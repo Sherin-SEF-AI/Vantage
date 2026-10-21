@@ -1,0 +1,7 @@
+PyQt6>=6.5
+numpy>=1.24
+scipy>=1.10
+PyOpenGL>=3.1          # GL viewport; without it the 3D view falls back to QPainter
+PyYAML>=6.0            # extrinsics.yaml export
+opencv-python>=4.7     # reference-photo calibration (solvePnP / calibrateCamera)
+# optional: gmsh       # STEP import (tessellation through OpenCASCADE)
