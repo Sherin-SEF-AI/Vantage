@@ -44,7 +44,7 @@ class ModuleEditor(VDialog):
         m = QMenu(self.b_imp)
         m.addAction('JSON…', lambda: self.import_file('json'))
         m.addAction('CSV…', lambda: self.import_file('csv'))
-        m.addAction('OpenCV YAML…', lambda: self.import_file('yaml'))
+        m.addAction('OpenCV / ROS / Kalibr YAML…', lambda: self.import_file('yaml'))
         self.b_imp.setMenu(m)
         bar.addWidget(self.b_imp)
         bar.addWidget(label('JSON · CSV · OpenCV YAML · or edit the fields below', muted=True))
@@ -412,7 +412,7 @@ class ModuleEditor(VDialog):
 
     # ------------------------------------------------------------------ import / apply
     def import_file(self, kind):
-        filt = {'json': 'JSON (*.json)', 'csv': 'CSV (*.csv)', 'yaml': 'OpenCV YAML (*.yaml *.yml *.xml)'}[kind]
+        filt = {'json': 'JSON (*.json)', 'csv': 'CSV (*.csv)', 'yaml': 'Calibration YAML (*.yaml *.yml *.xml)'}[kind]
         path, _ = QFileDialog.getOpenFileName(self, 'Import camera module', os.path.expanduser('~'), filt)
         if not path:
             if self.is_new and not self.isVisible():
@@ -446,16 +446,18 @@ class ModuleEditor(VDialog):
                 setattr(self.lens, k, tuple(v) if isinstance(v, list) and k != 'measured' else v)
         intr = d.get('intrinsics')
         if isinstance(intr, dict):
-            self._apply_intrinsics(intr.get('width'), intr.get('height'), intr.get('fx'), intr.get('cx'), intr.get('cy'), intr.get('k'))
+            self._apply_intrinsics(intr.get('width'), intr.get('height'), intr.get('fx'), intr.get('cx'), intr.get('cy'), intr.get('k'), intr.get('fy'))
 
-    def _apply_intrinsics(self, w, h, fx, cx, cy, k):
+    def _apply_intrinsics(self, w, h, fx, cx, cy, k, fy=None):
         m, l = self.mod, self.lens
         if w and h:
             m.width_px, m.height_px = int(w), int(h)
         if fx:
             l.focal_mm = float(fx) * m.pixel_um * 1e-3
+            l.aspect = float(fy) / float(fx) if fy else 1.0
         if cx is not None and cy is not None:
-            l.pp_offset_px = (float(cx) - m.width_px / 2, float(cy) - m.height_px / 2)
+            # OpenCV pixel coordinates: the centre of a 1920-wide sensor is 959.5
+            l.pp_offset_px = (float(cx) + 0.5 - m.width_px / 2, float(cy) + 0.5 - m.height_px / 2)
         if k is not None and len(k) >= 4:
             l.kb = tuple(float(x) for x in list(k)[:4])
             l.projection = 'kannala_brandt'
@@ -481,22 +483,9 @@ class ModuleEditor(VDialog):
         self._apply_dict(d)
 
     def _import_cv(self, path):
-        import cv2
-        fs = cv2.FileStorage(path, cv2.FILE_STORAGE_READ)
-        if not fs.isOpened():
-            raise ValueError('not an OpenCV FileStorage file')
-        K = fs.getNode('camera_matrix').mat()
-        D = fs.getNode('distortion_coefficients').mat()
-        w = fs.getNode('image_width').real()
-        h = fs.getNode('image_height').real()
-        model = fs.getNode('distortion_model').string()
-        fs.release()
-        if K is None:
-            raise ValueError('camera_matrix missing')
-        k = D.ravel().tolist() if D is not None else None
-        if model and model.lower() not in ('fisheye', 'kannala_brandt', 'equidistant') and k is not None:
-            raise ValueError(f'distortion model “{model}” is not fisheye; only fisheye (Kannala–Brandt) is supported')
-        self._apply_intrinsics(w, h, K[0, 0], K[0, 2], K[1, 2], k)
+        from ...core.calib import read_file
+        r = read_file(path)[0]
+        self._apply_intrinsics(r['width'], r['height'], r['fx'], r['cx'], r['cy'], r['k'], r['fy'])
         self.lens.name = os.path.splitext(os.path.basename(path))[0]
         self.lens.label = 'calibrated'
 

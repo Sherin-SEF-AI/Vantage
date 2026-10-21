@@ -57,6 +57,7 @@ class Camera:
     link_uid: str = ''                 # mirrored partner
     route_extra_m: float = 0.0
     route_note: str = ''
+    calib: dict = field(default_factory=dict)   # unit calibration (core.calib record); overrides the lens model
 
     def pos(self):
         return np.array([self.x, self.y, self.z])
@@ -395,6 +396,14 @@ class Project:
         return self.modules.get(cam.module_id) or next(iter(self.modules.values()))
 
     def lens_for(self, cam: Camera) -> Lens:
+        """The lens model in use: the camera's own unit calibration when it has one, else the library lens."""
+        base = self.nominal_lens_for(cam)
+        if cam.calib:
+            from .calib import unit_lens
+            return unit_lens(base, self.module_for(cam), cam.calib)
+        return base
+
+    def nominal_lens_for(self, cam: Camera) -> Lens:
         return self.lenses.get(cam.lens_id) or next(iter(self.lenses.values()))
 
     def add_log(self, kind, text):

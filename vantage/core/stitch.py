@@ -131,10 +131,10 @@ def build_lut(project: Project, engine, result, res=0.02, poses=None, extent=Non
     return lut
 
 
-def stitch(lut: StitchLUT, images: dict, body_rgb=(38, 38, 36), empty_rgb=(20, 20, 20)) -> np.ndarray:
-    """images: uid -> uint8 image (grey or RGB, any resolution with the sensor's aspect). Returns RGB uint8."""
+def warp(lut: StitchLUT, images: dict) -> tuple[dict, dict]:
+    """Each camera's image resampled onto the ground grid: ({uid: float32 (ny, nx, 3)}, {uid: bool valid})."""
     import cv2
-    out = np.zeros((lut.ny, lut.nx, 3), np.float32)
+    out, valid = {}, {}
     for uid in lut.uids:
         img = images.get(uid)
         if img is None:
@@ -143,10 +143,144 @@ def stitch(lut: StitchLUT, images: dict, body_rgb=(38, 38, 36), empty_rgb=(20, 2
             img = np.repeat(img[..., None], 3, axis=2)
         h, w = img.shape[:2]
         sw, sh = lut.sensor[uid]
-        mx = np.where(lut.map_x[uid] >= 0, lut.map_x[uid] * (w / sw) - 0.5, -1).astype(np.float32)
-        my = np.where(lut.map_y[uid] >= 0, lut.map_y[uid] * (h / sh) - 0.5, -1).astype(np.float32)
-        smp = cv2.remap(img, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0).astype(np.float32)
-        out += smp * lut.weight[uid][..., None]
+        ok = lut.map_x[uid] >= 0
+        mx = np.where(ok, lut.map_x[uid] * (w / sw) - 0.5, -1).astype(np.float32)
+        my = np.where(ok, lut.map_y[uid] * (h / sh) - 0.5, -1).astype(np.float32)
+        out[uid] = cv2.remap(img, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0).astype(np.float32)
+        valid[uid] = ok
+    return out, valid
+
+
+def overlap_means(lut: StitchLUT, warped: dict, valid: dict, step=2) -> list:
+    """[(uid_a, uid_b, n, mean_a (3,), mean_b (3,))] over the ground both cameras see (well exposed pixels only)."""
+    uids = [u for u in lut.uids if u in warped]
+    sl = (slice(None, None, step), slice(None, None, step))
+    free = ~lut.body[sl]
+    out = []
+    for i, a in enumerate(uids):
+        for b in uids[i + 1:]:
+            m = valid[a][sl] & valid[b][sl] & free
+            if m.sum() < 50:
+                continue
+            A, B = warped[a][sl][m], warped[b][sl][m]
+            la, lb = A.mean(1), B.mean(1)
+            ok = (la > 8) & (la < 247) & (lb > 8) & (lb < 247)
+            if ok.sum() < 50:
+                continue
+            out.append((a, b, int(ok.sum()), A[ok].mean(0), B[ok].mean(0)))
+    return out
+
+
+def estimate_gains(lut: StitchLUT, images: dict = None, warped=None, sigma_n=10.0, sigma_g=0.5) -> dict:
+    """Per-camera, per-channel gains that make overlapping cameras agree (Brown & Lowe gain compensation):
+    minimise sum N_ab ((g_a I_ab - g_b I_ba)^2 / sigma_n^2 + (1 - g)^2 / sigma_g^2). Returns {uid: (3,) gains}."""
+    if warped is None:
+        warped, valid = warp(lut, images)
+    else:
+        warped, valid = warped
+    uids = [u for u in lut.uids if u in warped]
+    idx = {u: i for i, u in enumerate(uids)}
+    n = len(uids)
+    pairs = overlap_means(lut, warped, valid)
+    g = np.ones((n, 3))
+    for ch in range(3):
+        A = np.zeros((n, n))
+        bvec = np.zeros(n)
+        for a, b, N, ma, mb in pairs:
+            i, j = idx[a], idx[b]
+            Ia, Ib = ma[ch], mb[ch]
+            A[i, i] += N * (Ia * Ia / sigma_n ** 2 + 1 / sigma_g ** 2)
+            A[j, j] += N * (Ib * Ib / sigma_n ** 2 + 1 / sigma_g ** 2)
+            A[i, j] -= N * Ia * Ib / sigma_n ** 2
+            A[j, i] -= N * Ia * Ib / sigma_n ** 2
+            bvec[i] += N / sigma_g ** 2
+            bvec[j] += N / sigma_g ** 2
+        for i in range(n):
+            if A[i, i] == 0:
+                A[i, i], bvec[i] = 1.0, 1.0
+        g[:, ch] = np.linalg.solve(A, bvec)
+    g = np.clip(g, 0.4, 2.5)
+    return {u: g[idx[u]].astype(np.float32) for u in uids}
+
+
+def overlap_mismatch(lut: StitchLUT, warped, gains=None) -> float:
+    """Mean absolute grey-level difference between overlapping cameras (after gains when given)."""
+    w, valid = warped
+    tot, num = 0.0, 0
+    for a, b, N, ma, mb in overlap_means(lut, w, valid):
+        ga = gains[a] if gains else 1.0
+        gb = gains[b] if gains else 1.0
+        tot += N * float(np.mean(np.abs(ma * ga - mb * gb)))
+        num += N
+    return tot / num if num else 0.0
+
+
+def _fill(img, ok, levels):
+    """Pull-push fill of the pixels a camera does not see, so its Laplacian pyramid has no edge there."""
+    import cv2
+    w = ok.astype(np.float32)
+    ims, ws = [img * w[..., None]], [w]
+    for _ in range(levels):
+        ims.append(cv2.pyrDown(ims[-1]))
+        ws.append(cv2.pyrDown(ws[-1]))
+    out = ims[-1] / np.maximum(ws[-1], 1e-6)[..., None]
+    for l in range(levels - 1, -1, -1):
+        up = cv2.pyrUp(out, dstsize=(ims[l].shape[1], ims[l].shape[0]))
+        own = ims[l] / np.maximum(ws[l], 1e-6)[..., None]
+        out = np.where((ws[l] > 1e-3)[..., None], own, up)
+    return out
+
+
+def _multiband(lut: StitchLUT, warped: dict, valid: dict, bands: int) -> np.ndarray:
+    """Laplacian-pyramid blend: fine detail switches sharply at the seam (no double edges), brightness blends over
+    2^bands pixels (no visible step)."""
+    import cv2
+    uids = [u for u in lut.uids if u in warped]
+    stack = np.stack([lut.weight[u] for u in uids])
+    own = np.argmax(stack, 0)
+    has = stack.max(0) > 0
+    acc = wacc = None
+    for k, u in enumerate(uids):
+        m = ((own == k) & has).astype(np.float32)
+        if not m.any():
+            continue
+        G = [_fill(warped[u], valid[u], bands)]
+        M = [m]
+        for _ in range(bands):
+            G.append(cv2.pyrDown(G[-1]))
+            M.append(cv2.pyrDown(M[-1]))
+        L = [G[l] - cv2.pyrUp(G[l + 1], dstsize=(G[l].shape[1], G[l].shape[0])) for l in range(bands)] + [G[-1]]
+        if acc is None:
+            acc = [np.zeros_like(x) for x in L]
+            wacc = [np.zeros(x.shape[:2], np.float32) for x in L]
+        for l in range(bands + 1):
+            acc[l] += L[l] * M[l][..., None]
+            wacc[l] += M[l]
+    if acc is None:
+        return np.zeros((lut.ny, lut.nx, 3), np.float32)
+    acc = [a / np.maximum(w, 1e-6)[..., None] for a, w in zip(acc, wacc)]
+    out = acc[-1]
+    for l in range(bands - 1, -1, -1):
+        out = cv2.pyrUp(out, dstsize=(acc[l].shape[1], acc[l].shape[0])) + acc[l]
+    return out
+
+
+def stitch(lut: StitchLUT, images: dict, body_rgb=(38, 38, 36), empty_rgb=(20, 20, 20), gains=None, blend='linear',
+           bands=5) -> np.ndarray:
+    """images: uid -> uint8 image (grey or RGB, any resolution with the sensor's aspect). Returns RGB uint8.
+    gains: {uid: scalar or (3,)} exposure gains, 'auto' to estimate them from the overlaps, None for none.
+    blend: 'linear' (the remap tables' weights) or 'multiband'."""
+    warped, valid = warp(lut, images)
+    if isinstance(gains, str):
+        gains = estimate_gains(lut, warped=(warped, valid))
+    if gains:
+        warped = {u: w * np.asarray(gains.get(u, 1.0), np.float32) for u, w in warped.items()}
+    if blend == 'multiband' and warped:
+        out = _multiband(lut, warped, valid, bands)
+    else:
+        out = np.zeros((lut.ny, lut.nx, 3), np.float32)
+        for uid, smp in warped.items():
+            out += smp * lut.weight[uid][..., None]
     out[~lut.covered] = empty_rgb
     out[lut.body] = body_rgb
     return np.clip(out, 0, 255).astype(np.uint8)
@@ -168,11 +302,19 @@ def lut_files(lut: StitchLUT, project: Project | None = None, variant=None) -> l
         files.append((f'{safe}_map.bin', mp.tobytes()))
         files.append((f'{safe}_weight.bin', wt.tobytes()))
         y, pi, r, x, yy, z = lut.poses.get(uid, (0, 0, 0, 0, 0, 0))
-        cams.append({'tag': tag, 'map': f'{safe}_map.bin', 'weight': f'{safe}_weight.bin',
+        cams.append({'tag': tag, 'tag_safe': safe, 'map': f'{safe}_map.bin', 'weight': f'{safe}_weight.bin',
                      'sensor_width': lut.sensor[uid][0], 'sensor_height': lut.sensor[uid][1],
                      'pose': {'x': round(x, 4), 'y': round(yy, 4), 'z': round(z, 4), 'yaw': round(y, 3), 'pitch': round(pi, 3),
                               'roll': round(r, 3)}})
     files.append(('body_mask.bin', lut.body.astype(np.uint8).tobytes()))
+    txt = ['# vantage.bev_lut/1 manifest for the reference stitcher (stitcher/bev_stitch.cpp); see bev_lut.json',
+           f'width {lut.nx}', f'height {lut.ny}', f'resolution {lut.res:.6g}',
+           f'extent {lut.x0:.6g} {lut.y0:.6g} {lut.x0 + lut.nx * lut.res:.6g} {lut.y0 + lut.ny * lut.res:.6g}']
+    txt += [f'camera {c["tag_safe"]} {c["map"]} {c["weight"]} {c["sensor_width"]} {c["sensor_height"]}' for c in cams]
+    txt.append('body body_mask.bin')
+    for c in cams:
+        c.pop('tag_safe')
+    files.append(('bev_lut.txt', ('\n'.join(txt) + '\n').encode('utf-8')))
     buf = io.BytesIO()
     np.savez_compressed(buf, **arrays)
     files.append(('bev_lut.npz', buf.getvalue()))
@@ -193,6 +335,19 @@ def lut_files(lut: StitchLUT, project: Project | None = None, variant=None) -> l
     }
     files.insert(0, ('bev_lut.json', json.dumps(meta, indent=1).encode('utf-8')))
     return files
+
+
+RUNTIME_FILES = ('bev_stitch.cpp', 'CMakeLists.txt', 'bev_stitch.py', 'README.md')
+
+
+def runtime_files() -> list[tuple[str, bytes]]:
+    """The reference stitcher sources ([(name, bytes)]), to sit in a stitcher/ folder next to the remap tables."""
+    here = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'runtime')
+    out = []
+    for n in RUNTIME_FILES:
+        with open(os.path.join(here, n), 'rb') as fh:
+            out.append((n, fh.read()))
+    return out
 
 
 def export_lut(lut: StitchLUT, out_dir: str, project: Project | None = None, variant=None) -> list[str]:

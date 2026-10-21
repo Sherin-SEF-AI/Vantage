@@ -257,6 +257,218 @@ def test_batch_install_check_and_as_built(sample, tmp_path):
     meas = next(r for r in doc['cameras'] if r['tag'] == 'ML')['measured']
     assert ml.yaw == pytest.approx(meas['yaw'], abs=1e-3) and ml.x == pytest.approx(meas['x'], abs=1e-4)
     assert all(c.link_uid == '' for c in q.variant.cameras)
+    assert doc['joint']['shared_corners'] > 0 and 'own_solve' in doc['cameras'][0]
+    assert set(doc['exposure_gains']) == {c.tag for c in p.variant.cameras}
     # a camera with no image fails the check
     os.remove(caps / 'QR.png')
     assert batch.run(_args(install_check=str(caps), report=str(rep))) == 3
+
+
+# ----------------------------------------------------------------------------- joint solve
+def test_joint_solve_ties_cameras_together_despite_misplaced_boards(sample):
+    """Boards laid up to 20 mm / 1° off their planned places: each camera's own solve absorbs the error of its boards
+    and neighbours disagree at the seams by centimetres; the joint solve brings them back to the noise floor and
+    finds where the boards really lie."""
+    import copy
+    from vantage.core.install import check_all
+    from vantage.core.joint import seam_spread
+    p, e, _ = sample
+    rng = np.random.default_rng(5)
+    laid = copy.deepcopy(p.targets)
+    for t in laid:
+        t.x += rng.uniform(-0.02, 0.02)
+        t.y += rng.uniform(-0.02, 0.02)
+        t.yaw += rng.uniform(-1, 1)
+    cams = p.variant.cameras
+    truth, imgs = {}, {}
+    for c in cams:
+        d = np.r_[rng.uniform(-1, 1, 3), rng.uniform(-0.01, 0.01, 3)]
+        truth[c.uid] = _err_pose(c, d)
+        imgs[c.uid] = render_capture(p, e, c, 960, 768, pose=truth[c.uid], targets=laid, seed=c.slot)
+    res, jr = check_all(p, cams, imgs, InstallSettings(joint=True))
+    assert jr is not None and jr.ok and jr.shared_corners > 50
+    floor, _, _ = seam_spread(jr.used, truth)                      # detection noise with the true poses
+    assert jr.seam_before_mm > 15 and jr.seam_after_mm < max(4.0, 2 * floor * 1000)
+    assert all(res[c.uid].joint and res[c.uid].single is not None for c in cams)
+    # a board that disagrees with every placement is set aside, not averaged in
+    from vantage.core.joint import joint_solve
+    obs = {u: list(r.detected) for u, r in res.items()}
+    victim = cams[0].uid
+    o = obs[victim][0]
+    bad = copy.copy(o)
+    bad.image_pts = o.image_pts[::-1].copy()                      # a grid matched the wrong way round
+    obs[victim] = [bad] + obs[victim][1:]
+    init = {u: r.single for u, r in res.items()}
+    jr2 = joint_solve(p, cams, obs, init, {u: im.shape for u, im in imgs.items()})
+    assert [(t, b) for t, b, _ in jr2.rejected] == [(cams[0].tag, o.name)]
+    assert jr2.seam_after_mm < max(4.0, 2 * floor * 1000)
+
+
+def test_joint_solve_finds_a_misplaced_board(sample):
+    """One board 60 mm and 2° off its place, the rest within 3 mm: the joint solve names it."""
+    import copy
+    from vantage.core.install import check_all
+    p, e, _ = sample
+    rng = np.random.default_rng(4)
+    laid = copy.deepcopy(p.targets)
+    for t in laid:
+        t.x += rng.uniform(-0.003, 0.003)
+        t.y += rng.uniform(-0.003, 0.003)
+        if t.name == 'T7':
+            a = rng.uniform(0, 2 * np.pi)
+            t.x, t.y, t.yaw = t.x + 0.06 * np.cos(a), t.y + 0.06 * np.sin(a), t.yaw + 2.0
+    imgs = {}
+    for c in p.variant.cameras:
+        d = np.r_[rng.uniform(-1, 1, 3), rng.uniform(-0.01, 0.01, 3)]
+        imgs[c.uid] = render_capture(p, e, c, 960, 768, pose=_err_pose(c, d), targets=laid, seed=c.slot)
+    _, jr = check_all(p, p.variant.cameras, imgs, InstallSettings())
+    assert jr.moved and jr.moved[0].name == 'T7' and jr.moved[0].shift_mm > 35
+    assert jr.moved[0].dyaw_deg == pytest.approx(2.0, abs=0.6) and 'T7' in jr.message
+
+
+def test_joint_solve_without_shared_boards(sample):
+    from vantage.core.joint import joint_solve
+    p, e, _ = sample
+    c = p.variant.by_tag('F')
+    img = render_capture(p, e, c, 960, 768, seed=1)
+    r = check_camera(p, c, img, InstallSettings())
+    jr = joint_solve(p, [c], {c.uid: r.boards}, {c.uid: (rot_zyx(r.yaw, r.pitch, r.roll), r.pos)}, {c.uid: img.shape})
+    assert jr.shared_corners == 0 and 'not tied together' in jr.message
+    assert np.allclose(jr.poses[c.uid][1], r.pos, atol=2e-3)
+
+
+# ----------------------------------------------------------------------------- photometric stitching
+@pytest.fixture(scope='module')
+def exposed(sample):
+    p, e, res = sample
+    rng = np.random.default_rng(2)
+    expo = {c.uid: float(rng.uniform(0.7, 1.3)) for c in p.variant.cameras}
+    imgs = {c.uid: render_capture(p, e, c, 960, 768, seed=c.slot, exposure=expo[c.uid], vignette=0.3)
+            for c in p.variant.cameras}
+    return expo, imgs, build_lut(p, e, res, res=0.02)
+
+
+def test_exposure_gains_balance_the_cameras(exposed):
+    from vantage.core.stitch import estimate_gains, overlap_mismatch, warp
+    expo, imgs, lut = exposed
+    W = warp(lut, imgs)
+    g = estimate_gains(lut, warped=W)
+    before, after = overlap_mismatch(lut, W), overlap_mismatch(lut, W, g)
+    assert before > 10 and after < before / 8
+    prod = np.array([expo[u] * g[u][0] for u in lut.uids])
+    assert prod.std() / prod.mean() < 0.03                        # gain x exposure is the same for every camera
+    assert abs(np.mean([g[u][0] for u in lut.uids]) - 1) < 0.05   # and the overall level is kept
+    assert all(np.allclose(v, v[0]) for v in g.values())         # grey images: equal channels
+
+
+def test_multiband_blend(exposed):
+    expo, imgs, lut = exposed
+    lin = stitch(lut, imgs, gains='auto')
+    mb = stitch(lut, imgs, gains='auto', blend='multiband')
+    assert mb.shape == lin.shape == (lut.ny, lut.nx, 3) and mb.dtype == np.uint8
+    assert (mb[lut.body] == (38, 38, 36)).all() and (mb[~lut.covered & ~lut.body] == (20, 20, 20)).all()
+    free = lut.covered & ~lut.body
+    # the same picture, with seams resolved differently
+    assert np.abs(mb[free].astype(int) - lin[free].astype(int)).mean() < 6
+    # brightness steps across the seams: gradient energy along seam lines drops with multi-band
+    gy = np.abs(np.diff(mb.astype(float)[..., 0], axis=0))[free[1:] & free[:-1]].mean()
+    gy_lin = np.abs(np.diff(lin.astype(float)[..., 0], axis=0))[free[1:] & free[:-1]].mean()
+    assert gy <= gy_lin * 1.05
+
+
+# ----------------------------------------------------------------------------- reference stitchers
+def _frames_dir(lut, imgs, tmp_path, tags):
+    import cv2
+    d = tmp_path / 'frames'
+    d.mkdir()
+    for uid, tag in zip(lut.uids, lut.tags):
+        cv2.imwrite(str(d / f'{tag}.pgm'), imgs[uid])
+    return d
+
+
+def test_reference_stitcher_cpp_matches(exposed, tmp_path):
+    import shutil
+    import subprocess
+    import cv2
+    from vantage.core.stitch import export_lut, runtime_files
+    if not shutil.which('g++'):
+        pytest.skip('no C++ compiler')
+    expo, imgs, lut = exposed
+    export_lut(lut, str(tmp_path / 'lut'))
+    src = tmp_path / 'bev_stitch.cpp'
+    src.write_bytes(dict(runtime_files())['bev_stitch.cpp'])
+    exe = tmp_path / 'bev_stitch'
+    cc = subprocess.run(['g++', '-O2', '-std=c++17', '-Wall', '-Wextra', '-Werror', str(src), '-o', str(exe)],
+                        capture_output=True, text=True)
+    assert cc.returncode == 0, cc.stderr
+    frames = _frames_dir(lut, imgs, tmp_path, lut.tags)
+    for balance in (False, True):
+        out = tmp_path / f'out{int(balance)}.ppm'
+        r = subprocess.run([str(exe), str(tmp_path / 'lut'), str(out), '--frames', str(frames)] + (['--balance'] if balance else []),
+                           capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        cpp = cv2.imread(str(out))[..., ::-1].astype(int)
+        py = stitch(lut, imgs, gains='auto' if balance else None).astype(int)
+        d = np.abs(cpp - py)
+        assert d.mean() < 0.1 and np.percentile(d, 99.9) <= 2, (balance, d.mean(), d.max())
+    bad = subprocess.run([str(exe), str(tmp_path / 'lut'), str(tmp_path / 'x.ppm'), str(frames / 'F.pgm')],
+                         capture_output=True, text=True)
+    assert bad.returncode == 1 and 'frames for' in bad.stderr
+
+
+def test_reference_stitcher_py_matches(exposed, tmp_path):
+    import subprocess
+    import sys
+    import cv2
+    from vantage.core.stitch import export_lut, runtime_files
+    expo, imgs, lut = exposed
+    export_lut(lut, str(tmp_path / 'lut'))
+    st = tmp_path / 'lut' / 'stitcher'
+    st.mkdir()
+    for n, data in runtime_files():
+        (st / n).write_bytes(data)
+    frames = _frames_dir(lut, imgs, tmp_path, lut.tags)
+    out = tmp_path / 'bev.png'
+    r = subprocess.run([sys.executable, str(st / 'bev_stitch.py'), '--frames', str(frames), '--out', str(out), '--balance'],
+                       capture_output=True, text=True, cwd=str(tmp_path))
+    assert r.returncode == 0, r.stderr
+    got = cv2.imread(str(out))[..., ::-1].astype(int)
+    py = stitch(lut, imgs, gains='auto').astype(int)
+    assert np.abs(got - py).mean() < 0.1
+    assert len([ln for ln in r.stdout.splitlines() if ln.startswith('gain ')]) == len(lut.uids)
+
+
+# ----------------------------------------------------------------------------- batch: lens calibration
+def test_batch_calibrate_lens_and_import(sample, tmp_path):
+    from vantage import batch
+    from vantage.core import calib
+    from vantage.core.project import Project
+    p, e, _ = sample
+    f = p.variant.by_tag('F')
+    m, lens = p.module_for(f), p.nominal_lens_for(f)
+    truth = calib.simulated_unit(m, lens, seed=21)
+    views = tmp_path / 'views'
+    views.mkdir()
+    for name, img in calib.board_views(m, lens, truth, (9, 6), 60.0, n=14, seed=2):
+        capture.save_image(str(views / f'{name}.png'), img)
+    rep, yml, saved = tmp_path / 'cal.json', tmp_path / 'F.yaml', tmp_path / 'cal.vantage'
+    code = batch.run(_args(calibrate_lens=str(views), camera='F', board='9x6', square=60.0, serial='SN-F',
+                           calib_out=str(yml), save=str(saved), report=str(rep)))
+    doc = json.loads(rep.read_text('utf-8'))
+    assert code == 0 and doc['ok'] and doc['camera'] == 'F', doc['message']
+    assert doc['calibration']['serial'] == 'SN-F' and doc['calibration']['rms_px'] < 0.2
+    assert doc['calibration']['fx'] * 2 == pytest.approx(truth['fx'], rel=3e-3)
+    q = Project.load(str(saved))
+    assert q.variant.by_tag('F').calib['serial'] == 'SN-F' and not q.variant.by_tag('R').calib
+    # the written YAML imports onto F (its camera_name) in a fresh copy of the sample
+    saved2 = tmp_path / 'imp.vantage'
+    code = batch.run(_args(import_calib=[str(yml)], save=str(saved2), report=str(tmp_path / 'imp.json')))
+    idoc = json.loads((tmp_path / 'imp.json').read_text('utf-8'))
+    assert code == 0 and [r['camera'] for r in idoc['applied']] == ['F'] and not idoc['unmatched']
+    q2 = Project.load(str(saved2))
+    a, b = q.variant.by_tag('F').calib, q2.variant.by_tag('F').calib
+    assert all(a[k] == pytest.approx(b[k], rel=1e-12) for k in ('fx', 'fy', 'cx', 'cy')) and a['k'] == pytest.approx(b['k'])
+    # nothing usable: exit code 4
+    assert batch.run(_args(calibrate_lens=str(tmp_path), camera='F', report=str(tmp_path / 'none.json'))) == 4
+    with pytest.raises(SystemExit):
+        batch.run(_args(calibrate_lens=str(views)))                # no --camera

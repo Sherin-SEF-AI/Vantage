@@ -361,6 +361,90 @@ def test_installation_live_source_error(app, win):
     win.set_page('viewports')
 
 
+def test_installation_check_joint_and_exposure(app, win, tmp_path):
+    win.set_page('install')
+    pg = win.page('install')
+    pg.sim_res.setCurrentIndex(1)
+    pg.sim_board.set_value(20)                       # boards laid up to 20 mm off
+    pg.sim_expo.set_value(30)
+    assert pg.joint_cb.isChecked() and pg.balance_cb.isChecked()
+    pg.run(check=True)
+    _wait(app, lambda: not pg.busy and pg.results)
+    jr = pg.joint
+    assert jr is not None and jr.poses and jr.seam_after_mm < jr.seam_before_mm
+    assert 'Joint solve' in pg.joint_lbl.text() and pg.btable.rowCount() == len(win.store.project.targets)
+    assert set(pg.board_truth) == {t.uid for t in win.store.project.targets}
+    assert 'simulated' in pg.btable.item(0, 2).toolTip()
+    assert pg.gains and 'gains' in pg.bev.caption
+    balanced = pg.stitched['measured'].copy()
+    pg.balance_cb.setChecked(False)
+    assert not pg.gains and not np.array_equal(balanced, pg.stitched['measured'])
+    pg.blend.buttons['multiband'].click()
+    pump(app, 0.1)
+    assert 'multi-band' in pg.bev.caption
+    pg.save_report(str(tmp_path / 'r.json'))
+    import json
+    rep = json.loads((tmp_path / 'r.json').read_text('utf-8'))
+    assert rep['joint']['shared_corners'] > 0 and len(rep['joint']['boards']) == len(win.store.project.targets)
+    assert all('own_solve' in r for r in rep['cameras'])
+    # without the joint solve every camera stands alone
+    pg.joint_cb.setChecked(False)
+    pg.run(check=True)
+    _wait(app, lambda: not pg.busy and pg.results)
+    assert pg.joint is None and pg.btable.isHidden() and not any(r.joint for r in pg.results.values())
+    pg.blend.buttons['linear'].click()
+    pg.balance_cb.setChecked(True)
+    pg.joint_cb.setChecked(True)
+
+
+def test_lens_calibration_dialog(app, win, tmp_path):
+    st = win.store
+    f = st.variant.by_tag('F')
+    st.select_cams([f.uid])
+    pump(app, 0.1)
+    insp = win.inspector.pages['camera'] if hasattr(win.inspector, 'pages') and 'camera' in win.inspector.pages else None
+    win.actions_by_id['lens_calib'].trigger()
+    d = win._calib_dialog
+    pump(app, 0.1)
+    assert d.cam.currentData() == f.uid and not d.b_run.isEnabled() and not d.b_apply.isEnabled()
+    d.source.buttons['synthetic'].click()
+    d.syn_n.set_value(12)
+    d.render_synthetic()
+    _wait(app, lambda: not d.busy and len(d.views) == 12)
+    assert d.truth is not None and d.vtable.rowCount() == 12 and d.preview.qimg is not None
+    d.run()
+    _wait(app, lambda: not d.busy and d.result is not None)
+    assert d.result.ok, d.result.message
+    assert d.ptable.rowCount() >= 8 and 'simulated truth' in d.diff.text() and d.b_apply.isEnabled()
+    assert all(d.vtable.item(i, 3).text() == 'used' for i in range(12))
+    d.serial.setText('SN-GUI')
+    d.apply()
+    pump(app, 0.2)
+    cal = st.variant.by_tag('F').calib
+    assert cal['serial'] == 'SN-GUI' and cal['views'] == 12
+    assert st.project.lens_for(st.variant.by_tag('F')).label == 'unit'
+    if insp is not None:
+        assert 'SN-GUI' in insp.calib_v.v.text() and not insp.proj.isEnabled()
+    d.save(str(tmp_path / 'F.yaml'))
+    win.store.undo.undo()
+    pump(app, 0.2)
+    assert not st.variant.by_tag('F').calib
+    d.close()
+    # the saved file imports back onto F by its camera name
+    imp = win.import_calibrations([str(tmp_path / 'F.yaml')])
+    pump(app, 0.1)
+    assert imp.combos[0].currentData() == f.uid and 'fits' in imp.table.item(0, 7).text()
+    imp.apply()
+    pump(app, 0.2)
+    assert st.variant.by_tag('F').calib['serial'] == 'SN-GUI'
+    out = win.export_calibrations(str(tmp_path / 'units.json'))
+    assert out and 'SN-GUI' in (tmp_path / 'units.json').read_text('utf-8')
+    st.select_cams([f.uid])
+    win.clear_calibration()
+    pump(app, 0.2)
+    assert not st.variant.by_tag('F').calib
+
+
 def test_load_cases_dialog(app, win):
     d = win.load_cases()
     pump(app, 0.1)

@@ -97,7 +97,7 @@ def _cams(p):
 # ----------------------------------------------------------------------------- registry
 def test_formats_registry():
     ids = [f.id for f in ex.FORMATS]
-    assert len(ids) == len(set(ids)) == 15
+    assert len(ids) == len(set(ids)) == 16
     assert {f.group for f in ex.FORMATS} == set(ex.GROUPS)
     for f in ex.FORMATS:
         assert f.kind in ('text', 'binary')
@@ -110,8 +110,9 @@ def test_export_writes_every_file(sample, exported):
     p, _ = sample
     out, paths, steps = exported
     n = len(_cams(p))
-    # 11 single-file formats + N opencv + 2 ros + N views + (json, npz, 2N bin, body mask) remap tables
-    assert len(paths) == 11 + 2 * n + 2 + (2 * n + 3)
+    # 11 single-file formats + N opencv + 2 ros + N views + (json, npz, txt, 2N bin, body mask) remap tables
+    # + 4 reference stitcher sources
+    assert len(paths) == 11 + 2 * n + 2 + (2 * n + 4) + 4
     for path in paths:
         assert os.path.isabs(path) and os.path.isfile(path) and os.path.getsize(path) > 0
         assert os.path.commonpath([path, str(out)]) == str(out)
@@ -121,7 +122,8 @@ def test_export_writes_every_file(sample, exported):
     for expected in ('mount-sheet.pdf', 'report.html', 'report.pdf', 'extrinsics.json', 'extrinsics.yaml',
                      'extrinsics.csv', 'vantage_cameras.urdf', 'static_tf.launch.py', 'jetson_cameras.json',
                      'viewport.png', 'birds-eye.png', 'mount-points.dxf', 'mount-points.step', 'opencv/F.yaml',
-                     'views/QR.png', 'bev_lut/bev_lut.json', 'bev_lut/F_map.bin', 'bev_lut/body_mask.bin'):
+                     'views/QR.png', 'bev_lut/bev_lut.json', 'bev_lut/F_map.bin', 'bev_lut/body_mask.bin',
+                     'bev_lut/bev_lut.txt', 'bev_lut/stitcher/bev_stitch.cpp', 'bev_lut/stitcher/bev_stitch.py'):
         assert expected in names
 
 
@@ -147,7 +149,7 @@ def test_json_extrinsics(sample, exported):
         intr = jc['intrinsics']
         assert intr['model'] == 'kannala_brandt' and len(intr['k']) == 4
         assert intr['fx'] == pytest.approx(2.62 / 0.003, abs=1e-3) and intr['fx'] == intr['fy']
-        assert (intr['width'], intr['height'], intr['cx'], intr['cy']) == (1920, 1536, 960.0, 768.0)
+        assert (intr['width'], intr['height'], intr['cx'], intr['cy']) == (1920, 1536, 959.5, 767.5)   # OpenCV pixel centres
         T = np.array(jc['T_world_optical'])
         R = rot_zyx(c.yaw, c.pitch, c.roll)
         assert T.shape == (4, 4)
@@ -269,8 +271,9 @@ def test_opencv_yaml_reprojects_like_the_app(sample, exported):
         assert len(P) >= 8, c.tag
         idx = np.linspace(0, len(P) - 1, 12).astype(int)
         uv_cv, _ = cv2.fisheye.projectPoints(P[idx].reshape(-1, 1, 3).astype(np.float64), rvec, tvec, K, D)
-        err = np.linalg.norm(uv_cv.reshape(-1, 2) - uv_app[idx], axis=1)
-        assert err.max() < 0.5, (c.tag, err.max())
+        # the app's sensor coordinates have pixel centres at i + 0.5, OpenCV's at i
+        err = np.linalg.norm(uv_cv.reshape(-1, 2) - (uv_app[idx] - 0.5), axis=1)
+        assert err.max() < 0.05, (c.tag, err.max())
 
 
 def test_kb_fit_for_other_projections(sample, images, tmp_path):
@@ -572,7 +575,14 @@ def test_bev_lut_files(sample, exported):
     npz = np.load(out / 'bev_lut' / 'bev_lut.npz')
     assert npz['body_mask'].shape == (h, w)
     _, d, n = ex.preview('bev_lut', p, sample[1], ex.ExportOptions(out_dir=str(out)))
-    assert d.startswith(f'{len(meta["cameras"]) * 2 + 3} files · {w} × {h} px') and n > 0
+    assert d.startswith(f'{len(meta["cameras"]) * 2 + 4} files · {w} × {h} px') and n > 0
+    # the plain-text manifest the C++ reference stitcher reads agrees with the JSON
+    man = [ln.split() for ln in (out / 'bev_lut' / 'bev_lut.txt').read_text('utf-8').splitlines() if not ln.startswith('#')]
+    kv = {r[0]: r[1:] for r in man}
+    assert int(kv['width'][0]) == w and int(kv['height'][0]) == h and kv['body'] == ['body_mask.bin']
+    cams = [r[1:] for r in man if r[0] == 'camera']
+    assert [c[1] for c in cams] == [c['map'] for c in meta['cameras']]
+    assert [int(c[3]) for c in cams] == [c['sensor_width'] for c in meta['cameras']]
 
 
 def test_number_formatting():

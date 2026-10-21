@@ -409,6 +409,10 @@ class MainWindow(QMainWindow):
         A('target_check', 'Check visibility', lambda: (self.set_page('targets'), self.inspector.pages['targets']._check()), None, None, category='Calibrate')
         A('target_export', 'Export target positions…', lambda: self.inspector.pages['targets']._export(), None, 'export', category='Calibrate')
         A('install', 'Installation check…', lambda: self.set_page('install'), 'Ctrl+Shift+I', 'target', category='Calibrate')
+        A('lens_calib', 'Lens calibration…', self.lens_calibration, 'Ctrl+Shift+L', 'lens', category='Calibrate')
+        A('calib_import', 'Import unit calibrations…', self.import_calibrations, None, 'file', category='Calibrate')
+        A('calib_export', 'Export unit calibrations…', self.export_calibrations, None, 'export', category='Calibrate')
+        A('calib_clear', 'Clear unit calibration', self.clear_calibration, None, None, category='Calibrate')
         # export
         A('export', 'Export…', self.export_dialog, 'Ctrl+E', 'export', category='Export')
         for fid, text in (('mount_sheet_pdf', 'Mount sheet (PDF)'), ('report_html', 'Report (HTML)'), ('report_pdf', 'Report (PDF)'),
@@ -532,6 +536,8 @@ class MainWindow(QMainWindow):
         cb.addAction(a['targets'])
         sub(cb, 'Add target', ['target_checkerboard', 'target_charuco', 'target_aprilgrid'])
         cb.addActions([a['target_auto'], a['target_check'], a['target_export']])
+        cb.addSeparator()
+        cb.addActions([a['lens_calib'], a['calib_import'], a['calib_export'], a['calib_clear']])
         cb.addSeparator()
         cb.addAction(a['install'])
         ex = menu('Export')
@@ -1687,6 +1693,54 @@ class MainWindow(QMainWindow):
             return
         from .dialogs.module_editor import ModuleEditor
         ModuleEditor(self.ctx, mid, lid, self).exec()
+
+    # ------------------------------------------------------------------ unit lens calibration
+    def lens_calibration(self, uid=None):
+        from .dialogs.lens_calib_dialog import LensCalibDialog
+        if not self.store.variant.cameras:
+            self.msg('This variant has no cameras.')
+            return None
+        d = LensCalibDialog(self.ctx, uid, self)
+        d.show()
+        self._calib_dialog = d
+        return d
+
+    def import_calibrations(self, paths=None):
+        from .dialogs.lens_calib_dialog import ImportCalibDialog
+        if not paths:
+            paths, _ = QFileDialog.getOpenFileNames(self, 'Import unit calibrations', os.path.expanduser('~'),
+                                                    'Calibration files (*.yaml *.yml *.xml *.json);;All files (*)')
+        if not paths:
+            return None
+        d = ImportCalibDialog(self.ctx, paths, self)
+        d.show()
+        self._import_calib_dialog = d
+        return d
+
+    def export_calibrations(self, path=None):
+        from ..core.calib import to_json
+        cams = [c for c in self.store.variant.cameras if c.calib]
+        if not cams:
+            self.msg('No camera in this variant has a unit calibration.')
+            return None
+        if not path:
+            path, _ = QFileDialog.getSaveFileName(self, 'Export unit calibrations', 'unit-calibrations.json', 'JSON (*.json)')
+        if not path:
+            return None
+        with open(path, 'w', encoding='utf-8') as fh:
+            fh.write(to_json(self.store.project, cams))
+        self.msg(f'Wrote {len(cams)} unit calibration(s) to {path}')
+        return path
+
+    def clear_calibration(self):
+        from .dialogs.lens_calib_dialog import apply_calibrations
+        cams = [c for c in self.store.selected_cams() if c.calib] if self.store.selected else []
+        if not cams:
+            self.msg('Select a camera that has a unit calibration.')
+            return
+        apply_calibrations(self.ctx, {c.uid: {} for c in cams},
+                           f'Cleared the unit calibration of {", ".join(c.tag for c in cams)}')
+        self.msg(f'{", ".join(c.tag for c in cams)} use the library lens again')
 
     def import_module(self):
         from .dialogs.module_editor import ModuleEditor

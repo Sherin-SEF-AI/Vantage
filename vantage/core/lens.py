@@ -74,6 +74,7 @@ class Lens:
     sheet_fov: tuple = (0.0, 0.0, 0.0)  # datasheet H, V, D degrees (0 = unknown)
     max_half_deg: float = 0.0          # image-circle limit (half angle); 0 = derive from sheet D
     pp_offset_px: tuple = (0.0, 0.0)   # principal point offset from the sensor centre
+    aspect: float = 1.0                # fy / fx (pixel aspect of a calibrated unit; 1 for a nominal lens)
     measured: list = field(default_factory=list)   # [(theta_deg, r_mm), ...] calibration samples
     fit_rms_px: float = 0.0
     builtin: bool = False
@@ -201,6 +202,7 @@ class Intrinsics:
     max_theta: float     # radians, image-circle limit
     focus_near: float
     focus_far: float
+    aspect: float = 1.0  # fy / fx
 
     @property
     def f_px(self):
@@ -214,7 +216,7 @@ class Intrinsics:
         r = r_of_theta(theta, self.f_mm, self.projection, self.kb) / self.pixel_mm
         s = np.where(rho > 1e-12, r / np.where(rho > 1e-12, rho, 1.0), 0.0)
         u = self.cx + x * s
-        v = self.cy + y * s
+        v = self.cy + y * s * self.aspect
         ok = (theta <= self.max_theta) & (u >= 0) & (u <= self.width) & (v >= 0) & (v <= self.height)
         if self.projection == 'rectilinear':
             ok &= z > 1e-6
@@ -223,7 +225,7 @@ class Intrinsics:
     def unproject(self, u, v):
         """Pixel coordinates -> optical-frame unit directions and theta."""
         x = (np.asarray(u, float) - self.cx) * self.pixel_mm
-        y = (np.asarray(v, float) - self.cy) * self.pixel_mm
+        y = (np.asarray(v, float) - self.cy) / self.aspect * self.pixel_mm
         r = np.hypot(x, y)
         theta = theta_of_r(r, self.f_mm, self.projection, self.kb)
         s = np.where(r > 1e-12, np.sin(theta) / np.where(r > 1e-12, r, 1.0), 0.0)
@@ -263,7 +265,8 @@ def resolve(module: Module, lens: Lens) -> Intrinsics:
     return Intrinsics(width=module.width_px, height=module.height_px, pixel_mm=pm, f_mm=lens.focal_mm,
                       projection=proj, kb=kb,
                       cx=module.width_px / 2 + lens.pp_offset_px[0], cy=module.height_px / 2 + lens.pp_offset_px[1],
-                      max_theta=math.radians(max_half), focus_near=lens.focus_near_m, focus_far=lens.focus_far_m)
+                      max_theta=math.radians(max_half), focus_near=lens.focus_near_m, focus_far=lens.focus_far_m,
+                      aspect=float(lens.aspect or 1.0))
 
 
 def model_fov(module: Module, lens: Lens, projection: str | None = None, kb=None):

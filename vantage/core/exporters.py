@@ -12,6 +12,8 @@ Conventions
   ``R = rot_zyx(yaw, pitch, roll)`` maps body to world.
 * OpenCV optical frame: x right, y down, z forward. ``W2O = BODY_TO_OPTICAL @ R.T`` maps world to optical.
 * Intrinsics: Kannala-Brandt (same model as ``cv::fisheye``); other projections are fitted by least squares.
+  fx, fy, cx, cy are in OpenCV pixel coordinates (pixel centres on integers), so the sensor centre of a
+  1920-wide image is cx = 959.5. A camera with a unit calibration (core.calib) exports its own intrinsics.
 """
 from __future__ import annotations
 
@@ -130,8 +132,12 @@ FORMATS: list[ExportFormat] = [
                  lambda p, v: 'jetson_cameras.json', 'text'),
     ExportFormat('bev_lut', 'Surround view', 'Bird\'s-eye remap tables', 'NPZ, BIN',
                  lambda p, v: ['bev_lut/bev_lut.json', 'bev_lut/bev_lut.npz'] + [f'bev_lut/{t}_{k}.bin' for t in safe_tags(v).values()
-                                                                                 for k in ('map', 'weight')] + ['bev_lut/body_mask.bin'],
+                                                                                 for k in ('map', 'weight')] + ['bev_lut/body_mask.bin',
+                                                                                                                'bev_lut/bev_lut.txt'],
                  'binary', multi=True),
+    ExportFormat('bev_stitcher', 'Surround view', 'Reference stitcher', 'C++, PY',
+                 lambda p, v: ['bev_lut/stitcher/bev_stitch.cpp', 'bev_lut/stitcher/CMakeLists.txt',
+                               'bev_lut/stitcher/bev_stitch.py', 'bev_lut/stitcher/README.md'], 'text', multi=True),
     ExportFormat('viewport_png', 'Images', 'Viewport', 'PNG', lambda p, v: 'viewport.png', 'binary'),
     ExportFormat('bev_png', 'Images', "Bird's-eye", 'PNG', lambda p, v: 'birds-eye.png', 'binary'),
     ExportFormat('camera_views_png', 'Images', 'All camera views', 'PNG ×N',
@@ -272,8 +278,9 @@ def camera_model(project: Project, cam: Camera, origin=(0.0, 0.0, 0.0), scale: f
     W2O = BODY_TO_OPTICAL @ R.T
     p = (cam.pos() - np.asarray(origin, float)) * scale
     f = intr.f_px
-    return CameraModel(cam, tag or _safe(cam.tag), module, lens, intr, f, f, float(intr.cx), float(intr.cy), k, rms,
-                       R, W2O, p)
+    # OpenCV pixel coordinates put pixel centres on integers; Vantage's sensor coordinates on i + 0.5
+    return CameraModel(cam, tag or _safe(cam.tag), module, lens, intr, f, f * intr.aspect, float(intr.cx) - 0.5,
+                       float(intr.cy) - 0.5, k, rms, R, W2O, p)
 
 
 # ====================================================================== context
@@ -412,6 +419,12 @@ def _intrinsics_dict(cm: CameraModel) -> dict:
     if cm.fitted:
         d['fitted_from'] = cm.intr.projection
         d['fit_rms_px'] = _fn(cm.fit_rms_px, 4)
+    cal = cm.cam.calib
+    d['source'] = 'unit_calibration' if cal else 'library_lens'
+    if cal:
+        d['serial'] = cal.get('serial', '')
+        d['calibration_date'] = cal.get('date', '')
+        d['calibration_rms_px'] = _fn(float(cal.get('rms_px', 0)), 4)
     return d
 
 
@@ -537,11 +550,15 @@ def _opencv_yaml(ctx: _Ctx, cm: CameraModel) -> str:
     ]
     if cm.fitted:
         lines.append(f'# Lens projection {cm.intr.projection} fitted to Kannala-Brandt, RMS {cm.fit_rms_px:.3f} px.')
+    if c.calib:
+        lines.append(f'# Intrinsics: this unit\'s own calibration ({c.calib.get("serial") or "no serial"}, '
+                     f'{c.calib.get("date", "")}, RMS {float(c.calib.get("rms_px", 0)):.3f} px), not the library lens.')
     out = '\n'.join(lines) + '\n'
     out += (f'camera_name: {_cvstr(c.tag)}\n'
             f'camera_location: {_cvstr(c.location or c.name)}\n'
             f'module: {_cvstr(cm.module.name)}\n'
             f'lens: {_cvstr(cm.lens.name)}\n'
+            + (f'serial: {_cvstr(c.calib.get("serial", ""))}\n' if c.calib and c.calib.get('serial') else '') +
             f'gmsl_port: {int(c.port or 0)}\n'
             f'frame: {_cvstr(ctx.frame)}\n'
             f'units: {_cvstr(ctx.units)}\n'
@@ -1907,6 +1924,9 @@ def _render(fmt_id: str, ctx: _Ctx) -> list:
     if fmt_id == 'bev_lut':
         from .stitch import lut_files
         return [(f'bev_lut/{n}', d) for n, d in lut_files(_lut(ctx), ctx.project, ctx.variant)]
+    if fmt_id == 'bev_stitcher':
+        from .stitch import runtime_files
+        return [(f'bev_lut/stitcher/{n}', d) for n, d in runtime_files()]
     if fmt_id == 'dxf':
         return [(name(), t(_dxf(ctx)))]
     if fmt_id == 'step':

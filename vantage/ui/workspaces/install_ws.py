@@ -17,7 +17,8 @@ from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QSp
                              QFrame, QLineEdit, QSizePolicy)
 
 from ...core import capture as cap
-from ...core.install import InstallSettings, check_camera
+from ...core.install import InstallSettings, check_all
+from ...core.joint import pose_dict, report as joint_report
 from ...core.mathutil import rot_zyx, wrap180
 from ...core.project import Variant, new_uid
 from ..theme import THEME, STATUS, mono, sans
@@ -215,8 +216,12 @@ class InstallPage(QWidget):
         self.truth = {}            # uid -> (dyaw, dpitch, droll, dx, dy, dz) simulated mounting error
         self.results = {}          # uid -> PoseResult
         self.live = {}             # uid -> capture.LiveSource
-        self.stitched = {}         # 'planned' | 'measured' -> RGB
+        self.stitched = {}         # 'planned' | 'measured' -> RGB, with the current exposure / blend settings
         self.luts = {}
+        self.joint = None          # core.joint.JointResult of the last check
+        self.board_truth = {}      # target uid -> (dx mm, dy mm, dyaw deg) simulated board placement error
+        self.gains = {}            # uid -> exposure gains used for the measured stitch
+        self.exposure_truth = {}   # uid -> simulated exposure factor
         self.version = {}          # uid -> bumped whenever the frozen image changes (tile pixmap cache key)
         self.selected = None
         self.single = False
@@ -298,13 +303,21 @@ class InstallPage(QWidget):
         self.sim_ang = ScrubSpinBox('', 'angle', 1, '°', width=90)
         self.sim_pos = ScrubSpinBox('', 'plain', 0, 'mm', step=1, width=90)
         self.sim_seed = ScrubSpinBox('', 'plain', 0, '', step=1, width=90)
+        self.sim_board = ScrubSpinBox('', 'plain', 0, 'mm', step=1, width=90)
+        self.sim_board.setToolTip('Lay the boards off their planned places by up to this much (and up to 1° per 20 mm)')
+        self.sim_expo = ScrubSpinBox('', 'plain', 0, '%', step=1, width=90)
+        self.sim_expo.setToolTip('Each camera\'s auto-exposure differs by up to this much')
+        self.sim_vig = ScrubSpinBox('', 'plain', 0, '%', step=1, width=90)
+        self.sim_vig.setToolTip('Darkening towards the edge of the image circle')
         self.sim_res = QComboBox()
         self.sim_res.addItem('Full', 1.0)
         self.sim_res.addItem('Half', 0.5)
         self.sim_res.setFixedWidth(90)
-        for w, v in ((self.sim_ang, 1.5), (self.sim_pos, 15), (self.sim_seed, 7)):
+        for w, v in ((self.sim_ang, 1.5), (self.sim_pos, 15), (self.sim_seed, 7), (self.sim_board, 0), (self.sim_expo, 20),
+                     (self.sim_vig, 30)):
             w.set_value(v)
-        for i, (t, w) in enumerate((('Angle ±', self.sim_ang), ('Position ±', self.sim_pos), ('Seed', self.sim_seed),
+        for i, (t, w) in enumerate((('Angle ±', self.sim_ang), ('Position ±', self.sim_pos), ('Boards off by ±', self.sim_board),
+                                    ('Exposure ±', self.sim_expo), ('Vignetting', self.sim_vig), ('Seed', self.sim_seed),
                                     ('Resolution', self.sim_res))):
             a = label(t, ink2=True)
             a.setFixedWidth(110)
@@ -332,6 +345,24 @@ class InstallPage(QWidget):
         ll.addLayout(g2)
         ll.addWidget(label('Within tolerance: OK. Up to 3× : adjust or keep as built. Beyond: re-mount.', muted=True, small=True,
                            wrap=True))
+        ll.addSpacing(6)
+        ll.addWidget(label('Solve', bold=True))
+        self.joint_cb = QCheckBox('Joint: all cameras and the board placement')
+        self.joint_cb.setChecked(st.joint)
+        self.joint_cb.setToolTip('Boards are laid by hand. Solving every camera together, with each board free to sit a little '
+                                 'off its planned place, makes cameras that share a board agree at the seams.')
+        ll.addWidget(self.joint_cb)
+        g3 = QGridLayout()
+        g3.setVerticalSpacing(2)
+        self.board_sigma = ScrubSpinBox('', 'plain', 0, 'mm', step=1, width=90)
+        self.board_sigma.set_value(st.board_sigma_mm)
+        a = label('Board placement ±', ink2=True)
+        a.setFixedWidth(110)
+        g3.addWidget(a, 0, 0)
+        g3.addWidget(self.board_sigma, 0, 1)
+        g3.setColumnStretch(2, 1)
+        ll.addLayout(g3)
+        self.joint_cb.toggled.connect(self.board_sigma.setEnabled)
         ll.addStretch(1)
         self.status = label('Not run yet', muted=True, small=True, wrap=True)
         ll.addWidget(self.status)
@@ -422,6 +453,38 @@ class InstallPage(QWidget):
         rl.addLayout(h)
         self.bev = ImageView('Run the check to stitch the captures into a bird\'s-eye view.')
         rl.addWidget(self.bev, 1)
+        h = QHBoxLayout()
+        self.balance_cb = QCheckBox('Balance exposure')
+        self.balance_cb.setChecked(True)
+        self.balance_cb.setToolTip('Per-camera gains from the ground two cameras share, so differently exposed cameras meet '
+                                   'without a step in brightness')
+        self.balance_cb.toggled.connect(self._restitch)
+        self.blend = SegmentedControl([('linear', 'Linear'), ('multiband', 'Multi-band')], 'linear')
+        self.blend.setToolTip('Linear: the remap tables\' blend. Multi-band: fine detail switches at the seam, brightness '
+                              'blends wide (no double edges, no step)')
+        self.blend.changed.connect(self._restitch)
+        h.addWidget(self.balance_cb)
+        h.addStretch(1)
+        h.addWidget(label('Blend', ink2=True))
+        h.addWidget(self.blend)
+        rl.addLayout(h)
+        self.joint_lbl = label('', muted=True, small=True, wrap=True)
+        rl.addWidget(self.joint_lbl)
+        self.btable = QTableWidget(0, 4)
+        self.btable.setHorizontalHeaderLabels(['Board', 'Seen by', 'Off by mm', 'Δψ °'])
+        self.btable.verticalHeader().setVisible(False)
+        self.btable.verticalHeader().setDefaultSectionSize(ROW_H)
+        self.btable.horizontalHeader().setFixedHeight(ROW_H)
+        self.btable.setShowGrid(False)
+        self.btable.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.btable.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        bh = self.btable.horizontalHeader()
+        for c in range(4):
+            bh.setSectionResizeMode(c, QHeaderView.ResizeMode.ResizeToContents)
+        bh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.btable.setMaximumHeight(ROW_H * 9 + 2)
+        self.btable.hide()
+        rl.addWidget(self.btable)
         rl.addWidget(label('With the planned poses a mounting error shows as broken lines at the seams; the measured poses '
                            'remove it. The remap tables are what the surround-view pipeline on the ECU loads.',
                            muted=True, small=True, wrap=True))
@@ -462,6 +525,7 @@ class InstallPage(QWidget):
     def _on_project_replaced(self, *_):
         self.stop_live()
         self.sources, self.images, self.truth, self.results, self.stitched, self.luts = {}, {}, {}, {}, {}, {}
+        self.joint, self.board_truth, self.gains, self.exposure_truth = None, {}, {}, {}
         self._rebuild()
 
     def _rebuild(self):
@@ -753,7 +817,9 @@ class InstallPage(QWidget):
     # ------------------------------------------------------------------ run
     def settings(self) -> InstallSettings:
         return InstallSettings(pos_tol_mm=max(0.1, self.tol_pos.value()), ang_tol_deg=max(0.01, self.tol_ang.value()),
-                               min_boards=int(max(1, self.min_boards.value())))
+                               min_boards=int(max(1, self.min_boards.value())), joint=self.joint_cb.isChecked(),
+                               board_sigma_mm=max(1.0, self.board_sigma.value()),
+                               board_sigma_deg=max(0.2, self.board_sigma.value() / 20.0))
 
     def run(self, check=True):
         if self.busy:
@@ -787,6 +853,18 @@ class InstallPage(QWidget):
         for c in cams:
             d = np.r_[rng.uniform(-a, a, 3), rng.uniform(-mm, mm, 3)] if sim else np.zeros(6)
             errs[c.uid] = d
+        # boards laid off their planned places, and cameras that auto-exposed differently
+        import copy
+        bmm = abs(self.sim_board.value())
+        sim_targets, board_err = None, {}
+        if sim and bmm > 0:
+            sim_targets = copy.deepcopy(project.targets)
+            for t in sim_targets:
+                e = (rng.uniform(-bmm, bmm), rng.uniform(-bmm, bmm), rng.uniform(-1, 1) * bmm / 20.0)
+                t.x, t.y, t.yaw = t.x + e[0] / 1000, t.y + e[1] / 1000, t.yaw + e[2]
+                board_err[t.uid] = e
+        ex, vig = abs(self.sim_expo.value()) / 100, max(0.0, min(0.9, self.sim_vig.value() / 100))
+        expo = {c.uid: float(rng.uniform(1 - ex, 1 + ex)) if ex else 1.0 for c in cams}
         scale = float(self.sim_res.currentData())
         seed = int(self.sim_seed.value())
         st = self.settings()
@@ -804,8 +882,8 @@ class InstallPage(QWidget):
             from ...core.synth import render_capture
             from ...core.lens import resolve
             try:
-                out = {'images': {}, 'truth': {}, 'results': {}, 'check': check}
-                n = len(jobs) * (2 if check else 1) + (2 if check else 0)
+                out = {'images': {}, 'truth': {}, 'results': {}, 'check': check, 'expo': {}, 'boards': board_err}
+                n = len(jobs) * (2 if check else 1) + (3 if check else 0)
                 k = 0
                 for kind, uid in jobs:
                     c = snap.variant.cam(uid)
@@ -815,36 +893,35 @@ class InstallPage(QWidget):
                         R = rot_zyx(c.yaw + d[0], c.pitch + d[1], c.roll + d[2])
                         pos = c.pos() + d[3:]
                         img = render_capture(snap, eng, c, int(intr.width * scale), int(intr.height * scale),
-                                             pose=(R, pos), seed=seed * 31 + c.slot)
+                                             pose=(R, pos), seed=seed * 31 + c.slot, targets=sim_targets,
+                                             exposure=expo[uid], vignette=vig)
                         out['images'][uid] = img
                         out['truth'][uid] = d
+                        out['expo'][uid] = expo[uid]
                     else:
                         out['images'][uid] = images[uid]
                     k += 1
                     self.sig.progress.emit(k / n, f'Captured {c.tag}')
                 if check:
-                    for kind, uid in jobs:
-                        c = snap.variant.cam(uid)
-                        img = out['images'][uid]
-                        r = check_camera(snap, c, img, st)
-                        r.img_w = img.shape[1]
-                        out['results'][uid] = r
-                        k += 1
-                        self.sig.progress.emit(k / n, f'Checked {c.tag}: {len(r.boards)} board(s)')
+                    k0 = k
+                    m = len(jobs) + 1
+
+                    def prog(f, text):
+                        self.sig.progress.emit((k0 + f * m) / n, text)
+                    cams_ = [snap.variant.cam(uid) for _, uid in jobs]
+                    out['results'], out['joint'] = check_all(snap, cams_, out['images'], st, progress=prog)
+                    k += m
                     if result is not None:
-                        from ...core.stitch import build_lut, stitch
+                        from ...core.stitch import build_lut
                         lp = build_lut(snap, eng, result, res=0.02)
                         out['luts'] = {'planned': lp}
-                        out['stitched'] = {'planned': stitch(lp, out['images'])}
                         k += 1
-                        self.sig.progress.emit(k / n, 'Stitched with planned poses')
+                        self.sig.progress.emit(k / n, 'Remap tables for the planned poses')
                         poses = {u: (rot_zyx(r.yaw, r.pitch, r.roll), r.pos) for u, r in out['results'].items()
                                  if r.pos is not None}
-                        lm = build_lut(snap, eng, result, res=0.02, poses=poses)
-                        out['luts']['measured'] = lm
-                        out['stitched']['measured'] = stitch(lm, out['images'])
+                        out['luts']['measured'] = build_lut(snap, eng, result, res=0.02, poses=poses)
                         k += 1
-                        self.sig.progress.emit(k / n, 'Stitched with measured poses')
+                        self.sig.progress.emit(k / n, 'Remap tables for the measured poses')
                 self.sig.done.emit(out)
             except Exception as e:
                 self.sig.failed.emit(f'{type(e).__name__}: {e}\n{traceback.format_exc()}')
@@ -862,29 +939,81 @@ class InstallPage(QWidget):
             self.set_image(uid, img)
         for uid, d in out['truth'].items():
             self.truth[uid] = d
+        self.exposure_truth.update(out['expo'])
+        if out['truth']:
+            self.board_truth = dict(out['boards'])
+        elif out['images']:
+            self.board_truth = {}
         if out['check']:
             self.results = dict(out['results'])
+            self.joint = out.get('joint')
             self.luts = out.get('luts', {})
-            self.stitched = out.get('stitched', {})
         else:
             self.results = {}
-            self.stitched, self.luts = {}, {}
+            self.joint = None
+            self.luts = {}
+        self._restitch()
         secs = time.time() - self._t0
         if out['check']:
             res = list(self.results.values())
             ok = sum(r.status == 'good' for r in res)
             adj = sum(r.status == 'warning' for r in res)
             bad = sum(r.status == 'serious' for r in res)
-            self.status.setText(f'Checked {len(res)} camera(s) in {secs:.1f} s · {ok} OK · {adj} adjust · {bad} re-mount')
+            self.status.setText(f'Checked {len(res)} camera(s) in {secs:.1f} s · {ok} OK · {adj} adjust · {bad} re-mount'
+                                + (' · joint solve' if self.joint is not None and self.joint.poses else ''))
             self.ctx.store.project.add_log('install', f'{len(res)} cameras · {ok} OK · {adj} adjust · {bad} re-mount')
             if self.ctx.analysis.result is None:
                 self.ctx.msg('No analysis result yet, so the bird\'s-eye view was not stitched. Run the analysis (F5).', 6000)
         else:
             self.status.setText(f'Captured {len(out["images"])} image(s) in {secs:.1f} s')
         self._fill_table()
+        self._fill_boards()
         self._repaint_tiles()
         self._show_bev()
         self._sync_buttons()
+
+    def _restitch(self, *_):
+        """Stitch the captures with both sets of remap tables, using the current exposure and blend settings."""
+        from ...core.stitch import stitch, estimate_gains
+        self.stitched, self.gains = {}, {}
+        if not self.luts or not self.images:
+            if hasattr(self, 'bev'):
+                self._show_bev()
+            return
+        blend = self.blend.value() or 'linear'
+        for which, lut in self.luts.items():
+            gains = estimate_gains(lut, self.images) if self.balance_cb.isChecked() else None
+            if which == 'measured' or not self.gains:
+                self.gains = gains or {}
+            self.stitched[which] = stitch(lut, self.images, gains=gains, blend=blend)
+        self._show_bev()
+
+    def _fill_boards(self):
+        jr = self.joint
+        if jr is None or not jr.poses:
+            self.joint_lbl.setText('Each camera solved on its own.' if self.results else '')
+            self.btable.hide()
+            return
+        self.joint_lbl.setText('Joint solve · ' + jr.message + ' · board positions are estimates, good to about a centimetre')
+        self.btable.setRowCount(len(jr.boards))
+        tol = self.settings().board_sigma_mm
+        for i, b in enumerate(sorted(jr.boards, key=lambda b: b.name)):
+            vals = [b.name, ', '.join(b.cams) or '–', f'{b.shift_mm:.1f}', _fmt_delta(b.dyaw_deg, 2)]
+            for j, v in enumerate(vals):
+                it = QTableWidgetItem(v)
+                if j >= 2:
+                    it.setFont(mono(12))
+                    it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                if j == 2 and b.shift_mm > tol:
+                    it.setForeground(QColor(STATUS['warning']))
+                t = self.board_truth.get(b.uid)
+                if t is not None:
+                    it.setToolTip(f'Estimated {b.dx_mm:+.1f}, {b.dy_mm:+.1f} mm, {b.dyaw_deg:+.2f}° · simulated '
+                                  f'{t[0]:+.1f}, {t[1]:+.1f} mm, {t[2]:+.2f}°')
+                else:
+                    it.setToolTip(f'Estimated {b.dx_mm:+.1f}, {b.dy_mm:+.1f} mm, {b.dyaw_deg:+.2f}° from the planned place')
+                self.btable.setItem(i, j, it)
+        self.btable.show()
 
     def _failed(self, m):
         self.busy = False
@@ -967,6 +1096,11 @@ class InstallPage(QWidget):
         if lut is not None:
             cap_ = (f'{"Measured" if which == "measured" else "Planned"} poses · {lut.nx} × {lut.ny} px · '
                     f'{lut.res * 1000:.0f} mm/px')
+            if self.gains:
+                g = [float(np.mean(v)) for v in self.gains.values()]
+                cap_ += f' · gains {min(g):.2f}–{max(g):.2f}'
+            if (self.blend.value() or 'linear') == 'multiband':
+                cap_ += ' · multi-band'
         self.bev.set_image(img, cap_)
 
     # ------------------------------------------------------------------ outputs
@@ -1027,16 +1161,21 @@ class InstallPage(QWidget):
                     row['delta_mm'] = [round(float(v), 1) for v in r.dpos_mm]
                     row['delta_deg'] = [round(float(v), 3) for v in r.dang_deg]
                     row['rms_px'] = round(r.rms_px, 3)
+                    if r.single is not None:
+                        row['own_solve'] = pose_dict(*r.single)
             if c.uid in self.truth:
                 d = self.truth[c.uid]
                 row['simulated_error'] = {'deg': [round(float(v), 3) for v in d[:3]], 'mm': [round(float(v) * 1000, 1) for v in d[3:]]}
             rows.append(row)
         p = self.ctx.store.project
-        return {'schema': 'vantage.install_check/1', 'project': p.name, 'variant': p.variant.name,
-                'time': time.strftime('%Y-%m-%dT%H:%M:%S'),
-                'frame': 'ISO 8855, rear-axle origin on the ground; angles yaw-pitch-roll in degrees, pitch positive down',
-                'tolerance': {'position_mm': st.pos_tol_mm, 'angle_deg': st.ang_tol_deg, 'boards': st.min_boards},
-                'cameras': rows}
+        out = {'schema': 'vantage.install_check/1', 'project': p.name, 'variant': p.variant.name,
+               'time': time.strftime('%Y-%m-%dT%H:%M:%S'),
+               'frame': 'ISO 8855, rear-axle origin on the ground; angles yaw-pitch-roll in degrees, pitch positive down',
+               'tolerance': {'position_mm': st.pos_tol_mm, 'angle_deg': st.ang_tol_deg, 'boards': st.min_boards},
+               'cameras': rows}
+        if self.joint is not None and self.joint.poses:
+            out['joint'] = joint_report(self.joint)
+        return out
 
     def save_report(self, path=None):
         if not self.results:

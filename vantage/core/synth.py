@@ -21,7 +21,7 @@ _rays = {}
 
 def pixel_rays(intr: Intrinsics, w: int, h: int):
     """Optical-frame unit rays and theta for every pixel of a w x h image of this sensor."""
-    key = (intr.width, intr.height, intr.f_mm, intr.projection, tuple(intr.kb), intr.cx, intr.cy, w, h)
+    key = (intr.width, intr.height, intr.f_mm, intr.projection, tuple(intr.kb), intr.cx, intr.cy, intr.aspect, w, h)
     if key in _rays:
         return _rays[key]
     us = (np.arange(w) + 0.5) / w * intr.width
@@ -66,9 +66,11 @@ def _checker(gx, gy, targets, fw):
 
 
 def render_capture(project: Project, engine, cam: Camera, w=None, h=None, pose=None, targets=None, seed=0,
-                   noise=2.0, rgb=False):
+                   noise=2.0, rgb=False, exposure=1.0, vignette=0.0):
     """Grey (or RGB) image a camera records. pose = (R_body_to_world, position) of the *installed* camera
-    (defaults to the planned pose), so a capture can include a deliberate mounting error."""
+    (defaults to the planned pose), so a capture can include a deliberate mounting error. exposure scales the
+    brightness (auto-exposure differs between cameras); vignette darkens towards the image circle's edge by that
+    fraction."""
     intr = resolve(project.module_for(cam), project.lens_for(cam))
     w = w or intr.width
     h = h or intr.height
@@ -107,6 +109,8 @@ def render_capture(project: Project, engine, cam: Camera, w=None, h=None, pose=N
         idx = np.nonzero(gv)[0][sel]
         img[idx] = 25 + 210 * b[sel]
     img[body] = 55 + 0.45 * shade[body]
+    if exposure != 1.0 or vignette:
+        img = img * exposure * (1 - vignette * np.clip(th / intr.max_theta, 0, 1) ** 2)
     if noise:
         rng = np.random.default_rng(seed)
         img = img + rng.normal(0, noise, img.shape)

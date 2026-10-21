@@ -3,10 +3,13 @@
     vantage project.vantage --analyse report.json
     vantage project.vantage --export out/ --formats extrinsics_json,opencv_yaml,bev_lut
     vantage project.vantage --install-check captures/ --as-built built.vantage
+    vantage project.vantage --calibrate-lens views/ --camera F --board 9x6 --square 60 --save out.vantage
+    vantage project.vantage --import-calib camchain.yaml F.yaml --save out.vantage
     vantage --sample --load-cases -
 
-The exit code is 0 when everything is fine, 2 when an analysis or export finds critical issues in the plan
-and 3 when an installation check finds a camera that has to be re-mounted (or could not be solved).
+The exit code is 0 when everything is fine, 2 when an analysis or export finds critical issues in the plan,
+3 when an installation check finds a camera that has to be re-mounted (or could not be solved) and 4 when a lens
+calibration fails or an imported calibration matches no camera.
 """
 from __future__ import annotations
 
@@ -121,47 +124,113 @@ def load_cases_doc(project, eng) -> dict:
                        'status': r.status} for r in rs]}
 
 
-def install_check(project, eng, res, folder, st, lut_out=None):
+def install_check(project, eng, res, folder, st, lut_out=None, balance=True, blend='linear'):
     from .core import capture as cap
-    from .core.install import check_camera
+    from .core.install import check_all
+    from .core.joint import pose_dict, report
     from .core.mathutil import rot_zyx
     cams = [c for c in project.variant.cameras if c.visible]
     found = cap.match_folder(folder, [c.tag for c in cams])
-    rows, results, images = [], {}, {}
+    images = {c.uid: cap.load_image(found[c.tag]) for c in cams if c.tag in found}
+    results, jr = check_all(project, cams, images, st)
+    rows = []
     for c in cams:
         row = {'tag': c.tag, 'planned': {'x': c.x, 'y': c.y, 'z': c.z, 'yaw': c.yaw, 'pitch': c.pitch, 'roll': c.roll}}
-        path = found.get(c.tag)
-        if not path:
+        r = results.get(c.uid)
+        if r is None:
             row.update(status='serious', message='No image for this camera in the folder')
             rows.append(row)
             continue
-        img = cap.load_image(path)
-        images[c.uid] = img
-        r = check_camera(project, c, img, st)
-        results[c.uid] = r
-        row.update(image=os.path.basename(path), status=r.status, message=r.message, boards=[b.name for b in r.boards],
-                   corners=r.n_corners)
+        row.update(image=os.path.basename(found[c.tag]), status=r.status, message=r.message,
+                   boards=[b.name for b in r.boards], corners=r.n_corners)
+        if c.calib:
+            row['lens'] = {'unit_calibration': c.calib.get('serial') or True, 'rms_px': c.calib.get('rms_px')}
         if r.pos is not None:
             row['measured'] = {'x': _r(r.pos[0], 4), 'y': _r(r.pos[1], 4), 'z': _r(r.pos[2], 4), 'yaw': _r(r.yaw),
                                'pitch': _r(r.pitch), 'roll': _r(r.roll)}
             row['delta_mm'] = [_r(v, 1) for v in r.dpos_mm]
             row['delta_deg'] = [_r(v, 3) for v in r.dang_deg]
             row['rms_px'] = _r(r.rms_px)
+            if r.single is not None:
+                row['own_solve'] = pose_dict(*r.single)
         rows.append(row)
     doc = {'schema': 'vantage.install_check/1', 'project': project.name, 'variant': project.variant.name,
            'time': time.strftime('%Y-%m-%dT%H:%M:%S'), 'folder': os.path.abspath(folder),
            'tolerance': {'position_mm': st.pos_tol_mm, 'angle_deg': st.ang_tol_deg, 'boards': st.min_boards},
            'cameras': rows}
+    if jr is not None and jr.poses:
+        doc['joint'] = report(jr)
     if lut_out and res is not None:
-        from .core.stitch import build_lut, export_lut, stitch
+        from .core.stitch import build_lut, export_lut, stitch, estimate_gains
         poses = {u: (rot_zyx(r.yaw, r.pitch, r.roll), r.pos) for u, r in results.items() if r.pos is not None}
         lut = build_lut(project, eng, res, res=0.02, poses=poses)
         paths = export_lut(lut, lut_out, project)
-        bev = stitch(lut, images)
+        gains = estimate_gains(lut, images) if balance else None
+        bev = stitch(lut, images, gains=gains, blend=blend)
         cap.save_image(os.path.join(lut_out, 'birds-eye-measured.png'), bev)
         doc['remap_tables'] = os.path.abspath(lut_out)
         doc['remap_files'] = len(paths) + 1
+        if gains:
+            tags = {c.uid: c.tag for c in cams}
+            doc['exposure_gains'] = {tags[u]: [_r(x, 4) for x in g] for u, g in gains.items()}
     return doc, results
+
+
+def calibrate_lens(project, args) -> tuple[dict, bool]:
+    """--calibrate-lens: one camera's unit calibration from a folder of board views."""
+    from .core import calib, capture as cap
+    cam = project.variant.by_tag(args.camera or '')
+    if cam is None:
+        raise SystemExit('--calibrate-lens needs --camera TAG. Cameras: ' + ', '.join(c.tag for c in project.variant.cameras))
+    try:
+        cols, rows = (int(x) for x in args.board.lower().split('x'))
+    except ValueError:
+        raise SystemExit(f'--board {args.board!r}: give inner corners as COLSxROWS, e.g. 9x6')
+    folder = args.calibrate_lens
+    files = [f for f in sorted(os.listdir(folder)) if f.lower().endswith(cap.IMAGE_EXTS)]
+    images = [(f, cap.load_image(os.path.join(folder, f))) for f in files]
+    m, base = project.module_for(cam), project.nominal_lens_for(cam)
+    r = calib.calibrate(images, (cols, rows), args.square, m, base, serial=args.serial or '', source='images')
+    doc = {'schema': 'vantage.lens_calibration/1', 'camera': cam.tag, 'folder': os.path.abspath(folder),
+           'board': {'inner_corners': [cols, rows], 'square_mm': args.square}, 'ok': r.ok, 'message': r.message,
+           'advice': r.advice, 'views': [{'image': v.name, 'used': v.used, 'corners': 0 if v.corners is None else len(v.corners),
+                                          'rms_px': None if not v.used else _r(v.rms, 4), 'note': v.note} for v in r.views]}
+    if r.ok:
+        doc['calibration'] = calib.clean_record(r.record)
+        doc['compared_with_library'] = [dict(zip(('parameter', 'library', 'unit', 'difference'), row))
+                                        for row in calib.compare_rows(m, base, r.record)]
+        cam.calib = calib.clean_record(r.record)
+        if args.calib_out:
+            with open(args.calib_out, 'w', encoding='utf-8') as fh:
+                fh.write(calib.to_opencv_yaml(r.record, cam.tag) if not args.calib_out.lower().endswith('.json') else
+                         calib.to_json(project, [cam]))
+            print(f'wrote {args.calib_out}', file=sys.stderr)
+    return doc, r.ok
+
+
+def import_calibrations(project, paths) -> tuple[dict, bool]:
+    """--import-calib: unit calibrations from files, matched to the cameras by name, file name or serial."""
+    from .core import calib
+    recs, errors = [], []
+    for pth in paths:
+        try:
+            recs += calib.read_file(pth)
+        except Exception as e:
+            errors.append({'file': pth, 'error': str(e)})
+    cams = list(project.variant.cameras)
+    matched, unmatched = calib.match(recs, cams)
+    rows = []
+    for c in cams:
+        r = matched.get(c.uid)
+        if r is None:
+            continue
+        probs = calib.problems(r, project.module_for(c), project.nominal_lens_for(c))
+        c.calib = calib.clean_record(r)
+        rows.append({'camera': c.tag, 'file': os.path.basename(r.get('file', '')), 'name_in_file': r.get('hint', ''),
+                     'fx': _r(r['fx'], 3), 'cx': _r(r['cx'], 3), 'cy': _r(r['cy'], 3), 'warnings': probs})
+    doc = {'schema': 'vantage.calibration_import/1', 'applied': rows, 'errors': errors,
+           'unmatched': [{'file': os.path.basename(r.get('file', '')), 'name_in_file': r.get('hint', '')} for r in unmatched]}
+    return doc, bool(rows) and not unmatched and not errors
 
 
 def as_built_variant(project, results):
@@ -195,15 +264,23 @@ def run(args) -> int:
     from .core.install import InstallSettings
     project = load_project(args)
     pick_variant(project, args.variant)
+    code = 0
+    if args.import_calib:
+        cdoc, ok = import_calibrations(project, args.import_calib)
+        _out(cdoc, '-' if not args.report or args.install_check else args.report)
+        code = code if ok else 4
+    if args.calibrate_lens:
+        cdoc, ok = calibrate_lens(project, args)
+        _out(cdoc, '-' if not args.report or args.install_check else args.report)
+        code = code if ok else 4
     eng = Engine()
     t0 = time.time()
     res = eng.analyse(project)
     print(f'analysed {project.variant.name}: {len(project.variant.cameras)} cameras in {time.time() - t0:.1f} s',
           file=sys.stderr)
-    code = 0
     doc, issues = analysis_doc(project, res, eng)
     if any(i.severity == 'critical' for i in issues) and (args.analyse is not None or args.export):
-        code = 2
+        code = max(code, 2)
     if args.analyse is not None:
         _out(doc, args.analyse)
     if args.load_cases is not None:
@@ -225,8 +302,11 @@ def run(args) -> int:
         for p in paths:
             print(p)
     if args.install_check:
-        st = InstallSettings(pos_tol_mm=args.pos_tol, ang_tol_deg=args.ang_tol, min_boards=args.min_boards)
-        idoc, results = install_check(project, eng, res, args.install_check, st, args.lut_out)
+        st = InstallSettings(pos_tol_mm=args.pos_tol, ang_tol_deg=args.ang_tol, min_boards=args.min_boards,
+                             joint=not args.no_joint, board_sigma_mm=args.board_tol,
+                             board_sigma_deg=max(0.2, args.board_tol / 20.0))
+        idoc, results = install_check(project, eng, res, args.install_check, st, args.lut_out, balance=not args.no_balance,
+                                      blend=args.blend)
         _out(idoc, args.report or '-')
         if any(r['status'] != 'good' and r['status'] != 'warning' for r in idoc['cameras']):
             code = 3
@@ -234,6 +314,9 @@ def run(args) -> int:
             v = as_built_variant(project, results)
             project.save(args.as_built)
             print(f'saved {args.as_built} with variant {v.name}', file=sys.stderr)
+    if args.save:
+        project.save(args.save)
+        print(f'saved {args.save}', file=sys.stderr)
     return code
 
 
@@ -255,7 +338,20 @@ def add_arguments(ap):
     g.add_argument('--pos-tol', type=float, default=10.0, help='installation position tolerance, mm (default 10)')
     g.add_argument('--ang-tol', type=float, default=1.0, help='installation angle tolerance, degrees (default 1)')
     g.add_argument('--min-boards', type=int, default=1, help='boards a camera must see (default 1)')
+    g.add_argument('--no-joint', action='store_true', help='solve each camera on its own (no joint solve with the boards)')
+    g.add_argument('--board-tol', type=float, default=20.0, help='how far a board may lie off its planned place, mm (default 20)')
+    g.add_argument('--no-balance', action='store_true', help='stitch without exposure balancing')
+    g.add_argument('--blend', default='linear', choices=['linear', 'multiband'], help='seam blend of the stitched PNG')
+    g.add_argument('--calibrate-lens', metavar='DIR', help='calibrate one camera\'s lens from the board views in DIR')
+    g.add_argument('--camera', metavar='TAG', help='camera to calibrate')
+    g.add_argument('--board', default='9x6', help='calibration board inner corners, COLSxROWS (default 9x6)')
+    g.add_argument('--square', type=float, default=60.0, help='calibration board square, mm (default 60)')
+    g.add_argument('--serial', help='serial number to store with the calibration')
+    g.add_argument('--calib-out', metavar='FILE', help='also write the calibration (.yaml OpenCV, .json Vantage)')
+    g.add_argument('--import-calib', nargs='+', metavar='FILE', help='apply unit calibrations from OpenCV/ROS/Kalibr/JSON files')
+    g.add_argument('--save', metavar='OUT.vantage', help='save the project (with calibrations applied)')
 
 
 def wanted(args) -> bool:
-    return any(getattr(args, k) not in (None, False) for k in ('analyse', 'load_cases', 'export', 'install_check'))
+    return any(getattr(args, k) not in (None, False) for k in ('analyse', 'load_cases', 'export', 'install_check',
+                                                               'calibrate_lens', 'import_calib'))

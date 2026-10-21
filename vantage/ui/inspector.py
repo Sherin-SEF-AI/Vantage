@@ -186,6 +186,9 @@ class CameraPage(Page):
         self.s_opt.row('FOV H · V · D', self.fov_v)
         self.focus_v = ValueLabel()
         self.s_opt.row('Focus', self.focus_v)
+        self.calib_v = ValueLabel()
+        self.calib_v.setToolTip('A unit calibration (Calibrate ▸ Lens calibration) replaces the library lens for this camera')
+        self.s_opt.row('Unit calibration', self.calib_v)
         ic = QWidget()
         icl = QHBoxLayout(ic)
         icl.setContentsMargins(0, 0, 0, 0)
@@ -202,9 +205,12 @@ class CameraPage(Page):
         self.s_opt.add(ic)
         self.b_edit_mod = button('Edit module…')
         self.b_edit_mod.clicked.connect(lambda: ctx.window.edit_module(ctx.store.selected.module_id, ctx.store.selected.lens_id))
+        self.b_calib = button('Calibrate…', None, 'lens', 'Measure this camera\'s own lens from checkerboard views')
+        self.b_calib.clicked.connect(lambda: ctx.window.lens_calibration(ctx.store.selected.uid if ctx.store.selected else None))
         row = QHBoxLayout()
         row.addSpacing(LABEL_W + 2)
         row.addWidget(self.b_edit_mod)
+        row.addWidget(self.b_calib)
         row.addStretch(1)
         self.s_opt.blay.addLayout(row)
         self.lay.addWidget(self.s_opt)
@@ -451,13 +457,22 @@ class CameraPage(Page):
                 self.lens.addItem(f'{l.name} · {l.label}' if l.label else l.name, lid)
         self.lens.setCurrentIndex(max(0, self.lens.findData(c.lens_id)))
         self.proj.setCurrentIndex(max(0, self.proj.findData(lens.projection)))
+        self.proj.setEnabled(not c.calib)
+        if c.calib:
+            cal = c.calib
+            self.calib_v.set(cal.get('serial') or 'unit', '', 'good',
+                             f'{cal.get("rms_px", 0):.2f} px · {cal.get("views", 0) or "imported"}'
+                             f'{" views" if cal.get("views") else ""} · {cal.get("date", "")}')
+        else:
+            self.calib_v.set('none', '', None, 'library lens')
         d = derived(mod, lens)
         self.focal_v.set(f'{lens.focal_mm:.2f}', 'mm', None, f'F{lens.f_number:g}')
         self.fov_v.set(f'{d["fov"][0]:.1f}  {d["fov"][1]:.1f}  {d["fov"][2]:.1f}', '°')
         self.focus_v.set(f'{lens.focus_near_m:.2f}', 'm', None, '– ∞' if math.isinf(lens.focus_far_m) else f'– {lens.focus_far_m:.1f} m')
         self.circle.set(mod.sensor_w_mm, mod.sensor_h_mm, d['image_circle_r_mm'], d['max_half_deg'])
         self.circle_txt.setText(f'{mod.sensor_w_mm:.3f} × {mod.sensor_h_mm:.3f} mm\n{mod.optical_format} · {mod.sensor.replace("Sony ", "")}')
-        self.s_opt.header.set_summary(f'{lens.name} · {PROJECTION_LABEL[lens.projection].lower()} · {lens.focal_mm:g} mm')
+        self.s_opt.header.set_summary(f'{lens.name} · {PROJECTION_LABEL[lens.projection].lower()} · {lens.focal_mm:.3g} mm'
+                                      if not c.calib else f'{lens.name} · unit calibration · {lens.focal_mm:.3g} mm')
         # sensor
         self.sen_vals['Sensor'].set(mod.sensor)
         self.sen_vals['Resolution'].set(f'{mod.width_px} × {mod.height_px}', 'px')
