@@ -37,6 +37,7 @@
     <p>Design</p>
     <a href="#import">Importing a vehicle</a>
     <a href="#placement">Placing cameras</a>
+    <a href="#rig">Rig parts</a>
     <a href="#analysis">Coverage analysis</a>
     <a href="#overlays">Heatmaps and overlays</a>
     <a href="#issues">Issues and rules</a>
@@ -45,6 +46,7 @@
     <a href="#loadcases">Load cases</a>
     <a href="#variants">Variants</a>
     <a href="#volume">3D blind volume</a>
+    <a href="#perception">Perception range</a>
     <a href="#stitched">Objects in the stitched view</a>
     <p>Surround view</p>
     <a href="#birdseye">Bird's-eye view and remap tables</a>
@@ -53,6 +55,7 @@
     <p>Calibration</p>
     <a href="#lens">Unit lens calibration</a>
     <a href="#install-check">Installation check</a>
+    <a href="#live-rig">Live rig health</a>
     <p>Assistant</p>
     <a href="#assistant">Setting up</a>
     <a href="#assistant-use">Asking and proposals</a>
@@ -60,6 +63,7 @@
     <a href="#privacy">What is sent</a>
     <p>Reference</p>
     <a href="#formats">Export formats</a>
+    <a href="#datasets">Dataset calibration</a>
     <a href="#batch">Batch mode</a>
     <a href="#shortcuts">Keyboard shortcuts</a>
     <a href="#troubleshooting">Troubleshooting</a>
@@ -70,7 +74,7 @@
     <h1>Using Vantage</h1>
     <p class="intro">Vantage designs the sensor rigs of autonomous-driving data-collection vehicles: where the cameras go
       on the vehicle, what each one will record, how well the rig covers the road and the space around the car, how robust
-      that is, and how to calibrate the real cameras from their live streams. This guide walks through the workflow and
+      that is, and how to calibrate the real cameras from their live streams and hand the calibration to the dataset. This guide walks through the workflow and
       documents every study, export and command-line option.</p>
 
     <!-- ======================================================== start -->
@@ -106,7 +110,7 @@ vantage project.vantage            # open a project</code></pre>
     <p>The main page has one, two or four views (3D, top, looking through a camera, stitched bird's-eye) with docks
       around them:</p>
     <ul>
-      <li><b>Outliner</b>: the vehicle, cameras, compute, calibration targets, analysis and obstacles.</li>
+      <li><b>Outliner</b>: the vehicle, rig parts, cameras, compute, calibration targets, analysis and obstacles.</li>
       <li><b>Library</b>: camera modules and lenses; drag one onto the body to place it.</li>
       <li><b>Inspector</b>: the selected object's properties. Every number field accepts expressions and units and can be scrubbed with the mouse.</li>
       <li><b>Camera view</b>: the simulated fisheye image of the selected camera.</li>
@@ -114,7 +118,8 @@ vantage project.vantage            # open a project</code></pre>
       <li><b>Assistant</b> (<kbd>Ctrl</kbd>+<kbd>J</kbd>): the AI design assistant.</li>
     </ul>
     <p>Other pages open from the menus: Camera views (all camera images, the bird's-eye view and the bowl), Tolerance
-      study, Optimiser, Compare variants, Target planner, Installation check and Blind volume. The command palette
+      study, Optimiser, Compare variants, Target planner, Installation check, Live rig, Blind volume and Perception
+      range. The command palette
       (<kbd>Ctrl</kbd>+<kbd>K</kbd>) finds any command by name.</p>
     <figure><div class="frame natural"><img src="media/window.jpg" alt="The main window with the outliner, the 3D view, the inspector and the analysis panels" loading="lazy" width="1600" height="900"></div>
       <figcaption>The main window with the sample project.</figcaption></figure>
@@ -152,6 +157,16 @@ vantage project.vantage            # open a project</code></pre>
     <p>Camera modules and lenses come from the library: rectilinear, equidistant, equisolid, stereographic and measured
       Kannala–Brandt projections, with a live r(θ) plot, the image circle on the sensor and a check of the datasheet
       field of view against the model. Import modules from JSON, CSV or OpenCV YAML.</p>
+
+    <h2 id="rig">Rig parts</h2>
+    <p>The racks, masts and enclosures of a data-collection vehicle block cameras like the body does, and carry
+      cameras of their own. <b>Vehicle ▸ Add rig part</b> adds one, sized to the vehicle's roof:</p>
+    <ul>
+      <li><b>Roof rack</b>: two crossbars and a platform. <b>Sensor mast</b>: a pole with a head on top. <b>Sensor enclosure</b>: a box on the roof. <b>Bar</b>: one crossbar.</li>
+      <li>Each part is a box, a cylinder or a bar with its centre, size and yaw in the vehicle frame, listed under <b>Rig</b> in the outliner and edited in the inspector. Every change is one undo step.</li>
+      <li><b>Occludes</b>: the part hides what is behind it in every analysis (ground coverage, blind volume, perception range, camera images, synthetic captures). <b>Mountable</b>: cameras snap onto it. A part that occludes but is not mountable is a forbidden zone in the Issues list; a part that does not occlude is ignored.</li>
+      <li>The rig parts are exported as links of the ROS 2 URDF, a <code>rig</code> list in the extrinsics and a table in the report.</li>
+    </ul>
 
     <h2 id="analysis">Coverage analysis</h2>
     <p>The ground inside the <b>ROI</b> (a true offset around the body, or a polygon) is sampled on a 5, 2 or 1 cm grid.
@@ -230,6 +245,31 @@ vantage project.vantage            # open a project</code></pre>
     <p>Export: the blind surface as OBJ and the figures as JSON (<code>vantage.blind_volume/1</code>); batch mode
       <code>--blind-volume</code>.</p>
 
+    <h2 id="perception">Perception range</h2>
+    <p><b>Analysis ▸ Perception range</b> answers how far out the rig records objects a detector can use. An object
+      class has a height, a width, a height above the ground (a sign on a post) and the minimum height in pixels your
+      detector needs. A camera <b>resolves</b> an object standing at a point when the object is inside the image and
+      the lens circle, its centre is not hidden by the body or the rig, and its height in the image is at least the
+      minimum. The pixel height is measured between the projections of the object's bottom and top through the
+      camera's lens model, without a small-angle approximation.</p>
+    <table>
+      <tr><th>Class</th><th>Height</th><th>Width</th><th>Above ground</th><th>Min height</th></tr>
+      <tr><td>Car</td><td>1.5 m</td><td>1.8 m</td><td>0</td><td>20 px</td></tr>
+      <tr><td>Pedestrian</td><td>1.7 m</td><td>0.5 m</td><td>0</td><td>24 px</td></tr>
+      <tr><td>Cyclist</td><td>1.7 m</td><td>0.6 m</td><td>0</td><td>24 px</td></tr>
+      <tr><td>Traffic sign</td><td>0.6 m</td><td>0.6 m</td><td>2.0 m</td><td>12 px</td></tr>
+    </table>
+    <p>These are typical values: set your own model's. Directions are measured about the vehicle centre (the middle of
+      the body on the ground), ranges from that centre. The page shows:</p>
+    <ul>
+      <li>a polar plot of the range per class and direction, for the best camera or per camera, against the range required in each of eight sectors (default 80 m ahead, 40 m front-left and front-right, 25 m to the sides, 30 m rear-left and rear-right, 40 m behind);</li>
+      <li>the worst direction in each sector per class, red where it falls short;</li>
+      <li>camera pairs that both see a car at 20 m, with their overlap, baseline and the depth resolution a stereo pair would give at 10, 20 and 50 m (assuming a 0.25 px disparity error).</li>
+    </ul>
+    <p>Export: the ranges, verdicts and pairs as JSON (<code>vantage.perception_range/1</code>) and the plot as PNG;
+      batch mode <code>--perception-range</code>. A sector that falls short is reported but does not change the exit
+      code.</p>
+
     <h2 id="stitched">Objects in the stitched view</h2>
     <p>The bird's-eye view projects every pixel onto the ground, so each camera draws a standing object as a smear away
       from itself. Vantage stands a pole (0.5 m pole, 0.9 m child, 1.8 m adult or any height, 0.3 m across) on every
@@ -294,6 +334,33 @@ vantage project.vantage            # open a project</code></pre>
       <li>Save the report, the stitched PNG and remap tables for the measured poses, or apply them as an <b>as-built</b> variant.</li>
     </ul>
 
+    <h2 id="live-rig">Live rig health</h2>
+    <p><b>Calibrate ▸ Live rig</b> watches every camera's stream at once, for checking a rig before and during a
+      recording. Set a source per camera: <b>Stream</b> (an RTSP or HTTP URL, a V4L2 device such as
+      <code>/dev/video0</code>, a GStreamer pipeline or a video file) or <b>Synthetic</b> (the parking scene rendered
+      through the camera's lens, for trying the page without hardware). Sources are saved with the project and shared
+      with the installation check. Then press <b>Start</b>.</p>
+    <table>
+      <tr><th>Check</th><th>Warning</th><th>Fault</th></tr>
+      <tr><td>Frame rate against the module's</td><td>below 90 %</td><td>below 50 %</td></tr>
+      <tr><td>Dropped frames (an interval over 1.5× the nominal one)</td><td>over 1 %</td><td>over 5 %</td></tr>
+      <tr><td>Age of the newest frame</td><td>over 0.5 s</td><td>over 2 s, or no frame 8 s after starting</td></tr>
+      <tr><td>Exposure: mean grey level, clipped pixels</td><td>mean below 20 or above 235; over 10 % clipped</td><td></td></tr>
+      <tr><td>Sharpness (variance of the Laplacian)</td><td>below 8</td><td></td></tr>
+      <tr><td>Frozen image</td><td></td><td>10 identical frames in a row</td></tr>
+      <tr><td>Capture-time spread across the rig (median)</td><td>over 20 ms</td><td>over 50 ms</td></tr>
+      <tr><td>Edge alignment (see below)</td><td>over 12 px</td><td></td></tr>
+    </table>
+    <p>Statistics cover the last 5 seconds. The resolution is checked against the module's sensor.</p>
+    <ul>
+      <li><b>Drift indicator</b>: the planned body outline and horizon are drawn over each live image through the lens model, and the edge alignment score is the median distance from the planned body edge to the nearest edge in the image, in sensor pixels. A camera that has been knocked shows its body edge elsewhere. It is an indicator, not a measurement: where the body and what lies behind it look alike it may not find the edge, and it misses a rotation that slides the edge along itself, such as yaw on a mirror camera. The installation check measures the pose.</li>
+      <li><b>Save frames</b> writes the newest frame of every camera as <code>&lt;tag&gt;.png</code>; <b>Check installation</b> freezes them and opens the installation check with them.</li>
+      <li>Capture times are when frames reached Vantage (the software clock), not sensor timestamps, so network and encoder delays are included in the spread.</li>
+      <li>A password in a stream URL (<code>rtsp://user:password@host/…</code>) is not saved in the project: it goes to <code>stream-credentials.json</code> in your settings folder, readable only by you, and is put back when the stream is opened. Someone you share the project with enters their own once.</li>
+    </ul>
+    <p>Batch mode: <code>--rig-health SECONDS [OUT.json]</code> reads the streams for that long and writes the report
+      (<code>vantage.rig_health/1</code>); it exits with 3 if a camera is faulty or has no stream.</p>
+
     <!-- ======================================================== assistant -->
     <h2 id="assistant">Assistant: setting up</h2>
     <p>The assistant is a chat about the open design with a model hosted on <a href="https://groq.com">Groq</a>, using
@@ -316,7 +383,8 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td>Overview, coverage, issues, camera details, seams</td><td>Read the design and the analysis figures.</td></tr>
       <tr><td>Check what sees a point</td><td>For a point, which cameras see it and why not (field of view, image frame, body occlusion), with density and range.</td></tr>
       <tr><td>Find blind regions</td><td>Blind and low-density regions with where they are and why each camera misses them.</td></tr>
-      <tr><td>Run a study</td><td>Blind volume, objects in the stitched view (with seam advice), load cases, mounting tolerance.</td></tr>
+      <tr><td>Run a study</td><td>Blind volume, objects in the stitched view (with seam advice), load cases, mounting tolerance, perception range.</td></tr>
+      <tr><td>Live rig health</td><td>While the Live rig page runs: each stream's frame rate, drops, exposure, sharpness and drift indicator, with its verdict and reasons. Stream addresses are not sent.</td></tr>
       <tr><td>Compare variants</td><td>The figures of every variant side by side.</td></tr>
       <tr><td>Optimise a camera</td><td>Searches one camera's pose within ranges for the least blind ground, best minimum density or most redundancy, optionally keeping a minimum density; says when the gain is not worth it.</td></tr>
       <tr><td>Simulate / propose a change</td><td>Camera poses, lenses, seam angles or thresholds, analysed on a copy; a proposal shows the predicted effect.</td></tr>
@@ -363,12 +431,17 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td></td><td>Report</td><td>HTML</td><td><code>report_html</code></td></tr>
       <tr><td></td><td>Report</td><td>PDF</td><td><code>report_pdf</code></td></tr>
       <tr><td></td><td>Blind volume</td><td>JSON, OBJ</td><td><code>blind_volume</code></td></tr>
+      <tr><td></td><td>Perception range</td><td>JSON, PNG</td><td><code>perception_range</code></td></tr>
       <tr><td>Extrinsics</td><td>Camera poses</td><td>JSON</td><td><code>extrinsics_json</code></td></tr>
       <tr><td></td><td>Camera poses</td><td>YAML</td><td><code>extrinsics_yaml</code></td></tr>
       <tr><td></td><td>Camera poses</td><td>CSV</td><td><code>extrinsics_csv</code></td></tr>
       <tr><td>Calibration and robotics</td><td>OpenCV calibration, per camera</td><td>YAML ×N</td><td><code>opencv_yaml</code></td></tr>
       <tr><td></td><td>ROS 2 URDF + static TF</td><td>URDF, PY</td><td><code>ros2</code></td></tr>
       <tr><td></td><td>Jetson camera config</td><td>JSON</td><td><code>jetson_json</code></td></tr>
+      <tr><td>Datasets</td><td>nuScenes sensor calibration</td><td>JSON</td><td><code>nuscenes_calib</code></td></tr>
+      <tr><td></td><td>KITTI calibration</td><td>TXT</td><td><code>kitti_calib</code></td></tr>
+      <tr><td></td><td>ROS camera_info, per camera</td><td>YAML ×N</td><td><code>ros_camera_info</code></td></tr>
+      <tr><td></td><td>Kalibr camchain</td><td>YAML</td><td><code>kalibr_camchain</code></td></tr>
       <tr><td>Surround view</td><td>Bird's-eye remap tables</td><td>NPZ, BIN</td><td><code>bev_lut</code></td></tr>
       <tr><td></td><td>3D surround-view bowl</td><td>OBJ, NPZ, PNG</td><td><code>bowl_mesh</code></td></tr>
       <tr><td></td><td>Parking guidelines, per camera</td><td>JSON, PNG ×N</td><td><code>guidelines</code></td></tr>
@@ -381,6 +454,23 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td></td><td>For CAD</td><td>STEP</td><td><code>step</code></td></tr>
     </table>
 
+    <h2 id="datasets">Dataset calibration</h2>
+    <p>The <b>Datasets</b> exports write the calibration in the layouts training datasets and their tools read. They
+      are always in metres; the export frame and origin apply as for every export. Camera frames are optical: x right,
+      y down, z forward. A rectilinear lens is written as an exact pinhole with no distortion; every other lens as
+      Kannala–Brandt (equidistant, the model of <code>cv2.fisheye</code>), from the unit calibration if the camera has
+      one.</p>
+    <table>
+      <tr><th>Format</th><th>Files</th><th>Notes</th></tr>
+      <tr><td>nuScenes</td><td><code>nuscenes/sensor.json</code>, <code>calibrated_sensor.json</code>, README</td><td>Camera to ego: <code>p_ego = R(rotation) · p_camera + translation</code>, quaternion <code>[w, x, y, z]</code>. nuScenes puts the ego frame at the rear axle, which is the default export frame. The fisheye coefficients are in an extra <code>vantage_distortion</code> field the nuScenes tools ignore. Tokens are stable across re-exports.</td></tr>
+      <tr><td>KITTI</td><td><code>kitti/calib_cam_to_cam.txt</code>, <code>calib_cams_to_vehicle.txt</code>, README</td><td>Per camera S, K, D, and R, T from camera 00; the images are not rectified, so S_rect = S, R_rect = I and P_rect = [K | 0]. For a fisheye, D_xx holds k1–k4 and a <code>DISTORTION_MODEL_xx: equidistant</code> line says so; tools that assume radtan will misread it, so undistort with cv2.fisheye first.</td></tr>
+      <tr><td>ROS camera_info</td><td>one YAML per camera</td><td>As <code>camera_calibration_parsers</code> writes it: <code>equidistant</code> for a fisheye, <code>plumb_bob</code> for a pinhole.</td></tr>
+      <tr><td>Kalibr</td><td><code>kalibr/camchain.yaml</code></td><td><code>T_cn_cnm1</code> maps the previous camera into this one; <code>equidistant</code> or <code>radtan</code>. Vantage imports the file back.</td></tr>
+    </table>
+    <p>The tests reproject points through every written file and compare them with Vantage's own projection (within
+      0.05 px). The files have not yet been checked against each dataset's own devkit: check one frame before a large
+      conversion.</p>
+
     <h2 id="batch">Batch mode</h2>
     <p>Everything below runs without a window, for CI pipelines and the end of the production line. Use
       <code>vantage</code> (or <code>vantage-cli</code> in a bundle, <code>python3 run_vantage.py</code> from a
@@ -388,7 +478,9 @@ vantage project.vantage            # open a project</code></pre>
 <pre><code>vantage project.vantage --analyse report.json        # metrics, seams, issues, link budget, targets, stitched objects
 vantage project.vantage --load-cases -               # load cases as JSON on stdout
 vantage project.vantage --blind-volume volume.json   # 3D blind volume, unseen objects, reach rose
-vantage project.vantage --export out/ --formats extrinsics_json,opencv_yaml,bev_lut,guidelines
+vantage project.vantage --perception-range ranges.json   # range per object class and direction, stereo pairs
+vantage project.vantage --rig-health 10 health.json  # read every camera's stream for 10 s
+vantage project.vantage --export out/ --formats nuscenes_calib,kitti_calib,ros_camera_info
 vantage project.vantage --install-check captures/ --report check.json \
         --lut-out out/bev_lut --as-built built.vantage
 vantage project.vantage --calibrate-lens views/ --camera F --board 9x6 --square 60 \
@@ -412,7 +504,7 @@ vantage project.vantage --import-calib camchain.yaml F.yaml --save calibrated.va
       <tr><th>Exit code</th><th>Meaning</th></tr>
       <tr><td><code>0</code></td><td>Fine.</td></tr>
       <tr><td><code>2</code></td><td>The plan has critical issues (with <code>--analyse</code> or <code>--export</code>).</td></tr>
-      <tr><td><code>3</code></td><td>A camera has to be re-mounted or could not be checked.</td></tr>
+      <tr><td><code>3</code></td><td>A camera has to be re-mounted or could not be checked; or, with <code>--rig-health</code>, a camera is faulty or has no stream.</td></tr>
       <tr><td><code>4</code></td><td>A lens calibration failed, or an imported calibration matched no camera or did not fit it.</td></tr>
     </table>
     <p>When several apply, the highest is returned.</p>

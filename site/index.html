@@ -26,6 +26,7 @@
     <div class="nav-links" id="nav-links">
       <a href="#features">Features</a>
       <a href="#studies">Studies</a>
+      <a href="#calibration">Calibrate</a>
       <a href="#assistant">Assistant</a>
       <a href="#export">Export</a>
       <a href="docs.html">Docs</a>
@@ -66,7 +67,7 @@
       <div class="fact"><b>Simulated first</b><span>Coverage, resolution and occlusion before the hardware is fitted</span></div>
       <div class="fact"><b>Exact optics</b><span>Measured lens models, sensor edges and body occlusion per camera</span></div>
       <div class="fact"><b>Live streams</b><span>RTSP, V4L2 and GStreamer, including a Jetson's GMSL cameras</span></div>
-      <div class="fact"><b>Calibration out</b><span>OpenCV, ROS 2 and more, in your vehicle frame and units</span></div>
+      <div class="fact"><b>Calibration out</b><span>nuScenes, KITTI, ROS, Kalibr and OpenCV, in your vehicle frame</span></div>
     </div>
   </div>
 </header>
@@ -88,7 +89,8 @@
       <div class="step"><h3>Simulate the recording</h3><p>Simulated camera images, coverage, pixel density, overlaps,
         the 3D blind volume, mounting tolerance and load cases, before anything is bought or drilled.</p></div>
       <div class="step"><h3>Fit, calibrate, verify</h3><p>Calibrate each camera from its live stream, check every
-        installed camera against the plan, and export the calibration to your data pipeline.</p></div>
+        installed camera against the plan, watch the streams' health, and export the calibration in your dataset's
+        format.</p></div>
     </div>
   </div>
 </section>
@@ -196,6 +198,53 @@
       </div>
     </article>
 
+    <article class="feature" id="perception">
+      <div class="text">
+        <div class="eyebrow">Perception range</div>
+        <h3>How far out the rig resolves cars, people and signs</h3>
+        <p>A detector needs an object to be a number of pixels tall. Vantage stands each object class at every distance
+          in every direction and checks it through each camera's real lens and around the body: inside the image, not
+          hidden, and tall enough. The result is the range at which your dataset will contain usable examples.</p>
+        <ul>
+          <li>Car, pedestrian, cyclist and traffic sign with real sizes and your detector's minimum pixel height; add your own classes.</li>
+          <li>The range per direction against the range you need per sector, with the worst direction in each sector flagged. On the sample's six fisheyes a car is resolved to 70 m ahead, short of the default 80 m.</li>
+          <li>Camera pairs that overlap, with their baseline and the depth resolution a stereo pair would give at 10, 20 and 50 m.</li>
+          <li>Exported as JSON and a PNG plan; in batch mode with <code class="nowrap">--perception-range</code>.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/perception.jpg" aria-label="The perception range page: ranges per object and direction, then per camera">
+            <source src="media/perception.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature flip" id="rig">
+      <div class="text">
+        <div class="eyebrow">Rig parts</div>
+        <h3>Roof racks and masts that block and carry cameras</h3>
+        <p>A data-collection vehicle carries more than its body: crossbars, a roof rack, a sensor mast, an enclosure.
+          Add them from the Vehicle menu, sized to the roof, and they hide what they hide in every analysis: the ground
+          coverage, the blind volume, the camera images and the synthetic captures.</p>
+        <ul>
+          <li>Boxes, cylinders and bars with position, size and yaw. Each part blocks the view, carries cameras, or both.</li>
+          <li>Cameras snap onto the parts that may carry them; a part marked as not mountable is a forbidden zone in the Issues list.</li>
+          <li>The rig goes out with the design: links in the ROS 2 URDF, a list in the extrinsics and a table in the report.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/rig.jpg" aria-label="Adding a roof rack and a sensor mast, then a roof camera on the mast with camera light">
+            <source src="media/rig.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
     <div class="head" style="margin:72px 0 8px">
       <div class="eyebrow">Also for production surround-view systems</div>
       <h2>The same engine, for the in-car display.</h2>
@@ -203,7 +252,7 @@
         bird's-eye view and its seams, the 3D bowl, parking guidelines and what stitching does to standing people.</p>
     </div>
 
-    <article class="feature flip" id="surround">
+    <article class="feature" id="surround">
       <div class="text">
         <div class="eyebrow">Surround view</div>
         <h3>The in-car display, before the car exists</h3>
@@ -225,7 +274,7 @@
       </div>
     </article>
 
-    <article class="feature" id="guidelines">
+    <article class="feature flip" id="guidelines">
       <div class="text">
         <div class="eyebrow">Parking guidelines</div>
         <h3>Trajectory lines and the swept path, through every lens</h3>
@@ -248,7 +297,7 @@
       </div>
     </article>
 
-    <article class="feature flip" id="stitched">
+    <article class="feature" id="stitched">
       <div class="text">
         <div class="eyebrow">Stitched view</div>
         <h3>Where people vanish at the seams</h3>
@@ -343,6 +392,33 @@
         </div>
       </div>
     </article>
+
+    <article class="feature" id="liverig">
+      <div class="text">
+        <div class="eyebrow">Live rig health</div>
+        <h3>Every stream, its health, and whether a camera moved</h3>
+        <p><b>Calibrate ▸ Live rig</b> reads every camera's stream at once and says, per camera, whether it is delivering
+          what the recording needs: frame rate against the module's, interval jitter, dropped frames, exposure and
+          clipping, sharpness and frozen images, and across the rig how far apart the cameras' frames arrive.</p>
+        <ul>
+          <li><b>Drift indicator:</b> the planned body outline and horizon drawn over the live image through the lens model. If the body edge sits elsewhere, the camera has probably been knocked; the installation check then measures by how much.</li>
+          <li><b>Save frames</b> or hand them straight to the installation check.</li>
+          <li>Before each run: <code>vantage rig.vantage --rig-health 10 health.json</code> exits with 3 if a camera is faulty.</li>
+          <li>Stream passwords are kept in a private file in your settings folder, never in the project.</li>
+        </ul>
+        <p class="note">Capture times are when frames reached Vantage, not sensor timestamps, so network and encoder delays
+          are included. The recording uses synthetic streams rendered from the plan.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/liverig.jpg" aria-label="The live rig page starting six streams, with frame rate, drops and the planned body outline per camera">
+            <source src="media/liverig.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+          <span class="chip">Synthetic streams</span>
+        </div>
+      </div>
+    </article>
   </div>
 </section>
 
@@ -386,16 +462,38 @@
     <div class="head">
       <div class="eyebrow">Export</div>
       <h2>Hand the design to the people and machines that need it.</h2>
-      <p>Twenty formats, each with a live preview. Units, angles and the coordinate frame are chosen per export, and
+      <p>Twenty-five formats, each with a live preview. Units, angles and the coordinate frame are chosen per export, and
         every file says which convention it uses.</p>
     </div>
+    <article class="feature flip" id="datasets" style="padding-top:0;border-top:0">
+      <div class="text">
+        <div class="eyebrow">Datasets</div>
+        <h3>Calibration in your dataset's format</h3>
+        <p>The calibration your data pipeline reads, written straight from the design or from the measured as-built
+          poses, in the vehicle frame and origin you choose.</p>
+        <ul>
+          <li><b>nuScenes</b> <code>sensor.json</code> and <code>calibrated_sensor.json</code>: camera to ego, quaternions w first.</li>
+          <li><b>KITTI</b> <code>calib_cam_to_cam.txt</code> and every camera's pose in the vehicle frame.</li>
+          <li><b>ROS</b> <code>camera_info</code> per camera, and a <b>Kalibr</b> camchain that Vantage also reads back.</li>
+          <li>Fisheye lenses are written as Kannala–Brandt (equidistant), and each file says how its format's tools treat that.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/datasets.jpg" aria-label="Previewing the nuScenes, KITTI, ROS camera_info and Kalibr exports">
+            <source src="media/datasets.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
     <div class="grid3">
-      <div class="card"><h4>Documents</h4><ul><li><span>Mount sheet</span><span>PDF</span></li><li><span>Design report</span><span>HTML, PDF</span></li><li><span>Blind volume</span><span>JSON, OBJ</span></li></ul></div>
-      <div class="card"><h4>Extrinsics</h4><ul><li><span>Camera poses</span><span>JSON</span></li><li><span>Camera poses</span><span>YAML</span></li><li><span>Camera poses</span><span>CSV</span></li></ul></div>
+      <div class="card"><h4>Datasets</h4><ul><li><span>nuScenes sensor calibration</span><span>JSON</span></li><li><span>KITTI calibration</span><span>TXT</span></li><li><span>ROS camera_info</span><span>YAML ×N</span></li><li><span>Kalibr camchain</span><span>YAML</span></li></ul></div>
       <div class="card"><h4>Calibration and robotics</h4><ul><li><span>OpenCV fisheye calibration</span><span>YAML ×N</span></li><li><span>ROS 2 URDF + static TF</span><span>URDF, PY</span></li><li><span>Jetson camera config</span><span>JSON</span></li></ul></div>
+      <div class="card"><h4>Extrinsics</h4><ul><li><span>Camera poses</span><span>JSON</span></li><li><span>Camera poses</span><span>YAML</span></li><li><span>Camera poses</span><span>CSV</span></li></ul></div>
+      <div class="card"><h4>Documents</h4><ul><li><span>Mount sheet</span><span>PDF</span></li><li><span>Design report</span><span>HTML, PDF</span></li><li><span>Blind volume</span><span>JSON, OBJ</span></li><li><span>Perception range</span><span>JSON, PNG</span></li></ul></div>
       <div class="card"><h4>Surround view</h4><ul><li><span>Bird's-eye remap tables</span><span>NPZ, BIN</span></li><li><span>3D surround-view bowl</span><span>OBJ, NPZ, PNG</span></li><li><span>Parking guidelines</span><span>JSON, PNG ×N</span></li><li><span>Objects in the stitched view</span><span>JSON, PNG</span></li><li><span>Reference stitcher</span><span>C++, PY</span></li></ul></div>
-      <div class="card"><h4>Images</h4><ul><li><span>Viewport</span><span>PNG</span></li><li><span>Bird's-eye view</span><span>PNG</span></li><li><span>All camera views</span><span>PNG ×N</span></li></ul></div>
-      <div class="card"><h4>Mount points</h4><ul><li><span>For CAD</span><span>DXF</span></li><li><span>For CAD</span><span>STEP</span></li></ul></div>
+      <div class="card"><h4>Images and CAD</h4><ul><li><span>Viewport</span><span>PNG</span></li><li><span>Bird's-eye view</span><span>PNG</span></li><li><span>All camera views</span><span>PNG ×N</span></li><li><span>Mount points</span><span>DXF</span></li><li><span>Mount points</span><span>STEP</span></li></ul></div>
     </div>
     <div class="tiles">
       <figure>
