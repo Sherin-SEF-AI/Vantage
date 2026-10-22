@@ -97,10 +97,24 @@ def lut_for_points(project: Project, engine, result, P, body, poses=None, blend_
         dens[c.uid] = np.where(ok, intr.density_px_per_cm(th, dist), 0).reshape(ny, nx)
         yaw, pitch, roll = euler_zyx(R)
         lut.poses[c.uid] = (yaw, pitch, roll, float(pos[0]), float(pos[1]), float(pos[2]))
-    W = {c.uid: np.zeros((ny, nx), np.float32) for c in cams}
-    cx, cy = result.centre
+    W = blend_weights(X, Y, result.centre, result.seams, [c.uid for c in cams],
+                      variant.blend_m if blend_m is None else blend_m, vis, dens, lut.body)
+    lut.weight = W
+    lut.covered = sum(W.values()) > 0 if W else np.zeros((ny, nx), bool)
+    return lut
+
+
+def blend_weights(X, Y, centre, seams, uids, blend_m, vis, dens, body) -> dict:
+    """The stitched view's weight of every camera at ground points X, Y (any shape): ownership by azimuth around
+    the body centre between the seams (each seam hands the sector after it to its camera b), a linear blend
+    blend_m wide across each seam line, only where the camera sees the point (vis: uid -> bool like X), points no
+    owner sees filled by the best-density camera that does (dens: uid -> like X), nothing under the body.
+    Returns uid -> float32 like X, summing to 1 where any camera sees the point."""
+    shape = np.shape(X)
+    W = {u: np.zeros(shape, np.float32) for u in uids}
+    cx, cy = centre
     az = np.arctan2(Y - cy, X - cx)
-    seams = [s for s in result.seams if s.a in W and s.b in W]
+    seams = [s for s in seams if s.a in W and s.b in W]
     if seams:
         angs = [math.radians(s.angle) for s in seams]
         n = len(seams)
@@ -109,7 +123,7 @@ def lut_for_points(project: Project, engine, result, P, body, poses=None, blend_
             span = (s1 - s0) % (2 * math.pi) or 2 * math.pi
             own = ((az - s0) % (2 * math.pi)) < span
             W[seams[k].b][own] = 1.0
-        half = (variant.blend_m if blend_m is None else blend_m) / 2
+        half = blend_m / 2
         if half > 0:
             for k, s in enumerate(seams):
                 a = angs[k]
@@ -120,27 +134,25 @@ def lut_for_points(project: Project, engine, result, P, body, poses=None, blend_
                 wb = np.clip(0.5 + d / (2 * half), 0, 1)
                 W[s.a][zone] = (1 - wb[zone])
                 W[s.b][zone] = wb[zone]
-    elif cams:
-        W[cams[0].uid][:] = 1.0
+    elif uids:
+        W[uids[0]][:] = 1.0
     for u in W:
         W[u] *= vis[u]
-    tot = sum(W.values()) if W else np.zeros((ny, nx))
+    tot = sum(W.values()) if W else np.zeros(shape)
     # holes: owner cannot see -> best density camera that can
-    hole = (tot < 1e-6) & ~lut.body
-    if cams:
-        D = np.stack([dens[c.uid] for c in cams])
+    hole = (tot < 1e-6) & ~body
+    if uids:
+        D = np.stack([dens[u] for u in uids])
         best = np.argmax(D, 0)
         anyv = D.max(0) > 0
-        for i, c in enumerate(cams):
+        for i, u in enumerate(uids):
             m = hole & anyv & (best == i)
-            W[c.uid][m] = 1.0
+            W[u][m] = 1.0
         tot = sum(W.values())
     with np.errstate(invalid='ignore', divide='ignore'):
         for u in W:
             W[u] = np.where(tot > 0, W[u] / np.where(tot > 0, tot, 1), 0).astype(np.float32)
-    lut.weight = W
-    lut.covered = tot > 0
-    return lut
+    return W
 
 
 def warp(lut: StitchLUT, images: dict) -> tuple[dict, dict]:

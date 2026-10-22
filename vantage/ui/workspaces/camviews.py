@@ -4,10 +4,12 @@ from __future__ import annotations
 import math
 
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QSplitter, QTableWidget, QTableWidgetItem,
                              QHeaderView, QAbstractItemView, QComboBox, QCheckBox)
 
 from ..camview import CamImageView
+from ..guides import GuideBar
 from ..planview import PlanView
 from ..scene import MainScene
 from ..theme import THEME, mono
@@ -29,6 +31,8 @@ class CamViewsPage(QWidget):
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
         ll.setSpacing(2)
+        self.guide_bar = GuideBar(ctx)
+        ll.addWidget(self.guide_bar)
         self.grid_w = QWidget()
         self.grid_w.setObjectName('base')
         self.grid = QGridLayout(self.grid_w)
@@ -46,15 +50,17 @@ class CamViewsPage(QWidget):
         self.seam_note = label('', muted=True, small=True)
         head.addWidget(self.seam_note)
         sl.addLayout(head)
-        self.table = QTableWidget(3, 1)
+        sl.addLayout(self._objects_bar())
+        self.table = QTableWidget(5, 1)
         self.table.verticalHeader().setDefaultSectionSize(ROW_H)
         self.table.horizontalHeader().setFixedHeight(ROW_H)
         self.table.setShowGrid(False)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked)
-        self.table.verticalHeader().setFixedWidth(120)
-        self.table.setVerticalHeaderLabels(['Angle °', 'Blend m', 'Density at seam px/cm'])
+        self.table.verticalHeader().setFixedWidth(158)
+        self.table.setVerticalHeaderLabels(['Angle °', 'Blend m', 'Density at seam px/cm', 'Object vanishes m²',
+                                            'Advised angle °'])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.table.setFixedHeight(ROW_H * 4 + 4)
+        self.table.setFixedHeight(ROW_H * 6 + 4)
         self.table.itemChanged.connect(self._edited)
         sl.addWidget(self.table)
         ll.addWidget(seams)
@@ -63,6 +69,7 @@ class CamViewsPage(QWidget):
         right.setHandleWidth(2)
         self.bev = PlanView(ctx, 'bev')
         self.bev.legend = False
+        self.bev.show_objects = self.obj_check.isChecked()
         self.bev.seamMoved.connect(lambda: None)
         right.addWidget(self.bev)
         self.bowl_scene = MainScene(ctx, mode='bowl')
@@ -85,6 +92,122 @@ class CamViewsPage(QWidget):
         ctx.store.changed.connect(lambda *_: self.rebuild())
         ctx.store.project_replaced.connect(self.rebuild)
         ctx.analysis.finished.connect(lambda *_: self.refresh())
+
+    # ------------------------------------------------------------------ standing objects in the stitched view
+    def _objects_bar(self):
+        from ...core.stitched_objects import OBJECTS
+        from ..widgets import button
+        ctl = self.ctx.stitched
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        self.obj_check = QCheckBox('Standing objects')
+        self.obj_check.setToolTip('Show in the bird’s-eye view where a standing object vanishes at a seam (hatched) or '
+                                  'is cut off at the view’s edge (dotted), with the smears of a pole at the worst places')
+        try:
+            on = bool(self.ctx.settings.value('camviews/objects', False, type=bool))
+        except Exception:
+            on = False
+        self.obj_check.setChecked(on)
+        self.obj_check.toggled.connect(self._show_objects)
+        row.addWidget(self.obj_check)
+        self.obj_combo = QComboBox()
+        for _, name, h in OBJECTS:
+            self.obj_combo.addItem(f'{name} {h:g} m', h)
+        self.obj_combo.addItem('Custom height…', None)
+        self.obj_combo.setToolTip('The object stood on every point of the ROI (a pole 0.3 m across)')
+        self.obj_combo.activated.connect(self._object_picked)
+        row.addWidget(self.obj_combo)
+        self.thr_combo = QComboBox()
+        for f in (0.10, 0.25, 0.50):
+            self.thr_combo.addItem(f'lost below {f * 100:.0f} % shown', f)
+        self.thr_combo.setToolTip('An object counts as vanished where the stitched view shows less than this share of '
+                                  'its height although a camera sees it')
+        self.thr_combo.activated.connect(lambda i: ctl.set_settings(threshold=self.thr_combo.itemData(i)))
+        row.addWidget(self.thr_combo)
+        self.b_suggest = button('Suggest seams', None, None, 'Look for seam angles that make the object vanish on less '
+                                                              'ground without more ground below the minimum density')
+        self.b_suggest.clicked.connect(ctl.suggest)
+        row.addWidget(self.b_suggest)
+        self.b_apply = button('Apply', None, None, 'Move the seams to the advised angles (one undo step)')
+        self.b_apply.clicked.connect(ctl.apply_advice)
+        self.b_apply.setEnabled(False)
+        row.addWidget(self.b_apply)
+        self.adv_note = label('', muted=True, small=True)
+        row.addWidget(self.adv_note, 1)
+        ctl.ready.connect(self.refresh)
+        ctl.advice_ready.connect(self._advice_changed)
+        self.ctx.store.changed.connect(lambda *_: self._sync_objects())
+        self.ctx.store.project_replaced.connect(self._sync_objects)
+        self._sync_objects()
+        return row
+
+    def _sync_objects(self, *_):
+        st = self.ctx.stitched.settings          # follows undo, redo and opening another project
+        i = next((k for k in range(self.obj_combo.count() - 1) if abs(self.obj_combo.itemData(k) - st.height) < 1e-6), None)
+        if i is None:
+            self.obj_combo.setItemText(self.obj_combo.count() - 1, f'Custom {st.height:g} m…')
+            i = self.obj_combo.count() - 1
+        else:
+            self.obj_combo.setItemText(self.obj_combo.count() - 1, 'Custom height…')
+        self.obj_combo.setCurrentIndex(i)
+        j = min(range(self.thr_combo.count()), key=lambda k: abs(self.thr_combo.itemData(k) - st.threshold))
+        self.thr_combo.setCurrentIndex(j)
+
+    def _object_picked(self, i):
+        ctl = self.ctx.stitched
+        h = self.obj_combo.itemData(i)
+        if h is None:
+            from PyQt6.QtWidgets import QInputDialog
+            v, ok = QInputDialog.getDouble(self, 'Standing object', 'Height of the object, m', ctl.settings.height, 0.05,
+                                           5.0, 2)
+            if not ok:
+                self._sync_objects()
+                return
+            h = v
+        ctl.set_settings(height=h)
+        self._sync_objects()
+
+    def _show_objects(self, on):
+        self.bev.show_objects = on
+        try:
+            self.ctx.settings.setValue('camviews/objects', on)
+        except Exception:
+            pass
+        self.bev.update()
+
+    def _seam_objects(self, s):
+        """(object vanish m² at this seam, advised angle) as table text."""
+        ctl = self.ctx.stitched
+        van = '—'
+        if ctl.result is not None:
+            for x in ctl.result.seams:
+                if x['a'] == s.a and x['b'] == s.b:
+                    van = f'{x["vanish_m2"]:.2f}'
+        adv = '—'
+        if ctl.advice is not None:
+            for a in ctl.advice.seams:
+                if a.a == s.a and a.b == s.b and a.moved:
+                    adv = f'{a.best:.1f}'
+        return van, adv
+
+    def _advice_changed(self):
+        ctl = self.ctx.stitched
+        a = ctl.advice
+        if ctl.advising:
+            self.adv_note.setText('looking for better seam angles…')
+        elif a is None:
+            self.adv_note.setText('')
+        elif a.changes:
+            pct = 100 * (a.vanish_after - a.vanish_now) / max(a.vanish_now, 1e-9)
+            n = len(a.changes)
+            self.adv_note.setText(f'{n} seam{"s" if n != 1 else ""} · vanish area {pct:+.0f} %'.replace('-', '−'))
+            self.adv_note.setToolTip(f'On a 10 cm map: the object vanishes on {a.vanish_now:.2f} → {a.vanish_after:.2f} m²; '
+                                     f'ground below the minimum density {a.ground_low_now:.2f} → {a.ground_low_after:.2f} m²')
+        else:
+            self.adv_note.setText('no seam angle within ±15° does better')
+        self.b_apply.setEnabled(bool(a is not None and a.changes))
+        self.b_suggest.setEnabled(not ctl.advising)
+        self.refresh()
 
     # ------------------------------------------------------------------ 3D surround view
     def _bowl_bar(self):
@@ -238,12 +361,16 @@ class CamViewsPage(QWidget):
         for j, s in enumerate(seams):
             a, b = st.cam(s.a), st.cam(s.b)
             heads.append(f'{a.tag if a else "?"} | {b.tag if b else "?"}')
-            for i, val in enumerate((f'{s.angle:.1f}', f'{st.variant.blend_m:.2f}', f'{s.density:.1f}')):
+            van, adv = self._seam_objects(s)
+            for i, val in enumerate((f'{s.angle:.1f}', f'{st.variant.blend_m:.2f}', f'{s.density:.1f}', van, adv)):
                 it = QTableWidgetItem(val.replace('-', '−'))
                 it.setFont(mono(12))
                 it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                if i == 2:
+                if i >= 2:
                     it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                if i == 4 and val != '—':
+                    it.setForeground(THEME.color('ink'))
+                    it.setFont(mono(12, QFont.Weight.DemiBold))
                 self.table.setItem(i, j, it)
         self.table.setHorizontalHeaderLabels(heads)
         cx, cy = res.centre

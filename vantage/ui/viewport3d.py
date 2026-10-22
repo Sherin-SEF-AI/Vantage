@@ -178,6 +178,7 @@ class TriDraw:
     tri: np.ndarray            # (K,3,3)
     colors: np.ndarray         # (K,4) 0..1
     depth: bool = True
+    normals: np.ndarray | None = None   # (K,3,3) per-vertex normals: smooth shading in the shader renderer
 
 
 LIGHT = np.array([0.35, 0.55, 0.76])

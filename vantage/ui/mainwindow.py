@@ -19,6 +19,7 @@ from ..core.project import Project, Variant, FRAME_PRESETS, MAX_CAMERAS, new_uid
 from ..core import samples
 from . import icons, ops
 from .context import AppContext, OVERLAYS, HEATMAPS, TOOLS
+from .stitchedview import StitchedController
 from .store import ProjectStore
 from .theme import THEME, mono, sans, STATUS
 from .widgets import DockTitle, SegmentedControl, tool_button, label, button, hline
@@ -41,6 +42,9 @@ class MainWindow(QMainWindow):
         self.store = ProjectStore(project)
         self.ctx = AppContext(self.store)
         self.ctx.window = self
+        self.ctx.stitched = StitchedController(self.ctx)      # objects in the stitched view, kept up to date
+        from .assistant import AssistantController
+        self.ctx.assistant = AssistantController(self.ctx)    # the chat about the design (Preferences ▸ Assistant)
         self.actions_by_id: dict[str, QAction] = {}
         self.palette_extra = []
         self._photo_cache = {}
@@ -102,6 +106,9 @@ class MainWindow(QMainWindow):
         elif name == 'install':
             from .workspaces.install_ws import InstallPage
             w = InstallPage(self.ctx)
+        elif name == 'volume':
+            from .workspaces.volume_ws import VolumePage
+            w = VolumePage(self.ctx)
         self.pages.addWidget(w)
         self._page_widgets[name] = w
         return w
@@ -122,6 +129,7 @@ class MainWindow(QMainWindow):
         'photo': ('outliner', 'library', 'inspector', 'bottom'),
         'targets': ('outliner', 'library', 'inspector', 'bottom'),
         'install': (),
+        'volume': (),
     }
 
     def set_page(self, name):
@@ -134,7 +142,8 @@ class MainWindow(QMainWindow):
         self.pages.setCurrentWidget(w)
         want = self.PAGE_DOCKS.get(name, ())
         for k, d in self.docks.items():
-            d.setVisible(k in want)
+            if k != 'assistant':                            # the conversation stays open across pages
+                d.setVisible(k in want)
         QTimer.singleShot(30, self._restore_dock_sizes)
         if name == 'targets':
             self.store.select_obj(('targets',))
@@ -178,6 +187,13 @@ class MainWindow(QMainWindow):
         self._dock('camview', 'Camera view', self.camdock, R)
         bd = self._dock('bottom', 'Analysis', self.bottom, B)
         bd.setTitleBarWidget(QWidget())
+        from .assistant import AssistantPanel
+        self.assistant_panel = AssistantPanel(self.ctx)
+        ad = self._dock('assistant', 'Assistant', self.assistant_panel, R)
+        self.addDockWidget(R, ad, Qt.Orientation.Horizontal)  # a full-height column of its own, not under the inspector
+        ad.setTitleBarWidget(QWidget())                      # the panel has its own header
+        ad.setMinimumWidth(340)
+        ad.hide()
         self.splitDockWidget(self.docks['outliner'], self.docks['library'], Qt.Orientation.Vertical)
         self.splitDockWidget(self.docks['inspector'], self.docks['camview'], Qt.Orientation.Vertical)
         self.resizeDocks([self.docks['outliner'], self.docks['inspector']], [250, 312], Qt.Orientation.Horizontal)
@@ -235,6 +251,8 @@ class MainWindow(QMainWindow):
         A('import_layout', 'Layout from CSV/JSON…', self.import_layout, None, 'report', category='File ▸ Import')
         A('project_settings', 'Project settings…', self.project_settings, category='File')
         A('prefs', 'Preferences…', self.preferences, 'Ctrl+,', 'gear', category='File')
+        A('assistant', 'Assistant', self.toggle_assistant, 'Ctrl+J', 'sparkle', category='Window',
+          tip='Ask questions about this design; changes are proposed, you apply them')
         A('start', 'Start window…', self.show_start, category='File')
         A('quit', 'Quit', self.close, 'Ctrl+Q', category='File')
         # edit
@@ -285,7 +303,8 @@ class MainWindow(QMainWindow):
         A('back', 'Back to viewports', lambda: self.set_page('viewports'), category='View')
         for i, (key, text, ic, _) in enumerate(OVERLAYS):
             sc = {'frustums': 'Alt+1', 'footprints': 'Alt+2', 'camlight': 'Alt+3', 'shadows': 'Alt+0', 'occlusion': 'Alt+4',
-                  'seams': 'Alt+5', 'roi': 'Alt+6', 'targets': 'Alt+7', 'dimensions': 'Alt+8', 'grid': 'Alt+9'}[key]
+                  'seams': 'Alt+5', 'roi': 'Alt+6', 'targets': 'Alt+7', 'dimensions': 'Alt+8', 'grid': 'Alt+9',
+                  'guidelines': 'Alt+G'}.get(key)
             A(f'ov_{key}', text, lambda on, k=key: c.set_overlay(k, on), sc, ic, True, 'View ▸ Overlays', checked=c.overlays[key])
         for key, text in HEATMAPS:
             A(f'heat_{key}', text, None, None, None, True, 'View ▸ Overlays ▸ Heatmap', checked=key == 'none')
@@ -404,6 +423,8 @@ class MainWindow(QMainWindow):
         A('tolerance', 'Tolerance study…', lambda: self.set_page('tolerance'), None, 'tolerance', category='Analysis')
         A('sensitivity', 'Sensitivity…', lambda: self.set_page('tolerance'), None, 'tolerance', category='Analysis')
         A('load_cases', 'Load cases…', self.load_cases, None, 'axle', category='Analysis')
+        A('blind_volume', 'Blind volume…', lambda: self.set_page('volume'), None, 'blind', category='Analysis',
+          tip='Where around the vehicle something can stand unseen by every camera, in 3D')
         A('an_settings', 'Settings…', self.preferences, None, 'gear', category='Analysis')
         # calibrate
         A('targets', 'Target planner…', lambda: self.set_page('targets'), None, 'checker', category='Calibrate')
@@ -537,7 +558,8 @@ class MainWindow(QMainWindow):
         sub(an, 'Ground resolution', ['res_5', 'res_2', 'res_1'])
         sub(an, 'Obstacles', ['obs_ground', 'obs_pole05', 'obs_pole10', 'obs_child', '-', 'obs_add'])
         an.addSeparator()
-        an.addActions([a['thresholds'], a['tolerance'], a['sensitivity'], a['load_cases'], a['an_settings']])
+        an.addActions([a['thresholds'], a['tolerance'], a['sensitivity'], a['load_cases'], a['blind_volume'],
+                       a['an_settings']])
         cb = menu('Calibrate')
         cb.addAction(a['targets'])
         sub(cb, 'Add target', ['target_checkerboard', 'target_charuco', 'target_aprilgrid'])
@@ -641,6 +663,8 @@ class MainWindow(QMainWindow):
         self.state_btn.customContextMenuRequested.connect(lambda pos: self._state_menu(pos))
         self.state_btn.setProperty('text-button', True)
         tb.addWidget(self.state_btn)
+        tb.addWidget(QLabel(' '))
+        tb.addAction(self.actions_by_id['assistant'])
         tb.addWidget(QLabel(' '))
         self.search = QLineEdit()
         self.search.setPlaceholderText('Search')
@@ -1357,7 +1381,8 @@ class MainWindow(QMainWindow):
     def _fill_window_menu(self):
         w = self.win_menu
         w.clear()
-        names = {'outliner': 'Outliner', 'library': 'Library', 'inspector': 'Inspector', 'camview': 'Camera view', 'bottom': 'Analysis panels'}
+        names = {'outliner': 'Outliner', 'library': 'Library', 'inspector': 'Inspector', 'camview': 'Camera view',
+                 'bottom': 'Analysis panels', 'assistant': 'Assistant'}
         for k, d in self.docks.items():
             a = w.addAction(names[k])
             a.setCheckable(True)
@@ -1378,14 +1403,16 @@ class MainWindow(QMainWindow):
     def workspace(self, name):
         if name == 'placement':
             self.set_page('viewports')
-            for d in self.docks.values():
-                d.show()
+            for k, d in self.docks.items():
+                if k != 'assistant':
+                    d.show()
             self.set_split('single')
             self.set_view('persp')
         elif name == 'analysis':
             self.set_page('viewports')
-            for d in self.docks.values():
-                d.show()
+            for k, d in self.docks.items():
+                if k != 'assistant':
+                    d.show()
             self.set_split('quad')
             self.bottom.show_tab('coverage')
         elif name == 'review':
@@ -1684,6 +1711,26 @@ class MainWindow(QMainWindow):
     def project_settings(self):
         from .dialogs.misc import ProjectSettingsDialog
         ProjectSettingsDialog(self.ctx, self).exec()
+
+    def toggle_assistant(self):
+        d = self.docks['assistant']
+        if d.isVisible() and self.assistant_panel.composer.edit.hasFocus():
+            d.hide()
+            return
+        self.show_assistant()
+
+    def show_assistant(self):
+        d = self.docks['assistant']
+        if not d.isVisible():
+            d.show()
+            self.resizeDocks([d], [420], Qt.Orientation.Horizontal)
+        d.raise_()
+        self.assistant_panel.composer.edit.setFocus()
+
+    def ask_assistant(self, text):
+        """Open the assistant and ask (from the Issues list, the command palette)."""
+        self.show_assistant()
+        self.assistant_panel.ask(text)
 
     def preferences(self):
         from .dialogs.misc import PreferencesDialog
@@ -2024,6 +2071,25 @@ class MainWindow(QMainWindow):
         threading.Thread(target=run, daemon=True).start()
         return opt
 
+    def run_job(self, kind, title, fn, on_done, on_failed=None):
+        """A background job with the job bar and Cancel: fn(progress, cancel) -> result runs on a thread, then
+        on_done(result) here (on_failed(message) when it raised)."""
+        if kind in self._jobs:
+            return False
+        cancel = threading.Event()
+        self._jobs[kind] = {'cancel': cancel, 'state': (kind, 0.0, ''), 'title': title, 'on_done': on_done,
+                            'on_failed': on_failed}
+        self._show_job(title, 0.0)
+
+        def run():
+            try:
+                res = fn(lambda f, text='': self.jobs.progress.emit(kind, f, text), cancel.is_set)
+                self.jobs.done.emit(kind, res)
+            except Exception as e:
+                self.jobs.failed.emit(kind, f'{e}\n{traceback.format_exc()}')
+        threading.Thread(target=run, daemon=True).start()
+        return True
+
     def _shared_engine(self):
         e = self.ctx.analysis.engine.share()
         e.vehicle_geom(self.store.project)      # built here (or found), so the worker thread starts on it
@@ -2046,15 +2112,17 @@ class MainWindow(QMainWindow):
         if not j:
             return
         j['state'] = (kind, frac, text)
-        self._show_job(kind.capitalize(), frac, text)
+        self._show_job(j.get('title', kind.capitalize()), frac, text)
         cb = j.get('cb')
         if cb:
             cb(j.get('opt'))
 
     def _job_done(self, kind, result):
-        self._jobs.pop(kind, None)
+        job = self._jobs.pop(kind, None)
         self._hide_job()
-        if kind == 'tolerance':
+        if job and job.get('on_done'):
+            job['on_done'](result)
+        elif kind == 'tolerance':
             self.page('tolerance').show_result(result)
             self.bottom.tolerance.show_result(result)
             n = len(result.blind)
@@ -2074,11 +2142,14 @@ class MainWindow(QMainWindow):
     def _job_failed(self, kind, m):
         job = self._jobs.pop(kind, None)
         self._hide_job()
+        title = job.get('title', kind.capitalize()) if job else kind.capitalize()
+        if job and job.get('on_failed'):
+            job['on_failed'](m)
         if job and job.get('cancel') is not None and job['cancel'].is_set():
-            self.msg(f'{kind.capitalize()} cancelled')          # a cancel before the first sample is not a failure
+            self.msg(f'{title} cancelled')          # a cancel before the first sample is not a failure
         else:
             print(m)
-            QMessageBox.critical(self, f'{kind.capitalize()} failed', m.splitlines()[0])
+            QMessageBox.critical(self, f'{title} failed', m.splitlines()[0])
         self._update_state()
 
     def _hide_job(self):

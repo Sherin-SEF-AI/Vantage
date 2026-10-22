@@ -281,23 +281,27 @@ void main() {
 FLAT_VS = '''
 #version 120
 attribute vec3 aPos;
+attribute vec3 aNrm;
 attribute vec4 aCol;
 uniform mat4 uVP;
 varying vec3 vPos;
+varying vec3 vNrm;
 varying vec4 vCol;
-void main() { vPos = aPos; vCol = aCol; gl_Position = uVP * vec4(aPos, 1.0); }
+void main() { vPos = aPos; vNrm = aNrm; vCol = aCol; gl_Position = uVP * vec4(aPos, 1.0); }
 '''
 
 FLAT_FS = '''
 #version 120
 varying vec3 vPos;
+varying vec3 vNrm;
 varying vec4 vCol;
 uniform vec3 uEye;
 uniform vec3 uLight;
 uniform vec3 uSky;
 uniform vec3 uBounce;
+uniform float uSmooth;
 void main() {
-    vec3 N = normalize(cross(dFdx(vPos), dFdy(vPos)));
+    vec3 N = uSmooth > 0.5 ? normalize(vNrm) : normalize(cross(dFdx(vPos), dFdy(vPos)));
     if (dot(N, uEye - vPos) < 0.0) N = -N;
     float ndl = max(dot(N, uLight), 0.0);
     vec3 hemi = mix(uBounce, uSky, N.z * 0.5 + 0.5);
@@ -856,6 +860,13 @@ class GLRenderer:
         self._set(p, 'uBounce', f.style.bounce_rgb)
         v = np.ascontiguousarray(td.tri.reshape(-1, 3), np.float32)
         c = np.ascontiguousarray(np.repeat(np.asarray(td.colors, np.float32), 3, axis=0))
+        nrm = getattr(td, 'normals', None)
+        smooth = nrm is not None and len(nrm) == len(td.tri)
+        self._set(p, 'uSmooth', 1.0 if smooth else 0.0)
+        if smooth:
+            n = np.ascontiguousarray(np.asarray(nrm, np.float32).reshape(-1, 3))
+            GL.glEnableVertexAttribArray(1)
+            GL.glVertexAttribPointer(1, 3, GL.GL_FLOAT, GL.GL_FALSE, 0, n)
         if td.depth:
             GL.glEnable(GL.GL_DEPTH_TEST)
         else:
@@ -869,6 +880,8 @@ class GLRenderer:
         GL.glDrawArrays(GL.GL_TRIANGLES, 0, len(v))
         GL.glDisableVertexAttribArray(0)
         GL.glDisableVertexAttribArray(2)
+        if smooth:
+            GL.glDisableVertexAttribArray(1)
         GL.glDepthMask(GL.GL_TRUE)
         GL.glEnable(GL.GL_DEPTH_TEST)
 

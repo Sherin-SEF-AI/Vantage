@@ -9,8 +9,10 @@ OVERLAYS = [('frustums', 'Frustums', 'frustum', True), ('footprints', 'Footprint
             ('camlight', 'Camera light', 'lens', False), ('shadows', 'Shadows and lighting', 'shading', True),
             ('occlusion', 'Occlusion rays', 'occlusion', False), ('seams', 'Seams', 'seam', True),
             ('roi', 'ROI', 'roi', True), ('targets', 'Calibration targets', 'checker', False),
-            ('dimensions', 'Dimensions', 'measure', False), ('grid', 'Grid', 'snap-grid', True)]
-HEATMAPS = [('none', 'None'), ('coverage', 'Coverage'), ('density', 'Density'), ('redundancy', 'Redundancy')]
+            ('dimensions', 'Dimensions', 'measure', False), ('grid', 'Grid', 'snap-grid', True),
+            ('volume', 'Blind volume', 'blind', False), ('guidelines', 'Parking guidelines', 'axle', False)]
+HEATMAPS = [('none', 'None'), ('coverage', 'Coverage'), ('density', 'Density'), ('redundancy', 'Redundancy'),
+            ('stitched', 'Objects')]       # objects standing in the stitched bird's-eye view
 TOOLS = [('select', 'Select', 'select', 'V'), ('move', 'Move', 'move', 'G'), ('rotate', 'Rotate', 'rotate', 'R'),
          ('place', 'Place camera on surface', 'place', 'C'), ('measure', 'Measure', 'measure', 'M')]
 
@@ -39,6 +41,8 @@ class AppContext(QObject):
         self.photo_shading = False
         self.isolate: set = set()
         self.window = None
+        from .volumeview import VolumeController
+        self.volume = VolumeController(self)    # the 3D blind volume (its page and the 3D overlay)
         store.changed.connect(self._after_edit)
         store.project_replaced.connect(self._after_edit)
 

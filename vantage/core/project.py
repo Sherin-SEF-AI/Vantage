@@ -71,6 +71,18 @@ class Camera:
         return Camera(**{k: v for k, v in d.items() if k in known})
 
 
+def mirror_props(src: Camera, dst: Camera, keys):
+    for k in keys:
+        if k == 'y':
+            dst.y = -src.y
+        elif k == 'yaw':
+            dst.yaw = -src.yaw
+        elif k == 'roll':
+            dst.roll = -src.roll
+        elif k in ('x', 'z', 'pitch', 'module_id', 'lens_id', 'standoff_mm', 'bracket', 'snap_normal', 'cable_m', 'sync'):
+            setattr(dst, k, getattr(src, k))
+
+
 @dataclass
 class Variant:
     uid: str = field(default_factory=new_uid)
@@ -214,6 +226,10 @@ class AnalysisSettings:
     tol_mm: float = 100.0
     load_cases: list = field(default_factory=list)   # [[name, front drop mm, rear drop mm], ...]
     bowl: dict = field(default_factory=dict)          # 3D surround-view bowl shape (core.bowl.BowlShape fields)
+    volume: dict = field(default_factory=dict)        # blind volume study (core.volume.VolumeSettings fields)
+    guidelines: dict = field(default_factory=dict)    # parking guidelines (core.guidelines.GuidelineSettings fields)
+    stitched: dict = field(default_factory=dict)      # standing objects in the stitched view (core.stitched_objects.Settings)
+    assistant: dict = field(default_factory=dict)     # the assistant's project brief: {'brief': text}
 
     def to_dict(self):
         return asdict(self)

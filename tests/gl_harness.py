@@ -107,6 +107,16 @@ def main(out_dir):
     np.save(os.path.join(out_dir, 'bowl.npy'), bw)
     out['bowl_green'] = float((bw[..., 1].astype(int) - bw[..., 0].astype(int) > 100).mean())
     out['pixel_store'] = [int(GL.glGetIntegerv(GL.GL_UNPACK_ALIGNMENT)), int(GL.glGetIntegerv(GL.GL_PACK_ALIGNMENT))]
+    # translucent flat triangles with per-vertex normals (the blind volume): a red ground quad, lit smoothly
+    from vantage.ui.viewport3d import TriDraw
+    quad = np.array([[[-1, -1, 0.5], [3, -1, 0.5], [3, 1, 0.5]], [[-1, -1, 0.5], [3, 1, 0.5], [-1, 1, 0.5]]], np.float32)
+    nrm = np.tile(np.array([0, 0, 1], np.float32), (2, 3, 1))
+    col = np.array([[0.9, 0.1, 0.1, 0.6]] * 2, np.float32)
+    sm = r.render_offscreen(frame(top, tris=[TriDraw(quad, col, normals=nrm)], style=Style(shadows=False, ao=False)))
+    np.save(os.path.join(out_dir, 'smooth.npy'), sm)
+    mid = sm[H // 2 - 20:H // 2 + 20, W // 2 - 20:W // 2 + 20, :3].astype(int)
+    out['smooth_red'] = float((mid[..., 0] - mid[..., 1] > 60).mean())
+    out['smooth_flat'] = float(mid[..., 0].std())             # one normal: no faceting across the two triangles
     out['gl_error_end'] = int(GL.glGetError())
     r.release()
     print(json.dumps(out))

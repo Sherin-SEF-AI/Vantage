@@ -6,6 +6,7 @@
     vantage project.vantage --calibrate-lens views/ --camera F --board 9x6 --square 60 --save out.vantage
     vantage project.vantage --import-calib camchain.yaml F.yaml --save out.vantage
     vantage --sample --load-cases -
+    vantage project.vantage --blind-volume volume.json
 
 The exit code is 0 when everything is fine, 2 when an analysis or export finds critical issues in the plan,
 3 when an installation check finds a camera that has to be re-mounted (or could not be solved) and 4 when a lens
@@ -104,6 +105,14 @@ def analysis_doc(project, res, eng) -> dict:
     doc['link_budget'] = [{'deserializer': n, 'ports': ports, 'cameras': tags_, 'used_gbps': _r(used, 3),
                            'capacity_gbps': cap, 'load_pct': _r(100 * used / cap if cap else 0, 1)}
                           for n, ports, tags_, used, cap, worst, link in rules.link_budget(project)]
+    if res is not None:
+        from .core import stitched_objects as so
+        sres = so.analyse(project, eng, res)
+        doc['stitched_objects'] = so.to_doc(sres, so.advise(project, eng, res))
+        iss = so.issue(sres)
+        if iss is not None:
+            issues = sorted(issues + [iss], key=lambda i: rules.SEVERITY_ORDER.get(i.severity, 9))
+            doc['issues'] = [{'severity': i.severity, 'message': i.message, 'objects': i.objects} for i in issues]
     if project.targets:
         st = evaluate_targets(eng, project)
         names = {t.uid: t.name for t in project.targets}
@@ -122,6 +131,15 @@ def load_cases_doc(project, eng) -> dict:
                        'blind_m2': _r(r.blind_m2), 'delta_blind_m2': _r(r.delta_blind), 'min_density': _r(r.min_density, 2),
                        'ground_shift_cm': _r(r.ground_shift_cm, 1), 'seam_ghost_cm': _r(r.seam_ghost_cm, 1),
                        'status': r.status} for r in rs]}
+
+
+def blind_volume_doc(project, eng, res) -> dict:
+    from .core import volume as vol
+    st = vol.VolumeSettings.from_dict(project.analysis.volume)
+    vr = vol.analyse_volume(project, eng, res, st.height, st.dz, st.cell or None)
+    if vr is None:
+        raise SystemExit('The blind volume needs a vehicle model.')
+    return vol.to_doc(vr, project)
 
 
 def install_check(project, eng, res, folder, st, lut_out=None, balance=True, blend='linear'):
@@ -307,6 +325,8 @@ def run(args) -> int:
         _out(doc, args.analyse)
     if args.load_cases is not None:
         _out(load_cases_doc(project, eng), args.load_cases)
+    if args.blind_volume is not None:
+        _out(blind_volume_doc(project, eng, res), args.blind_volume)
     if args.export:
         if args.formats:
             ids = [f.strip() for f in args.formats.split(',') if f.strip()]
@@ -346,6 +366,8 @@ def add_arguments(ap):
     g = ap.add_argument_group('batch mode (no window)')
     g.add_argument('--analyse', nargs='?', const='-', metavar='OUT.json', help='write the analysis summary as JSON (- = stdout)')
     g.add_argument('--load-cases', nargs='?', const='-', metavar='OUT.json', help='evaluate the load cases')
+    g.add_argument('--blind-volume', nargs='?', const='-', metavar='OUT.json',
+                   help='3D blind volume: space up to the study height no camera sees, undetectable objects, reach rose')
     g.add_argument('--export', metavar='DIR', help='export into DIR')
     g.add_argument('--formats', help='comma-separated export format ids (default: every non-image format)')
     g.add_argument('--variant', help='variant name or 1-based index (default: the active one)')
@@ -376,4 +398,4 @@ def add_arguments(ap):
 
 def wanted(args) -> bool:
     return any(getattr(args, k) not in (None, False) for k in ('analyse', 'load_cases', 'export', 'install_check',
-                                                               'calibrate_lens', 'import_calib'))
+                                                               'calibrate_lens', 'import_calib', 'blind_volume'))

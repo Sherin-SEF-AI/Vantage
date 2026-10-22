@@ -13,7 +13,8 @@ from .viewport3d import make_viewport
 from .widgets import tool_button
 
 PLAN_LABELS = {'coverage': 'Coverage by best camera', 'density': 'Pixel density · best camera', 'redundancy': 'Redundancy',
-               'footprints': 'Footprints', 'bev': 'Bird’s-eye · stitched', 'targets': 'Floor plan · redundancy'}
+               'footprints': 'Footprints', 'bev': 'Bird’s-eye · stitched', 'targets': 'Floor plan · redundancy',
+               'stitched': 'Objects in the stitched view · hover to see a pole’s smears'}
 
 
 class Pane(QWidget):

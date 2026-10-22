@@ -168,7 +168,8 @@ class CoverageTab(QWidget):
         g.addWidget(t, 0, 0)
         g.addWidget(self.head, 0, 1, 1, 2)
         self.rows = {}
-        keys = ['Blind in ROI', 'Covered', 'Seen by ≥ 2 cameras', 'Minimum density', 'In focus', 'Worst single-camera error', 'ROI area']
+        keys = ['Blind in ROI', 'Covered', 'Seen by ≥ 2 cameras', 'Minimum density', 'In focus', 'Worst single-camera error',
+                'Object vanishes at seams', 'ROI area']
         for i, k in enumerate(keys, start=1):
             a = label(k, ink2=True)
             v = ValueLabel(align_right=True)
@@ -190,6 +191,8 @@ class CoverageTab(QWidget):
         ctx.analysis.secondary.connect(lambda k, v: self.refresh() if k == 'worst' else None)
         ctx.analysis.stale_changed.connect(lambda s: self._stale(s))
         ctx.store.selection_changed.connect(self.refresh)
+        if getattr(ctx, 'stitched', None) is not None:
+            ctx.stitched.ready.connect(self.refresh)
         self.refresh()
 
     def _stale(self, s):
@@ -225,6 +228,14 @@ class CoverageTab(QWidget):
         tol = f'{p.analysis.tol_deg:g}° / {p.analysis.tol_mm / 10:g} cm'
         self.rows['Worst single-camera error'].set(f'{w[0]:.3f}' if w else '…', 'm²', None, tol)
         self.rows['ROI area'].set(f'{m["roi_area"]:.3f}', 'm²')
+        sres = getattr(getattr(self.ctx, 'stitched', None), 'result', None)
+        if sres is None:
+            self.rows['Object vanishes at seams'].set('…', 'm²')
+        else:
+            v = sres.metrics['vanish_m2']
+            from ...core.stitched_objects import ISSUE_M2
+            self.rows['Object vanishes at seams'].set(f'{v:.2f}', 'm²', 'good' if v <= ISSUE_M2 else 'warning',
+                                                      sres.settings.label)
         cams = {c.uid: c for c in p.variant.cameras}
         rows = [(c.uid, c.slot, c.tag, res.per_cam[c.uid]['unique_m2']) for c in res.cams if c.uid in cams]
         self.bars.set_rows(rows, self.ctx.store.sel_cams)
@@ -580,9 +591,11 @@ class IssuesTab(QWidget):
         hh.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         hh.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
         self.t.setColumnWidth(0, 130)
-        self.t.setColumnWidth(3, 60)
+        self.t.setColumnWidth(3, 112)
         self.t.cellClicked.connect(self._show)
         self.t.cellEntered.connect(self._hover)
+        self.t.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.t.customContextMenuRequested.connect(self._menu)
         lay.addWidget(self.t)
         ctx.analysis.secondary.connect(lambda k, v: self.refresh() if k == 'issues' else None)
         self._hover_row = -1
@@ -600,10 +613,20 @@ class IssuesTab(QWidget):
             o.setFont(mono(11))
             o.setForeground(THEME.color('ink2'))
             self.t.setItem(i, 2, o)
+            cell = QWidget()
+            h = QHBoxLayout(cell)
+            h.setContentsMargins(0, 0, 4, 0)
+            h.setSpacing(4)
+            ask = QPushButton('Ask')
+            ask.setIcon(icons.icon('sparkle', 12))
+            ask.setToolTip('Ask the assistant to explain this issue and suggest a fix')
+            ask.clicked.connect(lambda _=False, i=i: self._ask(i))
             b = QPushButton('Show')
-            b.setVisible(False)
             b.clicked.connect(lambda _=False, i=i: self._show(i, 0))
-            self.t.setCellWidget(i, 3, b)
+            h.addWidget(ask)
+            h.addWidget(b)
+            cell.setVisible(False)
+            self.t.setCellWidget(i, 3, cell)
         worst = iss[0].severity if iss else ''
         self.countChanged.emit(len(iss), worst)
 
@@ -615,6 +638,22 @@ class IssuesTab(QWidget):
             if w:
                 w.setVisible(k == r)
         self._hover_row = r
+
+    def _ask(self, r):
+        iss = self.ctx.analysis.issues
+        if 0 <= r < len(iss) and self.ctx.window is not None:
+            x = iss[r]
+            self.ctx.window.ask_assistant(f'Explain this issue and suggest a fix: "{x.message}" '
+                                          f'({x.severity}; {x.objects}).')
+
+    def _menu(self, pos):
+        r = self.t.rowAt(pos.y())
+        if r < 0:
+            return
+        m = QMenu(self)
+        m.addAction(icons.icon('frame', 16), 'Show on the vehicle', lambda: self._show(r, 0))
+        m.addAction(icons.icon('sparkle', 16), 'Ask the assistant', lambda: self._ask(r))
+        m.exec(self.t.viewport().mapToGlobal(pos))
 
     def _show(self, r, c):
         iss = self.ctx.analysis.issues

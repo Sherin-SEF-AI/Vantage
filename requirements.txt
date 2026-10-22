@@ -4,4 +4,6 @@ scipy>=1.10
 PyOpenGL>=3.1          # GL viewport; without it the 3D view falls back to QPainter
 PyYAML>=6.0            # extrinsics.yaml export
 opencv-python>=4.7     # reference-photo calibration (solvePnP / calibrateCamera)
+certifi                # the assistant's HTTPS to Groq, also inside the bundles
+# optional: keyring    # keeps the assistant's API key in the system keyring
 # optional: gmsh       # STEP import (tessellation through OpenCASCADE)

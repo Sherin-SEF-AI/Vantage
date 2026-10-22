@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import QWidget
 from ..core.analysis import camera_frames
 from ..core.lens import resolve
 from .theme import THEME, mono, sans
-from . import maps
+from . import guides, maps
 
 _unproj_cache = {}
 
@@ -221,6 +221,7 @@ class CamImageView(QWidget):
             r = QRectF((W - w) / 2, top + (H - h) / 2, w, h)
             p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
             p.drawImage(r, img)
+            guides.paint_camera(self, p, cam, r)
             if self.label:
                 p.setFont(sans(11))
                 p.setPen(QColor(235, 235, 230))

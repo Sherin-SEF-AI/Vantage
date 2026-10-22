@@ -53,3 +53,9 @@ def test_leaves_the_pixel_store_as_qpainter_expects(run):
     """QPainter's GL text cache uploads glyph rows assuming the default alignment of 4; 1 shears every label."""
     doc, _ = run
     assert doc['pixel_store'] == [4, 4]
+
+
+def test_flat_triangles_with_smooth_normals(run):
+    """The blind volume's surface: translucent triangles shaded with per-vertex normals, not per face."""
+    doc, _ = run
+    assert doc['smooth_red'] > 0.95 and doc['smooth_flat'] < 2.0

@@ -11,7 +11,7 @@ from ..core.analysis import surface_frame, camera_frames
 from ..core.lens import resolve
 from ..core.mathutil import rot_zyx, BODY_TO_OPTICAL, wrap180, yaw_pitch_from_dir
 from ..core.mesh import ROLE_GLASS, ROLE_WHEELS, ROLE_IGNORED
-from . import maps, ops, icons
+from . import guides, maps, ops, icons
 from .theme import THEME, mono, sans, STATUS
 from .viewport3d import MeshDraw, GroundDraw, LineDraw, TriDraw
 from .widgets import paint_chip
@@ -103,6 +103,7 @@ class MainScene(QObject):
         self.show_tooltip = True
         self.photo_frame = None
         self.label_prefix = ''
+        self.show_volume = False            # the blind volume regardless of the overlay (its own page)
         self._cube_hint = {}                # uid -> occlusion map from the camera's last analysed position
         self._lights = (None, [])
         self._bowl_tris = (None, None)
@@ -197,11 +198,17 @@ class MainScene(QObject):
         if self.mode == 'bowl':
             mode = 'blank'
         iso = frozenset(self.ctx.isolate) if self.ctx.isolate else None
-        key = (id(res), mode, THEME.name, iso)
+        sres = getattr(getattr(self.ctx, 'stitched', None), 'result', None) if mode == 'stitched' else None
+        if mode == 'stitched' and sres is None:
+            mode = 'blank'
+        key = (id(res), mode, THEME.name, iso, id(sres))
         if key != self._ground_key:
-            img = maps.make(res, mode, k=4, isolate=iso)
-            self._ground = GroundDraw(maps.to_qimage(img), maps.extent(res), 0.002,
-                                      nearest=mode in ('density', 'redundancy', 'coverage'), version=hash(key))
+            if sres is not None:
+                img, ext = maps.stitched(sres, k=4), maps.stitched_extent(sres)
+            else:
+                img, ext = maps.make(res, mode, k=4, isolate=iso), maps.extent(res)
+            self._ground = GroundDraw(maps.to_qimage(img), ext, 0.002,
+                                      nearest=mode in ('density', 'redundancy', 'coverage', 'stitched'), version=hash(key))
             self._ground_key = key
         return self._ground
 
@@ -297,11 +304,17 @@ class MainScene(QObject):
                         tri += [P[[0, 1, 2]], P[[0, 2, 3]]]
                         col += [cc, cc]
             out.append(TriDraw(np.array(tri), np.array(col)))
+        vc = getattr(self.ctx, 'volume', None)
+        if vc is not None and self.mode == 'scene' and (self.show_volume or self.ctx.overlays.get('volume')):
+            td = vc.tri_draw(gl=getattr(vp, 'renderer', None) is not None)
+            if td is not None:
+                out.append(td)
         if self.mode == 'bowl' and self.result is not None:
             if self.bowl_draw(vp) is None:
                 out.append(self._bowl())
             elif not getattr(vp, 'gl_bowl', False):
                 out.append(self._bowl_soft())
+        out += guides.scene_tris(self, vp)
         return out
 
     def _bowl(self):
@@ -431,6 +444,7 @@ class MainScene(QObject):
                 out.append(LineDraw(P[i], THEME.color('ink', 0.18), 1.0))
             for j in range(0, P.shape[1], 6):
                 out.append(LineDraw(P[:, j], THEME.color('ink', 0.18), 1.0))
+        out += guides.scene_lines(self, vp)
         return out
 
     def _grid(self):
@@ -503,7 +517,11 @@ class MainScene(QObject):
         view = 'Perspective' if not vp.cam.ortho else ('Top' if vp.cam.el > 80 else 'Side' if abs(vp.cam.az - 90) < 1 else 'Front' if abs(vp.cam.az) < 1 else 'Rear' if abs(abs(vp.cam.az) - 180) < 1 else 'Ortho')
         if vp.cam.custom is not None:
             view = 'Perspective · matched to photo'
-        heat = {'none': '', 'coverage': ' · coverage', 'density': ' · density', 'redundancy': ' · redundancy'}[self.ctx.heatmap]
+        heat = {'none': '', 'coverage': ' · coverage', 'density': ' · density', 'redundancy': ' · redundancy',
+                'stitched': ' · objects in the stitched view'}.get(self.ctx.heatmap, '')
+        vc = getattr(self.ctx, 'volume', None)
+        if vc is not None and vc.result is not None and (self.show_volume or self.ctx.overlays.get('volume')):
+            heat += f' · blind space up to {vc.result.z[vc.cut_level() - 1] + vc.result.dz / 2:.2f} m'
         return f'{view} · {names.get(self.ctx.shading, "Solid")}{heat}'
 
     def overlay(self, p: QPainter, vp):
@@ -1021,6 +1039,9 @@ def paint_ground_tooltip(p: QPainter, pos, info, project, cameras):
     lines_h = 18
     W = 236
     H = 44 + lines_h * max(len(rows), 1) + 16
+    stitched = info.get('stitched')
+    if stitched is not None:
+        H += 44
     x, y = pos.x() + 16, pos.y() + 14
     vw = p.device().width() / max(p.device().devicePixelRatioF(), 1) if p.device() else 2000
     vh = p.device().height() / max(p.device().devicePixelRatioF(), 1) if p.device() else 2000
@@ -1055,7 +1076,43 @@ def paint_ground_tooltip(p: QPainter, pos, info, project, cameras):
         p.setPen(THEME.color('ink'))
         for v, cx in ((f'{dens:.1f}', cols[1]), (f'{rng:.2f}', cols[2]), (f'{off:.1f}', cols[3])):
             p.drawText(QRectF(cx - 60, yy2 - 12, 60, 16), Qt.AlignmentFlag.AlignRight, v)
+    if stitched is not None:
+        _paint_stitched_rows(p, x, y + H - 60, W, stitched)
     if rows:
         p.setFont(sans(10))
         p.setPen(THEME.color('muted'))
         p.drawText(QPointF(x + 8, y + H - 6), f'Click selects {rows[0][0].tag} · best density')
+
+
+def _paint_stitched_rows(p: QPainter, x, y, W, stitched):
+    """Ground tooltip, Objects heatmap: how much of the object the stitched view shows here, and by which cameras."""
+    (shown, raw, by), sres, cams = stitched
+    st = sres.settings
+    p.setPen(QPen(THEME.color('strong'), 1))
+    p.drawLine(QPointF(x + 8, y), QPointF(x + W - 8, y))
+    p.setFont(sans(11))
+    if raw < st.threshold:
+        txt, col = f'{st.label}: no camera sees it', QColor(STATUS['critical'])
+    elif shown < st.threshold:
+        txt, col = f'{st.label}: {shown * 100:.0f} % shown · lost', QColor(STATUS['serious'])
+    else:
+        txt, col = f'{st.label}: {shown * 100:.0f} % shown', THEME.color('ink')
+    p.setPen(col)
+    p.drawText(QPointF(x + 8, y + 16), txt)
+    byc = {c.uid: c for c in cams}
+    xx = x + 8
+    p.setFont(mono(11))
+    for uid, f in sorted(by.items(), key=lambda t: -t[1])[:4]:
+        c = byc.get(uid)
+        if c is None:
+            continue
+        end = paint_chip(p, xx, y + 30, c.slot, c.tag, size=7)
+        p.setFont(mono(11))
+        p.setPen(THEME.color('ink'))
+        txt = f'{f * 100:.0f} %'
+        p.drawText(QPointF(end + 5, y + 34), txt)
+        xx = end + 5 + p.fontMetrics().horizontalAdvance(txt) + 12
+    if not by:
+        p.setPen(THEME.color('muted'))
+        p.setFont(sans(10))
+        p.drawText(QPointF(x + 8, y + 34), 'no camera\'s smear lands in its own sector')

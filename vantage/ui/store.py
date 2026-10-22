@@ -10,7 +10,7 @@ from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 from PyQt6.QtGui import QUndoCommand, QUndoStack
 
 from ..core.analysis import Engine
-from ..core.project import Project, Camera, Variant
+from ..core.project import Project, Camera, Variant, mirror_props  # noqa: F401  (re-exported for the UI)
 from ..core import rules
 
 _MERGE_ID = 4242
@@ -190,16 +190,9 @@ class ProjectStore(QObject):
         self.edit('variant', fn, label, merge_key=(uid, tuple(sorted(props))) if merge else None)
 
 
-def mirror_props(src: Camera, dst: Camera, keys):
-    for k in keys:
-        if k == 'y':
-            dst.y = -src.y
-        elif k == 'yaw':
-            dst.yaw = -src.yaw
-        elif k == 'roll':
-            dst.roll = -src.roll
-        elif k in ('x', 'z', 'pitch', 'module_id', 'lens_id', 'standoff_mm', 'bracket', 'snap_normal', 'cable_m', 'sync'):
-            setattr(dst, k, getattr(src, k))
+def _closed(e) -> bool:
+    """A signal emitted from a worker after its Qt object was deleted (the window closed meanwhile)."""
+    return isinstance(e, RuntimeError) and 'has been deleted' in str(e)
 
 
 class AnalysisController(QObject):
@@ -289,13 +282,21 @@ class AnalysisController(QObject):
                                             cell=max(project.analysis.cell_m, 0.05))
                 self.secondary.emit('worst', (gen, w))
         except Exception as e:
-            self.failed.emit(f'{type(e).__name__}: {e}\n{traceback.format_exc()}')
+            if _closed(e):              # the window closed while this run was finishing
+                return
+            try:
+                self.failed.emit(f'{type(e).__name__}: {e}\n{traceback.format_exc()}')
+            except RuntimeError:
+                pass
         finally:
             with self._qlock:
                 self._busy = False
                 again, self._pending = self._pending, False
             if again:
-                self._rerun.emit()
+                try:
+                    self._rerun.emit()
+                except RuntimeError:
+                    pass
 
     def _on_finished(self, res):
         self.result = res

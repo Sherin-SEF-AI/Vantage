@@ -59,11 +59,26 @@ def ask_text(parent, title, lab, default='') -> str | None:
 
 # ------------------------------------------------------------------------------------- preferences
 class PreferencesDialog(VDialog):
-    def __init__(self, ctx, parent=None, settings=None):
-        super().__init__(parent, 'Preferences', '', (620, 470), resizable=False)
+    def __init__(self, ctx, parent=None, settings=None, tab='general'):
+        super().__init__(parent, 'Preferences', '', (660, 520), resizable=False)
         self.ctx = ctx
         self.settings = settings or (ctx.settings if ctx else QSettings('Vantage', 'Vantage'))
-        g = QGridLayout(self.body)
+        from PyQt6.QtWidgets import QTabWidget
+        from ..assistant import AssistantPrefs
+        outer = QVBoxLayout(self.body)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
+        general = QWidget()
+        general.setObjectName('panel')
+        self.tabs.addTab(general, 'General')
+        self.assistant = AssistantPrefs(self.settings)
+        self.assistant.setObjectName('panel')
+        self.tabs.addTab(self.assistant, 'Assistant')
+        if tab == 'assistant':
+            self.tabs.setCurrentWidget(self.assistant)
+        outer.addWidget(self.tabs)
+        g = QGridLayout(general)
         g.setContentsMargins(14, 12, 14, 12)
         g.setVerticalSpacing(6)
         s = self.settings
@@ -131,6 +146,9 @@ class PreferencesDialog(VDialog):
                 w.set_cell(self.cell.currentData())
             if proj.analysis.live != self.live.isChecked():
                 w.actions_by_id['live'].setChecked(self.live.isChecked())
+        self.assistant.apply()
+        if self.ctx is not None and getattr(self.ctx, 'assistant', None) is not None:
+            self.ctx.assistant.reload()
         self.accept()
 
 

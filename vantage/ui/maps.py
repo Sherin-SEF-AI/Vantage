@@ -169,6 +169,35 @@ def bev(result, k=4, alpha=0.30, grid_m=0.5):
     return img
 
 
+def stitched(sres, k=4) -> np.ndarray:
+    """Objects standing in the stitched bird's-eye view (core.stitched_objects): how much of the object the view
+    shows, pale (none) to dark blue (all of it); vanishing at a seam orange, cut off at the view's edge dotted,
+    blind red."""
+    from ..core.stitched_objects import map_rgba
+    rgb = lambda h: tuple(int(v) for v in _rgb(h))
+    return map_rgba(sres, k, SEQ, vanish_rgb=rgb(STATUS['serious']), blind_rgb=rgb(STATUS['critical']))
+
+
+def stitched_zones(sres, k=4) -> np.ndarray:
+    """Over the bird's-eye view's sector tints: where a standing object vanishes at a seam (orange, hatched) or is cut
+    off at the view's edge (dotted)."""
+    H, W = sres.ny * k, sres.nx * k
+    img = np.zeros((H, W, 4), np.float32)
+    van = _up(_flip(sres.vanish), k)
+    cut = _up(_flip(sres.cut), k)
+    jj, ii = np.mgrid[0:H, 0:W]
+    _over(img, _rgb(STATUS['serious']), van * 0.45)
+    _over(img, np.array([250, 250, 250], np.float32), (van & (((ii + jj) % 6) < 2)).astype(np.float32) * 0.9)
+    _over(img, _rgb(THEME.tok['ink']), (cut & (ii % 4 == 1) & (jj % 4 == 1)).astype(np.float32) * 0.7)
+    out = np.clip(img, 0, 255)
+    out[..., 3] = np.clip(img[..., 3] * 255, 0, 255)
+    return out.astype(np.uint8)
+
+
+def stitched_extent(sres):
+    return (sres.x0, sres.y0, sres.x0 + sres.nx * sres.cell, sres.y0 + sres.ny * sres.cell)
+
+
 def targets_redundancy(result, k=4):
     return redundancy(result, k)
 

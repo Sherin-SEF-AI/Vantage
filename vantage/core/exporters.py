@@ -123,6 +123,8 @@ FORMATS: list[ExportFormat] = [
     ExportFormat('mount_sheet_pdf', 'Documents', 'Mount sheet', 'PDF', lambda p, v: 'mount-sheet.pdf', 'binary'),
     ExportFormat('report_html', 'Documents', 'Report', 'HTML', lambda p, v: 'report.html', 'text'),
     ExportFormat('report_pdf', 'Documents', 'Report', 'PDF', lambda p, v: 'report.pdf', 'binary'),
+    ExportFormat('blind_volume', 'Documents', 'Blind volume', 'JSON, OBJ',
+                 lambda p, v: ['blind_volume.json', 'blind_volume.obj'], 'text', multi=True),
     ExportFormat('extrinsics_json', 'Extrinsics', 'Extrinsics', 'JSON', lambda p, v: 'extrinsics.json', 'text'),
     ExportFormat('extrinsics_yaml', 'Extrinsics', 'Extrinsics', 'YAML', lambda p, v: 'extrinsics.yaml', 'text'),
     ExportFormat('extrinsics_csv', 'Extrinsics', 'Extrinsics', 'CSV', lambda p, v: 'extrinsics.csv', 'text'),
@@ -139,6 +141,12 @@ FORMATS: list[ExportFormat] = [
                  'binary', multi=True),
     ExportFormat('bowl_mesh', 'Surround view', '3D surround-view bowl', 'OBJ, NPZ, PNG',
                  lambda p, v: ['bowl/bowl.obj', 'bowl/bowl.mtl', 'bowl/bowl.png', 'bowl/bowl_lut.npz', 'bowl/bowl_lut.json'],
+                 'binary', multi=True),
+    ExportFormat('guidelines', 'Surround view', 'Parking guidelines, per camera', 'JSON, PNG ×N',
+                 lambda p, v: [f'guidelines/{safe_tags(v)[c.uid]}.{e}' for c in _view_cams(v) for e in ('json', 'png')],
+                 'binary', multi=True),
+    ExportFormat('stitched_objects', 'Surround view', 'Objects in the stitched view', 'JSON, PNG',
+                 lambda p, v: ['stitched_objects/stitched_objects.json', 'stitched_objects/stitched_objects.png'],
                  'binary', multi=True),
     ExportFormat('bev_stitcher', 'Surround view', 'Reference stitcher', 'C++, PY',
                  lambda p, v: ['bev_lut/stitcher/bev_stitch.cpp', 'bev_lut/stitcher/CMakeLists.txt',
@@ -1944,11 +1952,31 @@ def _render(fmt_id: str, ctx: _Ctx) -> list:
         return [(f'bev_lut/stitcher/{n}', d) for n, d in runtime_files()]
     if fmt_id == 'bowl_mesh':
         return [(f'bowl/{n}', d) for n, d in _bowl(ctx)]
+    if fmt_id == 'blind_volume':
+        return [(n, t(d)) for n, d in _blind_volume(ctx)]
+    if fmt_id == 'guidelines':
+        return _guidelines(ctx)
+    if fmt_id == 'stitched_objects':
+        return [(f'stitched_objects/{n}', d) for n, d in _stitched(ctx)]
     if fmt_id == 'dxf':
         return [(name(), _dxf(ctx).encode('cp1252', errors='replace'))]
     if fmt_id == 'step':
         return [(name(), t(_step(ctx)))]
     raise ValueError(f'Unknown export format {fmt_id!r}')
+
+
+def _blind_volume(ctx: _Ctx):
+    from . import volume as vol
+    from .analysis import Engine
+    st = vol.VolumeSettings.from_dict(getattr(ctx.project.analysis, 'volume', None))
+    vr = vol.analyse_volume(ctx.project, ctx.opts.engine or Engine(), ctx.result, st.height, st.dz, st.cell or None)
+    if vr is None:                  # no vehicle model yet: say so instead of failing the other formats
+        doc = {'schema': 'vantage.blind_volume/1', 'project': ctx.project.name, 'variant': ctx.variant.name,
+               'note': 'No vehicle model: there is no blind volume to analyse.'}
+        return [('blind_volume.json', json.dumps(doc, indent=1) + '\n'),
+                ('blind_volume.obj', '# Vantage blind volume: no vehicle model\n')]
+    return [('blind_volume.json', json.dumps(vol.to_doc(vr, ctx.project), indent=1) + '\n'),
+            ('blind_volume.obj', vol.to_obj(vr))]
 
 
 def _bowl(ctx: _Ctx):
@@ -1969,6 +1997,107 @@ def _bowl(ctx: _Ctx):
         tex = bowl_core.bowl_texture(bowl_core.bowl_lut(ctx.project, eng, ctx.result, shape, 1024, 320), images)
     ctx.meta['bowl'] = bowl_core.export_files(ctx.project, eng, ctx.result, shape, tex)
     return ctx.meta['bowl']
+
+
+def _json_compact(doc, keys=('pixels', 'ground')) -> str:
+    """Like _json, with the (long) arrays under keys written on one line each."""
+    store = []
+
+    def walk(o):
+        if isinstance(o, dict):
+            out = {}
+            for k, v in o.items():
+                if k in keys and isinstance(v, list):
+                    store.append(json.dumps(v, separators=(',', ':')))
+                    out[k] = f'@@{len(store) - 1}@@'
+                else:
+                    out[k] = walk(v)
+            return out
+        if isinstance(o, list):
+            return [walk(x) for x in o]
+        return o
+    return re.sub(r'"@@(\d+)@@"', lambda m: store[int(m.group(1))], _json(walk(doc)))
+
+
+def _guidelines(ctx: _Ctx):
+    """Per visible camera: the parking-guideline table for the ECU (JSON) and a preview of the current guidelines
+    over the synthetic parking scene (PNG)."""
+    if 'guidelines' in ctx.meta:
+        return ctx.meta['guidelines']
+    from . import guidelines as G
+    from .synth import parking_world
+    eng, st = _guideline_setup(ctx)
+    tags = safe_tags(ctx.variant)
+    world = parking_world(ctx.project)
+    files = []
+    for c in _view_cams(ctx.variant):
+        doc = _guideline_doc(ctx, c, eng, st)
+        files.append((f'guidelines/{tags[c.uid]}.json', _json_compact(doc).encode('utf-8')))
+        files.append((f'guidelines/{tags[c.uid]}.png',
+                      G.preview_png(ctx.project, eng, c, st, list(doc['directions']), world)))
+    ctx.meta['guidelines'] = files
+    return files
+
+
+def _guideline_setup(ctx: _Ctx):
+    from . import guidelines as G
+    from .analysis import Engine
+    return ctx.opts.engine or Engine(), G.GuidelineSettings.from_dict(getattr(ctx.project.analysis, 'guidelines', None))
+
+
+def _guideline_doc(ctx: _Ctx, c: Camera, eng, st) -> dict:
+    from .. import __version__
+    from . import guidelines as G
+    p = ctx.project
+    o = G.vehicle_outline(p)
+    ox, oy = float(ctx.origin[0]), float(ctx.origin[1])
+    table = G.guideline_table(p, eng, c, settings=st, origin=ctx.origin, scale=ctx.scale, dp=ctx.pdp)
+    intr = resolve(p.module_for(c), p.lens_for(c))
+    return {
+        'schema': G.SCHEMA, 'generator': f'Vantage {__version__}', 'created': ctx.stamp,
+        'project': p.name, 'variant': ctx.variant.name,
+        'camera': {'tag': c.tag, 'name': c.name, 'port': c.port, 'sensor_width': intr.width,
+                   'sensor_height': intr.height, 'lens': p.lens_for(c).name, 'unit_calibration': bool(c.calib)},
+        'pixel_coordinates': G.PIXEL_TEXT,
+        'frame': f'{ctx.frame_label}; origin: {ctx.origin_text}; axes: {AXES_TEXT}', 'units': ctx.units,
+        'vehicle': {'wheelbase': ctx.L(o.wheelbase), 'track': ctx.L(o.track), 'width': ctx.L(2 * o.half_width),
+                    'front_bumper_x': ctx.L(o.front_x - ox), 'rear_bumper_x': ctx.L(o.rear_x - ox),
+                    'rear_axle_x': ctx.L(o.rear_axle_x - ox), 'centre_y': ctx.L(o.centre_y - oy)},
+        'steering': {'model': 'kinematic bicycle about the rear axle; turn radius of the rear-axle centre = '
+                              'wheelbase / tan(road wheel angle)',
+                     'positive': 'turning left (counter-clockwise seen from above)',
+                     'road_wheel_angle_max_deg': st.max_deg, 'step_deg': st.step_deg,
+                     'steering_ratio': st.ratio or None},
+        'guidelines': {'distances': [ctx.L(d) for d in st.distances], 'path_length': ctx.L(st.length),
+                       'margin': ctx.L(st.margin_m), 'colors': dict(G.COLORS),
+                       'bands': 'red up to the first distance, yellow up to the second, green beyond',
+                       'kinds': {'static': 'width lines and distance markers straight back or ahead (no steering)',
+                                 'trajectory': 'paths of the bumper corners at this angle',
+                                 'distance': 'markers across the trajectory at the travel distances',
+                                 'swept': 'outline of the ground the whole body (with the mirrors) passes over'}},
+        'directions_note': 'reverse: backing up; forward: driving ahead. Only directions with a guideline visible in '
+                           'this camera are listed; a line\'s pixels are its visible pieces.',
+        **table,
+    }
+
+
+def _stitched(ctx: _Ctx):
+    """stitched_objects.json (map summary, hotspots, seam advice in the export frame and units) and the map PNG."""
+    if 'stitched' in ctx.meta:
+        return ctx.meta['stitched']
+    if ctx.result is None:
+        raise ValueError('The objects-in-the-stitched-view map needs an analysis result.')
+    from . import stitched_objects as so
+    from .analysis import Engine
+    eng = ctx.opts.engine or Engine()
+    sres = so.analyse(ctx.project, eng, ctx.result)
+    doc = so.to_doc(sres, so.advise(ctx.project, eng, ctx.result), L=ctx.L, A=ctx.Ap, origin=ctx.origin)
+    head = {'project': ctx.project.name, 'variant': ctx.variant.name, 'created': ctx.stamp, 'frame': ctx.frame,
+            'units': ctx.units, 'angles': ctx.angles,
+            'azimuth': 'seam azimuths are measured about the body centre, counter-clockwise from +x'}
+    doc = {'schema': doc.pop('schema'), **head, **doc}
+    ctx.meta['stitched'] = [('stitched_objects.json', _json(doc).encode('utf-8')), ('stitched_objects.png', so.png(sres))]
+    return ctx.meta['stitched']
 
 
 def _lut(ctx: _Ctx):
@@ -2055,6 +2184,30 @@ def preview(fmt_id: str, project: Project, result, opts: ExportOptions) -> tuple
         return (f'{base}/bowl/bowl_lut.json', f'{len(files)} files · {meta["vertices"]} vertices, {meta["faces"]} triangles · '
                 f'{len(meta["cameras"])} cameras · {_size_text(total)}\n\n' + dict(files)['bowl/bowl_lut.json'].decode('utf-8'),
                 total)
+    if fmt_id == 'guidelines':
+        cams = _view_cams(ctx.variant)
+        if not cams:
+            return first, 'No visible cameras in this variant.', 0
+        # only the first table: the previews render a parking scene through every camera, too slow to show live
+        eng, st = _guideline_setup(ctx)
+        doc = _guideline_doc(ctx, cams[0], eng, st)
+        data = _json_compact(doc).encode('utf-8')
+        head = {k: v for k, v in doc.items() if k not in ('static', 'directions')}
+        dirs = ', '.join(f'{d} ({len(rows)} steering angles)' for d, rows in doc['directions'].items()) or \
+            'no guideline in view'
+        return (first, f'{2 * len(cams)} files: a table (JSON) and a preview (PNG) per visible camera · {names[0]}: '
+                f'{dirs} · {_size_text(len(data))}\n\n' + _json(head), len(data))
+    if fmt_id == 'stitched_objects':
+        if ctx.result is None:
+            return first, 'Not available: the map needs an analysis result.', 0
+        files = _render(fmt_id, ctx)
+        total = sum(len(d) for _, d in files)
+        doc = json.loads(dict(files)['stitched_objects/stitched_objects.json'])
+        m = doc['metrics']
+        return (f'{base}/stitched_objects/stitched_objects.json',
+                f'{doc["object"]["label"]}: vanishes on {m["vanish_m2"]} m², cut off on {m["cut_m2"]} m², '
+                f'{len(doc["hotspots"])} hotspots · {_size_text(total)}\n\n'
+                + dict(files)['stitched_objects/stitched_objects.json'].decode('utf-8'), total)
     if fmt_id == 'bev_lut':
         if ctx.result is None and ctx.opts.lut is None:
             return first, 'Not available: the remap tables need an analysis result.', 0
@@ -2101,6 +2254,8 @@ def export(fmt_ids, project: Project, result, opts: ExportOptions, progress=None
             _lut(ctx)
         elif fid == 'bowl_mesh':
             _bowl(ctx)
+        elif fid == 'stitched_objects':
+            _stitched(ctx)
     written = []
     for i, fid in enumerate(ids):
         for rel, data in _render(fid, ctx):

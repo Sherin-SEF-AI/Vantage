@@ -13,7 +13,7 @@ from ..core.analysis import surface_frame
 from ..core.lens import resolve
 from ..core.mathutil import rot_zyx
 from ..core.mesh import ROLE_GLASS, ROLE_WHEELS, ROLE_IGNORED
-from . import maps, ops
+from . import guides, maps, ops
 from .theme import THEME, mono, sans, STATUS, SEQ, REDUNDANCY, DIVERGING
 from .scene import paint_ground_tooltip, _qc
 from .widgets import paint_chip
@@ -89,6 +89,10 @@ class PlanView(QWidget):
         self.drag = None
         self.suggestions = []           # [(uid, x, y)]
         self.pinned_marker = None
+        self.show_objects = False       # bird's-eye mode: where standing objects vanish, and their smears
+        self._smears = None             # smears of the pole under the cursor (Objects heatmap)
+        self._obj_img = self._obj_key = None
+        self._hs_smears = (None, [])
         self.setMouseTracking(True)
         self.setMinimumSize(160, 120)
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
@@ -100,6 +104,8 @@ class PlanView(QWidget):
         ctx.analysis.finished.connect(self._on_result)
         ctx.analysis.secondary.connect(self._on_change)
         ctx.overlays_changed.connect(self._on_change)
+        if getattr(ctx, 'stitched', None) is not None:
+            ctx.stitched.ready.connect(self._on_change)
         THEME.changed.connect(self._on_theme)
 
     def _on_change(self, *_):
@@ -187,9 +193,12 @@ class PlanView(QWidget):
         self._car(p)
         if res is not None:
             self._lines(p, res)
+            self._stitched_marks(p, res)
+        guides.paint_plan(self, p)
         self._targets(p)
         self._obstacles(p)
         self._cameras(p, res)
+        guides.paint_plan_hits(self, p)
         if res is not None and self.mode == 'bev':
             self._seam_handles(p, res)
         if self.edit_polygon:
@@ -235,8 +244,24 @@ class PlanView(QWidget):
             return 'redundancy'
         return m
 
+    def _stitched(self):
+        """The objects-in-the-stitched-view result for this view (not for pinned or compared results)."""
+        ctl = getattr(self.ctx, 'stitched', None)
+        return ctl.result if ctl is not None and self.result_fn is None else None
+
     def _map(self, p, res):
         mode = self._map_mode()
+        if mode == 'stitched':
+            sres = self._stitched()
+            if sres is None:
+                return
+            key = ('stitched', id(sres), THEME.name)
+            if key != self._img_key:
+                self._img = maps.to_qimage(maps.stitched(sres, k=2))
+                self._img_key = key
+            x0, y0, x1, y1 = maps.stitched_extent(sres)
+            p.drawImage(QRectF(self.w2s(x0, y1), self.w2s(x1, y0)), self._img)
+            return
         if self.mode == 'delta' and self.delta_fn:
             a, b = self.delta_fn()
             key = ('delta', id(a), id(b), THEME.name)
@@ -462,6 +487,68 @@ class PlanView(QWidget):
         if self.legend and res is not None:
             self._legend(p)
 
+    def _stitched_marks(self, p, res):
+        """Objects heatmap: hotspots and the smears of the pole under the cursor. Bird's-eye with show_objects: where
+        objects vanish over the sector tints, and the smears of a pole at the worst places."""
+        if not (self.mode == 'stitched' or (self.mode == 'bev' and self.show_objects)):
+            return
+        sres = self._stitched()
+        if sres is None:
+            return
+        if self.mode == 'bev':
+            key = (id(sres), THEME.name)
+            if key != self._obj_key:
+                self._obj_img = maps.to_qimage(maps.stitched_zones(sres, k=2))
+                self._obj_key = key
+            x0, y0, x1, y1 = maps.stitched_extent(sres)
+            p.drawImage(QRectF(self.w2s(x0, y1), self.w2s(x1, y0)), self._obj_img)
+        p.setFont(mono(10))
+        for h in sres.hotspots[:8]:
+            q = self.w2s(h.x, h.y)
+            r = max(7.0, math.sqrt(h.area_m2 / math.pi) * self.scale)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(THEME.color('ink'), 1.2))
+            p.drawEllipse(q, r, r)
+            txt = f'{h.area_m2:.2f} m²'
+            tw = p.fontMetrics().horizontalAdvance(txt) + 8
+            box = QRectF(q.x() + r * 0.72, q.y() - r * 0.72 - 15, tw, 14)
+            bg = THEME.color('raised')
+            bg.setAlphaF(0.85)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(bg)
+            p.drawRoundedRect(box, 3, 3)
+            p.setPen(THEME.color('ink'))
+            p.drawText(box, Qt.AlignmentFlag.AlignCenter, txt)
+        if self.mode == 'stitched':
+            self._draw_smears(p, self._smears or [])
+        else:
+            if self._hs_smears[0] != (id(sres), id(res)):
+                from ..core.stitched_objects import smears
+                sm = []
+                for h in sres.hotspots[:3]:
+                    sm += smears(self.project, self.ctx.analysis.engine, res, h.x, h.y)
+                self._hs_smears = ((id(sres), id(res)), sm)
+            self._draw_smears(p, self._hs_smears[1])
+
+    def _draw_smears(self, p, sm):
+        """Each camera draws a pole as a smear away from itself: solid where the stitched view shows that camera
+        there, dashed where the seams hand that ground to another camera (the pole is lost there)."""
+        for d in sm:
+            col = THEME.cam(d['slot'])
+            P, seen, w = d['points'], d['seen'], d['weight']
+            for i in range(len(P) - 1):
+                if not (seen[i] and np.isfinite(P[i]).all() and np.isfinite(P[i + 1]).all()):
+                    continue
+                shown = w[i] >= 0.5
+                c = QColor(col)
+                c.setAlphaF(0.95 if shown else 0.55)
+                p.setPen(QPen(c, 3.0 if shown else 1.4, Qt.PenStyle.SolidLine if shown else Qt.PenStyle.DashLine,
+                              Qt.PenCapStyle.RoundCap))
+                p.drawLine(self.w2s(*P[i]), self.w2s(*P[i + 1]))
+            p.setPen(QPen(THEME.color('viewport'), 1))
+            p.setBrush(col)
+            p.drawEllipse(self.w2s(*d['foot']), 3.2, 3.2)
+
     def _legend(self, p):
         mode = self.mode
         x1 = self.width() - 12
@@ -529,12 +616,69 @@ class PlanView(QWidget):
                 p.drawRect(QRectF(xx, yy, 10, 10))
                 p.setPen(THEME.color('ink2'))
                 p.drawText(QPointF(xx + 14, yy + 9), 'suggested position')
+        elif mode == 'stitched':
+            self._legend_stitched(p, x1, y)
         elif mode == 'delta':
             w = 260
             x0 = x1 - w
             n = len(DIVERGING)
             for i, c in enumerate(DIVERGING):
                 p.fillRect(QRectF(x0 + i * w / n, y + 4, w / n + 0.5, 6), QColor(c))
+
+    def _legend_stitched(self, p, x1, y):
+        sres = self._stitched()
+        w = min(330, self.width() * 0.4)
+        x0 = x1 - w
+        p.setPen(Qt.PenStyle.NoPen)
+        bg = THEME.color('panel')
+        bg.setAlphaF(0.9)
+        p.setBrush(bg)
+        p.drawRoundedRect(QRectF(x0 - 8, y - 4, w + 14, 104), 4, 4)
+        p.setFont(sans(10))
+        p.setPen(THEME.color('ink2'))
+        what = sres.settings.label if sres is not None else 'object'
+        p.drawText(QRectF(x0, y, w, 14), Qt.AlignmentFlag.AlignLeft, f'share of a {what} the stitched view shows')
+        yb = y + 18
+        n = len(SEQ)
+        for i, c in enumerate(SEQ):
+            p.fillRect(QRectF(x0 + i * w / n, yb, w / n + 0.5, 8), QColor(c))
+        p.setFont(mono(10))
+        for v in (0, 25, 50, 75, 100):
+            xx = x0 + v / 100 * w
+            al = Qt.AlignmentFlag.AlignLeft if v == 0 else Qt.AlignmentFlag.AlignRight if v == 100 else Qt.AlignmentFlag.AlignCenter
+            p.drawText(QRectF(xx - (0 if v == 0 else 36 if v == 100 else 18), yb + 10, 36, 12), al, f'{v} %')
+        p.setFont(sans(10))
+        rows = [[('vanish', 'vanishes at a seam'), ('cut', 'cut off: view edge or above the camera')],
+                [('blind', 'no camera sees it'), ('hot', 'hotspot · m²')]]
+        yy = yb + 38
+        for row in rows:
+            xx = x0
+            for kind, txt in row:
+                r = QRectF(xx, yy - 9, 14, 10)
+                if kind == 'blind':
+                    p.fillRect(r, QBrush(QColor(STATUS['critical']), Qt.BrushStyle.BDiagPattern))
+                elif kind == 'vanish':
+                    p.fillRect(r, QColor(STATUS['serious']))
+                    p.fillRect(r, QBrush(QColor('#fafafa'), Qt.BrushStyle.BDiagPattern))
+                elif kind == 'cut':
+                    p.fillRect(r, QColor(SEQ[2]))
+                    p.fillRect(r, QBrush(QColor('#181816'), Qt.BrushStyle.Dense6Pattern))
+                else:
+                    p.setPen(QPen(THEME.color('ink'), 1.2))
+                    p.setBrush(Qt.BrushStyle.NoBrush)
+                    p.drawEllipse(r.center(), 5, 5)
+                p.setPen(THEME.color('ink2'))
+                p.drawText(QPointF(xx + 19, yy), txt)
+                xx += 19 + p.fontMetrics().horizontalAdvance(txt) + 14
+            yy += 16
+        p.setPen(THEME.color('ink2') if sres is not None else THEME.color('muted'))
+        if sres is not None:
+            m = sres.metrics
+            txt = f'vanishes on {m["vanish_m2"]:.2f} m² · cut off on {m["cut_m2"]:.2f} m² · {m["shown_mean"] * 100:.0f} % shown on average'
+        else:
+            ctl = getattr(self.ctx, 'stitched', None)
+            txt = ctl.status if ctl is not None and ctl.status else 'computing…'
+        p.drawText(QPointF(x0, yy + 2), txt)
 
     # ------------------------------------------------------------------ interaction
     def _pick_camera(self, pos, r=9):
@@ -702,6 +846,14 @@ class PlanView(QWidget):
                     o = W2O @ dv
                     rows.append((cam, dens, float(np.linalg.norm(dv)), math.degrees(math.atan2(math.hypot(o[0], o[1]), o[2]))))
                 info = dict(q, point=(w[0], w[1]), extra=rows, pos=pos)
+        self._smears = None
+        if info is not None and self.mode == 'stitched':
+            sres = self._stitched()
+            at = sres.at(w[0], w[1]) if sres is not None else None
+            if at is not None:
+                info['stitched'] = (at, sres, self.cameras())
+                from ..core.stitched_objects import smears
+                self._smears = smears(self.project, self.ctx.analysis.engine, res, w[0], w[1])
         had = self.hover is not None
         self.hover = info
         if info or had:
