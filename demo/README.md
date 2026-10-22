@@ -25,3 +25,17 @@ taken from a real run of `run_vantage.py --install-check`.
 
 Time-lapses (the tolerance study, the optimiser, the installation check) are marked on screen with the measured
 speed-up.
+
+## Website clips
+
+`clips.py` records the short silent clips on the website (`site/media`): the real application driven offscreen, one
+window per clip, its 3D views drawn by the shader renderer through a headless EGL context. The sample's reference
+photos are never shown. The assistant clip talks to `tests/fake_groq.py`, so its model replies are scripted (the
+website says so); the lookups, the optimisation and the proposal are computed live.
+
+```bash
+python3 demo/clips.py build/clips                      # every clip: <name>.mp4 (web, H.264) and <name>.jpg (poster)
+python3 demo/clips.py build/clips --clips hero,bowl    # some of them
+cp build/clips/*.mp4 site/media/                       # then pick the posters (see the site's media folder)
+```
+

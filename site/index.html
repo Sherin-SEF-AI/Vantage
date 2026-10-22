@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vantage · Surround-view camera planner</title>
+<meta name="description" content="Vantage is a desktop app for planning 360° surround-view camera rigs on vehicles: place cameras on the body, see exactly what every lens sees, prove coverage, density and robustness, and deliver calibration, remap tables and parking guidelines to the vehicle's computer.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Vantage · Surround-view camera planner">
+<meta property="og:description" content="Plan 360° camera rigs with exact lens models and body occlusion, live coverage, robustness studies, an installation check and an AI design assistant.">
+<meta property="og:image" content="https://sherin-sef-ai.github.io/Vantage/media/hero.jpg">
+<meta property="og:url" content="https://sherin-sef-ai.github.io/Vantage/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#0f0f0e">
+<link rel="icon" type="image/png" href="assets/img/favicon.png">
+<link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+<link rel="stylesheet" href="assets/css/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<nav class="nav" aria-label="Main">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="assets/img/logo.png" alt="" width="26" height="26">Vantage</a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="nav-links">Menu</button>
+    <div class="nav-links" id="nav-links">
+      <a href="#features">Features</a>
+      <a href="#studies">Studies</a>
+      <a href="#assistant">Assistant</a>
+      <a href="#export">Export</a>
+      <a href="docs.html">Docs</a>
+      <a href="#download">Download</a>
+      <a href="https://github.com/Sherin-SEF-AI/Vantage">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<main id="main">
+<!-- ============================================================ hero -->
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">Surround-view camera planner</div>
+    <h1>Plan 360° camera rigs with evidence, not guesswork.</h1>
+    <p class="lede">Vantage is a desktop app for automotive camera engineers. Import the vehicle, place the cameras on its
+      body, and see exactly what every lens sees: blind ground, pixel density, stitch seams, mounting tolerance. Then
+      hand calibration files, bird's-eye remap tables and parking guidelines to the vehicle's computer, and check the
+      cameras as built.</p>
+    <div class="cta">
+      <a class="btn primary" href="#download"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>Download</a>
+      <a class="btn" href="docs.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5"/></svg>Read the docs</a>
+      <a class="btn" href="https://github.com/Sherin-SEF-AI/Vantage"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.68 0-1.25.45-2.28 1.19-3.08-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.8 1.19 1.83 1.19 3.08 0 4.41-2.69 5.39-5.25 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5z"/></svg>Source on GitHub</a>
+    </div>
+    <div class="hero-media">
+      <div class="frame">
+        <video muted loop playsinline autoplay preload="auto" poster="media/hero.jpg" aria-label="The sample vehicle orbiting, each camera's view painted on the body and the ground">
+          <source src="media/hero.mp4" type="video/mp4">
+        </video>
+        <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+        <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        <span class="chip">Camera light · six fisheye cameras · shader renderer</span>
+      </div>
+      <p class="caption">Every colour on the car and the ground is what one camera sees through its real lens model, with
+        the body hiding what it hides. Recorded in Vantage.</p>
+    </div>
+    <div class="facts">
+      <div class="fact"><b>Exact optics</b><span>Lens models, sensor edges and body occlusion per camera</span></div>
+      <div class="fact"><b>Live</b><span>Coverage and density re-analysed while you drag a camera</span></div>
+      <div class="fact"><b>20 export formats</b><span>Calibration, ROS 2, remap tables, guidelines, CAD</span></div>
+      <div class="fact"><b>Desktop</b><span>Linux, Windows and macOS, or <code>pip install</code></span></div>
+    </div>
+  </div>
+</header>
+
+<!-- ============================================================ workflow -->
+<section class="alt" id="workflow">
+  <div class="wrap">
+    <div class="head">
+      <div class="eyebrow">From CAD to car</div>
+      <h2>One tool for the whole camera job.</h2>
+      <p>Vantage covers the work from the first sketch to the end-of-line check, so the numbers you plan with are
+        the numbers you verify against.</p>
+    </div>
+    <div class="steps">
+      <div class="step"><h3>Import the vehicle</h3><p>glTF, OBJ, STL, PLY, FBX or STEP. A wizard sorts out units, axes,
+        wheels, glass and the zones where cameras may go.</p></div>
+      <div class="step"><h3>Place the cameras</h3><p>Snap modules from the library onto the body, mirror them in pairs,
+        aim them at the ground, and watch coverage update as you go.</p></div>
+      <div class="step"><h3>Prove the design</h3><p>Blind ground, pixel density, seams, tolerance, load cases, the 3D
+        blind volume and what the stitched view does to people.</p></div>
+      <div class="step"><h3>Deliver and verify</h3><p>Export calibration and remap tables, then check every installed
+        camera from one image and apply the measured poses.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ features -->
+<section id="features">
+  <div class="wrap">
+    <div class="head">
+      <div class="eyebrow">Features</div>
+      <h2>See what every camera sees, before anything is drilled.</h2>
+      <p>All videos on this page were recorded from the application itself, running the bundled Tata Tigor EV sample
+        with six fisheye cameras.</p>
+    </div>
+
+    <article class="feature" id="coverage">
+      <div class="text">
+        <div class="eyebrow">Analysis</div>
+        <h3>Live coverage, density and redundancy</h3>
+        <p>The ground around the vehicle is evaluated cell by cell for every camera: inside the lens's field of view,
+          inside the image frame, not hidden by the body. The result updates while you work.</p>
+        <ul>
+          <li><b>Blind ground</b>, coverage and redundancy on a 5, 2 or 1 cm grid inside an ROI drawn around the body or as a polygon.</li>
+          <li><b>Pixel density</b> of the best camera at every point, in px/cm, against your minimum and target.</li>
+          <li><b>Per camera:</b> what it sees, what only it sees, and what goes blind if it fails or is mounted badly.</li>
+          <li>An <b>Issues</b> list that checks cable lengths, GMSL ports and link budget, mounting zones and edge clearance.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/coverage.jpg" aria-label="Switching heatmaps from coverage to density and redundancy">
+            <source src="media/coverage.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature flip" id="placement">
+      <div class="text">
+        <div class="eyebrow">Placement</div>
+        <h3>Place cameras on the body, not in a spreadsheet</h3>
+        <p>Cameras snap to the vehicle's surface with their housing standoff, and left/right pairs stay mirrored. Every
+          field takes expressions and units, so <code>1880/2 mm</code> means what it says.</p>
+        <ul>
+          <li>Place on the surface (<kbd>C</kbd>), mirrored pairs with <kbd>Alt</kbd>-click, move (<kbd>G</kbd>) and rotate (<kbd>R</kbd>) gizmos, aim at a ground point.</li>
+          <li>A library of camera modules and lenses: rectilinear, fisheye models and measured Kannala–Brandt, with a datasheet field-of-view check.</li>
+          <li>An editable camera table with paste from Excel, coordinate frames from the rear axle, front axle or bumper, in m or mm.</li>
+          <li>Undo for everything, including scrubbing a value with the mouse as one step.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/placement.jpg" aria-label="Changing the mirror camera's pitch while the density map follows">
+            <source src="media/placement.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature" id="camlight">
+      <div class="text">
+        <div class="eyebrow">3D view</div>
+        <h3>Camera light: each lens's view, painted on the car</h3>
+        <p>Turn on <b>Camera light</b> (<kbd>Alt</kbd>+<kbd>3</kbd>) and every camera lights up what it can see on the body
+          and the ground, through its own lens model and around the body that occludes it. Overlaps show where two
+          cameras meet.</p>
+        <ul>
+          <li>A GPU shader renderer with shadows, contact shadow and smooth shading; it falls back to plain OpenGL and then to a software renderer.</li>
+          <li>Frustums, footprints, occlusion rays, seams and dimensions as overlays.</li>
+          <li><b>Render image</b> at up to four times the view size and <b>turntable videos</b> for reviews.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/camlight.jpg" aria-label="Camera light turned on while the front camera turns">
+            <source src="media/camlight.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature flip" id="surround">
+      <div class="text">
+        <div class="eyebrow">Surround view</div>
+        <h3>The in-car display, before the car exists</h3>
+        <p>Vantage renders a synthetic parking scene through every camera's real lens, stitches the images into the
+          bird's-eye view and projects them onto a 3D bowl around the car, exactly as a surround-view ECU would.</p>
+        <ul>
+          <li>Seams you can drag, exposure balancing and multi-band blending; the bowl's floor, wall, reach and profile are tunable.</li>
+          <li><b>Remap tables</b> per camera for the bird's-eye view, with a dependency-free C++17 and a Python reference stitcher that match Vantage to within a grey level.</li>
+          <li>Export the bowl as OBJ and texture with per-vertex remap tables for a 3D renderer on the ECU.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/bowl.jpg" aria-label="Orbiting the 3D surround-view bowl with the parking scene projected onto it">
+            <source src="media/bowl.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature" id="guidelines">
+      <div class="text">
+        <div class="eyebrow">Parking guidelines</div>
+        <h3>Trajectory lines and the swept path, through every lens</h3>
+        <p>A kinematic model of the vehicle turns the steering angle into the lines a production display draws:
+          distance markers, the bumper corners' trajectory in red, yellow and green, and the ground the whole body,
+          mirrors included, passes over.</p>
+        <ul>
+          <li>Drawn through each camera's real lens: they curve with the fisheye and disappear behind the body.</li>
+          <li>On the camera images, the bird's-eye view, the bowl and the 3D view; obstacles in the swept path are flagged with the distance to contact.</li>
+          <li>Exported per camera for the ECU: pixel polylines for every steering angle from lock to lock.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/guidelines.jpg" aria-label="Moving the steering slider; the guidelines bend in every camera image">
+            <source src="media/guidelines.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature flip" id="stitched">
+      <div class="text">
+        <div class="eyebrow">Stitched view</div>
+        <h3>Where people vanish at the seams</h3>
+        <p>A bird's-eye view assumes everything lies on the ground, so a standing person is smeared away from each
+          camera. Near a seam both smears can land in the other camera's sector, and the person disappears from the
+          display even though both raw images show them.</p>
+        <ul>
+          <li>A pole, a 0.9 m child or a 1.8 m adult is stood on every point and followed through the same seams and blending as the remap tables.</li>
+          <li>The map separates <b>vanishes at a seam</b> from <b>cut off</b> by the view's edge, marks hotspots and shows the smears under the cursor.</li>
+          <li><b>Suggest seams</b> searches each seam ±15° for angles that hide less, without losing ground density; <b>Apply</b> is one undo step.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/stitched.jpg" aria-label="The Objects heatmap with vanishing zones, then seam suggestions">
+            <source src="media/stitched.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature" id="volume">
+      <div class="text">
+        <div class="eyebrow">3D analysis</div>
+        <h3>The blind volume: where something can stand unseen</h3>
+        <p>Ground coverage is not the whole story. Vantage samples the space around the car level by level and shows,
+          in 3D, every pocket no camera sees, and how close to the body a pole, a child or an adult can stand without
+          being detected.</p>
+        <ul>
+          <li>Blind volume, the height up to which the ground is covered, and the undetected area for each object height.</li>
+          <li>A polar chart of how far from the body something can hide in every direction.</li>
+          <li>A height slider over a plan slice, and the blind space cut away in 3D at that height.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/volume.jpg" aria-label="Sweeping the height slider through the 3D blind volume">
+            <source src="media/volume.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+  </div>
+</section>
+
+<!-- ============================================================ studies -->
+<section class="alt" id="studies">
+  <div class="wrap">
+    <div class="head">
+      <div class="eyebrow">Robustness</div>
+      <h2>Designs that survive the real world.</h2>
+      <p>A camera is never mounted exactly where it was drawn, and a loaded car sits lower. These studies tell you how
+        much that matters, and which camera to worry about.</p>
+    </div>
+    <article class="feature" style="padding-top:0">
+      <div class="text">
+        <h3>Tolerance, optimiser, load cases, variants</h3>
+        <ul>
+          <li><b>Monte Carlo tolerance study</b> with a sensitivity tornado and the worst cases pinned for inspection.</li>
+          <li><b>Placement optimiser:</b> an evolutionary search scored under tolerance, with a Pareto front.</li>
+          <li><b>Load cases:</b> axle drops become body pitch and drop; for each case the blind area, density, the ground shift of the stitched image and the ghosting at the seams.</li>
+          <li><b>Variants</b> side by side with a difference map and a table of every figure.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/tolerance.jpg" aria-label="Running a Monte Carlo tolerance study">
+            <source src="media/tolerance.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+          <span class="chip">Time-lapse ×2</span>
+        </div>
+      </div>
+    </article>
+    <div class="tiles">
+      <figure>
+        <div class="frame natural"><img src="media/compare.jpg" alt="Four layout variants compared: maps, a difference map and a table" loading="lazy" width="1600" height="900"></div>
+        <figcaption>Variants compared: blind ground, redundancy, density and the worst single-camera error.</figcaption>
+      </figure>
+      <figure>
+        <div class="frame natural"><img src="media/loadcases.jpg" alt="The load cases table with ground shift and seam ghosting per case" loading="lazy" width="1020" height="520"></div>
+        <figcaption>Load cases: how far the stitched image moves and ghosts when the car is loaded.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ calibration -->
+<section id="calibration">
+  <div class="wrap">
+    <article class="feature flip" style="border-top:0;padding-top:0">
+      <div class="text">
+        <div class="eyebrow">End of line</div>
+        <h3>Check every installed camera from one image</h3>
+        <p>Lay the planned checkerboards on the floor and take one image per camera: from a file, a live stream
+          (V4L2, GStreamer, RTSP) or a synthetic capture with a simulated mounting error.</p>
+        <ul>
+          <li>Boards are found in rectified patches cut out of the fisheye image with the exact lens model, and the pose is solved per camera.</li>
+          <li>A <b>joint solve</b> refines all cameras together with each board's placement, so neighbouring cameras agree at the seams.</li>
+          <li>Per camera: Δx Δy Δz, Δyaw Δpitch Δroll and a verdict against your tolerance; the measured poses become an <b>as-built</b> variant.</li>
+          <li><b>Unit lens calibration</b> from 10–20 board views (cv::fisheye), or import calibrations from OpenCV, ROS camera_info, Kalibr or JSON.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/install.jpg" aria-label="An installation check recovering simulated mounting errors">
+            <source src="media/install.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+          <span class="chip">Time-lapse ×3 while solving</span>
+        </div>
+      </div>
+    </article>
+  </div>
+</section>
+
+<!-- ============================================================ assistant -->
+<section class="alt" id="assistant">
+  <div class="wrap">
+    <div class="head">
+      <div class="eyebrow">AI assistant</div>
+      <h2>Ask the design questions. Get answers from the analysis.</h2>
+      <p>The assistant runs on a model hosted on Groq with your own API key. It reads the design only through Vantage's
+        own tools, so every number in an answer comes from the analysis, and it can only propose changes.</p>
+    </div>
+    <article class="feature" style="padding-top:0">
+      <div class="text">
+        <h3>From a question to a measured proposal</h3>
+        <ul>
+          <li><b>Answers with reasons:</b> why ground is blind (field of view, image frame, body occlusion), which camera matters most, what the studies show.</li>
+          <li><b>Agent mode:</b> give it a goal; it plans a checklist, runs studies, searches camera poses, and proposes the best change with its effect.</li>
+          <li><b>Proposals</b> show the change and the predicted effect; apply them as one undo step or as a new variant, and the card shows the measured result.</li>
+          <li><b>A project brief</b> with your requirements goes with every question; slash commands such as <code>/optimise QR</code> and <code>/compare</code>.</li>
+        </ul>
+        <p class="note">Only camera poses, lens and module names and analysis figures are sent to Groq, never the vehicle
+          model, images or files; every lookup is listed with what it sent. In this recording the model's replies were
+          scripted; the lookups, the optimisation and the proposal were computed live by Vantage.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/assistant.jpg" aria-label="Agent mode: a plan, an optimisation, a proposal applied and measured">
+            <source src="media/assistant.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+  </div>
+</section>
+
+<!-- ============================================================ export -->
+<section id="export">
+  <div class="wrap">
+    <div class="head">
+      <div class="eyebrow">Export</div>
+      <h2>Hand the design to the people and machines that need it.</h2>
+      <p>Twenty formats, each with a live preview. Units, angles and the coordinate frame are chosen per export, and
+        every file says which convention it uses.</p>
+    </div>
+    <div class="grid3">
+      <div class="card"><h4>Documents</h4><ul><li><span>Mount sheet</span><span>PDF</span></li><li><span>Design report</span><span>HTML, PDF</span></li><li><span>Blind volume</span><span>JSON, OBJ</span></li></ul></div>
+      <div class="card"><h4>Extrinsics</h4><ul><li><span>Camera poses</span><span>JSON</span></li><li><span>Camera poses</span><span>YAML</span></li><li><span>Camera poses</span><span>CSV</span></li></ul></div>
+      <div class="card"><h4>Calibration and robotics</h4><ul><li><span>OpenCV fisheye calibration</span><span>YAML ×N</span></li><li><span>ROS 2 URDF + static TF</span><span>URDF, PY</span></li><li><span>Jetson camera config</span><span>JSON</span></li></ul></div>
+      <div class="card"><h4>Surround view</h4><ul><li><span>Bird's-eye remap tables</span><span>NPZ, BIN</span></li><li><span>3D surround-view bowl</span><span>OBJ, NPZ, PNG</span></li><li><span>Parking guidelines</span><span>JSON, PNG ×N</span></li><li><span>Objects in the stitched view</span><span>JSON, PNG</span></li><li><span>Reference stitcher</span><span>C++, PY</span></li></ul></div>
+      <div class="card"><h4>Images</h4><ul><li><span>Viewport</span><span>PNG</span></li><li><span>Bird's-eye view</span><span>PNG</span></li><li><span>All camera views</span><span>PNG ×N</span></li></ul></div>
+      <div class="card"><h4>Mount points</h4><ul><li><span>For CAD</span><span>DXF</span></li><li><span>For CAD</span><span>STEP</span></li></ul></div>
+    </div>
+    <div class="tiles">
+      <figure>
+        <div class="frame natural"><img src="media/export.jpg" alt="The export dialog with a live preview of the bird's-eye remap table header" loading="lazy" width="1210" height="820"></div>
+        <figcaption>The export dialog previews each file before it is written.</figcaption>
+      </figure>
+      <figure id="batch">
+        <div class="term" role="img" aria-label="Batch mode commands in a terminal">
+          <div class="bar"><i></i><i></i><i></i></div>
+<pre><span class="c"># the same engine without a window, for CI and the factory</span>
+<span class="p">$</span> vantage tigor.vantage --analyse report.json
+analysed 6-cam · v3: 6 cameras in 0.4 s
+wrote report.json
+<span class="c"># exit code 2: a critical issue (0.010 m² of blind ground)</span>
+<span class="p">$</span> vantage tigor.vantage --install-check captures/ \
+      --report check.json --as-built built.vantage
+analysed 6-cam · v3: 6 cameras in 0.4 s
+wrote check.json
+saved built.vantage with variant 6-cam · v3 · as-built
+<span class="p">$</span> jq -r '.cameras[] | "\(.tag) \(.status) \(.rotation_error_deg)°"' check.json
+<span class="g">F good 0.107°</span>
+<span class="g">R good 0.013°</span>
+<span class="g">ML good 0.075°</span>
+<span class="g">MR good 0.047°</span>
+<span class="g">QL good 0.146°</span>
+<span class="w">QR warning 1.438°</span></pre>
+        </div>
+        <figcaption>A real batch run on the sample. The captures were synthetic, rendered with a 1.5° yaw and 9 mm height error on QR; the check found 1.44°.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ download -->
+<section class="alt" id="download">
+  <div class="wrap">
+    <div class="head">
+      <div class="eyebrow">Download</div>
+      <h2>Install Vantage.</h2>
+      <p>Bundles that need no Python are built by the repository's <em>Build installers</em> workflow and attached to a
+        <a href="https://github.com/Sherin-SEF-AI/Vantage/releases">release</a> whenever a version is tagged. Until the
+        first version is tagged, install from source with Python 3.10 or later, or
+        <a href="docs.html#install">build a bundle</a> for your machine.</p>
+    </div>
+    <div class="dl">
+      <div class="card"><span class="os">Linux</span><h4>Bundle, no Python</h4>
+<pre>tar xf Vantage-*-linux-x86_64.tar.gz
+cd Vantage-*-linux-x86_64
+./install.sh
+vantage --self-test</pre><p>Installs for your user with a menu entry and the <code>.vantage</code> file type.</p></div>
+      <div class="card"><span class="os">Windows</span><h4>Installer</h4>
+<pre>Vantage-&lt;version&gt;-windows-x64-setup.exe</pre><p>Per-user install without administrator rights, a Start menu entry, and <code>vantage-cli.exe</code> for batch mode.</p></div>
+      <div class="card"><span class="os">macOS</span><h4>App</h4>
+<pre>unzip Vantage-*-macos-arm64.zip
+mv Vantage.app /Applications</pre><p>Not signed yet: the first time, right-click the app and choose Open.</p></div>
+      <div class="card"><span class="os">Python</span><h4>From source</h4>
+<pre>git clone https://github.com/Sherin-SEF-AI/Vantage
+cd Vantage
+python3 -m pip install .
+vantage --sample</pre><p>Add <code>[step]</code> for STEP import and <code>[keyring]</code> to keep the assistant's key in the system keyring.</p></div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <a class="brand" href="./"><img src="assets/img/logo.png" alt="" width="22" height="22">Vantage</a>
+      <p class="fine">The videos were recorded from the application, driven by a script, with its OpenGL renderer. The
+        sample vehicle and camera names (Tata Tigor EV, e-con Systems STURDeCAM31) describe the bundled sample project
+        and belong to their owners; no affiliation is implied.</p>
+    </div>
+    <div class="links">
+      <a href="docs.html">Documentation</a>
+      <a href="docs.html#batch">Batch mode</a>
+      <a href="docs.html#assistant">Assistant and privacy</a>
+      <a href="https://github.com/Sherin-SEF-AI/Vantage">GitHub</a>
+      <a href="https://github.com/Sherin-SEF-AI/Vantage/issues">Report an issue</a>
+    </div>
+  </div>
+</footer>
+<script src="assets/js/site.js"></script>
+</body>
+</html>

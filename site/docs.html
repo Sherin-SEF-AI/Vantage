@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Documentation · Vantage</title>
+<meta name="description" content="How to use Vantage: installing, conventions, placing cameras, the analysis and studies, surround view, parking guidelines, calibration, the AI assistant, export formats and batch mode.">
+<meta property="og:title" content="Vantage documentation">
+<meta property="og:image" content="https://sherin-sef-ai.github.io/Vantage/media/hero.jpg">
+<meta name="theme-color" content="#0f0f0e">
+<link rel="icon" type="image/png" href="assets/img/favicon.png">
+<link rel="stylesheet" href="assets/css/site.css">
+</head>
+<body>
+<a class="skip" href="#doc">Skip to content</a>
+<nav class="nav" aria-label="Main">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="assets/img/logo.png" alt="" width="26" height="26">Vantage</a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="nav-links">Menu</button>
+    <div class="nav-links" id="nav-links">
+      <a href="./#features">Features</a>
+      <a href="./#assistant">Assistant</a>
+      <a href="docs.html" aria-current="page">Docs</a>
+      <a href="./#download">Download</a>
+      <a href="https://github.com/Sherin-SEF-AI/Vantage">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<div class="docs">
+  <aside class="toc" aria-label="On this page">
+    <p>Start</p>
+    <a href="#install">Install</a>
+    <a href="#first-run">First run</a>
+    <a href="#interface">The window</a>
+    <a href="#conventions">Conventions</a>
+    <p>Design</p>
+    <a href="#import">Importing a vehicle</a>
+    <a href="#placement">Placing cameras</a>
+    <a href="#analysis">Coverage analysis</a>
+    <a href="#overlays">Heatmaps and overlays</a>
+    <a href="#issues">Issues and rules</a>
+    <p>Studies</p>
+    <a href="#tolerance">Tolerance and optimiser</a>
+    <a href="#loadcases">Load cases</a>
+    <a href="#variants">Variants</a>
+    <a href="#volume">3D blind volume</a>
+    <a href="#stitched">Objects in the stitched view</a>
+    <p>Surround view</p>
+    <a href="#birdseye">Bird's-eye view and remap tables</a>
+    <a href="#bowl">3D surround-view bowl</a>
+    <a href="#guidelines">Parking guidelines</a>
+    <p>Calibration</p>
+    <a href="#lens">Unit lens calibration</a>
+    <a href="#install-check">Installation check</a>
+    <p>Assistant</p>
+    <a href="#assistant">Setting up</a>
+    <a href="#assistant-use">Asking and proposals</a>
+    <a href="#agent">Agent mode</a>
+    <a href="#privacy">What is sent</a>
+    <p>Reference</p>
+    <a href="#formats">Export formats</a>
+    <a href="#batch">Batch mode</a>
+    <a href="#shortcuts">Keyboard shortcuts</a>
+    <a href="#troubleshooting">Troubleshooting</a>
+  </aside>
+
+  <main class="doc" id="doc">
+    <div class="eyebrow">Documentation</div>
+    <h1>Using Vantage</h1>
+    <p class="intro">Vantage plans surround-view camera rigs: where the cameras go on the vehicle, what each one sees,
+      how well the system covers the ground and the space around the car, and how robust that is. This guide walks
+      through the workflow and documents every study, export and command-line option.</p>
+
+    <!-- ======================================================== start -->
+    <h2 id="install">Install</h2>
+    <p><b>From source</b>, with Python 3.10 or later:</p>
+<pre><code>git clone https://github.com/Sherin-SEF-AI/Vantage
+cd Vantage
+python3 -m pip install .            # add [step] for STEP import, [keyring] for the assistant's key
+vantage                             # the window; vantage-gui on Windows starts it without a console</code></pre>
+    <p><b>Bundles that need no Python</b> (Linux <code>.tar.gz</code>, a Windows installer, a macOS app) are built by
+      the repository's <em>Build installers</em> workflow and attached to a GitHub release whenever a version is
+      tagged. Until the first version is tagged, install from source or build a bundle for your machine:</p>
+<pre><code>python3 -m pip install -r requirements.txt pyinstaller
+python3 packaging/build.py --smoke    # dist/: the bundle and its archive (and the installer on Windows)</code></pre>
+    <p>On Linux, <code>./install.sh</code> in the extracted bundle installs it for your user, with a menu entry and the
+      <code>.vantage</code> file type; <code>uninstall.sh</code> removes it again.</p>
+    <p>Check an installation at any time with <code>vantage --self-test</code>: it runs the analysis, OpenCV, the fonts,
+      the OpenGL renderer and the main window without showing a window, and exits with 1 if something the app needs
+      is missing.</p>
+
+    <h2 id="first-run">First run</h2>
+    <p>The start window lists recent projects and templates. The <b>Tata Tigor EV</b> sample has a measured body, six
+      fisheye cameras and four layout variants; the templates (sedan, hatchback, SUV, van, truck) are generated bodies
+      with a starting layout. You can also start from the command line:</p>
+<pre><code>vantage --sample                   # the sample project
+vantage --template suv             # a template
+vantage car.glb                    # import a model
+vantage project.vantage            # open a project</code></pre>
+    <p>A project is a single <code>.vantage</code> file holding the vehicle, its variants, the analysis settings and
+      a thumbnail. Everything you change can be undone (<kbd>Ctrl</kbd>+<kbd>Z</kbd>); the History tab lists the steps.</p>
+
+    <h2 id="interface">The window</h2>
+    <p>The main page has one, two or four views (3D, top, looking through a camera, stitched bird's-eye) with docks
+      around them:</p>
+    <ul>
+      <li><b>Outliner</b>: the vehicle, cameras, compute, calibration targets, analysis and obstacles.</li>
+      <li><b>Library</b>: camera modules and lenses; drag one onto the body to place it.</li>
+      <li><b>Inspector</b>: the selected object's properties. Every number field accepts expressions and units and can be scrubbed with the mouse.</li>
+      <li><b>Camera view</b>: the simulated fisheye image of the selected camera.</li>
+      <li><b>Analysis panels</b>: Coverage, Cameras, Tolerance, Issues, History and Log.</li>
+      <li><b>Assistant</b> (<kbd>Ctrl</kbd>+<kbd>J</kbd>): the AI design assistant.</li>
+    </ul>
+    <p>Other pages open from the menus: Camera views (all camera images, the bird's-eye view and the bowl), Tolerance
+      study, Optimiser, Compare variants, Target planner, Installation check and Blind volume. The command palette
+      (<kbd>Ctrl</kbd>+<kbd>K</kbd>) finds any command by name.</p>
+    <figure><div class="frame natural"><img src="media/window.jpg" alt="The main window with the outliner, the 3D view, the inspector and the analysis panels" loading="lazy" width="1600" height="900"></div>
+      <figcaption>The main window with the sample project.</figcaption></figure>
+
+    <h2 id="conventions">Conventions</h2>
+    <table>
+      <tr><th>Item</th><th>Convention</th></tr>
+      <tr><td>Vehicle frame</td><td>ISO 8855: x forward, y left, z up. The origin is the centre of the rear axle on the ground. Exports can use the rear axle, front axle, front bumper, ground centre or a custom origin.</td></tr>
+      <tr><td>Camera orientation</td><td>Intrinsic Z-Y-X yaw, pitch, roll in degrees. Yaw is positive to the left, pitch positive pointing down, roll about the optical axis.</td></tr>
+      <tr><td>Units</td><td>Metres inside the app; m or mm for display and per export. Angles in degrees, or radians in exports.</td></tr>
+      <tr><td>Pixel density</td><td>√(radial × tangential sampling) / range, in px/cm: the square root of the pixels a square centimetre facing the camera covers, including a calibrated fy/fx aspect.</td></tr>
+      <tr><td>Pixel coordinates</td><td>Exported and imported intrinsics use OpenCV's convention (pixel centres on integers: the centre of a 1920-wide sensor is cx = 959.5). Remap tables and guideline tables use sensor coordinates with pixel centres at i + 0.5, as their headers say.</td></tr>
+    </table>
+
+    <!-- ======================================================== design -->
+    <h2 id="import">Importing a vehicle</h2>
+    <p><b>File ▸ Import ▸ Vehicle model</b> (<kbd>Ctrl</kbd>+<kbd>I</kbd>) reads <code>.glb</code>, <code>.gltf</code>,
+      <code>.obj</code>, <code>.stl</code>, <code>.ply</code>, <code>.fbx</code> (binary and ASCII) and <code>.step</code>
+      (with the optional gmsh package). The wizard then asks for:</p>
+    <ul>
+      <li><b>Units</b>, guessed from the bounding box, and the <b>up and forward axes</b>, with mirroring; inside-out meshes are flipped automatically.</li>
+      <li><b>Wheel centres</b>, found from wheel parts or picked on the mesh, which set the ground plane and the origin.</li>
+      <li>A <b>spec check</b> against datasheet dimensions, the occluder simplification, glass (from materials and transparency) and <b>mount zones</b> painted with a brush: where cameras may and may not go.</li>
+    </ul>
+
+    <h2 id="placement">Placing cameras</h2>
+    <ul>
+      <li><b>Place on surface</b> (<kbd>C</kbd>): click the body; <kbd>Alt</kbd>-click places a mirrored left/right pair. Cameras sit on the surface with their housing standoff.</li>
+      <li><b>Move</b> (<kbd>G</kbd>) and <b>Rotate</b> (<kbd>R</kbd>) gizmos; dragging along the body keeps the camera on the surface.</li>
+      <li><b>Aim at a ground point</b>: Camera ▸ Aim ▸ At ground point, then click in the 3D or top view.</li>
+      <li><b>Linked pairs</b> mirror every change to the partner; a <b>locked</b> camera (<kbd>Ctrl</kbd>+<kbd>L</kbd>) never moves.</li>
+      <li>The <b>camera table</b> (Cameras tab) is editable and accepts a paste from a spreadsheet.</li>
+      <li>Fields accept expressions and units: <code>1880/2 mm</code>, <code>0.62 + 0.05</code>, <code>12°</code>.</li>
+    </ul>
+    <p>Camera modules and lenses come from the library: rectilinear, equidistant, equisolid, stereographic and measured
+      Kannala–Brandt projections, with a live r(θ) plot, the image circle on the sensor and a check of the datasheet
+      field of view against the model. Import modules from JSON, CSV or OpenCV YAML.</p>
+
+    <h2 id="analysis">Coverage analysis</h2>
+    <p>The ground inside the <b>ROI</b> (a true offset around the body, or a polygon) is sampled on a 5, 2 or 1 cm grid.
+      For every cell and camera, Vantage checks the lens's field of view, the sensor frame and occlusion by the body
+      (exact, from a cube depth map per camera), and computes the pixel density. With <b>Live analysis</b> on, it
+      re-runs as you edit.</p>
+    <table>
+      <tr><th>Figure</th><th>Meaning</th></tr>
+      <tr><td>Blind in ROI</td><td>Ground no camera sees, m².</td></tr>
+      <tr><td>Covered</td><td>Share of the ROI seen by at least one camera.</td></tr>
+      <tr><td>Seen by ≥ 2 cameras</td><td>Redundancy: the share seen by two or more.</td></tr>
+      <tr><td>Minimum density</td><td>The lowest best-camera pixel density anywhere in the ROI, px/cm, against your minimum and target.</td></tr>
+      <tr><td>In focus</td><td>Share of the ROI inside the best camera's focus range.</td></tr>
+      <tr><td>Worst single-camera error</td><td>The blind area when any one camera is off by the tolerance (default 5° or 10 cm).</td></tr>
+      <tr><td>Per camera</td><td>Area seen, seen only by this camera, best-camera area, and what goes blind or below the minimum density if it is removed.</td></tr>
+    </table>
+    <p>Analysis ▸ Obstacles evaluates at a height instead of on the ground (0.5 m and 1.0 m poles, a 0.9 m child),
+      and obstacle poles placed in the project report which cameras see them.</p>
+
+    <h2 id="overlays">Heatmaps and overlays</h2>
+    <p><b>View ▸ Overlays ▸ Heatmap</b> colours the ground by <b>Coverage</b> (which camera is best), <b>Density</b>,
+      <b>Redundancy</b> or <b>Objects</b> (how much of a standing object the stitched view shows). The overlays:</p>
+    <table>
+      <tr><th>Overlay</th><th>Shortcut</th><th>Shows</th></tr>
+      <tr><td>Frustums</td><td><kbd>Alt</kbd>+<kbd>1</kbd></td><td>Each camera's viewing volume.</td></tr>
+      <tr><td>Footprints</td><td><kbd>Alt</kbd>+<kbd>2</kbd></td><td>Each camera's visible ground outline.</td></tr>
+      <tr><td>Camera light</td><td><kbd>Alt</kbd>+<kbd>3</kbd></td><td>What every camera sees, painted on the body and the ground through its real lens and around the body.</td></tr>
+      <tr><td>Occlusion rays</td><td><kbd>Alt</kbd>+<kbd>4</kbd></td><td>Rays from a camera stopped by the body.</td></tr>
+      <tr><td>Seams</td><td><kbd>Alt</kbd>+<kbd>5</kbd></td><td>The bird's-eye stitch seams.</td></tr>
+      <tr><td>ROI</td><td><kbd>Alt</kbd>+<kbd>6</kbd></td><td>The region of interest.</td></tr>
+      <tr><td>Calibration targets</td><td><kbd>Alt</kbd>+<kbd>7</kbd></td><td>The floor boards for calibration.</td></tr>
+      <tr><td>Dimensions</td><td><kbd>Alt</kbd>+<kbd>8</kbd></td><td>Vehicle and camera dimensions.</td></tr>
+      <tr><td>Grid</td><td><kbd>Alt</kbd>+<kbd>9</kbd></td><td>The ground grid.</td></tr>
+      <tr><td>Shadows and lighting</td><td><kbd>Alt</kbd>+<kbd>0</kbd></td><td>The shader renderer's shadows and lighting.</td></tr>
+      <tr><td>Parking guidelines</td><td><kbd>Alt</kbd>+<kbd>G</kbd></td><td>Trajectory lines and the swept path on the ground.</td></tr>
+      <tr><td>Blind volume</td><td></td><td>The 3D blind space, cut away at the blind-volume page's height.</td></tr>
+    </table>
+    <p><b>View ▸ Render image</b> (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>) saves the 3D view at up to four
+      times its size; <b>Turntable video</b> records an orbit (MP4 with ffmpeg, otherwise PNG frames).</p>
+
+    <h2 id="issues">Issues and rules</h2>
+    <p>The Issues tab lists what needs attention, by severity: blind ground, cable routed length against the module's
+      cable, GMSL port conflicts, the GMSL2 link and deserializer CSI-2 budget (editable link rate, bit depth and
+      overhead in the Compute inspector), cameras off the body or in forbidden zones, edge clearance, density below
+      the minimum, and objects vanishing at stitch seams. <b>Show</b> frames the problem; <b>Ask</b> sends it to the
+      assistant.</p>
+
+    <!-- ======================================================== studies -->
+    <h2 id="tolerance">Tolerance study and optimiser</h2>
+    <p><b>Analysis ▸ Tolerance study</b> perturbs every camera at random within your tolerances (yaw, pitch, roll,
+      position; uniform or normal) and reports the distribution of blind area, minimum density and seam movement, a
+      sensitivity tornado (which parameter of which camera matters most), and the worst cases, which you can pin and
+      preview.</p>
+    <p>The <b>Optimiser</b> runs an evolutionary search over the camera poses, scored under tolerance, and shows the
+      Pareto front of coverage against robustness; apply a result as a new variant.</p>
+
+    <h2 id="loadcases">Load cases</h2>
+    <p><b>Analysis ▸ Load cases</b> takes axle drops from kerb weight per case (static suspension deflection) and turns
+      them into body pitch and drop. For each case it reports the blind area and density, the <b>ground shift</b>
+      (how far the kerb-calibrated stitched image moves a ground point) and the <b>seam ghost</b> (how far the two
+      cameras at a seam disagree). The preset drops are examples: enter the vehicle's suspension data.</p>
+    <figure><div class="frame natural"><img src="media/loadcases.jpg" alt="The load cases dialog" loading="lazy" width="1020" height="520"></div></figure>
+
+    <h2 id="variants">Variants</h2>
+    <p>A project holds several layout variants. The variant menu switches, duplicates and renames them; <b>Compare</b>
+      shows them side by side with a difference map of best-camera density and a table of every figure.</p>
+
+    <h2 id="volume">3D blind volume</h2>
+    <p><b>Analysis ▸ Blind volume</b> samples the columns above the ROI level by level (default 5 cm steps up to 2 m)
+      with the same visibility test as the ground analysis, and reports:</p>
+    <ul>
+      <li>the blind volume and its share of the space, the ground blind area, and the height up to which the ground is covered;</li>
+      <li>for objects standing around the car (0.5 m pole, 0.9 m child, 1.8 m adult) the area where no camera sees any part of them, and how far from the body they can stand;</li>
+      <li>a polar chart of how far from the body something can hide per direction, a height slider over a plan slice, and the blind space in 3D, cut away at the slider's height.</li>
+    </ul>
+    <p>Export: the blind surface as OBJ and the figures as JSON (<code>vantage.blind_volume/1</code>); batch mode
+      <code>--blind-volume</code>.</p>
+
+    <h2 id="stitched">Objects in the stitched view</h2>
+    <p>The bird's-eye view projects every pixel onto the ground, so each camera draws a standing object as a smear away
+      from itself. Vantage stands a pole (0.5 m pole, 0.9 m child, 1.8 m adult or any height, 0.3 m across) on every
+      ROI cell and follows it through the same ownership and blending as the remap tables:</p>
+    <ul>
+      <li><b>Vanishes at a seam</b>: a camera sees it, but the seams hand its smear to cameras that do not. Moving seams can fix this.</li>
+      <li><b>Cut off</b>: its smear leaves the view or it is taller than the camera. Moving seams cannot fix this.</li>
+      <li><b>Not seen</b>: no camera sees it at all.</li>
+    </ul>
+    <p>Choose the <b>Objects</b> heatmap to see the map with hotspots; hover a point to see each camera's smear. In
+      Camera views ▸ Stitch seams, <b>Suggest seams</b> searches each seam ±15° for angles where the object vanishes on
+      less ground without leaving more ground below the minimum density, and <b>Apply</b> moves them as one undo step.</p>
+
+    <!-- ======================================================== surround -->
+    <h2 id="birdseye">Bird's-eye view and remap tables</h2>
+    <p>The stitched bird's-eye view uses the analysis seams for ownership with a linear blend; holes fall back to the
+      best-density camera and the body is masked. Drag a seam's handle to move it. Exposure balancing (per camera and
+      channel, from the shared ground) and multi-band blending are available for the stitched images.</p>
+    <p>The <b>Bird's-eye remap tables</b> export holds, per camera, float32 sensor x/y for every output pixel and a uint8
+      blend weight, a body mask, a JSON header describing the layout and a plain-text manifest. The <b>Reference
+      stitcher</b> export adds a dependency-free C++17 program and a numpy + OpenCV Python program (stills or live
+      V4L2/GStreamer/RTSP, CUDA remap on a Jetson) that reproduce Vantage's stitch to within a grey level.</p>
+
+    <h2 id="bowl">3D surround-view bowl</h2>
+    <p>Camera views ▸ bowl shows what an in-car display shows: camera images projected through each lens onto a bowl
+      around the car (flat floor, curved wall; floor, wall height, reach, profile and squareness are saved with the
+      project), with the seams, balancing and blending of the bird's-eye view. The images come from a synthetic parking
+      scene rendered through every camera, from the installation check's captures, or just the camera sectors. Export
+      the bowl as OBJ with its texture and per-vertex remap tables (sensor pixel and weight per camera).</p>
+    <div class="frame"><video muted loop playsinline preload="none" poster="media/bowl.jpg" aria-label="The 3D surround-view bowl"><source src="media/bowl.mp4" type="video/mp4"></video>
+      <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button></div>
+
+    <h2 id="guidelines">Parking guidelines</h2>
+    <p>The steering bar on the Camera views page (and View ▸ Overlays ▸ Parking guidelines) draws what a surround-view
+      display shows while parking, from a kinematic bicycle model of the vehicle: wheelbase and track from the wheel
+      centres, width without the mirrors from the mesh.</p>
+    <ul>
+      <li><b>Static</b> width lines and distance markers; the <b>trajectory</b> of the bumper corners at the steering angle with red, yellow and green bands; the <b>swept path</b> of the whole body with its mirrors.</li>
+      <li>Reverse or forward. The slider steers (left of centre steers left), shows the road-wheel and steering-wheel angle and the turning radius, and makes one undo step per drag.</li>
+      <li>Drawn through each lens (fisheye curvature, image circle, body occlusion, unit calibrations); obstacles in the swept path are flagged with the travel to contact.</li>
+      <li>Export per camera: a JSON table of pixel polylines for every steering angle from full lock to full lock, the ground polylines in the export frame, and a preview over the parking scene.</li>
+    </ul>
+
+    <!-- ======================================================== calibration -->
+    <h2 id="lens">Unit lens calibration</h2>
+    <p><b>Calibrate ▸ Lens calibration</b> (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd>) gives a camera its own
+      intrinsics instead of the library lens: 10–20 views of a hand-held checkerboard (files, a live stream, or a
+      synthetic set) fitted as cv::fisheye (fx, fy, cx, cy, k1–k4). Boards the fisheye distorts too much are found in
+      rectified views; poor views are dropped. It shows per-view RMS, corner coverage with advice, and how far the
+      library lens would put a ray on this unit. Calibrations made elsewhere (OpenCV YAML/XML, ROS camera_info, Kalibr
+      camchain, JSON) are imported and matched to cameras by name, topic, file name or serial. A unit calibration
+      replaces the library lens everywhere, and every export says so.</p>
+
+    <h2 id="install-check">Installation check</h2>
+    <p><b>Calibrate ▸ Installation check</b> (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd>) checks the installed cameras
+      from one image each: a file, a live stream (V4L2 device, GStreamer pipeline, RTSP/HTTP URL) or a synthetic capture
+      with an optional simulated mounting error.</p>
+    <ul>
+      <li>The floor boards are cut out of each fisheye image as rectified pinhole patches, the corners found with OpenCV, and the pose solved by PnP on the bearing rays; boards that disagree are dropped.</li>
+      <li>The <b>joint solve</b> refines all cameras with each board's placement (x, y, yaw under a placement prior), so cameras that share a board agree at the seams even if the boards were laid a centimetre off.</li>
+      <li>Per camera: boards, corners, RMS, Δx Δy Δz, Δyaw Δpitch Δroll and a verdict (OK, adjust, re-mount) against the tolerance. The stitched view is shown with the planned and the measured poses.</li>
+      <li>Save the report, the stitched PNG and remap tables for the measured poses, or apply them as an <b>as-built</b> variant.</li>
+    </ul>
+
+    <!-- ======================================================== assistant -->
+    <h2 id="assistant">Assistant: setting up</h2>
+    <p>The assistant is a chat about the open design with a model hosted on <a href="https://groq.com">Groq</a>, using
+      your own API key. It is off until you set it up:</p>
+    <ol>
+      <li>Create a key at <a href="https://console.groq.com/keys">console.groq.com/keys</a>.</li>
+      <li>Open <b>Preferences ▸ Assistant</b> (<kbd>Ctrl</kbd>+<kbd>,</kbd>), tick <b>Use the assistant</b>, paste the key and press <b>Test</b>: Vantage checks the key and loads the chat models it may use.</li>
+      <li>Pick a model (GPT-OSS 120B by default) and a reasoning effort, then <b>Apply</b>.</li>
+    </ol>
+    <p>The key is kept in the system keyring when the optional <code>keyring</code> package and a keyring service are
+      available, otherwise in a private file in your settings folder that only you can read; never in projects. The
+      <code>GROQ_API_KEY</code> environment variable takes precedence.</p>
+
+    <h3 id="assistant-use">Asking and proposals</h3>
+    <p>Open the panel with <kbd>Ctrl</kbd>+<kbd>J</kbd>. The model reads the design only through Vantage's tools, so
+      every number comes from the analysis. Each lookup is listed in the answer; click it to see what the model asked
+      for and what was sent back.</p>
+    <table>
+      <tr><th>Tool</th><th>What it does</th></tr>
+      <tr><td>Overview, coverage, issues, camera details, seams</td><td>Read the design and the analysis figures.</td></tr>
+      <tr><td>Check what sees a point</td><td>For a point, which cameras see it and why not (field of view, image frame, body occlusion), with density and range.</td></tr>
+      <tr><td>Find blind regions</td><td>Blind and low-density regions with where they are and why each camera misses them.</td></tr>
+      <tr><td>Run a study</td><td>Blind volume, objects in the stitched view (with seam advice), load cases, mounting tolerance.</td></tr>
+      <tr><td>Compare variants</td><td>The figures of every variant side by side.</td></tr>
+      <tr><td>Optimise a camera</td><td>Searches one camera's pose within ranges for the least blind ground, best minimum density or most redundancy, optionally keeping a minimum density; says when the gain is not worth it.</td></tr>
+      <tr><td>Simulate / propose a change</td><td>Camera poses, lenses, seam angles or thresholds, analysed on a copy; a proposal shows the predicted effect.</td></tr>
+      <tr><td>Show in Vantage</td><td>Selects cameras, frames a ground point, switches heatmaps and overlays, opens pages. Never changes the design.</td></tr>
+    </table>
+    <p>The assistant can only <b>propose</b> design changes. A proposal card lists the changes (mirrored partners
+      included) and the predicted effect; <b>Apply</b> makes one undo step, <b>As new variant</b> applies it to a copy
+      and switches to it, <b>Discard</b> drops it. After applying, the card shows the measured result next to the
+      prediction.</p>
+    <p>The <b>project brief</b> (the Brief button, or <code>/brief</code>) holds your requirements and constraints; it
+      is saved with the project and sent with every question. Type <code>/</code> for commands:</p>
+    <table>
+      <tr><th>Command</th><th>Does</th></tr>
+      <tr><td><code>/goal …</code></td><td>Work towards a goal on its own (agent mode for this message).</td></tr>
+      <tr><td><code>/optimise QR</code></td><td>Search a camera's pose and propose it if worth it.</td></tr>
+      <tr><td><code>/compare</code></td><td>Compare all variants and recommend one.</td></tr>
+      <tr><td><code>/study load_cases</code></td><td>Run a study and explain it.</td></tr>
+      <tr><td><code>/show …</code></td><td>Show something in the app.</td></tr>
+      <tr><td><code>/review</code>, <code>/issues</code></td><td>A design review; explain the issues.</td></tr>
+      <tr><td><code>/brief</code>, <code>/new</code></td><td>Edit the project brief; start a new conversation.</td></tr>
+    </table>
+
+    <h3 id="agent">Agent mode</h3>
+    <p>Switch on <b>Agent</b> in the composer (or use <code>/goal</code>) and describe a goal, such as “no blind ground,
+      at least 4 px/cm everywhere”. The assistant writes a plan as a checklist that updates as it works, reads the
+      figures, runs the studies it needs, searches camera poses and checks each option, then proposes the best change
+      and reports what it tried. It has a larger budget than a question (30 rounds of tool calls, 4 minutes); when the
+      budget runs out it writes up what it has. <kbd>Esc</kbd> stops it at any time.</p>
+
+    <h3 id="privacy">What is sent</h3>
+    <div class="callout"><p>With each question, Vantage sends Groq the question, a short context line (project and
+      variant names, the open page, the selected cameras), your project brief, and the results of the lookups the
+      model asks for: camera poses, lens and module names and analysis figures. The vehicle model, images, captures
+      and files are never sent. Groq processes them under its own terms. Answers can be wrong: check a proposal's
+      predicted effect before applying it.</p></div>
+
+    <!-- ======================================================== reference -->
+    <h2 id="formats">Export formats</h2>
+    <p><b>Export ▸ Export</b> (<kbd>Ctrl</kbd>+<kbd>E</kbd>) previews every file before writing it. The frame, units
+      and angles are chosen per export.</p>
+    <table>
+      <tr><th>Group</th><th>Format</th><th>Files</th><th>Id (batch mode)</th></tr>
+      <tr><td>Documents</td><td>Mount sheet</td><td>PDF</td><td><code>mount_sheet_pdf</code></td></tr>
+      <tr><td></td><td>Report</td><td>HTML</td><td><code>report_html</code></td></tr>
+      <tr><td></td><td>Report</td><td>PDF</td><td><code>report_pdf</code></td></tr>
+      <tr><td></td><td>Blind volume</td><td>JSON, OBJ</td><td><code>blind_volume</code></td></tr>
+      <tr><td>Extrinsics</td><td>Camera poses</td><td>JSON</td><td><code>extrinsics_json</code></td></tr>
+      <tr><td></td><td>Camera poses</td><td>YAML</td><td><code>extrinsics_yaml</code></td></tr>
+      <tr><td></td><td>Camera poses</td><td>CSV</td><td><code>extrinsics_csv</code></td></tr>
+      <tr><td>Calibration and robotics</td><td>OpenCV calibration, per camera</td><td>YAML ×N</td><td><code>opencv_yaml</code></td></tr>
+      <tr><td></td><td>ROS 2 URDF + static TF</td><td>URDF, PY</td><td><code>ros2</code></td></tr>
+      <tr><td></td><td>Jetson camera config</td><td>JSON</td><td><code>jetson_json</code></td></tr>
+      <tr><td>Surround view</td><td>Bird's-eye remap tables</td><td>NPZ, BIN</td><td><code>bev_lut</code></td></tr>
+      <tr><td></td><td>3D surround-view bowl</td><td>OBJ, NPZ, PNG</td><td><code>bowl_mesh</code></td></tr>
+      <tr><td></td><td>Parking guidelines, per camera</td><td>JSON, PNG ×N</td><td><code>guidelines</code></td></tr>
+      <tr><td></td><td>Objects in the stitched view</td><td>JSON, PNG</td><td><code>stitched_objects</code></td></tr>
+      <tr><td></td><td>Reference stitcher</td><td>C++, PY</td><td><code>bev_stitcher</code></td></tr>
+      <tr><td>Images</td><td>Viewport</td><td>PNG</td><td><code>viewport_png</code></td></tr>
+      <tr><td></td><td>Bird's-eye view</td><td>PNG</td><td><code>bev_png</code></td></tr>
+      <tr><td></td><td>All camera views</td><td>PNG ×N</td><td><code>camera_views_png</code></td></tr>
+      <tr><td>Mount points</td><td>For CAD</td><td>DXF</td><td><code>dxf</code></td></tr>
+      <tr><td></td><td>For CAD</td><td>STEP</td><td><code>step</code></td></tr>
+    </table>
+
+    <h2 id="batch">Batch mode</h2>
+    <p>Everything below runs without a window, for CI pipelines and the end of the production line. Use
+      <code>vantage</code> (or <code>vantage-cli</code> in a bundle, <code>python3 run_vantage.py</code> from a
+      checkout).</p>
+<pre><code>vantage project.vantage --analyse report.json        # metrics, seams, issues, link budget, targets, stitched objects
+vantage project.vantage --load-cases -               # load cases as JSON on stdout
+vantage project.vantage --blind-volume volume.json   # 3D blind volume, unseen objects, reach rose
+vantage project.vantage --export out/ --formats extrinsics_json,opencv_yaml,bev_lut,guidelines
+vantage project.vantage --install-check captures/ --report check.json \
+        --lut-out out/bev_lut --as-built built.vantage
+vantage project.vantage --calibrate-lens views/ --camera F --board 9x6 --square 60 \
+        --serial SN1234 --calib-out F.yaml --save calibrated.vantage
+vantage project.vantage --import-calib camchain.yaml F.yaml --save calibrated.vantage</code></pre>
+    <table>
+      <tr><th>Option</th><th>Meaning</th></tr>
+      <tr><td><code>--variant NAME|N</code></td><td>Variant by name or 1-based index (default: the active one).</td></tr>
+      <tr><td><code>--frame</code></td><td>Export frame: <code>rear_axle</code>, <code>front_axle</code>, <code>front_bumper</code>, <code>ground_centre</code>, <code>custom</code>.</td></tr>
+      <tr><td><code>--units m|mm</code>, <code>--angles deg|rad</code></td><td>Export conventions.</td></tr>
+      <tr><td><code>--formats</code></td><td>Comma-separated format ids (default: every non-image format).</td></tr>
+      <tr><td><code>--pos-tol</code>, <code>--ang-tol</code></td><td>Installation tolerances, mm and degrees (default 10 and 1).</td></tr>
+      <tr><td><code>--min-boards</code></td><td>Boards a camera must see (default 1).</td></tr>
+      <tr><td><code>--no-joint</code>, <code>--board-tol MM</code></td><td>Solve each camera alone; how far a board may lie off its place (default 20).</td></tr>
+      <tr><td><code>--no-balance</code>, <code>--blend linear|multiband</code></td><td>Stitched PNG options.</td></tr>
+    </table>
+    <p>Captures are matched to cameras by the tag in the file name (<code>F.png</code>, <code>cam_QR.jpg</code>,
+      <code>ML-capture.tif</code>); imported calibrations by camera name or ROS topic in the file, the file name, or the
+      serial number.</p>
+    <table>
+      <tr><th>Exit code</th><th>Meaning</th></tr>
+      <tr><td><code>0</code></td><td>Fine.</td></tr>
+      <tr><td><code>2</code></td><td>The plan has critical issues (with <code>--analyse</code> or <code>--export</code>).</td></tr>
+      <tr><td><code>3</code></td><td>A camera has to be re-mounted or could not be checked.</td></tr>
+      <tr><td><code>4</code></td><td>A lens calibration failed, or an imported calibration matched no camera or did not fit it.</td></tr>
+    </table>
+    <p>When several apply, the highest is returned.</p>
+
+    <h2 id="shortcuts">Keyboard shortcuts</h2>
+    <table>
+      <tr><th>Keys</th><th>Command</th><th>Keys</th><th>Command</th></tr>
+      <tr><td><kbd>V</kbd></td><td>Select</td><td><kbd>Ctrl</kbd>+<kbd>K</kbd></td><td>Command palette</td></tr>
+      <tr><td><kbd>C</kbd></td><td>Place camera on surface</td><td><kbd>Ctrl</kbd>+<kbd>J</kbd></td><td>Assistant</td></tr>
+      <tr><td><kbd>G</kbd> / <kbd>R</kbd></td><td>Move / rotate</td><td><kbd>Ctrl</kbd>+<kbd>E</kbd></td><td>Export</td></tr>
+      <tr><td><kbd>M</kbd></td><td>Measure</td><td><kbd>Ctrl</kbd>+<kbd>I</kbd></td><td>Import a vehicle model</td></tr>
+      <tr><td><kbd>F</kbd> / <kbd>Home</kbd></td><td>Frame selection / frame all</td><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd></td><td>Camera views, bird's-eye, bowl</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>0</kbd></td><td>Look through the camera</td><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd></td><td>Installation check</td></tr>
+      <tr><td><kbd>H</kbd> / <kbd>Alt</kbd>+<kbd>H</kbd></td><td>Hide / show all</td><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd></td><td>Lens calibration</td></tr>
+      <tr><td><kbd>/</kbd></td><td>Isolate</td><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd></td><td>Render image</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>M</kbd></td><td>Mirror to the other side</td><td><kbd>F5</kbd></td><td>Run the analysis now</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>L</kbd></td><td>Lock transform</td><td><kbd>Ctrl</kbd>+<kbd>Space</kbd></td><td>Maximise the view</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>D</kbd></td><td>Duplicate</td><td><kbd>?</kbd></td><td>All shortcuts</td></tr>
+    </table>
+
+    <h2 id="troubleshooting">Troubleshooting</h2>
+    <ul>
+      <li><b>Check the installation:</b> <code>vantage --self-test</code> prints one line per check.</li>
+      <li><b>The 3D view looks flat or fails:</b> the shader renderer falls back to fixed-function OpenGL and then to a software renderer by itself; <code>--software-3d</code> forces the software renderer.</li>
+      <li><b>The assistant says the key was not accepted:</b> check it in Preferences ▸ Assistant with <b>Test</b>; a <code>GROQ_API_KEY</code> environment variable overrides a saved key.</li>
+      <li><b>Report a problem:</b> <a href="https://github.com/Sherin-SEF-AI/Vantage/issues">open an issue</a> with the steps and, if you can, the project file.</li>
+    </ul>
+  </main>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div><a class="brand" href="./"><img src="assets/img/logo.png" alt="" width="22" height="22">Vantage</a></div>
+    <div class="links">
+      <a href="./">Home</a>
+      <a href="./#download">Download</a>
+      <a href="https://github.com/Sherin-SEF-AI/Vantage">GitHub</a>
+    </div>
+  </div>
+</footer>
+<script src="assets/js/site.js"></script>
+</body>
+</html>

@@ -12,6 +12,8 @@ exports/
 demo/out/
 demo/build/
 *.mp4
+# ... except the website's demo clips
+!site/media/*.mp4
 
 # third-party sample data (not redistributable): the Tigor studio photo spin
 data/
