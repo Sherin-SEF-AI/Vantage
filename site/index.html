@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Vantage · Sensor rig planner for autonomous-driving data collection</title>
-<meta name="description" content="Vantage is a desktop app for designing the sensor rigs of autonomous-driving data-collection vehicles: place the cameras on the vehicle, prove in simulation what they will record before any hardware is fitted, then calibrate the real cameras from their live streams and hand the calibration to the data pipeline.">
+<meta name="description" content="Vantage is a desktop app for designing the sensor rigs of autonomous-driving data-collection vehicles: place the cameras, lidars and radars on the vehicle, prove in simulation what they will record before any hardware is fitted, then calibrate the real cameras from their live streams and hand the calibration to the data pipeline.">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Vantage · Sensor rig planner for autonomous-driving data collection">
-<meta property="og:description" content="Design data-collection camera rigs with exact lens models and occlusion, simulate what they will record before fitting the hardware, and calibrate the real cameras from their live streams.">
+<meta property="og:description" content="Design data-collection rigs of cameras, lidars and radars with exact lens models and occlusion, simulate what they will record before fitting the hardware, and calibrate the real cameras from their live streams.">
 <meta property="og:image" content="https://sherin-sef-ai.github.io/Vantage/media/hero.jpg">
 <meta property="og:url" content="https://sherin-sef-ai.github.io/Vantage/">
 <meta name="twitter:card" content="summary_large_image">
@@ -25,6 +25,7 @@
     <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="nav-links">Menu</button>
     <div class="nav-links" id="nav-links">
       <a href="#features">Features</a>
+      <a href="#multisensor">Lidar &amp; radar</a>
       <a href="#studies">Studies</a>
       <a href="#calibration">Calibrate</a>
       <a href="#assistant">Assistant</a>
@@ -42,10 +43,11 @@
   <div class="wrap">
     <div class="eyebrow">Sensor rig planner · autonomous-driving data collection</div>
     <h1>Design <span class="nowrap">data-collection</span> rigs that record what your models need.</h1>
-    <p class="lede">Vantage designs the camera rigs of the vehicles that record training data for self-driving models.
-      Place the cameras on the vehicle and prove in simulation what the rig will record, before any hardware is fitted:
-      what every lens sees, where the body blocks it, how many pixels land on the road, where cameras overlap. Then
-      calibrate the real cameras from their live streams and hand the calibration to your data pipeline.</p>
+    <p class="lede">Vantage designs the sensor rigs of the vehicles that record training data for self-driving models.
+      Place the cameras, lidars and radars on the vehicle and prove in simulation what the rig will record, before any
+      hardware is fitted: what every lens sees, where the body blocks it, how many pixels land on the road, what each
+      lidar and radar reaches, and whether the recorder keeps up. Then calibrate the real cameras from their live
+      streams and hand the calibration to your data pipeline.</p>
     <div class="cta">
       <a class="btn primary" href="#download"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>Download</a>
       <a class="btn" href="docs.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5"/></svg>Read the docs</a>
@@ -84,10 +86,11 @@
     <div class="steps">
       <div class="step"><h3>Import the vehicle</h3><p>glTF, OBJ, STL, PLY, FBX or STEP. A wizard sorts out units, axes,
         wheels, glass and the zones where cameras may go.</p></div>
-      <div class="step"><h3>Place the cameras</h3><p>Snap camera modules from the library onto the body, mirror them in
-        pairs, aim them, and watch what the rig sees update as you go.</p></div>
+      <div class="step"><h3>Place the sensors</h3><p>Snap camera modules from the library onto the body, mirror them in
+        pairs and aim them; add lidars and radars; watch what the rig sees update as you go.</p></div>
       <div class="step"><h3>Simulate the recording</h3><p>Simulated camera images, coverage, pixel density, overlaps,
-        the 3D blind volume, mounting tolerance and load cases, before anything is bought or drilled.</p></div>
+        the 3D blind volume, lidar and radar reach, trigger timing and the data budget, before anything is bought or
+        drilled.</p></div>
       <div class="step"><h3>Fit, calibrate, verify</h3><p>Calibrate each camera from its live stream, check every
         installed camera against the plan, watch the streams' health, and export the calibration in your dataset's
         format.</p></div>
@@ -239,6 +242,110 @@
         <div class="frame">
           <video muted loop playsinline preload="none" poster="media/rig.jpg" aria-label="Adding a roof rack and a sensor mast, then a roof camera on the mast with camera light">
             <source src="media/rig.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
+    <div class="head" style="margin:72px 0 8px" id="multisensor">
+      <div class="eyebrow">Lidar, radar and the recorder</div>
+      <h2>The whole rig, not just its cameras.</h2>
+      <p>A collection vehicle carries lidars and radars next to its cameras, and a recorder that has to keep up with all
+        of them. Vantage places them on the same model, shows what they reach and what the vehicle blocks, times the
+        cameras to the lidar's sweep and adds up the data before anything is bought.</p>
+    </div>
+
+    <article class="feature" id="sensors">
+      <div class="text">
+        <div class="eyebrow">Lidars and radars</div>
+        <h3>Lidars and radars on the rig</h3>
+        <p>Add a lidar or a radar from the Vehicle menu. A lidar goes on the mast head or the roof, a radar in the front
+          bumper; move them in the inspector or drag them in the top view. The 3D view draws where each lidar channel
+          meets the ground and each radar's field.</p>
+        <ul>
+          <li>Ouster OS1-128, Hesai OT128, AT128 and XT32, Velodyne VLP-16, Livox Mid-360, and typical long-range, imaging and corner radars. Figures are nominal datasheet values, each with its source; edit them to match your unit.</li>
+          <li>Import the measured beam angles from an Ouster metadata file, a Hesai angle-correction CSV or a Velodyne calibration.</li>
+          <li>The Issues list flags a lidar inside the body and a radar set deeper than a bumper fascia.</li>
+          <li>Every sensor frame goes into the URDF and TF launch file, the extrinsics, the nuScenes tables and KITTI, including the lidar-to-camera file KITTI tools expect.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/sensors.jpg" aria-label="Adding a sensor mast, a roof lidar and five radars, then their ground rings and fields from above">
+            <source src="media/sensors.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature flip" id="sensorcoverage">
+      <div class="text">
+        <div class="eyebrow">Lidar and radar coverage</div>
+        <h3>How many kinds of sensor see each object</h3>
+        <p>For every direction and object class, how far the cameras, the lidars and the radars detect it, against the
+          range your dataset needs. A sector two or more of them cover is redundant, one is single, none is a gap.</p>
+        <ul>
+          <li>Lidar points counted on each object from the real beam elevations, around the body and the rig; radar ranges scaled by each object's cross-section.</li>
+          <li>What the vehicle blocks: on the sample, 35 % of a lidar sitting on the roof hits the roof, and its nearest ground point is 8.5 m or more from the body. Raised 0.6 m, it loses none.</li>
+          <li>How much of each camera image the lidar covers, for projecting points into images.</li>
+          <li>Exported as JSON and a PNG plan; in batch mode with <code class="nowrap">--sensor-coverage</code>.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/sensorcoverage.jpg" aria-label="The lidar and radar coverage page: lidar rings, what the roof blocks and the sector verdicts, then the lidar raised">
+            <source src="media/sensorcoverage.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature" id="timing">
+      <div class="text">
+        <div class="eyebrow">Sync and timing</div>
+        <h3>Cameras that fire when the lidar looks</h3>
+        <p>Each camera should expose its image while the spinning lidar sweeps across its view. Vantage works out when
+          the sweep crosses every camera, the trigger that centres a rolling-shutter exposure on it, and what sharing a
+          trigger line costs.</p>
+        <ul>
+          <li>A dial of one lidar rotation with every camera's field, sweep crossing and trigger.</li>
+          <li>Suggested trigger lines: on the sample's data rig, six cameras on one line are up to 12.4 ms off the sweep (17 cm at 50 km/h); four lines bring that under 1 ms.</li>
+          <li>Phases for further lidars, motion blur and rolling-shutter skew at speed, and the longest exposure that keeps blur under a pixel.</li>
+          <li>Exported as JSON and the dial; in batch mode with <code class="nowrap">--sync-plan</code>.</li>
+        </ul>
+        <p class="note">These are planned times. The Live rig page measures the real skew, from software timestamps.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/timing.jpg" aria-label="The sync and timing dial, then the suggested trigger lines applied">
+            <source src="media/timing.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature flip" id="recording">
+      <div class="text">
+        <div class="eyebrow">Recording budget</div>
+        <h3>Will the recorder keep up?</h3>
+        <p>Every camera's, lidar's and radar's data rate, the load on each link and on the uplink to the recorder, the
+          write speed the disks need, and how many hours of driving fit on a disk set.</p>
+        <ul>
+          <li>Cameras raw, JPEG or H.265; lidars as driver packets or decoded clouds; GNSS, IMU and CAN on top.</li>
+          <li>On the sample, six raw cameras record 8.5 Gbit/s: an 8 TB disk set lasts 2 hours, which the Issues list reports.</li>
+          <li>A recorder short of write speed, or a lidar on a link it saturates, is a critical issue.</li>
+          <li>Exported as JSON and CSV; in batch mode with <code class="nowrap">--recording-budget</code>, which exits with 2 when something cannot keep up.</li>
+        </ul>
+        <p class="note">The JPEG and H.265 bits per pixel are assumptions: replace them with figures measured on your encoder.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/recording.jpg" aria-label="The recording budget page: data rate, disk hours, write speed and the link of every sensor, raw against H.265">
+            <source src="media/recording.mp4" type="video/mp4"></video>
           <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
           <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
         </div>
@@ -462,7 +569,7 @@
     <div class="head">
       <div class="eyebrow">Export</div>
       <h2>Hand the design to the people and machines that need it.</h2>
-      <p>Twenty-five formats, each with a live preview. Units, angles and the coordinate frame are chosen per export, and
+      <p>Twenty-eight formats, each with a live preview. Units, angles and the coordinate frame are chosen per export, and
         every file says which convention it uses.</p>
     </div>
     <article class="feature flip" id="datasets" style="padding-top:0;border-top:0">
@@ -472,8 +579,8 @@
         <p>The calibration your data pipeline reads, written straight from the design or from the measured as-built
           poses, in the vehicle frame and origin you choose.</p>
         <ul>
-          <li><b>nuScenes</b> <code>sensor.json</code> and <code>calibrated_sensor.json</code>: camera to ego, quaternions w first.</li>
-          <li><b>KITTI</b> <code>calib_cam_to_cam.txt</code> and every camera's pose in the vehicle frame.</li>
+          <li><b>nuScenes</b> <code>sensor.json</code> and <code>calibrated_sensor.json</code>: cameras, lidars and radars to ego, quaternions w first.</li>
+          <li><b>KITTI</b> <code>calib_cam_to_cam.txt</code>, every sensor's pose in the vehicle frame, and <code>calib_velo_to_cam.txt</code> with a lidar.</li>
           <li><b>ROS</b> <code>camera_info</code> per camera, and a <b>Kalibr</b> camchain that Vantage also reads back.</li>
           <li>Fisheye lenses are written as Kannala–Brandt (equidistant), and each file says how its format's tools treat that.</li>
         </ul>
@@ -490,8 +597,8 @@
     <div class="grid3">
       <div class="card"><h4>Datasets</h4><ul><li><span>nuScenes sensor calibration</span><span>JSON</span></li><li><span>KITTI calibration</span><span>TXT</span></li><li><span>ROS camera_info</span><span>YAML ×N</span></li><li><span>Kalibr camchain</span><span>YAML</span></li></ul></div>
       <div class="card"><h4>Calibration and robotics</h4><ul><li><span>OpenCV fisheye calibration</span><span>YAML ×N</span></li><li><span>ROS 2 URDF + static TF</span><span>URDF, PY</span></li><li><span>Jetson camera config</span><span>JSON</span></li></ul></div>
-      <div class="card"><h4>Extrinsics</h4><ul><li><span>Camera poses</span><span>JSON</span></li><li><span>Camera poses</span><span>YAML</span></li><li><span>Camera poses</span><span>CSV</span></li></ul></div>
-      <div class="card"><h4>Documents</h4><ul><li><span>Mount sheet</span><span>PDF</span></li><li><span>Design report</span><span>HTML, PDF</span></li><li><span>Blind volume</span><span>JSON, OBJ</span></li><li><span>Perception range</span><span>JSON, PNG</span></li></ul></div>
+      <div class="card"><h4>Extrinsics</h4><ul><li><span>Camera, lidar and radar poses</span><span>JSON</span></li><li><span>Camera, lidar and radar poses</span><span>YAML</span></li><li><span>Camera, lidar and radar poses</span><span>CSV</span></li></ul></div>
+      <div class="card"><h4>Documents</h4><ul><li><span>Mount sheet</span><span>PDF</span></li><li><span>Design report</span><span>HTML, PDF</span></li><li><span>Blind volume</span><span>JSON, OBJ</span></li><li><span>Perception range</span><span>JSON, PNG</span></li><li><span>Lidar and radar coverage</span><span>JSON, PNG</span></li><li><span>Sync and timing plan</span><span>JSON, PNG</span></li><li><span>Recording budget</span><span>JSON, CSV</span></li></ul></div>
       <div class="card"><h4>Surround view</h4><ul><li><span>Bird's-eye remap tables</span><span>NPZ, BIN</span></li><li><span>3D surround-view bowl</span><span>OBJ, NPZ, PNG</span></li><li><span>Parking guidelines</span><span>JSON, PNG ×N</span></li><li><span>Objects in the stitched view</span><span>JSON, PNG</span></li><li><span>Reference stitcher</span><span>C++, PY</span></li></ul></div>
       <div class="card"><h4>Images and CAD</h4><ul><li><span>Viewport</span><span>PNG</span></li><li><span>Bird's-eye view</span><span>PNG</span></li><li><span>All camera views</span><span>PNG ×N</span></li><li><span>Mount points</span><span>DXF</span></li><li><span>Mount points</span><span>STEP</span></li></ul></div>
     </div>

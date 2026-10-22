@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Documentation · Vantage</title>
-<meta name="description" content="How to use Vantage, the sensor rig planner for autonomous-driving data collection: installing, conventions, placing cameras, the analysis and studies, surround view, parking guidelines, calibration, the AI assistant, export formats and batch mode.">
+<meta name="description" content="How to use Vantage, the sensor rig planner for autonomous-driving data collection: installing, conventions, placing cameras, lidars and radars, the analysis and studies, sync and timing, the recording budget, surround view, parking guidelines, calibration, the AI assistant, export formats and batch mode.">
 <meta property="og:title" content="Vantage documentation">
 <meta property="og:image" content="https://sherin-sef-ai.github.io/Vantage/media/hero.jpg">
 <meta name="theme-color" content="#0f0f0e">
@@ -38,6 +38,7 @@
     <a href="#import">Importing a vehicle</a>
     <a href="#placement">Placing cameras</a>
     <a href="#rig">Rig parts</a>
+    <a href="#sensors">Lidars and radars</a>
     <a href="#analysis">Coverage analysis</a>
     <a href="#overlays">Heatmaps and overlays</a>
     <a href="#issues">Issues and rules</a>
@@ -47,6 +48,9 @@
     <a href="#variants">Variants</a>
     <a href="#volume">3D blind volume</a>
     <a href="#perception">Perception range</a>
+    <a href="#sensor-coverage">Lidar and radar coverage</a>
+    <a href="#timing">Sync and timing</a>
+    <a href="#recording">Recording budget</a>
     <a href="#stitched">Objects in the stitched view</a>
     <p>Surround view</p>
     <a href="#birdseye">Bird's-eye view and remap tables</a>
@@ -168,6 +172,40 @@ vantage project.vantage            # open a project</code></pre>
       <li>The rig parts are exported as links of the ROS 2 URDF, a <code>rig</code> list in the extrinsics and a table in the report.</li>
     </ul>
 
+    <h2 id="sensors">Lidars and radars</h2>
+    <p><b>Vehicle ▸ Add lidar</b> and <b>Add radar</b> put a sensor from the library on the rig: a lidar on top of the
+      highest rig part that may carry sensors (a mast head), otherwise on the roof; a radar in the middle of the front
+      bumper. Sensors belong to the variant, like cameras. Select one in the outliner, the 3D view or the top view
+      (drag it there to move it) and edit it in the inspector: its tag, model, optical centre and yaw, pitch and roll
+      (as a camera's: yaw 0 faces forward, pitch positive down).</p>
+    <table>
+      <tr><th>Model</th><th>Kind</th><th>Field</th><th>Range</th><th>Points/s</th></tr>
+      <tr><td>Ouster OS1-128 (Rev 7)</td><td>spinning, 128 ch</td><td>360° × 45°</td><td>90 m @ 10 %</td><td>1.31 M</td></tr>
+      <tr><td>Hesai OT128</td><td>spinning, 128 ch</td><td>360° × 40° (−25° to +15°)</td><td>200 m @ 10 %</td><td>3.46 M</td></tr>
+      <tr><td>Hesai AT128</td><td>fixed field, 128 ch</td><td>120° × 25.4°</td><td>200 m @ 10 %</td><td>1.54 M</td></tr>
+      <tr><td>Hesai XT32</td><td>spinning, 32 ch</td><td>360° × 31°</td><td>80 m @ 10 %</td><td>0.64 M</td></tr>
+      <tr><td>Velodyne VLP-16</td><td>spinning, 16 ch</td><td>360° × 30°</td><td>100 m</td><td>0.30 M</td></tr>
+      <tr><td>Livox Mid-360</td><td>non-repetitive</td><td>360° × 59° (−7° to +52°)</td><td>40 m @ 10 %</td><td>0.20 M</td></tr>
+      <tr><td>Long-range radar · typical</td><td>77 GHz, two beams</td><td>±9° to 250 m, ±45° to 70 m</td><td>on a car</td><td>1 Mbit/s</td></tr>
+      <tr><td>4D imaging radar · typical</td><td>77 GHz</td><td>±50° × ±15°</td><td>300 m on a car</td><td>30 Mbit/s</td></tr>
+      <tr><td>Corner radar · typical</td><td>77 GHz</td><td>±75° × ±10°</td><td>100 m on a car</td><td>2 Mbit/s</td></tr>
+    </table>
+    <p>The lidar figures are nominal values from the public datasheets; each model notes where they come from. The
+      radars are typical classes, not products. Check every figure against your unit's datasheet. The inspector edits
+      a model's figures; editing a built-in model makes an edited copy for that sensor, so the library and the other
+      sensors keep theirs.</p>
+    <ul>
+      <li>A lidar is a fan of channels at fixed elevations, swept through its horizontal field at the frame rate in steps of the azimuth step. A non-repetitive scanner is modelled as an even grid with the same points per frame. Ranges are on a dark (10 %) target.</li>
+      <li><b>Import beam angles…</b> replaces the even spread with the measured channel elevations from an Ouster metadata JSON (<code>beam_altitude_angles</code>), a Hesai angle-correction CSV, a Velodyne ROS calibration YAML (<code>vert_correction</code>) or a list with one angle per line.</li>
+      <li>A radar is one or more zones: a range on a car-sized target (10 m²) and the half-angles of its field. A smaller target is detected out to the fourth root of its cross-section ratio (the radar equation): a pedestrian (0.5 m²) at 47 % of the car's range.</li>
+      <li>The sync phase (spinning lidars) is the azimuth, in the lidar's own frame, it faces at the top of each sync period. See <a href="#timing">Sync and timing</a>.</li>
+      <li>The 3D view draws each housing, a lidar's ground rings (where its downward beams meet the ground, out to 15 m) and a radar's field edges; the top view draws the rings, the radar fields and every sensor's footprint and tag. View ▸ Overlays ▸ <i>Lidar rings and radar fields</i> turns them off.</li>
+      <li>The Issues list flags a lidar inside the body or a rig part (its beams would start inside the vehicle), a radar more than 15 cm behind the body's surface (a radar sees through a plastic bumper fascia, not through the body), a sensor below the ground, and a tag used by a camera too.</li>
+      <li>Exports: each sensor is a frame with x forward, y left and z up at its optical centre (ROS REP 103). It goes into the extrinsics (pose, field, spin direction and phase), the ROS 2 URDF and static TF launch file, the nuScenes tables (<code>LIDAR_&lt;TAG&gt;</code>, <code>RADAR_&lt;TAG&gt;</code>), KITTI (<code>Tr_&lt;tag&gt;_to_vehicle</code>, and <code>calib_velo_to_cam.txt</code> for the first lidar into camera 00) and the report. Drivers use their own frames (an Ouster's lidar frame has x towards the connector): add the driver's fixed rotation if your point clouds are in it.</li>
+    </ul>
+    <p>The sample's fifth variant, <i>Data rig</i>, has the six cameras, an OS1-128 on the roof, a long-range radar in
+      the front bumper and a corner radar at each bumper corner.</p>
+
     <h2 id="analysis">Coverage analysis</h2>
     <p>The ground inside the <b>ROI</b> (a true offset around the body, or a polygon) is sampled on a 5, 2 or 1 cm grid.
       For every cell and camera, Vantage checks the lens's field of view, the sensor frame and occlusion by the body
@@ -269,6 +307,74 @@ vantage project.vantage            # open a project</code></pre>
     <p>Export: the ranges, verdicts and pairs as JSON (<code>vantage.perception_range/1</code>) and the plot as PNG;
       batch mode <code>--perception-range</code>. A sector that falls short is reported but does not change the exit
       code.</p>
+
+    <h2 id="sensor-coverage">Lidar and radar coverage</h2>
+    <p><b>Analysis ▸ Lidar and radar coverage</b> shows what the variant's lidars and radars add to the cameras, using
+      the same occlusion as the coverage analysis (the body and the rig parts block beams).</p>
+    <ul>
+      <li><b>Each lidar</b>: the share of its points that land on the vehicle or the rig, per channel and per direction; its nearest ground ring; per direction how far from the body the nearest ground point it reaches lies (its ground blind zone); points per m² per frame on the ground (summed over lidars); points on a car 25, 50 and 100 m ahead.</li>
+      <li><b>Objects</b>: the perception classes with two more thresholds each. A lidar <b>detects</b> an object when the points on it, summed over lidars, reach the class minimum: counted per channel from the beam's real elevation at that azimuth (tilt included) through the object's height, times its angular width over the azimuth step, within the range on a 10 % target and not blocked. A radar detects it when its centre is inside a zone at the range for its cross-section and not blocked (vehicle surface within 15 cm of the radar counts as the bumper fascia it sees through).</li>
+      <li><b>Sectors</b>: for each class and each of the perception page's eight sectors, the shortest camera, lidar and radar range against the required range, and a verdict: <b>redundant</b> (two or more modalities reach it), <b>single</b>, <b>gap</b>.</li>
+      <li><b>Camera–lidar overlap</b>: per camera, the share of its image (inside the lens circle, not the body) where a lidar's points land at 10, 20 and 50 m (or on the ground, if nearer), the best lidar, and how many of its rings cross the image's centre column at 20 m. This tells you whether lidar points can be projected into each camera for labelling and cross-calibration.</li>
+    </ul>
+    <table>
+      <tr><th>Class</th><th>Lidar points</th><th>Radar cross-section</th></tr>
+      <tr><td>Car</td><td>20</td><td>10 m²</td></tr>
+      <tr><td>Pedestrian</td><td>8</td><td>0.5 m²</td></tr>
+      <tr><td>Cyclist</td><td>10</td><td>1 m²</td></tr>
+      <tr><td>Traffic sign</td><td>5</td><td>not detected by radar</td></tr>
+    </table>
+    <p>On the sample's data rig, 35 % of the roof lidar's points land on the roof, and its nearest ground point is
+      8.5 to 16 m from the body; raised 0.6 m it loses none and the zone shrinks to about 3.9 m. The objects are flat
+      upright rectangles facing the sensor; there is no reflectivity fall-off, beam divergence, multiple returns or
+      occlusion by other objects, and radar is a zone test on the object's centre. Export:
+      <code>vantage.sensor_coverage/1</code> JSON (export frame and units) and the plan as PNG; batch
+      <code>--sensor-coverage</code>.</p>
+
+    <h2 id="timing">Sync and timing</h2>
+    <p><b>Analysis ▸ Sync and timing</b> plans when each camera should take its picture so that it sees the scene at the
+      moment the spinning lidar sweeps across its view, as datasets such as nuScenes need for lidar points projected
+      into images. The reference lidar (the first spinning one unless you pick another) is phase-locked to the sync
+      pulse: at time <i>t</i> after the pulse it faces <i>phase − 360° · f · t</i> in its own frame, turning clockwise
+      seen from above (a counter-clockwise model turns the other way).</p>
+    <ul>
+      <li>Per camera: the azimuth of its view from the lidar (the point 20 m along its optical axis, so the distance between the lidar and the camera counts), the time the sweep crosses it, and how long the sweep takes to cross the image.</li>
+      <li>The trigger that centres the exposure of the image's middle row on the crossing. With a rolling shutter the rows are read top to bottom over the readout time, so the middle row's exposure is centred at <i>trigger + readout/2 + exposure/2</i>.</li>
+      <li>Cameras on the same hardware trigger line (A–H, set in the camera inspector) fire together. Per line the best common trigger; per camera its misalignment and the distance the vehicle drives in that time at the set speed. A camera running at a whole multiple of the lidar rate (30 fps against 10 Hz) is measured against its nearest frame. A rate that is no whole multiple is flagged, with how often it comes back in step.</li>
+      <li><b>Suggest groups</b> splits the cameras over the available trigger lines (runs of neighbours in sweep order, every split tried) for the smallest worst misalignment and shows it before and after. <b>Apply</b> sets the lines as one undo step. On the sample's data rig, six cameras on one line are up to 12.4 ms apart from the sweep (17 cm at 50 km/h); four lines bring it under 1 ms.</li>
+      <li>Other spinning lidars: the phase that makes each one face the same way as the reference at the same time; <b>Apply phases</b> sets them.</li>
+      <li>Motion (no lidar needed): the blur, in pixels, of a static object at the set distance while the vehicle drives straight, from the angular rate times the exposure times the lens model's local pixels per radian, over the whole image; the longest exposure within the blur limit; the rolling-shutter skew; and how far the vehicle drives during one lidar rotation (what deskewing corrects).</li>
+    </ul>
+    <p>Settings: speed (50 km/h), exposure (2 ms), readout (20 ms: enter your sensor's), object distance (5 m), blur
+      limit (1 px), trigger lines available (4). These are planned times; the <a href="#live-rig">Live rig</a> page
+      measures the cameras' skew from software timestamps. Export: <code>vantage.sync_plan/1</code> JSON (in the export
+      frame and units; times in ms) and the dial as PNG; batch <code>--sync-plan</code>.</p>
+
+    <h2 id="recording">Recording budget</h2>
+    <p><b>Analysis ▸ Recording budget</b> adds up the data the rig records and checks the links, the network and the
+      recorder's disks. Units are decimal, as disks and links are sold (1 MB = 10⁶ bytes, 1 TB = 10¹² bytes).</p>
+    <table>
+      <tr><th>Source</th><th>Data rate</th></tr>
+      <tr><td>Camera, raw</td><td>width × height × frame rate × the ECU's bits per pixel (16 = YUV 4:2:2, the GMSL budget's figure)</td></tr>
+      <tr><td>Camera, JPEG / H.265</td><td>the same × 2.0 or 0.15 bit/px: assumptions, replace them with what your encoder gives on your scenes</td></tr>
+      <tr><td>Lidar</td><td>points per second × bytes per point: as the driver's packets (the model's figure), or as a decoded cloud (32 B per point)</td></tr>
+      <tr><td>Radar</td><td>its stated output</td></tr>
+      <tr><td>Other</td><td>GNSS, IMU and CAN (2 Mbit/s) and the container's overhead (3 %)</td></tr>
+    </table>
+    <p>Each lidar's and radar's link is read from its interface (1000BASE-T1, 100BASE-TX, CAN-FD …) and its load
+      checked; the lidars and radars share the uplink from the switch to the recorder. The recorder needs a sustained
+      write speed of the total times the headroom (1.3); the page shows GB per hour, TB per shift and how many hours of
+      driving one disk set holds. Findings go to the Issues list:</p>
+    <table>
+      <tr><th>Finding</th><th>Severity</th></tr>
+      <tr><td>The disks cannot write the data (with the headroom)</td><td>critical</td></tr>
+      <tr><td>A lidar's or radar's link over 100 % / over the 80 % margin</td><td>critical / warning</td></tr>
+      <tr><td>The uplink over its capacity</td><td>serious</td></tr>
+      <tr><td>A disk set fills before the shift ends</td><td>warning</td></tr>
+    </table>
+    <p>The sample's six raw cameras record 8.5 Gbit/s: an 8 TB disk set holds 2 hours of driving, which the Issues list
+      reports as a warning. Export: <code>vantage.recording_budget/1</code> JSON and CSV; batch
+      <code>--recording-budget</code>, which exits with 2 when the recorder or a link cannot keep up.</p>
 
     <h2 id="stitched">Objects in the stitched view</h2>
     <p>The bird's-eye view projects every pixel onto the ground, so each camera draws a standing object as a smear away
@@ -380,10 +486,11 @@ vantage project.vantage            # open a project</code></pre>
       for and what was sent back.</p>
     <table>
       <tr><th>Tool</th><th>What it does</th></tr>
-      <tr><td>Overview, coverage, issues, camera details, seams</td><td>Read the design and the analysis figures.</td></tr>
+      <tr><td>Overview, coverage, issues, camera details, seams</td><td>Read the design and the analysis figures; the overview includes the lidars and radars (pose, model, field, range).</td></tr>
       <tr><td>Check what sees a point</td><td>For a point, which cameras see it and why not (field of view, image frame, body occlusion), with density and range.</td></tr>
       <tr><td>Find blind regions</td><td>Blind and low-density regions with where they are and why each camera misses them.</td></tr>
-      <tr><td>Run a study</td><td>Blind volume, objects in the stitched view (with seam advice), load cases, mounting tolerance, perception range.</td></tr>
+      <tr><td>Run a study</td><td>Blind volume, objects in the stitched view (with seam advice), load cases, mounting tolerance, perception range, lidar and radar coverage.</td></tr>
+      <tr><td>Sync plan, recording budget</td><td>Camera triggers against the lidar sweep with suggested trigger lines; every sensor's data rate, the links, the write speed and hours per disk set.</td></tr>
       <tr><td>Live rig health</td><td>While the Live rig page runs: each stream's frame rate, drops, exposure, sharpness and drift indicator, with its verdict and reasons. Stream addresses are not sent.</td></tr>
       <tr><td>Compare variants</td><td>The figures of every variant side by side.</td></tr>
       <tr><td>Optimise a camera</td><td>Searches one camera's pose within ranges for the least blind ground, best minimum density or most redundancy, optionally keeping a minimum density; says when the gain is not worth it.</td></tr>
@@ -417,7 +524,7 @@ vantage project.vantage            # open a project</code></pre>
     <h3 id="privacy">What is sent</h3>
     <div class="callout"><p>With each question, Vantage sends Groq the question, a short context line (project and
       variant names, the open page, the selected cameras), your project brief, and the results of the lookups the
-      model asks for: camera poses, lens and module names and analysis figures. The vehicle model, images, captures
+      model asks for: camera, lidar and radar poses, lens, module and sensor model names and analysis figures. The vehicle model, images, captures
       and files are never sent. Groq processes them under its own terms. Answers can be wrong: check a proposal's
       predicted effect before applying it.</p></div>
 
@@ -432,9 +539,12 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td></td><td>Report</td><td>PDF</td><td><code>report_pdf</code></td></tr>
       <tr><td></td><td>Blind volume</td><td>JSON, OBJ</td><td><code>blind_volume</code></td></tr>
       <tr><td></td><td>Perception range</td><td>JSON, PNG</td><td><code>perception_range</code></td></tr>
-      <tr><td>Extrinsics</td><td>Camera poses</td><td>JSON</td><td><code>extrinsics_json</code></td></tr>
-      <tr><td></td><td>Camera poses</td><td>YAML</td><td><code>extrinsics_yaml</code></td></tr>
-      <tr><td></td><td>Camera poses</td><td>CSV</td><td><code>extrinsics_csv</code></td></tr>
+      <tr><td></td><td>Lidar and radar coverage</td><td>JSON, PNG</td><td><code>sensor_coverage</code></td></tr>
+      <tr><td></td><td>Sync and timing plan</td><td>JSON, PNG</td><td><code>sync_plan</code></td></tr>
+      <tr><td></td><td>Recording budget</td><td>JSON, CSV</td><td><code>recording_budget</code></td></tr>
+      <tr><td>Extrinsics</td><td>Camera, lidar and radar poses</td><td>JSON</td><td><code>extrinsics_json</code></td></tr>
+      <tr><td></td><td>Camera, lidar and radar poses</td><td>YAML</td><td><code>extrinsics_yaml</code></td></tr>
+      <tr><td></td><td>Camera, lidar and radar poses</td><td>CSV</td><td><code>extrinsics_csv</code></td></tr>
       <tr><td>Calibration and robotics</td><td>OpenCV calibration, per camera</td><td>YAML ×N</td><td><code>opencv_yaml</code></td></tr>
       <tr><td></td><td>ROS 2 URDF + static TF</td><td>URDF, PY</td><td><code>ros2</code></td></tr>
       <tr><td></td><td>Jetson camera config</td><td>JSON</td><td><code>jetson_json</code></td></tr>
@@ -462,8 +572,8 @@ vantage project.vantage            # open a project</code></pre>
       one.</p>
     <table>
       <tr><th>Format</th><th>Files</th><th>Notes</th></tr>
-      <tr><td>nuScenes</td><td><code>nuscenes/sensor.json</code>, <code>calibrated_sensor.json</code>, README</td><td>Camera to ego: <code>p_ego = R(rotation) · p_camera + translation</code>, quaternion <code>[w, x, y, z]</code>. nuScenes puts the ego frame at the rear axle, which is the default export frame. The fisheye coefficients are in an extra <code>vantage_distortion</code> field the nuScenes tools ignore. Tokens are stable across re-exports.</td></tr>
-      <tr><td>KITTI</td><td><code>kitti/calib_cam_to_cam.txt</code>, <code>calib_cams_to_vehicle.txt</code>, README</td><td>Per camera S, K, D, and R, T from camera 00; the images are not rectified, so S_rect = S, R_rect = I and P_rect = [K | 0]. For a fisheye, D_xx holds k1–k4 and a <code>DISTORTION_MODEL_xx: equidistant</code> line says so; tools that assume radtan will misread it, so undistort with cv2.fisheye first.</td></tr>
+      <tr><td>nuScenes</td><td><code>nuscenes/sensor.json</code>, <code>calibrated_sensor.json</code>, README</td><td>Camera to ego: <code>p_ego = R(rotation) · p_camera + translation</code>, quaternion <code>[w, x, y, z]</code>. nuScenes puts the ego frame at the rear axle, which is the default export frame. The fisheye coefficients are in an extra <code>vantage_distortion</code> field the nuScenes tools ignore. Lidars and radars follow the cameras as <code>LIDAR_&lt;TAG&gt;</code> and <code>RADAR_&lt;TAG&gt;</code> with an empty <code>camera_intrinsic</code>. Tokens are stable across re-exports.</td></tr>
+      <tr><td>KITTI</td><td><code>kitti/calib_cam_to_cam.txt</code>, <code>calib_cams_to_vehicle.txt</code>, <code>calib_velo_to_cam.txt</code> (with a lidar), README</td><td>Per camera S, K, D, and R, T from camera 00; the images are not rectified, so S_rect = S, R_rect = I and P_rect = [K | 0]. For a fisheye, D_xx holds k1–k4 and a <code>DISTORTION_MODEL_xx: equidistant</code> line says so; tools that assume radtan will misread it, so undistort with cv2.fisheye first. Lidars and radars get <code>Tr_&lt;tag&gt;_to_vehicle</code> lines; <code>calib_velo_to_cam.txt</code> maps the first lidar into camera 00 (R, T as KITTI's velodyne file).</td></tr>
       <tr><td>ROS camera_info</td><td>one YAML per camera</td><td>As <code>camera_calibration_parsers</code> writes it: <code>equidistant</code> for a fisheye, <code>plumb_bob</code> for a pinhole.</td></tr>
       <tr><td>Kalibr</td><td><code>kalibr/camchain.yaml</code></td><td><code>T_cn_cnm1</code> maps the previous camera into this one; <code>equidistant</code> or <code>radtan</code>. Vantage imports the file back.</td></tr>
     </table>
@@ -479,6 +589,9 @@ vantage project.vantage            # open a project</code></pre>
 vantage project.vantage --load-cases -               # load cases as JSON on stdout
 vantage project.vantage --blind-volume volume.json   # 3D blind volume, unseen objects, reach rose
 vantage project.vantage --perception-range ranges.json   # range per object class and direction, stereo pairs
+vantage project.vantage --sensor-coverage coverage.json  # lidar/radar reach, blocked beams, sector verdicts
+vantage project.vantage --sync-plan sync.json       # camera triggers against the lidar sweep, blur at speed
+vantage project.vantage --recording-budget budget.json   # data rate, links, write speed, hours per disk set
 vantage project.vantage --rig-health 10 health.json  # read every camera's stream for 10 s
 vantage project.vantage --export out/ --formats nuscenes_calib,kitti_calib,ros_camera_info
 vantage project.vantage --install-check captures/ --report check.json \
@@ -503,7 +616,7 @@ vantage project.vantage --import-calib camchain.yaml F.yaml --save calibrated.va
     <table>
       <tr><th>Exit code</th><th>Meaning</th></tr>
       <tr><td><code>0</code></td><td>Fine.</td></tr>
-      <tr><td><code>2</code></td><td>The plan has critical issues (with <code>--analyse</code> or <code>--export</code>).</td></tr>
+      <tr><td><code>2</code></td><td>The plan has critical issues (with <code>--analyse</code> or <code>--export</code>); or, with <code>--recording-budget</code>, the recorder or a sensor's link cannot keep up.</td></tr>
       <tr><td><code>3</code></td><td>A camera has to be re-mounted or could not be checked; or, with <code>--rig-health</code>, a camera is faulty or has no stream.</td></tr>
       <tr><td><code>4</code></td><td>A lens calibration failed, or an imported calibration matched no camera or did not fit it.</td></tr>
     </table>
