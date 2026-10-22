@@ -12,6 +12,8 @@ import time
 
 import numpy as np
 
+from .credentials import mask
+
 IMAGE_EXTS = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff', '.pgm', '.ppm')
 
 
@@ -66,7 +68,8 @@ def default_spec(port: int) -> str:
 
 def _open(spec: str):
     import cv2
-    s = spec.strip()
+    from .credentials import resolve
+    s = resolve(spec.strip())              # a password kept out of the project file is put back here
     if s.isdigit():
         return cv2.VideoCapture(int(s))
     if '!' in s:
@@ -79,11 +82,13 @@ def _open(spec: str):
 class LiveSource:
     """Background reader for one stream; latest() returns a copy of the newest RGB frame."""
 
-    def __init__(self, spec: str):
+    def __init__(self, spec: str, on_frame=None):
         self.spec = spec
         self.error = ''
         self.frames = 0
         self.size = None
+        self.stamp = 0.0               # time.monotonic() when the newest frame arrived
+        self.on_frame = on_frame       # callable(frame, stamp), called on the reader thread for every frame
         self._frame = None
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -99,7 +104,7 @@ class LiveSource:
         # a fresh event per reader: a reader still stuck in read() after stop() keeps its own (set) event and exits
         self._stop = threading.Event()
         self.error = ''
-        self._thread = threading.Thread(target=self._run, args=(self._stop,), name=f'live:{self.spec}', daemon=True)
+        self._thread = threading.Thread(target=self._run, args=(self._stop,), name=f'live:{mask(self.spec)}', daemon=True)
         self._thread.start()
 
     def _run(self, stop=None):
@@ -108,13 +113,16 @@ class LiveSource:
         try:
             cap = _open(self.spec)
         except Exception as e:
-            self.error = f'Cannot open {self.spec}: {e}'
+            self.error = mask(f'Cannot open {self.spec}: {e}')       # errors reach labels, reports and the assistant
             return
         if cap is None or not cap.isOpened():
-            self.error = f'Cannot open {self.spec}'
+            self.error = f'Cannot open {mask(self.spec)}'
             return
         fails = 0
         is_file = os.path.isfile(self.spec)
+        fps = cap.get(cv2.CAP_PROP_FPS) if is_file else 0
+        period = 1.0 / fps if is_file and 1 <= fps <= 240 else 1 / 30      # a file plays at its own frame rate
+        nxt = time.monotonic()
         try:
             while not stop.is_set():
                 ok, f = cap.read()
@@ -124,7 +132,7 @@ class LiveSource:
                         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                         continue
                     if fails > 60:
-                        self.error = f'{self.spec} stopped delivering frames'
+                        self.error = f'{mask(self.spec)} stopped delivering frames'
                         break
                     time.sleep(0.03)
                     continue
@@ -133,12 +141,25 @@ class LiveSource:
                     f = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
                 if stop.is_set():
                     break
+                t = time.monotonic()
                 with self._lock:
                     self._frame = f
                     self.frames += 1
                     self.size = (f.shape[1], f.shape[0])
+                    self.stamp = t
+                cb = self.on_frame
+                if cb is not None:
+                    try:
+                        cb(f, t)
+                    except Exception:           # a statistics hook must never stop the stream
+                        pass
                 if is_file:
-                    time.sleep(1 / 30)
+                    nxt += period
+                    delay = nxt - time.monotonic()
+                    if delay < -period:
+                        nxt = time.monotonic()
+                    elif delay > 0:
+                        stop.wait(delay)
         finally:
             cap.release()
 
@@ -146,9 +167,10 @@ class LiveSource:
         with self._lock:
             return None if self._frame is None else self._frame.copy()
 
-    def stop(self):
+    def stop(self, wait=True):
+        """wait=False returns at once (a reader blocked in read() exits by itself when the read returns)."""
         self._stop.set()
         t = self._thread
-        if t is not None and t is not threading.current_thread():
+        if wait and t is not None and t is not threading.current_thread():
             t.join(timeout=1.5)
         self._thread = None

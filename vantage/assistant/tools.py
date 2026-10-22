@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -52,6 +53,7 @@ class ToolContext:
     on_status: object = None             # callable(str): progress of a long tool
     cancel: object = None                # threading.Event
     cache: dict = field(default_factory=dict)
+    rig_health: dict | None = None       # the Live rig page's snapshot while it streams (core.rig_health)
     _proposals: int = 0
 
     def status(self, text):
@@ -191,6 +193,12 @@ def get_overview(tc, **_):
                     'front_x': _r(hi[0]) if lo is not None else None, 'rear_x': _r(lo[0]) if lo is not None else None,
                     'wheelbase_m': _r(wb), 'track_m': _r(track)},
         'cameras': cams,
+        'rig': [{'name': q.name, 'kind': q.kind, 'x': _r(q.x), 'y': _r(q.y), 'z': _r(q.z),
+                 'size_m': {'length': _r(q.length), 'width': _r(q.width), 'height': _r(q.height)} if q.kind == 'box' else
+                 {'radius': _r(q.radius), ('height' if q.kind == 'cylinder' else 'length'):
+                  _r(q.height if q.kind == 'cylinder' else q.length)},
+                 'yaw': _r(q.yaw, 1), 'occludes': q.occludes, 'mountable': q.mountable, 'visible': q.visible}
+                for q in getattr(p, 'rig', ())],
         'roi': {'mode': p.roi.mode, 'distance_m': _r(p.roi.distance), 'measured_from': p.roi.measured_from},
         'analysis': {'ground_cell_m': _r(a.cell_m), 'min_density_px_cm': _r(a.min_density, 2),
                      'target_density_px_cm': _r(a.target_density, 2), 'evaluated_at': a.obstacle_mode,
@@ -223,7 +231,7 @@ def get_coverage(tc, **_):
            'evaluated_height_m': _r(m.get('z')), 'cell_m': _r(m.get('cell')), 'per_camera': per}
     if tc.worst and tc.worst[1]:
         b, uid, pert = tc.worst
-        out['worst_single_camera_error'] = {'blind_m2': _r(b, 3), 'camera': tags.get(uid, uid), 'error': str(pert),
+        out['worst_single_camera_error'] = {'blind_m2': _r(b, 3), 'camera': tags.get(uid, uid), 'perturbation': str(pert),
                                             'tolerance': {'deg': p.analysis.tol_deg, 'mm': p.analysis.tol_mm}}
     return out
 
@@ -270,6 +278,14 @@ def get_camera(tc, camera='', **_):
     return out
 
 
+def _blocker(vg, o, d) -> str:
+    """What the ray meets first: 'the body' or a named rig part."""
+    m = vg.occ_mesh
+    _, f = m.raycast(o[None], d[None])
+    part = m.parts[int(m.face_part[f[0]])] if f[0] >= 0 and m.parts else None
+    return f'the rig part "{part.name}"' if part is not None and part.material == 'rig' else 'the body'
+
+
 def _explain(tc, P):
     p, eng = tc.project, tc.engine
     vg = eng.vehicle_geom(p)
@@ -297,7 +313,8 @@ def _explain(tc, P):
                 depth = float(eng.cube(c.pos()).lookup(d[None])[0][0])
             if depth < dist - (0.02 + 0.01 * dist):
                 row.update(seen=False, reason='hidden by the body',
-                           detail=f'the body is {depth:.2f} m along the ray, the point {dist:.2f} m')
+                           detail=f'{_blocker(vg, c.pos(), d / dist)} is {depth:.2f} m along the ray, '
+                                  f'the point {dist:.2f} m')
             else:
                 dens = float(intr.density_px_per_cm(th, dist))
                 row.update(seen=True, density_px_cm=_r(dens, 2), pixel=[_r(u, 0), _r(v, 0)],
@@ -441,8 +458,33 @@ def get_studies(tc, **_):
         out['parking_guidelines'] = tc.guidelines
     if tc.worst and tc.worst[1]:
         b, uid, pert = tc.worst
-        out['worst_single_camera_error'] = {'blind_m2': _r(b, 3), 'camera': tags.get(uid, uid), 'error': str(pert)}
+        out['worst_single_camera_error'] = {'blind_m2': _r(b, 3), 'camera': tags.get(uid, uid), 'perturbation': str(pert)}
     return out
+
+
+_URL_IN_TEXT = re.compile(r'[a-z][a-z0-9+.-]*://\S+', re.IGNORECASE)
+
+
+def get_rig_health(tc, **_):
+    h = tc.rig_health
+    streams = getattr(tc.project, 'streams', {}) or {}
+    if not h:
+        from ..core.rig_health import describe
+        return {'streaming': False,
+                'note': 'not streaming: the health is measured on Calibrate ▸ Live rig… while it runs (Start)',
+                'configured_streams': {c.tag: describe(streams.get(c.tag, '')) or 'none' for c in _cams(tc.project)}}
+    keep = ('status', 'reasons', 'kind', 'fps', 'nominal_fps', 'jitter_ms', 'dropped', 'dropped_share', 'age_s', 'size',
+            'expected_size', 'mean', 'clip_bright', 'clip_dark', 'sharpness', 'frozen_frames', 'drift_px', 'drift_checked')
+    cams = {k: {f: (_r(v, 3) if isinstance(v, float) else v) for f, v in c.items() if f in keep}
+            for k, c in h['cameras'].items()}
+    for c in cams.values():                # a stream error names its URL: hosts and user names stay on this machine
+        c['reasons'] = [_URL_IN_TEXT.sub('<stream URL>', r) for r in c.get('reasons', [])]
+    rig = {k: (_r(v, 2) if isinstance(v, float) else v) for k, v in h['rig'].items()}
+    return {'streaming': True, 'rig': rig, 'cameras': cams,
+            'meaning': 'fps from frame arrival times; dropped = gaps longer than 1.5 frame intervals; sharpness = '
+                       'variance of the Laplacian (low: blurred or covered lens); drift_px = median distance of the '
+                       'planned body edge to the edge in the image, an indicator that a camera moved, not a '
+                       'measurement (null with drift_checked: the body edge was not found in the image)'}
 
 
 # =========================================================================== changes
@@ -743,7 +785,7 @@ def compare_variants(tc, variants=None, **_):
     return {'variants': out}
 
 
-STUDIES = ('blind_volume', 'stitched_objects', 'load_cases', 'mounting_tolerance')
+STUDIES = ('blind_volume', 'stitched_objects', 'load_cases', 'mounting_tolerance', 'perception_range')
 
 
 def run_study(tc, study='', height=None, object_height=None, tolerance_deg=None, tolerance_mm=None, **_):
@@ -759,7 +801,8 @@ def run_study(tc, study='', height=None, object_height=None, tolerance_deg=None,
             from ..core import volume as V
             h = min(max(float(height or 2.0), 0.3), 4.0)
             tc.status(f'Blind volume up to {h:.1f} m…')
-            vr = V.analyse_volume(p, eng, res, height=h, dz=0.1, cell=max(res.cell, 0.1), cancel=tc.cancel)
+            vr = V.analyse_volume(p, eng, res, height=h, dz=0.1, cell=max(res.cell, 0.1),
+                                  cancel=tc.cancelled)                                     # a callable
             if vr is None:
                 return {'error': 'cancelled'}
             m = vr.metrics
@@ -775,7 +818,7 @@ def run_study(tc, study='', height=None, object_height=None, tolerance_deg=None,
             st = so.Settings.from_dict(p.analysis.stitched)
             h = min(max(float(object_height or st.height), 0.1), 2.5)
             tc.status(f'Objects {h:.1f} m tall in the stitched view…')
-            sres = so.analyse(p, eng, res, height=h, cell=max(res.cell, 0.1), cancel=tc.cancel)
+            sres = so.analyse(p, eng, res, height=h, cell=max(res.cell, 0.1), cancel=tc.cancel)   # an Event
             if sres is None:
                 return {'error': 'cancelled'}
             tc.status('Searching seam angles…')
@@ -794,6 +837,20 @@ def run_study(tc, study='', height=None, object_height=None, tolerance_deg=None,
                                                  'to_deg': _r(x.best, 1)} for x in adv.seams if x.moved],
                                       'note': 'propose these with propose_changes(seams=[...])'}
             return out
+        if study == 'perception_range':
+            from ..core import perception as PR
+            st = PR.PerceptionSettings.from_dict(p.analysis.perception)
+            tc.status('Perception range…')
+            pr = PR.analyse(p, eng, res, st, cancel=tc.cancelled)
+            if pr is None:
+                return {'error': 'cancelled'}
+            return {'study': study, **PR.summary(pr),
+                    'objects': [{'name': c.name, 'height_m': c.height, 'width_m': c.width, 'min_px': c.min_px,
+                                 'above_ground_m': c.base} for c in pr.classes],
+                    'meaning': 'min_m is the shortest range, over the directions of the sector, out to which some '
+                               'camera resolves the object (in the image, not hidden by the body, at least min_px tall '
+                               'through the real lens); a sector passes when min_m reaches required_m. Stereo pairs: '
+                               'cameras that both see a car 20 m out; depth_error_m is z^2*0.25px/(f*baseline).'}
         if study == 'load_cases':
             from ..core import loadcases as LC
             tc.status('Load cases…')
@@ -812,7 +869,7 @@ def run_study(tc, study='', height=None, object_height=None, tolerance_deg=None,
         eng.vehicle_geom(p)
         b, uid, pert = worst_single_camera(eng, p, deg, mm / 1000.0, cell=max(res.cell, 0.05))
         return {'study': study, 'tolerance': {'deg': deg, 'mm': mm}, 'worst_blind_m2': _r(b, 3),
-                'camera': tags.get(uid, uid) or None, 'error': str(pert) if pert is not None else None,
+                'camera': tags.get(uid, uid) or None, 'perturbation': str(pert) if pert is not None else None,
                 'baseline_blind_m2': _r(res.metrics['blind_m2'], 3)}
     except (TypeError, ValueError) as e:
         return {'error': f'bad option: {e}'}
@@ -1007,7 +1064,8 @@ class Tool:
 TOOLS = [
     Tool('get_overview', 'Read the design overview',
          'The project, vehicle size, every camera (tag, pose, lens, module, field of view, locked, mirrored partner), '
-         'the ROI and the analysis thresholds. Start here.', {}, get_overview),
+         'the rig on the vehicle (roof racks, masts, enclosures: centre, size, whether they block cameras or carry '
+         'them), the ROI and the analysis thresholds. Start here.', {}, get_overview),
     Tool('get_coverage', 'Read coverage figures',
          'Ground coverage figures: blind area, coverage, redundancy, minimum pixel density, and per camera the area it '
          'sees, sees alone, and what would go blind without it; the worst single-camera mounting error.', {},
@@ -1033,6 +1091,12 @@ TOOLS = [
          'Results of studies already run in the app: objects in the stitched view, the 3D blind volume, parking '
          'guidelines and the worst single-camera error. Use run_study to compute one that has not been run.', {},
          get_studies),
+    Tool('get_rig_health', 'Read the live rig health',
+         'While the Live rig page streams the cameras: per camera the measured frame rate against the module\'s, '
+         'jitter, dropped frames, resolution, exposure, sharpness, frozen images and a drift indicator, with an '
+         'ok / warning / fault verdict and reasons; for the rig the cameras up, the worst frame rate and the sync '
+         'skew (software timestamps). Otherwise says it is not streaming and which cameras have a stream set.', {},
+         get_rig_health),
     Tool('compare_variants', 'Compare variants',
          'Analyse layout variants of this project side by side (blind area, coverage, redundancy, density, issues). '
          'All variants unless named.', {'variants': {'type': 'array', 'items': {'type': 'string'}}},
@@ -1041,7 +1105,8 @@ TOOLS = [
          'Compute a study now (10 cm grids, a few seconds): blind_volume (where a pole, child or adult goes unseen, '
          'up to `height`), stitched_objects (where an object of `object_height` vanishes at the seams, with seam '
          'advice), load_cases (the project\'s axle drops), mounting_tolerance (worst blind area when one camera is off '
-         'by tolerance_deg / tolerance_mm).',
+         'by tolerance_deg / tolerance_mm), perception_range (how far out cars, pedestrians, cyclists and signs are '
+         'resolved per sector against the required ranges, and the stereo camera pairs).',
          {'study': {'type': 'string', 'enum': list(STUDIES)}, 'height': {'type': 'number'},
           'object_height': {'type': 'number'}, 'tolerance_deg': {'type': 'number'}, 'tolerance_mm': {'type': 'number'}},
          run_study, 'compute', ('study',)),
@@ -1076,7 +1141,7 @@ TOOLS = [
          'Show something to the user in the app (does not change the design): select_cameras (cameras), '
          'frame_point (x, y: frames the views on a ground point and marks it), frame_all, heatmap '
          '(none | coverage | density | redundancy | stitched), overlay (overlay key such as camlight, volume, '
-         'guidelines, frustums; on), open_page (viewports | camviews | volume | tolerance | compare).',
+         'guidelines, frustums; on), open_page (viewports | camviews | volume | perception | tolerance | compare | rig).',
          {'action': {'type': 'string', 'enum': list(UI_ACTIONS)}, 'cameras': {'type': 'array', 'items': {'type': 'string'}},
           'x': {'type': 'number'}, 'y': {'type': 'number'}, 'heatmap': {'type': 'string'}, 'overlay': {'type': 'string'},
           'on': {'type': 'boolean'}, 'page': {'type': 'string'}}, show_in_app, 'ui', ('action',)),

@@ -117,7 +117,7 @@ def _view_cams(variant: Variant) -> list:
     return [c for c in variant.cameras if c.visible]
 
 
-GROUPS = ['Documents', 'Extrinsics', 'Calibration and robotics', 'Surround view', 'Images', 'Mount points']
+GROUPS = ['Documents', 'Extrinsics', 'Calibration and robotics', 'Datasets', 'Surround view', 'Images', 'Mount points']
 
 FORMATS: list[ExportFormat] = [
     ExportFormat('mount_sheet_pdf', 'Documents', 'Mount sheet', 'PDF', lambda p, v: 'mount-sheet.pdf', 'binary'),
@@ -125,6 +125,9 @@ FORMATS: list[ExportFormat] = [
     ExportFormat('report_pdf', 'Documents', 'Report', 'PDF', lambda p, v: 'report.pdf', 'binary'),
     ExportFormat('blind_volume', 'Documents', 'Blind volume', 'JSON, OBJ',
                  lambda p, v: ['blind_volume.json', 'blind_volume.obj'], 'text', multi=True),
+    ExportFormat('perception_range', 'Documents', 'Perception range', 'JSON, PNG',
+                 lambda p, v: ['perception_range/perception_range.json', 'perception_range/perception_range.png'],
+                 'binary', multi=True),
     ExportFormat('extrinsics_json', 'Extrinsics', 'Extrinsics', 'JSON', lambda p, v: 'extrinsics.json', 'text'),
     ExportFormat('extrinsics_yaml', 'Extrinsics', 'Extrinsics', 'YAML', lambda p, v: 'extrinsics.yaml', 'text'),
     ExportFormat('extrinsics_csv', 'Extrinsics', 'Extrinsics', 'CSV', lambda p, v: 'extrinsics.csv', 'text'),
@@ -134,6 +137,15 @@ FORMATS: list[ExportFormat] = [
                  lambda p, v: ['vantage_cameras.urdf', 'static_tf.launch.py'], 'text', multi=True),
     ExportFormat('jetson_json', 'Calibration and robotics', 'Jetson camera config', 'JSON',
                  lambda p, v: 'jetson_cameras.json', 'text'),
+    ExportFormat('nuscenes_calib', 'Datasets', 'nuScenes sensor calibration', 'JSON',
+                 lambda p, v: ['nuscenes/calibrated_sensor.json', 'nuscenes/sensor.json', 'nuscenes/README.md'], 'text',
+                 multi=True),
+    ExportFormat('kitti_calib', 'Datasets', 'KITTI calibration', 'TXT',
+                 lambda p, v: ['kitti/calib_cam_to_cam.txt', 'kitti/calib_cams_to_vehicle.txt', 'kitti/README.txt'],
+                 'text', multi=True),
+    ExportFormat('ros_camera_info', 'Datasets', 'ROS camera_info, per camera', 'YAML ×N',
+                 lambda p, v: [f'camera_info/{t}.yaml' for t in safe_tags(v).values()], 'text', multi=True),
+    ExportFormat('kalibr_camchain', 'Datasets', 'Kalibr camchain', 'YAML', lambda p, v: 'kalibr/camchain.yaml', 'text'),
     ExportFormat('bev_lut', 'Surround view', 'Bird\'s-eye remap tables', 'NPZ, BIN',
                  lambda p, v: ['bev_lut/bev_lut.json', 'bev_lut/bev_lut.npz'] + [f'bev_lut/{t}_{k}.bin' for t in safe_tags(v).values()
                                                                                  for k in ('map', 'weight')] + ['bev_lut/body_mask.bin',
@@ -454,6 +466,33 @@ def _T_world_optical(ctx: _Ctx, cm: CameraModel) -> list:
     return rows + [[0, 0, 0, 1]]
 
 
+def _rig_parts(ctx: _Ctx) -> list:
+    """(frame-safe link name, part) for the rig parts in the analysis (the visible ones)."""
+    out, used = [], set()
+    for q in getattr(ctx.project, 'rig', ()):
+        if not q.visible:
+            continue
+        base = 'rig_' + _safe(q.name).lower()
+        t, k = base, 2
+        while t in used:
+            t, k = f'{base}_{k}', k + 1
+        used.add(t)
+        out.append((t, q))
+    return out
+
+
+def _rig_doc(ctx: _Ctx) -> list:
+    out = []
+    for t, q in _rig_parts(ctx):
+        size = {'box': {'length': ctx.L(q.length), 'width': ctx.L(q.width), 'height': ctx.L(q.height)},
+                'cylinder': {'radius': ctx.L(q.radius), 'height': ctx.L(q.height)},
+                'bar': {'radius': ctx.L(q.radius), 'length': ctx.L(q.length)}}[q.kind]
+        out.append({'name': q.name, 'frame': t, 'kind': q.kind,
+                    'centre': [ctx.L(q.x - ctx.origin[0]), ctx.L(q.y - ctx.origin[1]), ctx.L(q.z - ctx.origin[2])],
+                    'yaw': ctx.Ap(q.yaw), **size, 'occludes': q.occludes, 'mountable': q.mountable})
+    return out
+
+
 def _extrinsics_doc(ctx: _Ctx) -> dict:
     meas, spec = ctx.measured(), ctx.project.vehicle.spec or {}
 
@@ -472,7 +511,7 @@ def _extrinsics_doc(ctx: _Ctx) -> dict:
             'intrinsics': _intrinsics_dict(cm),
             'T_world_optical': _T_world_optical(ctx, cm),
         })
-    return {
+    doc = {
         'schema': SCHEMA_EXTRINSICS,
         'project': ctx.project.name,
         'variant': ctx.variant.name,
@@ -493,6 +532,10 @@ def _extrinsics_doc(ctx: _Ctx) -> dict:
                     'wheelbase': dim('Wheelbase')},
         'cameras': cams,
     }
+    rig = _rig_doc(ctx)
+    if rig:
+        doc['rig'] = rig         # roof racks, masts, enclosures: centre in this frame, length along x, width along y
+    return doc
 
 
 _NUM_LIST = re.compile(r'\[\s+((?:-?[0-9][0-9.eE+-]*|null),(?:\s+(?:-?[0-9][0-9.eE+-]*|null),)*\s+(?:-?[0-9][0-9.eE+-]*|null))\s+\]')
@@ -632,6 +675,25 @@ def _urdf(ctx: _Ctx) -> str:
             f'    <origin xyz="0 0 0" rpy="{_fs(-math.pi / 2, 5)} 0 {_fs(-math.pi / 2, 5)}"/>',
             '  </joint>',
         ]
+    for t, q in _rig_parts(ctx):
+        geom = {'box': f'<box size="{_fs(q.length, 4)} {_fs(q.width, 4)} {_fs(q.height, 4)}"/>',
+                'cylinder': f'<cylinder radius="{_fs(q.radius, 4)}" length="{_fs(q.height, 4)}"/>',
+                'bar': f'<cylinder radius="{_fs(q.radius, 4)}" length="{_fs(q.length, 4)}"/>'}[q.kind]
+        turn = f'{_fs(math.pi / 2, 5)} 0 0' if q.kind == 'bar' else '0 0 0'      # a bar runs along the link's y
+        xyz = ' '.join(_fs(v, 3) for v in (q.x - o[0], q.y - o[1], q.z - o[2]))
+        L += [
+            '',
+            f'  <!-- rig: {_xml_comment(q.name)} ({q.kind}{", blocks cameras" if q.occludes else ""}) -->',
+            f'  <link name="{t}">',
+            f'    <visual><origin xyz="0 0 0" rpy="{turn}"/><geometry>{geom}</geometry></visual>',
+            f'    <collision><origin xyz="0 0 0" rpy="{turn}"/><geometry>{geom}</geometry></collision>',
+            '  </link>',
+            f'  <joint name="{t}_joint" type="fixed">',
+            '    <parent link="base_link"/>',
+            f'    <child link="{t}"/>',
+            f'    <origin xyz="{xyz}" rpy="0 0 {_fs(math.radians(q.yaw), 5)}"/>',
+            '  </joint>',
+        ]
     L.append('</robot>')
     return '\n'.join(L) + '\n'
 
@@ -678,6 +740,220 @@ def _launch(ctx: _Ctx) -> str:
                  f'{t + "_link"!r}, {t + "_optical_frame"!r}),')
     L.append('    ])')
     return '\n'.join(L) + '\n'
+
+
+# ====================================================================== datasets
+# The calibration in the layouts training datasets and their tools read. These files are always in metres (the
+# formats' own convention, like URDF/TF); the export frame and origin apply as everywhere else.
+DATASET_NOTE = ('Pixel coordinates follow OpenCV and ROS: pixel centres on integers (the centre of a 1920-wide image '
+                'is cx = 959.5).')
+
+
+def _pinhole(cm: CameraModel) -> bool:
+    """A rectilinear lens is an exact pinhole (no distortion); every other lens is written as Kannala-Brandt."""
+    return cm.intr.projection == 'rectilinear'
+
+
+def _T_vehicle_camera(ctx: _Ctx, cm: CameraModel) -> np.ndarray:
+    """4x4 mapping points in the camera's optical frame (x right, y down, z forward) into the export frame, metres."""
+    T = np.eye(4)
+    T[:3, :3] = cm.O2W
+    T[:3, 3] = cm.cam.pos() - ctx.origin
+    return T
+
+
+def _T_inv(T: np.ndarray) -> np.ndarray:
+    R, t = T[:3, :3], T[:3, 3]
+    out = np.eye(4)
+    out[:3, :3] = R.T
+    out[:3, 3] = -R.T @ t
+    return out
+
+
+def _r(v, n=9):
+    """A clean float for machine-read files (no -0.0)."""
+    x = round(float(v), n) + 0.0
+    return 0.0 if x == 0 else x
+
+
+def _frame_sentence(ctx: _Ctx) -> str:
+    return f'{ctx.frame_label} ({AXES_TEXT}), origin at the {ctx.origin_text}; metres'
+
+
+def _token(*parts) -> str:
+    """A stable 32-hex token like nuScenes', so a re-export gives the same tokens."""
+    import hashlib
+    return hashlib.md5('|'.join(str(x) for x in parts).encode('utf-8')).hexdigest()
+
+
+def _nuscenes(ctx: _Ctx) -> list:
+    sensors, cal = [], []
+    p, v = ctx.project, ctx.variant
+    for cm in ctx.models:
+        st = _token('vantage', 'sensor', p.name, v.name, cm.tag)
+        sensors.append({'token': st, 'channel': f'CAM_{cm.tag.upper()}', 'modality': 'camera'})
+        T = _T_vehicle_camera(ctx, cm)
+        x, y, z, w = _quat(T[:3, :3])
+        K = cm.K
+        cal.append({
+            'token': _token('vantage', 'calibrated_sensor', p.name, v.name, cm.tag),
+            'sensor_token': st,
+            'translation': [_r(t, 6) for t in T[:3, 3]],
+            'rotation': [_r(w, 10), _r(x, 10), _r(y, 10), _r(z, 10)],
+            'camera_intrinsic': [[_r(K[i, j], 6) for j in range(3)] for i in range(3)],
+            'vantage_distortion': {
+                'model': 'none (pinhole)' if _pinhole(cm) else 'kannala_brandt',
+                'coefficients': [] if _pinhole(cm) else [_sig(k) for k in cm.k],
+                'image_size': [int(cm.intr.width), int(cm.intr.height)],
+                'camera': cm.cam.tag, 'name': cm.cam.location or cm.cam.name,
+                'source': 'unit_calibration' if cm.cam.calib else 'library_lens',
+            },
+        })
+    head = f'Vantage {p.name} / {v.name}, exported {ctx.stamp}'
+    rah = ''
+    wc = p.vehicle.wheel_centres or {}
+    if 'RL' in wc:
+        rah = (f' The rear axle is {float(wc["RL"][2]):.3f} m above the ground here: subtract that from z if your ego '
+               f'frame is at axle height.')
+    readme = f"""# nuScenes calibration · {head}
+
+`sensor.json` and `calibrated_sensor.json` follow the nuScenes tables of the same names, one camera per row
+(channel `CAM_<TAG>`).
+
+- **translation**: the camera's position in the ego frame, metres. Ego frame here: {_frame_sentence(ctx)}.
+  nuScenes puts its ego frame at the rear axle with x forward, y left, z up, which is this export's default
+  (rear-axle) frame.{rah}
+- **rotation**: quaternion `[w, x, y, z]` rotating the camera frame into the ego frame, as nuScenes does:
+  `p_ego = R(rotation) · p_camera + translation`. The camera frame is the optical frame: x right, y down, z forward.
+- **camera_intrinsic**: the 3×3 pinhole matrix. {DATASET_NOTE}
+- **vantage_distortion** (an extra field the nuScenes tools ignore): these are fisheye cameras, Kannala-Brandt
+  (`cv2.fisheye`, k1..k4). nuScenes assumes pinhole images, so undistort the images with these coefficients and
+  `camera_intrinsic` (for example `cv2.fisheye.undistortImage(img, K, D, Knew=K)`) before using the 3×3 alone.
+  A rectilinear lens has no distortion and says `none (pinhole)`.
+
+Tokens are stable hashes of the project, variant and camera, so a re-export keeps them.
+"""
+    return [('nuscenes/calibrated_sensor.json', _json(cal).encode('utf-8')),
+            ('nuscenes/sensor.json', _json(sensors).encode('utf-8')),
+            ('nuscenes/README.md', readme.encode('utf-8'))]
+
+
+def _ke(vals) -> str:
+    """KITTI's number style; rotation round-off (1e-16) is written as 0."""
+    return ' '.join(f'{(float(v) if abs(v) > 1e-12 else 0.0):.6e}' for v in np.asarray(vals, float).ravel())
+
+
+def _kitti(ctx: _Ctx) -> list:
+    cams = ctx.models
+    when = ctx.now.strftime('%d-%b-%Y %H:%M:%S')
+    square = float(getattr(ctx.project.target_settings, 'square_mm', 100.0)) / 1000.0
+    names = ' '.join(cm.tag for cm in cams)
+    # KITTI readers parse "key: numbers" lines and skip values that are not numbers, so the notes are such lines
+    a = [f'calib_time: {when}', f'corner_dist: {_ke([square])}', f'camera_names: {names}',
+         'note: cameras are numbered 00.. in camera_names order; R_xx/T_xx map camera 00 coordinates into camera xx '
+         '(X_xx = R_xx X_00 + T_xx), metres; images are not rectified, so S_rect = S, R_rect = I and P_rect = [K|0]; '
+         'D_xx holds Kannala-Brandt k1 k2 k3 k4 (then 0) where DISTORTION_MODEL_xx is equidistant - standard KITTI '
+         'tools assume radtan (k1 k2 p1 p2 k3)']
+    b = [f'calib_time: {when}', f'camera_names: {names}',
+         f'note: Tr_cam_xx_to_vehicle is the 3x4 [R|t] (row-major) mapping camera xx optical coordinates (x right, '
+         f'y down, z forward) into the vehicle frame: {_frame_sentence(ctx)}']
+    T0 = _T_vehicle_camera(ctx, cams[0]) if cams else np.eye(4)
+    for i, cm in enumerate(cams):
+        n = f'{i:02d}'
+        T = _T_vehicle_camera(ctx, cm)
+        rel = _T_inv(T) @ T0                       # camera 00 coordinates -> camera n
+        K = cm.K
+        D = [0.0] * 5 if _pinhole(cm) else list(cm.k) + [0.0]
+        size = [cm.intr.width, cm.intr.height]
+        a += [f'S_{n}: {_ke(size)}', f'K_{n}: {_ke(K)}', f'D_{n}: {_ke(D)}',
+              f'DISTORTION_MODEL_{n}: {"plumb_bob" if _pinhole(cm) else "equidistant"}',
+              f'R_{n}: {_ke(rel[:3, :3])}', f'T_{n}: {_ke(rel[:3, 3])}',
+              f'S_rect_{n}: {_ke(size)}', f'R_rect_{n}: {_ke(np.eye(3))}',
+              f'P_rect_{n}: {_ke(np.c_[K, np.zeros(3)])}']
+        b.append(f'Tr_cam_{n}_to_vehicle: {_ke(T[:3, :4])}')
+    order = '\n'.join(f'  {i:02d}  {cm.cam.tag:<6} {cm.cam.location or cm.cam.name}' for i, cm in enumerate(cams))
+    readme = f"""KITTI-style calibration · Vantage {ctx.project.name} / {ctx.variant.name}, exported {ctx.stamp}
+
+calib_cam_to_cam.txt follows the KITTI raw-data layout: calib_time, corner_dist, and per camera S, K, D, R, T,
+S_rect, R_rect, P_rect. calib_cams_to_vehicle.txt gives every camera's pose in the vehicle frame.
+
+Cameras:
+{order or '  (none)'}
+
+- R_xx, T_xx map camera 00 coordinates into camera xx: X_xx = R_xx X_00 + T_xx (metres), as in KITTI.
+- Tr_cam_xx_to_vehicle maps camera xx coordinates into the vehicle frame ({_frame_sentence(ctx)}).
+- Camera frames are optical: x right, y down, z forward. {DATASET_NOTE}
+- These are fisheye cameras. KITTI's D is a radtan vector (k1 k2 p1 p2 k3); here D_xx holds the Kannala-Brandt
+  coefficients k1 k2 k3 k4 followed by 0, and DISTORTION_MODEL_xx says equidistant. Tools that assume radtan will
+  misread them: undistort with cv2.fisheye first. A rectilinear lens has D = 0 and plumb_bob.
+- The images are not rectified: S_rect = S, R_rect = I, P_rect = [K | 0] (no stereo baseline term).
+- corner_dist is the floor calibration board's square ({square:.3f} m).
+- The extra lines (camera_names, note, DISTORTION_MODEL) are not numbers, so KITTI readers such as pykitti skip them.
+"""
+    return [('kitti/calib_cam_to_cam.txt', ('\n'.join(a) + '\n').encode('utf-8')),
+            ('kitti/calib_cams_to_vehicle.txt', ('\n'.join(b) + '\n').encode('utf-8')),
+            ('kitti/README.txt', readme.encode('utf-8'))]
+
+
+def _yaml_mat(name: str, M) -> str:
+    M = np.atleast_2d(np.asarray(M, float))
+    data = ', '.join(repr(_r(v, 10)) for v in M.ravel())
+    return f'{name}:\n  rows: {M.shape[0]}\n  cols: {M.shape[1]}\n  data: [{data}]\n'
+
+
+def _camera_info(ctx: _Ctx, cm: CameraModel) -> str:
+    """ROS sensor_msgs/CameraInfo as camera_calibration_parsers writes it."""
+    c = cm.cam
+    K = cm.K
+    pin = _pinhole(cm)
+    D = [0.0] * 5 if pin else list(cm.k)
+    lens = "Pinhole lens: plumb_bob with no distortion." if pin else \
+        "Fisheye lens: equidistant = Kannala-Brandt (cv2.fisheye) k1..k4."
+    src = "this unit's own calibration" if c.calib else f'the library lens {cm.lens.name}'
+    out = (f'# ROS camera_info for camera {c.tag} ({c.location or c.name}), Vantage {ctx.project.name} / '
+           f'{ctx.variant.name}, exported {ctx.stamp}\n'
+           f'# {lens} {DATASET_NOTE}\n'
+           f'# Intrinsics: {src}.\n'
+           f'image_width: {int(cm.intr.width)}\n'
+           f'image_height: {int(cm.intr.height)}\n'
+           f'camera_name: {cm.tag}\n')
+    out += _yaml_mat('camera_matrix', K)
+    out += f'distortion_model: {"plumb_bob" if pin else "equidistant"}\n'
+    out += _yaml_mat('distortion_coefficients', np.array(D)[None, :])
+    out += _yaml_mat('rectification_matrix', np.eye(3))
+    out += _yaml_mat('projection_matrix', np.c_[K, np.zeros(3)])
+    return out
+
+
+def _kalibr(ctx: _Ctx) -> str:
+    import yaml
+    cams = ctx.models
+    index = {cm.cam.uid: i for i, cm in enumerate(cams)}
+    doc, prev = {}, None
+    for i, cm in enumerate(cams):
+        T = _T_vehicle_camera(ctx, cm)
+        pin = _pinhole(cm)
+        d = {'camera_model': 'pinhole',
+             'intrinsics': [_r(cm.fx, 6), _r(cm.fy, 6), _r(cm.cx, 6), _r(cm.cy, 6)],
+             'distortion_model': 'radtan' if pin else 'equidistant',
+             'distortion_coeffs': [0.0] * 4 if pin else [_sig(k) for k in cm.k],
+             'resolution': [int(cm.intr.width), int(cm.intr.height)],
+             'rostopic': f'/{cm.tag.lower()}/image_raw'}
+        if ctx.result is not None:
+            ov = ctx.result.per_cam.get(cm.cam.uid, {}).get('overlaps', {})
+            d['cam_overlaps'] = sorted(index[u] for u, a in ov.items() if u in index and a > 0.05)
+        if prev is not None:
+            rel = _T_inv(T) @ prev                 # previous camera's coordinates -> this camera
+            d['T_cn_cnm1'] = [[_r(rel[r, c], 10) for c in range(4)] for r in range(4)]
+        doc[f'cam{i}'] = d
+        prev = T
+    order = ', '.join(f'cam{i} = {cm.cam.tag}' for i, cm in enumerate(cams)) or 'none'
+    head = (f'# Kalibr camera chain · Vantage {ctx.project.name} / {ctx.variant.name}, exported {ctx.stamp}\n'
+            f'# {order}. T_cn_cnm1 maps points from the previous camera into this one (p_n = T p_n-1), metres;\n'
+            f'# camera frames are optical (x right, y down, z forward). intrinsics are [fu, fv, pu, pv].\n'
+            f'# {DATASET_NOTE}\n'
+            f'# Poses in the vehicle frame ({_frame_sentence(ctx)}): see the extrinsics export.\n')
+    return head + (yaml.safe_dump(doc, sort_keys=False, default_flow_style=None, width=200) if doc else '{}\n')
 
 
 # ====================================================================== Jetson
@@ -1209,6 +1485,17 @@ def _report_html(ctx: _Ctx, qt: bool = False, img_src: Callable | None = None) -
     w(tbl_end)
     if any(r['over'] for r in rows):
         w('<p class="note">Routed lengths in red are longer than the module cable.</p>\n')
+    rig = _rig_doc(ctx)
+    if rig:
+        w('<h3>Rig</h3>\n' if not qt else '<p style="margin-top:10px; font-weight:600">Rig</p>\n')
+        w(table([('Part', False), ('Kind', False), (f'X ({u})', True), (f'Y ({u})', True), (f'Z ({u})', True),
+                 (f'Size ({u})', True), ('Blocks cameras', False), ('Carries cameras', False)]))
+        for r in rig:
+            size = (' × '.join(_fs(r[k], ctx.pdp) for k in ('length', 'width', 'height')) if r['kind'] == 'box' else
+                    f'⌀{_fs(2 * r["radius"], ctx.pdp)} × {_fs(r.get("height", r.get("length")), ctx.pdp)}')
+            w(f'<tr><td>{E(r["name"])}</td><td>{E(r["kind"])}</td>' + ''.join(num(_fs(v, ctx.pdp)) for v in r['centre'])
+              + num(size) + f'<td>{"yes" if r["occludes"] else "no"}</td><td>{"yes" if r["mountable"] else "no"}</td></tr>\n')
+        w(tbl_end)
 
     # ---------------------------------------------------------------- per-camera coverage
     w('<h2>Coverage per camera</h2>\n')
@@ -1937,6 +2224,14 @@ def _render(fmt_id: str, ctx: _Ctx) -> list:
         return [(f'opencv/{cm.tag}.yaml', t(_opencv_yaml(ctx, cm))) for cm in ctx.models]
     if fmt_id == 'ros2':
         return [('vantage_cameras.urdf', t(_urdf(ctx))), ('static_tf.launch.py', t(_launch(ctx)))]
+    if fmt_id == 'nuscenes_calib':
+        return _nuscenes(ctx)
+    if fmt_id == 'kitti_calib':
+        return _kitti(ctx)
+    if fmt_id == 'ros_camera_info':
+        return [(f'camera_info/{cm.tag}.yaml', t(_camera_info(ctx, cm))) for cm in ctx.models]
+    if fmt_id == 'kalibr_camchain':
+        return [(name(), t(_kalibr(ctx)))]
     if fmt_id == 'jetson_json':
         return [(name(), t(_jetson_json(ctx)))]
     if fmt_id in _IMAGE_KEYS:
@@ -1958,6 +2253,8 @@ def _render(fmt_id: str, ctx: _Ctx) -> list:
         return _guidelines(ctx)
     if fmt_id == 'stitched_objects':
         return [(f'stitched_objects/{n}', d) for n, d in _stitched(ctx)]
+    if fmt_id == 'perception_range':
+        return [(f'perception_range/{n}', d) for n, d in _perception(ctx)]
     if fmt_id == 'dxf':
         return [(name(), _dxf(ctx).encode('cp1252', errors='replace'))]
     if fmt_id == 'step':
@@ -2100,6 +2397,24 @@ def _stitched(ctx: _Ctx):
     return ctx.meta['stitched']
 
 
+def _perception(ctx: _Ctx):
+    """perception_range.json (ranges per direction and object, sector verdicts, stereo pairs in the export frame and
+    units) and the plan PNG."""
+    if 'perception' in ctx.meta:
+        return ctx.meta['perception']
+    from . import perception as PR
+    from .analysis import Engine
+    st = PR.PerceptionSettings.from_dict(getattr(ctx.project.analysis, 'perception', None))
+    pr = PR.analyse(ctx.project, ctx.opts.engine or Engine(), ctx.result, st)
+    doc = PR.to_doc(pr, ctx.project, L=ctx.L, A=ctx.Ap, origin=ctx.origin)
+    head = {'project': ctx.project.name, 'variant': ctx.variant.name, 'created': ctx.stamp, 'frame': ctx.frame,
+            'units': ctx.units, 'angles': ctx.angles}
+    doc = {'schema': doc.pop('schema'), **head, **{k: v for k, v in doc.items() if k not in ('project', 'variant')}}
+    ctx.meta['perception'] = [('perception_range.json', _json(doc).encode('utf-8')),
+                              ('perception_range.png', PR.png(pr))]
+    return ctx.meta['perception']
+
+
 def _lut(ctx: _Ctx):
     if ctx.opts.lut is not None:
         return ctx.opts.lut
@@ -2208,6 +2523,17 @@ def preview(fmt_id: str, project: Project, result, opts: ExportOptions) -> tuple
                 f'{doc["object"]["label"]}: vanishes on {m["vanish_m2"]} m², cut off on {m["cut_m2"]} m², '
                 f'{len(doc["hotspots"])} hotspots · {_size_text(total)}\n\n'
                 + dict(files)['stitched_objects/stitched_objects.json'].decode('utf-8'), total)
+    if fmt_id == 'perception_range':
+        files = _render(fmt_id, ctx)
+        total = sum(len(d) for _, d in files)
+        doc = json.loads(dict(files)['perception_range/perception_range.json'])
+        passed = sum(v['pass'] for s in doc['sectors'] for v in s['classes'].values())
+        checks = sum(len(s['classes']) for s in doc['sectors'])
+        head = {k: v for k, v in doc.items() if k not in ('azimuth', 'per_class', 'per_camera')}
+        return (f'{base}/perception_range/perception_range.json',
+                f'{len(doc["classes"])} objects × {len(doc["azimuth"])} directions · {passed} of {checks} sector checks '
+                f'pass · {len(doc["stereo"]["pairs"])} overlapping camera pairs · {_size_text(total)}\n\n'
+                f'(the per-direction ranges are left out of this preview)\n' + _json(head), total)
     if fmt_id == 'bev_lut':
         if ctx.result is None and ctx.opts.lut is None:
             return first, 'Not available: the remap tables need an analysis result.', 0
@@ -2256,6 +2582,8 @@ def export(fmt_ids, project: Project, result, opts: ExportOptions, progress=None
             _bowl(ctx)
         elif fid == 'stitched_objects':
             _stitched(ctx)
+        elif fid == 'perception_range':
+            _perception(ctx)
     written = []
     for i, fid in enumerate(ids):
         for rel, data in _render(fid, ctx):

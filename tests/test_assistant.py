@@ -425,6 +425,17 @@ def test_compare_variants_and_studies(sample):
     assert 'error' in T.run_study(tc, study='nope')
 
 
+def test_studies_run_inside_a_conversation(sample):
+    """In the app the session sets tc.cancel to a threading.Event; the studies take a callable."""
+    tc = _tc(sample)
+    tc.cancel = threading.Event()
+    for study in ('blind_volume', 'stitched_objects', 'load_cases', 'mounting_tolerance'):
+        out = T.run_study(tc, study=study)
+        assert 'error' not in out, (study, out)
+    tc.cancel.set()
+    assert T.run_study(tc, study='blind_volume') == {'error': 'cancelled'}
+
+
 def test_optimiser_finds_the_fix_and_says_when_there_is_none(tilted, sample):
     p, e, res = tilted
     tc = T.ToolContext(p.snapshot(), res, e.share())

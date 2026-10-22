@@ -13,6 +13,7 @@ from .lens import resolve, Intrinsics
 from .mathutil import rot_zyx, BODY_TO_OPTICAL
 from .mesh import Mesh
 from .occlusion import OccluderGeom, CubeCache
+from .rig import merge, rig_key, rig_mesh
 from .project import Project, Variant, Camera, ROI
 
 HIST_EDGES = np.array([0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 1e9], float)
@@ -22,30 +23,48 @@ HIST_EDGES = np.array([0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 1e9],
 @dataclass
 class VehicleGeom:
     version: int
-    mesh: Mesh
-    occ_mesh: Mesh
+    mesh: Mesh                  # the body with the rig parts (surfaces to mount on, mount checks)
+    occ_mesh: Mesh              # the simplified body with the rig parts: what blocks the cameras
     occ: OccluderGeom
     centre: tuple
-    bbox: tuple
+    bbox: tuple                 # the body alone
     max_dev: float
+    body_occ_mesh: Mesh | None = None   # the simplified body alone: its footprint (ROI), drawing
+
+    @property
+    def body(self) -> Mesh:
+        return self.body_occ_mesh if self.body_occ_mesh is not None else self.occ_mesh
 
 
 _vg_counter = [0]
 
 
-def prepare_vehicle(mesh: Mesh, occluder_target: int = 8000) -> VehicleGeom:
+def prepare_vehicle(mesh: Mesh, occluder_target: int = 8000, rig=None, body=None) -> VehicleGeom:
+    """The body's occluder (simplified to occluder_target triangles) and, with rig parts, the rig merged in: the rig
+    blocks cameras and carries them, but the ROI footprint and the vehicle's size are the body's. body: an already
+    simplified body (mesh, max deviation) to reuse when only the rig changed."""
     _vg_counter[0] += 1
-    occ_faces = mesh.occluder_faces()
-    base = mesh.subset(occ_faces) if not occ_faces.all() else mesh
-    if base.n_tris > occluder_target:
-        occ_mesh, dev = base.decimate(occluder_target)
+    if body is not None:
+        body_occ, dev = body
     else:
-        occ_mesh, dev = base, 0.0
+        occ_faces = mesh.occluder_faces()
+        base = mesh.subset(occ_faces) if not occ_faces.all() else mesh
+        if base.n_tris > occluder_target:
+            body_occ, dev = base.decimate(occluder_target)
+        else:
+            body_occ, dev = base, 0.0
+    rm = rig_mesh(rig) if rig else None
+    if rm is not None:
+        mesh = merge(mesh, rm)
+        keep = rm.occluder_faces()
+        occ_mesh = merge(body_occ, rm.subset(keep)) if keep.any() else body_occ
+    else:
+        occ_mesh = body_occ
     glass_idx = [i for i, p in enumerate(occ_mesh.parts) if 'not mountable' in p.role or p.name.lower().startswith('glass')]
     glass = np.isin(occ_mesh.face_part, glass_idx)
     occ = OccluderGeom(occ_mesh.tri, occ_mesh.normals, glass, version=_vg_counter[0])
-    lo, hi = occ_mesh.bbox
-    return VehicleGeom(_vg_counter[0], mesh, occ_mesh, occ, ((lo[0] + hi[0]) / 2, 0.0), (lo, hi), dev)
+    lo, hi = body_occ.bbox
+    return VehicleGeom(_vg_counter[0], mesh, occ_mesh, occ, ((lo[0] + hi[0]) / 2, 0.0), (lo, hi), dev, body_occ)
 
 
 # ------------------------------------------------------------------ ROI
@@ -98,7 +117,7 @@ def compute_roi(vg: VehicleGeom, roi: ROI, cell: float) -> RoiGrid:
     nx = int(math.ceil((xmax - xmin) / cell))
     ny = int(math.ceil((ymax - ymin) / cell))
     x0, y0 = xmin, ymin
-    body = vg.occ_mesh.plan_mask(x0, y0, cell, nx, ny)
+    body = vg.body.plan_mask(x0, y0, cell, nx, ny)
     src = body.copy()
     if roi.measured_from == 'bbox' and body.any():
         jj, ii = np.nonzero(body)
@@ -310,15 +329,19 @@ class Engine:
         m = project.vehicle.mesh
         if m is None or m.n_tris == 0:
             return None
+        rig = [r for r in getattr(project, 'rig', ()) if r.visible]
         key = (id(m), m.n_tris, project.vehicle.occluder_target, tuple(p.role for p in m.parts),
-               id(m.face_zone), tuple((z.name, z.kind) for z in m.zones))      # zones are copied into the occluder
+               id(m.face_zone), tuple((z.name, z.kind) for z in m.zones),      # zones are copied into the occluder
+               rig_key(rig))
         cur_key, cur = self._current()
         if key == cur_key:
             return cur
         with self._glock:
             vg = self._geoms.pop(key, None)
             if vg is None:
-                vg = prepare_vehicle(m, project.vehicle.occluder_target)
+                same = next((g for k, g in self._geoms.items() if k[:-1] == key[:-1]), None)  # only the rig changed
+                vg = prepare_vehicle(m, project.vehicle.occluder_target, rig,
+                                     (same.body, same.max_dev) if same is not None else None)
             self._geoms[key] = vg                                               # most recent last
             while len(self._geoms) > self.GEOMS_KEPT:
                 self._geoms.pop(next(iter(self._geoms)))

@@ -109,6 +109,12 @@ class MainWindow(QMainWindow):
         elif name == 'volume':
             from .workspaces.volume_ws import VolumePage
             w = VolumePage(self.ctx)
+        elif name == 'perception':
+            from .workspaces.perception_ws import PerceptionPage
+            w = PerceptionPage(self.ctx)
+        elif name == 'rig':
+            from .workspaces.rig_ws import RigPage
+            w = RigPage(self.ctx)
         self.pages.addWidget(w)
         self._page_widgets[name] = w
         return w
@@ -130,6 +136,8 @@ class MainWindow(QMainWindow):
         'targets': ('outliner', 'library', 'inspector', 'bottom'),
         'install': (),
         'volume': (),
+        'perception': (),
+        'rig': (),
     }
 
     def set_page(self, name):
@@ -375,6 +383,11 @@ class MainWindow(QMainWindow):
         A('photo_cal', 'Calibrate…', self.calibrate_photos, None, None, category='Vehicle ▸ Reference photos')
         A('photo_pane', 'Show photo pane', lambda: self.show_photo_page(True), None, None, category='Vehicle ▸ Reference photos')
         A('spec', 'Spec check…', self.spec_check, None, 'report', category='Vehicle')
+        from ..core.rig import PRESETS as RIG_PRESETS
+        from .rigview import add_preset
+        for k, t in RIG_PRESETS:
+            A(f'rig_{k}', t, lambda _=False, k=k: add_preset(self.ctx, k), None, 'cylinder' if k == 'sensor_mast' else 'cube',
+              category='Vehicle ▸ Add rig part')
         # camera
         A('add_cam', 'Add from library…', self.add_from_library, 'Shift+A', 'plus', category='Camera')
         A('place', 'Place on surface', lambda: self.set_tool('place'), None, 'place', category='Camera')
@@ -425,6 +438,8 @@ class MainWindow(QMainWindow):
         A('load_cases', 'Load cases…', self.load_cases, None, 'axle', category='Analysis')
         A('blind_volume', 'Blind volume…', lambda: self.set_page('volume'), None, 'blind', category='Analysis',
           tip='Where around the vehicle something can stand unseen by every camera, in 3D')
+        A('perception_range', 'Perception range…', lambda: self.set_page('perception'), None, 'target',
+          category='Analysis', tip='How far out the rig resolves cars, pedestrians, cyclists and signs in each direction')
         A('an_settings', 'Settings…', self.preferences, None, 'gear', category='Analysis')
         # calibrate
         A('targets', 'Target planner…', lambda: self.set_page('targets'), None, 'checker', category='Calibrate')
@@ -434,6 +449,8 @@ class MainWindow(QMainWindow):
         A('target_check', 'Check visibility', lambda: (self.set_page('targets'), self.inspector.pages['targets']._check()), None, None, category='Calibrate')
         A('target_export', 'Export target positions…', lambda: self.inspector.pages['targets']._export(), None, 'export', category='Calibrate')
         A('install', 'Installation check…', lambda: self.set_page('install'), 'Ctrl+Shift+I', 'target', category='Calibrate')
+        A('live_rig', 'Live rig…', lambda: self.set_page('rig'), None, 'camera-wide', category='Calibrate',
+          tip='Every camera\'s stream at once: frame rate, drops, exposure, sharpness, sync and drift from the plan')
         A('lens_calib', 'Lens calibration…', self.lens_calibration, 'Ctrl+Shift+L', 'lens', category='Calibrate')
         A('calib_import', 'Import unit calibrations…', self.import_calibrations, None, 'file', category='Calibrate')
         A('calib_export', 'Export unit calibrations…', self.export_calibrations, None, 'export', category='Calibrate')
@@ -531,6 +548,7 @@ class MainWindow(QMainWindow):
         sub(ve, 'Mount zones', ['zone_allow', 'zone_forbid', 'zone_glass', 'zone_clear'])
         sub(ve, 'Occluder', ['occ_full', 'occ_hull', 'occ_level'])
         sub(ve, 'Reference photos', ['photo_load', 'photo_cal', 'photo_pane'])
+        sub(ve, 'Add rig part', ['rig_roof_rack', 'rig_sensor_mast', 'rig_enclosure', 'rig_bar'])
         ve.addSeparator()
         ve.addAction(a['spec'])
         ca = menu('Camera')
@@ -559,7 +577,7 @@ class MainWindow(QMainWindow):
         sub(an, 'Obstacles', ['obs_ground', 'obs_pole05', 'obs_pole10', 'obs_child', '-', 'obs_add'])
         an.addSeparator()
         an.addActions([a['thresholds'], a['tolerance'], a['sensitivity'], a['load_cases'], a['blind_volume'],
-                       a['an_settings']])
+                       a['perception_range'], a['an_settings']])
         cb = menu('Calibrate')
         cb.addAction(a['targets'])
         sub(cb, 'Add target', ['target_checkerboard', 'target_charuco', 'target_aprilgrid'])
@@ -567,7 +585,7 @@ class MainWindow(QMainWindow):
         cb.addSeparator()
         cb.addActions([a['lens_calib'], a['calib_import'], a['calib_export'], a['calib_clear']])
         cb.addSeparator()
-        cb.addAction(a['install'])
+        cb.addActions([a['install'], a['live_rig']])
         ex = menu('Export')
         ex.addAction(a['export'])
         ex.addSeparator()
@@ -856,6 +874,8 @@ class MainWindow(QMainWindow):
         self.cancel_jobs()
         if 'install' in self._page_widgets:
             self._page_widgets['install'].stop_live()
+        if 'rig' in self._page_widgets:
+            self._page_widgets['rig'].stop()
         # the undo stack and analysis keep emitting while child widgets are torn down
         for obj in (self.store.undo, self.store, self.ctx.analysis, self.ctx):
             obj.blockSignals(True)
@@ -1337,6 +1357,12 @@ class MainWindow(QMainWindow):
                 m.addAction('Delete obstacle', lambda: self.inspector.pages['obstacle']._delete())
         elif kind == 'ecu':
             m.addAction(a['assign_port'])
+        elif kind == 'rig' or (kind == 'group' and ident == 'rig'):
+            m.addActions([a['rig_roof_rack'], a['rig_sensor_mast'], a['rig_enclosure'], a['rig_bar']])
+            if kind == 'rig':
+                from .rigview import delete_parts
+                m.addSeparator()
+                m.addAction('Delete rig part', lambda: delete_parts(self.ctx, [ident]))
         else:
             return
         m.exec(gpos)
@@ -1443,6 +1469,9 @@ class MainWindow(QMainWindow):
             self._delete_target(st.sel_obj[1])
         elif st.sel_obj and st.sel_obj[0] == 'obstacle':
             self.inspector.pages['obstacle']._delete()
+        elif st.sel_obj and st.sel_obj[0] == 'rig' and len(st.sel_obj) > 1:
+            from .rigview import delete_parts
+            delete_parts(self.ctx, [st.sel_obj[1]])
 
     def _delete_target(self, uid):
         self.store.edit('targets', lambda p: setattr(p, 'targets', [t for t in p.targets if t.uid != uid]), 'Deleted target')

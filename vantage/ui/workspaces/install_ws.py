@@ -521,6 +521,8 @@ class InstallPage(QWidget):
             self._restitch()
             self._fill_boards()
             self._sync_buttons()
+        if 'streams' in sections:
+            self._streams_changed()
         if 'variant' in sections or 'variants' in sections:
             uids = [c.uid for c in self._cams()]
             if uids != list(self.tiles):
@@ -528,6 +530,27 @@ class InstallPage(QWidget):
             else:
                 self._fill_table()
                 self._repaint_tiles()
+
+    def _stream_spec(self, cam):
+        """The live source of a camera: its stream in the project (shared with the live rig page), else its port."""
+        spec = self.ctx.store.project.streams.get(cam.tag, '').strip()
+        return spec if spec and not spec.lower().startswith('synthetic') else cap.default_spec(cam.port)
+
+    def _streams_changed(self):
+        for c in self._cams():
+            s = self.sources.get(c.uid)
+            spec = self._stream_spec(c)
+            if s is None or s['spec'] == spec:
+                continue
+            s['spec'] = spec
+            if s['kind'] == 'live':
+                ls = self.live.pop(c.uid, None)
+                if ls:
+                    ls.stop()
+                self.set_image(c.uid, None)
+                self._start_live(c.uid)
+            if c.uid in self.rows:
+                self._sync_row(c.uid)
 
     def _on_project_replaced(self, *_):
         self.stop_live()
@@ -552,7 +575,7 @@ class InstallPage(QWidget):
                 self.sources[c.uid] = dict(src)
                 if old in self.images:
                     self.set_image(c.uid, self.images[old])
-            s = self.sources.setdefault(c.uid, {'kind': 'synthetic', 'path': '', 'spec': cap.default_spec(c.port)})
+            s = self.sources.setdefault(c.uid, {'kind': 'synthetic', 'path': '', 'spec': self._stream_spec(c)})
             s['tag'] = c.tag
             chip = Chip(c.slot, c.tag)
             combo = QComboBox()
@@ -671,6 +694,11 @@ class InstallPage(QWidget):
                 ls.stop()
             self.set_image(uid, None)
             self._start_live(uid)
+            cam = self.ctx.store.cam(uid)
+            if cam is not None and self.ctx.store.project.streams.get(cam.tag) != text:
+                from ...core.rig_health import shown
+                self.ctx.store.edit('streams', lambda p, t=cam.tag: p.streams.__setitem__(t, text),
+                                    f'Stream of {cam.tag}: {shown(text)}')
         self._after_sources()
 
     def browse(self, uid):
@@ -704,6 +732,31 @@ class InstallPage(QWidget):
         missing = [c.tag for c in cams if c.tag not in found]
         self.ctx.msg(f'Loaded {len(found)} image(s) from {os.path.basename(folder)}' +
                      (f' · none for {", ".join(missing)}' if missing else ''), 6000)
+        self._after_sources()
+
+    def use_frames(self, frames: dict):
+        """Frames grabbed elsewhere (the live rig page), uid -> RGB, become this check's captures."""
+        for uid, img in frames.items():
+            s = self.sources.get(uid)
+            if s is None or img is None:
+                continue
+            ls = self.live.pop(uid, None)
+            if ls:
+                ls.stop()
+            s.update(kind='file', path='')
+            self.truth.pop(uid, None)
+            self.results.pop(uid, None)
+            if uid in self.rows:
+                combo = self.rows[uid][0]
+                combo.blockSignals(True)
+                combo.setCurrentIndex([k for k, _ in SOURCES].index('file'))
+                combo.blockSignals(False)
+                self._sync_row(uid)
+                self.rows[uid][1].setPlaceholderText('frame from the live rig')
+            warn = self._aspect_warning(self.ctx.store.cam(uid), img)
+            if warn:
+                self.ctx.msg(warn, 8000)
+            self.set_image(uid, img)
         self._after_sources()
 
     def _load_file(self, uid, path):

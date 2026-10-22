@@ -21,7 +21,8 @@ MENU_TO_FMT = {'bev_lut': 'bev_lut', 'mount_sheet_pdf': 'mount_sheet_pdf', 'repo
                'extrinsics_json': 'extrinsics_json', 'extrinsics_yaml': 'extrinsics_yaml', 'extrinsics_csv': 'extrinsics_csv',
                'opencv_yaml': 'opencv_yaml', 'ros2': 'ros2', 'jetson': 'jetson_json', 'img_viewport': 'viewport_png',
                'img_bev': 'bev_png', 'img_cams': 'camera_views_png', 'dxf': 'dxf', 'step': 'step'}
-ICONS = {'Documents': 'report', 'Extrinsics': 'axes', 'Calibration and robotics': 'ecu', 'Surround view': 'bowl', 'Images': 'bev',
+ICONS = {'Documents': 'report', 'Extrinsics': 'axes', 'Calibration and robotics': 'ecu', 'Datasets': 'layers',
+         'Surround view': 'bowl', 'Images': 'bev',
          'Mount points': 'mount-zone'}
 DEFAULT_ON = {'mount_sheet_pdf', 'report_html', 'extrinsics_json', 'ros2', 'jetson_json'}
 

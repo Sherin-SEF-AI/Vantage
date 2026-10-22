@@ -178,10 +178,10 @@ class MainScene(QObject):
             src = m
             if self.ctx.window is not None and self.ctx.window.soft_3d:
                 vg = self.ctx.analysis.engine.vehicle_geom(self.project)
-                src = vg.occ_mesh if vg and m.n_tris > 12000 else m
+                src = vg.body if vg and m.n_tris > 12000 else m
             elif not use_full:
                 vg = self.ctx.analysis.engine.vehicle_geom(self.project)
-                src = vg.occ_mesh
+                src = vg.body
             base, alpha, keep = mesh_colors(src, sh)
             self._mesh = MeshDraw(src.tri[keep].astype(np.float32), src.normals[keep], base[keep], alpha[keep],
                                   version=id(src), wire=(sh == 'wire'))
@@ -314,6 +314,11 @@ class MainScene(QObject):
                 out.append(self._bowl())
             elif not getattr(vp, 'gl_bowl', False):
                 out.append(self._bowl_soft())
+        if self.mode in ('scene', 'bowl'):                      # the rig rides on the car in the bowl view too
+            from .rigview import scene_tris
+            td = scene_tris(self.ctx, getattr(vp, 'renderer', None) is not None)
+            if td is not None:
+                out.append(td)
         out += guides.scene_tris(self, vp)
         return out
 
@@ -915,6 +920,12 @@ class MainScene(QObject):
         if c is not None:
             st.select_cams([c.uid], add=add)
             return
+        if self.project.rig:
+            from .rigview import pick
+            uid = pick(self.project, self.ctx.analysis.engine.vehicle_geom(self.project), *vp.ray(pos.x(), pos.y()))
+            if uid is not None:
+                st.select_obj(('rig', uid))
+                return
         g = vp.ground_at(pos.x(), pos.y())
         if g is not None and self.ctx.overlays.get('targets'):
             for t in self.project.targets:

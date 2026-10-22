@@ -97,7 +97,7 @@ def _cams(p):
 # ----------------------------------------------------------------------------- registry
 def test_formats_registry():
     ids = [f.id for f in ex.FORMATS]
-    assert len(ids) == len(set(ids)) == 20
+    assert len(ids) == len(set(ids)) == 25
     assert {f.group for f in ex.FORMATS} == set(ex.GROUPS)
     for f in ex.FORMATS:
         assert f.kind in ('text', 'binary')
@@ -112,8 +112,9 @@ def test_export_writes_every_file(sample, exported):
     n = len(_cams(p))
     # 11 single-file formats + N opencv + 2 ros + N views + (json, npz, txt, 2N bin, body mask) remap tables
     # + 4 reference stitcher sources + 5 bowl files (obj, mtl, png, npz, json) + 2 blind volume files (json, obj)
-    # + N guideline tables and N previews + 2 stitched-objects files (json, png)
-    assert len(paths) == 11 + 2 * n + 2 + (2 * n + 4) + 4 + 5 + 2 + 2 * n + 2
+    # + N guideline tables and N previews + 2 stitched-objects files (json, png) + 2 perception range files (json, png)
+    # + datasets: 3 nuScenes, 3 KITTI, N camera_info, 1 Kalibr
+    assert len(paths) == 11 + 2 * n + 2 + (2 * n + 4) + 4 + 5 + 2 + 2 * n + 2 + 2 + 3 + 3 + n + 1
     for path in paths:
         assert os.path.isabs(path) and os.path.isfile(path) and os.path.getsize(path) > 0
         assert os.path.commonpath([path, str(out)]) == str(out)
@@ -126,7 +127,8 @@ def test_export_writes_every_file(sample, exported):
                      'views/QR.png', 'bev_lut/bev_lut.json', 'bev_lut/F_map.bin', 'bev_lut/body_mask.bin',
                      'bev_lut/bev_lut.txt', 'bev_lut/stitcher/bev_stitch.cpp', 'bev_lut/stitcher/bev_stitch.py',
                      'bowl/bowl.obj', 'bowl/bowl_lut.npz', 'bowl/bowl.png', 'guidelines/R.json', 'guidelines/R.png',
-                     'stitched_objects/stitched_objects.json', 'stitched_objects/stitched_objects.png'):
+                     'stitched_objects/stitched_objects.json', 'stitched_objects/stitched_objects.png',
+                     'perception_range/perception_range.json', 'perception_range/perception_range.png'):
         assert expected in names
 
 
@@ -606,8 +608,9 @@ def test_exports_without_analysis_result(sample, tmp_path, qapp):
     with pytest.raises(ValueError, match='analysis result'):
         ex.export(['bev_lut'], p, None, ex.ExportOptions(out_dir=str(tmp_path / 'lut')))
     assert not (tmp_path / 'lut').exists()
-    # opencv: one per camera; ros2 and the blind volume: two
-    assert len(paths) == (len(ids) - 3) + len(_cams(p)) + 2 + 2
+    # opencv and camera_info: one per camera; ros2, the blind volume and the perception range: two;
+    # nuScenes and KITTI: three
+    assert len(paths) == (len(ids) - 7) + 2 * len(_cams(p)) + 2 + 2 + 2 + 3 + 3
     html_text = (tmp_path / 'report.html').read_text('utf-8')
     assert 'No analysis result' in html_text
     _, desc, _ = ex.preview('report_pdf', p, None, ex.ExportOptions(out_dir=str(tmp_path)))

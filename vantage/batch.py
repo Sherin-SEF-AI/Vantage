@@ -7,10 +7,13 @@
     vantage project.vantage --import-calib camchain.yaml F.yaml --save out.vantage
     vantage --sample --load-cases -
     vantage project.vantage --blind-volume volume.json
+    vantage project.vantage --perception-range ranges.json --variant 2
+    vantage project.vantage --rig-health 10 health.json
 
 The exit code is 0 when everything is fine, 2 when an analysis or export finds critical issues in the plan,
-3 when an installation check finds a camera that has to be re-mounted (or could not be solved) and 4 when a lens
-calibration fails or an imported calibration matches no camera.
+3 when an installation check finds a camera that has to be re-mounted (or could not be solved) or the rig health check
+finds a camera faulty (or without a stream), and 4 when a lens calibration fails or an imported calibration matches no
+camera.
 """
 from __future__ import annotations
 
@@ -140,6 +143,12 @@ def blind_volume_doc(project, eng, res) -> dict:
     if vr is None:
         raise SystemExit('The blind volume needs a vehicle model.')
     return vol.to_doc(vr, project)
+
+
+def perception_range_doc(project, eng, res) -> dict:
+    from .core import perception as PR
+    pr = PR.analyse(project, eng, res, PR.PerceptionSettings.from_dict(project.analysis.perception))
+    return PR.to_doc(pr, project)
 
 
 def install_check(project, eng, res, folder, st, lut_out=None, balance=True, blend='linear'):
@@ -327,6 +336,8 @@ def run(args) -> int:
         _out(load_cases_doc(project, eng), args.load_cases)
     if args.blind_volume is not None:
         _out(blind_volume_doc(project, eng, res), args.blind_volume)
+    if args.perception_range is not None:
+        _out(perception_range_doc(project, eng, res), args.perception_range)
     if args.export:
         if args.formats:
             ids = [f.strip() for f in args.formats.split(',') if f.strip()]
@@ -356,10 +367,33 @@ def run(args) -> int:
             v = as_built_variant(project, results)
             project.save(args.as_built)
             print(f'saved {args.as_built} with variant {v.name}', file=sys.stderr)
+    if args.rig_health:
+        hdoc = rig_health_doc(project, eng, args.rig_health)
+        _out(hdoc, args.rig_health[1] if len(args.rig_health) > 1 else '-')
+        if any(c['status'] in ('fault', 'off') for c in hdoc['cameras'].values()):
+            code = max(code, 3)
     if args.save:
         project.save(args.save)
         print(f'saved {args.save}', file=sys.stderr)
     return code
+
+
+def rig_health_doc(project, eng, spec) -> dict:
+    """--rig-health SECONDS [OUT.json]: watch every camera's stream (project.streams) and report its health."""
+    from .core import rig_health as rh
+    try:
+        seconds = float(spec[0])
+    except ValueError:
+        raise SystemExit(f'--rig-health needs the seconds to measure first, not {spec[0]!r}.')
+    if len(spec) > 2 or (len(spec) == 2 and spec[1].lower().endswith('.vantage')):
+        raise SystemExit('--rig-health takes SECONDS and at most one OUT.json (put the project before it).')
+    cams = [c for c in project.variant.cameras if c.visible]
+    print(f'rig health: watching {sum(1 for c in cams if project.streams.get(c.tag))} of {len(cams)} cameras for '
+          f'{seconds:g} s', file=sys.stderr)
+    doc = rh.jsonable(rh.run_for(project, cams, seconds, engine_factory=eng.share))
+    for k, c in doc['cameras'].items():
+        print(f'  {k:<4} {c["status"]:<8} ' + ('; '.join(c['reasons']) or f'{c.get("fps", 0):.1f} fps'), file=sys.stderr)
+    return doc
 
 
 def add_arguments(ap):
@@ -368,6 +402,8 @@ def add_arguments(ap):
     g.add_argument('--load-cases', nargs='?', const='-', metavar='OUT.json', help='evaluate the load cases')
     g.add_argument('--blind-volume', nargs='?', const='-', metavar='OUT.json',
                    help='3D blind volume: space up to the study height no camera sees, undetectable objects, reach rose')
+    g.add_argument('--perception-range', nargs='?', const='-', metavar='OUT.json',
+                   help='how far out the rig resolves each object class per direction, sector verdicts, stereo pairs')
     g.add_argument('--export', metavar='DIR', help='export into DIR')
     g.add_argument('--formats', help='comma-separated export format ids (default: every non-image format)')
     g.add_argument('--variant', help='variant name or 1-based index (default: the active one)')
@@ -394,8 +430,12 @@ def add_arguments(ap):
     g.add_argument('--calib-out', metavar='FILE', help='also write the calibration (.yaml OpenCV, .json Vantage)')
     g.add_argument('--import-calib', nargs='+', metavar='FILE', help='apply unit calibrations from OpenCV/ROS/Kalibr/JSON files')
     g.add_argument('--save', metavar='OUT.vantage', help='save the project (with calibrations applied)')
+    g.add_argument('--rig-health', nargs='+', metavar=('SECONDS', 'OUT.json'),
+                   help='watch every camera\'s stream (set on the Live rig page) for SECONDS and report frame rate, '
+                        'drops, exposure, sharpness and sync (default: stdout)')
 
 
 def wanted(args) -> bool:
     return any(getattr(args, k) not in (None, False) for k in ('analyse', 'load_cases', 'export', 'install_check',
-                                                               'calibrate_lens', 'import_calib', 'blind_volume'))
+                                                               'calibrate_lens', 'import_calib', 'blind_volume',
+                                                               'perception_range', 'rig_health'))

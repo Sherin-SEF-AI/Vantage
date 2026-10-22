@@ -14,6 +14,7 @@ import numpy as np
 
 from .lens import Module, Lens, builtin_modules, builtin_lenses
 from .mesh import Mesh, Part, Zone
+from . import credentials as _credentials
 
 FORMAT_VERSION = 1
 MAX_CAMERAS = 8
@@ -170,6 +171,33 @@ class Target:
 
 
 @dataclass
+class RigPart:
+    """A solid of the data-collection rig on the vehicle (roof rack, sensor mast, crossbar, enclosure), in the vehicle
+    frame. It blocks cameras like the body does (occludes) and cameras can be placed on it (mountable)."""
+    uid: str = field(default_factory=new_uid)
+    name: str = 'Rig part'
+    kind: str = 'box'                  # box | cylinder (vertical) | bar (horizontal, along y before yaw)
+    x: float = 0.0                     # centre, m
+    y: float = 0.0
+    z: float = 1.6
+    length: float = 0.4                # box: along x; bar: its length
+    width: float = 0.4                 # box: along y
+    height: float = 0.2                # box, cylinder: along z
+    radius: float = 0.05               # cylinder, bar
+    yaw: float = 0.0                   # degrees about z
+    occludes: bool = True
+    mountable: bool = True
+    visible: bool = True
+
+    def to_dict(self):
+        return asdict(self)
+
+    @staticmethod
+    def from_dict(d):
+        return RigPart(**{k: v for k, v in d.items() if k in RigPart.__dataclass_fields__})
+
+
+@dataclass
 class Obstacle:
     uid: str = field(default_factory=new_uid)
     name: str = 'Pole'
@@ -230,6 +258,7 @@ class AnalysisSettings:
     guidelines: dict = field(default_factory=dict)    # parking guidelines (core.guidelines.GuidelineSettings fields)
     stitched: dict = field(default_factory=dict)      # standing objects in the stitched view (core.stitched_objects.Settings)
     assistant: dict = field(default_factory=dict)     # the assistant's project brief: {'brief': text}
+    perception: dict = field(default_factory=dict)    # perception range study (core.perception.PerceptionSettings)
 
     def to_dict(self):
         return asdict(self)
@@ -371,8 +400,10 @@ class Project:
         self.targets: list[Target] = []
         self.target_settings = TargetSettings()
         self.obstacles: list[Obstacle] = []
+        self.rig: list[RigPart] = []           # the data-collection rig mounted on the vehicle
         self.ecu = ECU()
         self.photos = PhotoSet()
+        self.streams: dict[str, str] = {}               # camera tag -> stream source (URL, device, file, 'synthetic')
         self.frame = 'rear_axle'
         self.custom_origin = [0.0, 0.0, 0.0]
         self.units = 'm'
@@ -389,8 +420,8 @@ class Project:
         for k in ('wheel_centres', 'spec', 'landmarks'):
             setattr(q.vehicle, k, copy.deepcopy(getattr(self.vehicle, k)))
         q.variants = [Variant.from_dict(v.to_dict()) for v in self.variants]
-        for k in ('roi', 'analysis', 'targets', 'target_settings', 'obstacles', 'ecu', 'lenses', 'modules',
-                  'custom_origin'):
+        for k in ('roi', 'analysis', 'targets', 'target_settings', 'obstacles', 'rig', 'ecu', 'lenses', 'modules',
+                  'custom_origin', 'streams'):
             setattr(q, k, copy.deepcopy(getattr(self, k)))
         q.photos = self.photos
         q.log = []
@@ -474,6 +505,8 @@ class Project:
             return {'targets': [t.to_dict() for t in self.targets], 'settings': self.target_settings.to_dict()}
         if key == 'obstacles':
             return [o.to_dict() for o in self.obstacles]
+        if key == 'rig':
+            return [r.to_dict() for r in self.rig]
         if key == 'ecu':
             return self.ecu.to_dict()
         if key == 'library':
@@ -485,6 +518,8 @@ class Project:
             return self.name
         if key == 'photos':
             return self.photos.to_dict()
+        if key == 'streams':
+            return dict(self.streams)
         if key == 'vehicle':
             # mesh is shared by reference (immutable once built); meta is deep-copied
             return {'meta': copy.deepcopy(self.vehicle.meta()), 'vehicle': self.vehicle}
@@ -511,6 +546,8 @@ class Project:
             self.target_settings = TargetSettings.from_dict(state['settings'])
         elif key == 'obstacles':
             self.obstacles = [Obstacle.from_dict(o) for o in state]
+        elif key == 'rig':
+            self.rig = [RigPart.from_dict(r) for r in state]
         elif key == 'ecu':
             self.ecu = ECU.from_dict(state)
         elif key == 'library':
@@ -522,6 +559,8 @@ class Project:
             self.name = state
         elif key == 'photos':
             self.photos = PhotoSet.from_dict(state)
+        elif key == 'streams':
+            self.streams = dict(state)
         elif key == 'vehicle':
             veh = state['vehicle']
             meta = state['meta']
@@ -549,9 +588,13 @@ class Project:
             'variants': [v.to_dict() for v in self.variants], 'active': self.active_uid,
             'roi': self.roi.to_dict(), 'analysis': self.analysis.to_dict(),
             'targets': [t.to_dict() for t in self.targets], 'target_settings': self.target_settings.to_dict(),
-            'obstacles': [o.to_dict() for o in self.obstacles], 'ecu': self.ecu.to_dict(),
+            'obstacles': [o.to_dict() for o in self.obstacles], 'rig': [r.to_dict() for r in self.rig],
+            'ecu': self.ecu.to_dict(),
             'photos': self.photos.to_dict(), 'frame': self.frame, 'custom_origin': self.custom_origin,
-            'units': self.units, 'log': [[e.t, e.kind, e.text] for e in self.log[-400:]],
+            'units': self.units,
+            # passwords in stream URLs go to the user's private store, never into the file (core/credentials.py)
+            'streams': {k: _credentials.remember(v) for k, v in self.streams.items()},
+            'log': [[e.t, e.kind, e.text] for e in self.log[-400:]],
         }
 
     def save(self, path: str, thumb_png: bytes | None = None):
@@ -618,8 +661,10 @@ class Project:
         p.targets = [Target.from_dict(t) for t in data.get('targets', [])]
         p.target_settings = TargetSettings.from_dict(data.get('target_settings', {}))
         p.obstacles = [Obstacle.from_dict(o) for o in data.get('obstacles', [])]
+        p.rig = [RigPart.from_dict(r) for r in data.get('rig', [])]
         p.ecu = ECU.from_dict(data.get('ecu', {}))
         p.photos = PhotoSet.from_dict(data.get('photos', {}))
+        p.streams = {str(k): str(v) for k, v in (data.get('streams') or {}).items() if str(v).strip()}
         p.frame = data.get('frame', 'rear_axle')
         p.custom_origin = data.get('custom_origin', [0, 0, 0])
         p.units = data.get('units', 'm')

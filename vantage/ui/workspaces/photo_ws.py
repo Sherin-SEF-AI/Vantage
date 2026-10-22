@@ -105,7 +105,7 @@ class PhotoCanvas(QWidget):
         # model wire: body creases and silhouette-ish edges
         vg = self.ctx.analysis.engine.vg
         if vg is not None:
-            segs = vg.occ_mesh.crease_segments(28.0)
+            segs = vg.body.crease_segments(28.0)
             if len(segs):
                 uv = ph.project_points(ps, k, segs.reshape(-1, 3)).reshape(-1, 2, 2)
                 ok = np.isfinite(uv).all(axis=(1, 2))

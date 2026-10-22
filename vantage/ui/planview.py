@@ -191,6 +191,8 @@ class PlanView(QWidget):
         if res is not None:
             self._map(p, res)
         self._car(p)
+        from .rigview import paint_plan as paint_rig
+        paint_rig(self, p)
         if res is not None:
             self._lines(p, res)
             self._stitched_marks(p, res)
@@ -289,7 +291,7 @@ class PlanView(QWidget):
         if m is None or m.n_tris == 0:
             return
         vg = self.ctx.analysis.engine.vehicle_geom(self.project)
-        src = vg.occ_mesh if vg is not None else m
+        src = vg.body if vg is not None else m
         img, lo, hi, ppm = car_top_image(src)
         a = self.w2s(lo[0] - 2 / ppm, hi[1] + 2 / ppm)
         w = img.width() / ppm * self.scale

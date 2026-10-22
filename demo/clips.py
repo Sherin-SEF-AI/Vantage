@@ -490,9 +490,110 @@ class Stage:
             K.delete()
             srv.stop()
 
+    def perception(self, r):
+        """Perception range: how far out the rig resolves each object, against the ranges the dataset needs."""
+        w = self.window()
+        r.win = w
+        r.chapter('Simulation', 'Perception range: how far the rig resolves objects')
+        r.menu('Analysis', 'Perception range')
+        pg = w.page('perception')
+        t = time.time()
+        while pg.ctl.result is None and time.time() - t < 8:
+            r.tick()
+        if pg.ctl.result is None:
+            r.click(pg.b_run)
+            r.wait_for(lambda: pg.ctl.result is not None, timeout=60)
+        r.hold(1.6)
+        for key in ('1', '3'):
+            b = pg.pick.buttons.get(key) if hasattr(pg.pick, 'buttons') else None
+            if b is not None:
+                r.click(b)
+                r.hold(1.4)
+        b = pg.mode.buttons.get('cameras') if hasattr(pg.mode, 'buttons') else None
+        if b is not None:
+            r.click(b)
+            r.hold(1.8)
+        right = r.wrect(pg)
+        r.zoom(QRectF(right.x() + right.width() * 0.64, right.y(), right.width() * 0.36, right.height()), 1.0)
+        r.hold(2.2)
+        r.zoom(None, 0.7)
+        r.hold(0.5)
+
+    def rig(self, r):
+        """Rig parts: a roof rack and a sensor mast block and carry cameras."""
+        from vantage.core.project import Camera
+        w = self.window()
+        r.win = w
+        st = w.store
+        r.chapter('Rig', 'Roof racks and masts that block and carry cameras')
+        r.menu('Vehicle', 'Add rig part', 'Roof rack')
+        self.settle(3)
+        r.menu('Vehicle', 'Add rig part', 'Sensor mast')
+        self.settle(3)
+        head = max(st.project.rig, key=lambda part: part.z)
+
+        def add(p):
+            c = Camera(tag='RF', name='Roof front', x=head.x + head.length / 2 + 0.012, y=0.0, z=head.z, yaw=0.0, pitch=18.0,
+                       slot=6, lens_id='h03r2')
+            p.variant.cameras.append(c)
+        st.edit('variant', add, 'Roof camera on the mast')
+        self.settle(4)
+        r.menu('View', 'Overlays', 'Camera light')
+        self.settle(3)
+        r.cursor_on = False
+        self.orbit(r, self.vp, 70, 4.5, d_el=6)
+        self.orbit(r, self.vp, -50, 3.5, d_el=-4)
+        r.hold(0.6)
+
+    def liverig(self, r):
+        """Live rig health: every camera's stream with frame rate, drops, exposure, sharpness and drift."""
+        w = self.window()
+        r.win = w
+        r.chapter('Live rig', 'Every stream, its health, and whether a camera moved')
+        r.menu('Calibrate', 'Live rig')
+        pg = w.page('rig')
+        for c in w.store.variant.cameras:
+            pg.set_kind(c.uid, 'synthetic')
+        self.settle(2)
+        r.hold(0.5)
+        r.click(pg.b_start)
+        t0 = time.time()
+        while time.time() - t0 < 9.0:
+            r.tick()
+            time.sleep(0.02)
+        r.hold(0.4)
+        grid = r.wrect(pg)
+        r.zoom(QRectF(grid.x(), grid.y() + 40, grid.width() * 0.5, grid.height() * 0.55), 1.0)
+        t0 = time.time()
+        while time.time() - t0 < 2.5:
+            r.tick()
+            time.sleep(0.02)
+        r.zoom(None, 0.7)
+        pg.stop()
+        r.hold(0.4)
+
+    def datasets(self, r):
+        """Calibration for the data pipeline: nuScenes, KITTI, ROS camera_info and Kalibr, previewed live."""
+        from vantage.ui.dialogs.export_dialog import ExportDialog
+        w = self.window()
+        r.win = w
+        r.chapter('Export', "Calibration in your dataset's format")
+        d = ExportDialog(w.ctx, w)
+        d.out.setText('~/Documents/vantage-exports/tigor-ev-svm/6-cam-v3')
+        d.show()
+        r.hold(0.4)
+        r.zoom(r.wrect(d), 0.9)
+        for fid in ('nuscenes_calib', 'kitti_calib', 'ros_camera_info', 'kalibr_camchain'):
+            r.click(d.rows[fid].cb, None, 0.6)            # tick it: it gets a preview tab and is written
+            d.select(fid)
+            r.hold(1.8)
+        r.zoom(None, 0.6)
+        d.close()
+        r.hold(0.3)
+
 
 CLIPS = ['hero', 'coverage', 'placement', 'camlight', 'bowl', 'guidelines', 'stitched', 'volume', 'install',
-         'tolerance', 'assistant']
+         'tolerance', 'assistant', 'perception', 'rig', 'liverig', 'datasets']
 POSTER_AT = {'hero': 2.0}
 
 

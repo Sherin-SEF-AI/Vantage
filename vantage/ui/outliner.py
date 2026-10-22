@@ -42,7 +42,7 @@ class OutlinerDelegate(QStyledItemDelegate):
         kind = index.data(ROLE_KIND)
         flags = index.data(ROLE_FLAGS) or {}
         # gutter: eye / lock (shown on hover or when not default)
-        if kind == 'camera':
+        if kind in ('camera', 'rig'):
             gy = r.top() + (r.height() - 12) // 2
             hidden, locked = flags.get('hidden'), flags.get('locked')
             if hov or hidden:
@@ -108,7 +108,7 @@ class Outliner(QTreeWidget):
         self.itemChanged.connect(self._on_rename)
         self._block = False
         self.expanded_state = {'vehicle': True, 'cameras': True, 'compute': True, 'targets': False, 'analysis': True,
-                               'obstacles': False, 'ports': False}
+                               'obstacles': False, 'ports': False, 'rig': True}
         st = ctx.store
         st.changed.connect(lambda *_: self.rebuild())
         st.project_replaced.connect(self.rebuild)
@@ -176,7 +176,7 @@ class Outliner(QTreeWidget):
         g = self._item(self, f'Vehicle — {veh.name if m is not None else "none"}', 'group', 'vehicle', 'car-side')
         if m is not None:
             vg = self.ctx.analysis.engine.vg
-            occ = vg.occ_mesh.n_tris if vg is not None else m.n_tris
+            occ = vg.body.n_tris if vg is not None else m.n_tris
             self._item(g, 'Body mesh', 'vehicle-part', 'vehicle', 'mesh', f'{_k(veh.imported_tris or m.n_tris)} · occ {_k(occ)}')
             if veh.wheel_centres:
                 r = next(iter(veh.wheel_centres.values()))[2]
@@ -184,6 +184,12 @@ class Outliner(QTreeWidget):
             self._item(g, 'Mount zones', 'vehicle-part', 'zones', 'mount-zone', f'{len(m.zones)} zones')
             if p.photos.frames:
                 self._item(g, f'Reference photos ({len(p.photos.frames)})', 'vehicle-part', 'photos', 'photo-spin')
+        if p.rig:
+            rg = self._item(self, f'Rig ({len(p.rig)})', 'group', 'rig', 'layers',
+                            f'{sum(1 for q in p.rig if q.visible and q.occludes)} blocking')
+            for q in p.rig:
+                self._item(rg, q.name, 'rig', q.uid, 'cylinder' if q.kind == 'cylinder' else 'cube',
+                           q.kind if q.occludes else f'{q.kind} · see-through', flags={'hidden': not q.visible})
         cg = self._item(self, f'Cameras ({len(v.cameras)})', 'group', 'cameras', 'camera-wide', v.name)
         for c in v.cameras:
             it = self._item(cg, c.name, 'camera', c.uid, (c.slot, c.tag), f'port {c.port}' if c.port else 'no port',
@@ -260,13 +266,15 @@ class Outliner(QTreeWidget):
             st.select_obj(('target', ident))
         elif k == 'obstacle':
             st.select_obj(('obstacle', ident))
+        elif k == 'rig':
+            st.select_obj(('rig', ident))
         elif k == 'roi':
             st.select_obj(('roi',))
         elif k == 'ecu':
             st.select_obj(('ecu',))
         elif k == 'group':
             st.select_obj({'cameras': ('variant',), 'targets': ('targets',), 'compute': ('ecu',),
-                           'vehicle': ('vehicle',), 'analysis': ('roi',)}.get(ident, ()))
+                           'vehicle': ('vehicle',), 'analysis': ('roi',), 'rig': ('rig',)}.get(ident, ()))
         elif k == 'group2':
             st.select_obj(('obstacles',))
 
@@ -287,6 +295,10 @@ class Outliner(QTreeWidget):
             if c:
                 ops.set_visible(self.ctx, [uid], not c.visible)
             return
+        if it is not None and e.position().x() < GUTTER and it.data(0, ROLE_KIND) == 'rig':
+            from .rigview import set_visible
+            set_visible(self.ctx, it.data(0, ROLE_ID), bool((it.data(0, ROLE_FLAGS) or {}).get('hidden')))
+            return
         super().mousePressEvent(e)
 
     def keyPressEvent(self, e):
@@ -298,6 +310,12 @@ class Outliner(QTreeWidget):
         if e.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and self.ctx.store.sel_cams:
             ops.delete_cameras(self.ctx, list(self.ctx.store.sel_cams))
             return
+        if e.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            rig = [it.data(0, ROLE_ID) for it in self.selectedItems() if it.data(0, ROLE_KIND) == 'rig']
+            if rig:
+                from .rigview import delete_parts
+                delete_parts(self.ctx, rig)
+                return
         super().keyPressEvent(e)
 
     def dropEvent(self, e):
@@ -335,6 +353,8 @@ class Outliner(QTreeWidget):
 def _obj_match(obj, kind, ident):
     if obj[0] in ('target', 'obstacle'):
         return kind == obj[0] and ident == obj[1]
+    if obj[0] == 'rig':
+        return (kind == 'rig' and ident == obj[1]) if len(obj) > 1 else (kind == 'group' and ident == 'rig')
     if obj[0] == 'roi':
         return kind == 'roi'
     if obj[0] in ('vehicle', 'wheels', 'zones', 'photos'):

@@ -74,7 +74,10 @@ def mount_info(project: Project, cam: Camera, vg) -> MountInfo | None:
     if 0 <= zi < len(m.zones):
         surface, kind = m.zones[zi].name, m.zones[zi].kind
     else:
-        surface, kind = m.parts[int(m.face_part[fi])].name if m.parts else 'Body', ''
+        part = m.parts[int(m.face_part[fi])] if m.parts else None
+        surface, kind = part.name if part else 'Body', ''
+        if part is not None and part.material == 'rig' and 'not mountable' in part.role:
+            kind = 'forbidden'                                  # a rig part that must not carry cameras
     segs = m.crease_segments(35.0, m.occluder_faces())
     edge = math.inf
     if len(segs):

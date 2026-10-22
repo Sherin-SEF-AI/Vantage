@@ -96,7 +96,8 @@ def expand_slash(text: str):
 
 PAGES = {'viewports': '3D and top views', 'camviews': 'Camera views', 'tolerance': 'Tolerance study',
          'optimiser': 'Optimiser', 'compare': 'Compare variants', 'photo': 'Photo matching', 'targets': 'Targets',
-         'install': 'Installation check', 'volume': 'Blind volume'}
+         'install': 'Installation check', 'volume': 'Blind volume', 'perception': 'Perception range',
+         'rig': 'Live rig'}
 
 
 # ============================================================================================ controller
@@ -326,7 +327,12 @@ class AssistantController(QObject):
         return T.ToolContext(st.project.snapshot(), an.result, an.engine.share(), list(an.issues), dict(an.mounts),
                              an.worst, getattr(so, 'result', None), getattr(so, 'advice', None),
                              getattr(vol, 'result', None), self._guidelines(), [c.tag for c in st.selected_cams()],
-                             PAGES.get(page, page), st.revision, brief=self.brief())
+                             PAGES.get(page, page), st.revision, brief=self.brief(), rig_health=self._rig_health())
+
+    def _rig_health(self):
+        w = self.ctx.window
+        rig = getattr(w, '_page_widgets', {}).get('rig') if w is not None else None
+        return rig.health() if rig is not None else None
 
     def _guidelines(self):
         try:

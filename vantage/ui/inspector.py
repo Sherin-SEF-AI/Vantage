@@ -788,7 +788,7 @@ class VehiclePage(Page):
         self.occ.setValue(v.occluder_target)
         self.occ.blockSignals(False)
         if vg is not None:
-            self.occ_v.set(f'{vg.occ_mesh.n_tris:,}'.replace(',', ' '), 'tris', None, f'{vg.max_dev * 1000:.1f} mm dev')
+            self.occ_v.set(f'{vg.body.n_tris:,}'.replace(',', ' '), 'tris', None, f'{vg.max_dev * 1000:.1f} mm dev')
         fill_spec(self.spec, v)
 
 
@@ -1307,10 +1307,12 @@ class Inspector(QWidget):
         self.scroll.setWidget(self.stack)
         lay.addWidget(self.scroll)
         from .inspector_extra import PhotosPage, TargetsPage
+        from .rigview import RigPage
         self.pages = {
             'empty': EmptyPage(ctx), 'camera': CameraPage(ctx), 'roi': RoiPage(ctx), 'vehicle': VehiclePage(ctx),
             'wheels': WheelsPage(ctx), 'zones': ZonesPage(ctx), 'ecu': EcuPage(ctx), 'obstacle': ObstaclePage(ctx),
             'obstacles': ObstaclesPage(ctx), 'variant': VariantPage(ctx), 'photos': PhotosPage(ctx), 'targets': TargetsPage(ctx),
+            'rig': RigPage(ctx),
         }
         for pg in self.pages.values():
             pg.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
@@ -1339,7 +1341,7 @@ class Inspector(QWidget):
         k = o[0]
         return {'target': 'targets', 'targets': 'targets', 'roi': 'roi', 'vehicle': 'vehicle', 'wheels': 'wheels',
                 'zones': 'zones', 'ecu': 'ecu', 'obstacle': 'obstacle', 'obstacles': 'obstacles', 'variant': 'variant',
-                'photos': 'photos'}.get(k, 'empty')
+                'photos': 'photos', 'rig': 'rig'}.get(k, 'empty')
 
     def refresh(self):
         key = self.page_for_selection()
