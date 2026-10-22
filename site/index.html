@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Vantage · Surround-view camera planner</title>
-<meta name="description" content="Vantage is a desktop app for planning 360° surround-view camera rigs on vehicles: place cameras on the body, see exactly what every lens sees, prove coverage, density and robustness, and deliver calibration, remap tables and parking guidelines to the vehicle's computer.">
+<title>Vantage · Sensor rig planner for autonomous-driving data collection</title>
+<meta name="description" content="Vantage is a desktop app for designing the sensor rigs of autonomous-driving data-collection vehicles: place the cameras on the vehicle, prove in simulation what they will record before any hardware is fitted, then calibrate the real cameras from their live streams and hand the calibration to the data pipeline.">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Vantage · Surround-view camera planner">
-<meta property="og:description" content="Plan 360° camera rigs with exact lens models and body occlusion, live coverage, robustness studies, an installation check and an AI design assistant.">
+<meta property="og:title" content="Vantage · Sensor rig planner for autonomous-driving data collection">
+<meta property="og:description" content="Design data-collection camera rigs with exact lens models and occlusion, simulate what they will record before fitting the hardware, and calibrate the real cameras from their live streams.">
 <meta property="og:image" content="https://sherin-sef-ai.github.io/Vantage/media/hero.jpg">
 <meta property="og:url" content="https://sherin-sef-ai.github.io/Vantage/">
 <meta name="twitter:card" content="summary_large_image">
@@ -39,12 +39,12 @@
 <!-- ============================================================ hero -->
 <header class="hero">
   <div class="wrap">
-    <div class="eyebrow">Surround-view camera planner</div>
-    <h1>Plan 360° camera rigs with evidence, not guesswork.</h1>
-    <p class="lede">Vantage is a desktop app for automotive camera engineers. Import the vehicle, place the cameras on its
-      body, and see exactly what every lens sees: blind ground, pixel density, stitch seams, mounting tolerance. Then
-      hand calibration files, bird's-eye remap tables and parking guidelines to the vehicle's computer, and check the
-      cameras as built.</p>
+    <div class="eyebrow">Sensor rig planner · autonomous-driving data collection</div>
+    <h1>Design <span class="nowrap">data-collection</span> rigs that record what your models need.</h1>
+    <p class="lede">Vantage designs the camera rigs of the vehicles that record training data for self-driving models.
+      Place the cameras on the vehicle and prove in simulation what the rig will record, before any hardware is fitted:
+      what every lens sees, where the body blocks it, how many pixels land on the road, where cameras overlap. Then
+      calibrate the real cameras from their live streams and hand the calibration to your data pipeline.</p>
     <div class="cta">
       <a class="btn primary" href="#download"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>Download</a>
       <a class="btn" href="docs.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5"/></svg>Read the docs</a>
@@ -57,16 +57,16 @@
         </video>
         <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
         <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
-        <span class="chip">Camera light · six fisheye cameras · shader renderer</span>
+        <span class="chip">Simulated before fitted · six fisheye cameras</span>
       </div>
-      <p class="caption">Every colour on the car and the ground is what one camera sees through its real lens model, with
-        the body hiding what it hides. Recorded in Vantage.</p>
+      <p class="caption">Every colour on the car and the ground is what one camera of the rig will see through its real
+        lens model, with the body hiding what it hides: computed before a single camera is mounted. Recorded in Vantage.</p>
     </div>
     <div class="facts">
-      <div class="fact"><b>Exact optics</b><span>Lens models, sensor edges and body occlusion per camera</span></div>
-      <div class="fact"><b>Live</b><span>Coverage and density re-analysed while you drag a camera</span></div>
-      <div class="fact"><b>20 export formats</b><span>Calibration, ROS 2, remap tables, guidelines, CAD</span></div>
-      <div class="fact"><b>Desktop</b><span>Linux, Windows and macOS, or <code>pip install</code></span></div>
+      <div class="fact"><b>Simulated first</b><span>Coverage, resolution and occlusion before the hardware is fitted</span></div>
+      <div class="fact"><b>Exact optics</b><span>Measured lens models, sensor edges and body occlusion per camera</span></div>
+      <div class="fact"><b>Live streams</b><span>RTSP, V4L2 and GStreamer, including a Jetson's GMSL cameras</span></div>
+      <div class="fact"><b>Calibration out</b><span>OpenCV, ROS 2 and more, in your vehicle frame and units</span></div>
     </div>
   </div>
 </header>
@@ -75,20 +75,20 @@
 <section class="alt" id="workflow">
   <div class="wrap">
     <div class="head">
-      <div class="eyebrow">From CAD to car</div>
-      <h2>One tool for the whole camera job.</h2>
-      <p>Vantage covers the work from the first sketch to the end-of-line check, so the numbers you plan with are
-        the numbers you verify against.</p>
+      <div class="eyebrow">From CAD to calibrated rig</div>
+      <h2>One tool from the first sketch to the first drive.</h2>
+      <p>A data-collection rig is only as good as its weakest camera. Vantage covers the work from placing the cameras to
+        checking them on the vehicle, so the numbers you plan with are the numbers you verify against.</p>
     </div>
     <div class="steps">
       <div class="step"><h3>Import the vehicle</h3><p>glTF, OBJ, STL, PLY, FBX or STEP. A wizard sorts out units, axes,
         wheels, glass and the zones where cameras may go.</p></div>
-      <div class="step"><h3>Place the cameras</h3><p>Snap modules from the library onto the body, mirror them in pairs,
-        aim them at the ground, and watch coverage update as you go.</p></div>
-      <div class="step"><h3>Prove the design</h3><p>Blind ground, pixel density, seams, tolerance, load cases, the 3D
-        blind volume and what the stitched view does to people.</p></div>
-      <div class="step"><h3>Deliver and verify</h3><p>Export calibration and remap tables, then check every installed
-        camera from one image and apply the measured poses.</p></div>
+      <div class="step"><h3>Place the cameras</h3><p>Snap camera modules from the library onto the body, mirror them in
+        pairs, aim them, and watch what the rig sees update as you go.</p></div>
+      <div class="step"><h3>Simulate the recording</h3><p>Simulated camera images, coverage, pixel density, overlaps,
+        the 3D blind volume, mounting tolerance and load cases, before anything is bought or drilled.</p></div>
+      <div class="step"><h3>Fit, calibrate, verify</h3><p>Calibrate each camera from its live stream, check every
+        installed camera against the plan, and export the calibration to your data pipeline.</p></div>
     </div>
   </div>
 </section>
@@ -98,17 +98,18 @@
   <div class="wrap">
     <div class="head">
       <div class="eyebrow">Features</div>
-      <h2>See what every camera sees, before anything is drilled.</h2>
+      <h2>Know what the rig will record, before anything is drilled.</h2>
       <p>All videos on this page were recorded from the application itself, running the bundled Tata Tigor EV sample
         with six fisheye cameras.</p>
     </div>
 
     <article class="feature" id="coverage">
       <div class="text">
-        <div class="eyebrow">Analysis</div>
-        <h3>Live coverage, density and redundancy</h3>
+        <div class="eyebrow">Simulation</div>
+        <h3>Coverage, resolution and redundancy, live</h3>
         <p>The ground around the vehicle is evaluated cell by cell for every camera: inside the lens's field of view,
-          inside the image frame, not hidden by the body. The result updates while you work.</p>
+          inside the image frame, not hidden by the body. For a data-collection rig that answers where the recording has
+          holes, where it is too coarse to label, and where two cameras overlap. The result updates while you work.</p>
         <ul>
           <li><b>Blind ground</b>, coverage and redundancy on a 5, 2 or 1 cm grid inside an ROI drawn around the body or as a polygon.</li>
           <li><b>Pixel density</b> of the best camera at every point, in px/cm, against your minimum and target.</li>
@@ -171,6 +172,36 @@
         </div>
       </div>
     </article>
+
+    <article class="feature flip" id="volume">
+      <div class="text">
+        <div class="eyebrow">3D analysis</div>
+        <h3>The blind volume: where something can stand unseen</h3>
+        <p>Ground coverage is not the whole story. Vantage samples the space around the car level by level and shows,
+          in 3D, every pocket no camera sees, and how close to the body a pole, a child or an adult can stand without
+          being detected.</p>
+        <ul>
+          <li>Blind volume, the height up to which the ground is covered, and the undetected area for each object height.</li>
+          <li>A polar chart of how far from the body something can hide in every direction.</li>
+          <li>A height slider over a plan slice, and the blind space cut away in 3D at that height.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/volume.jpg" aria-label="Sweeping the height slider through the 3D blind volume">
+            <source src="media/volume.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
+    <div class="head" style="margin:72px 0 8px">
+      <div class="eyebrow">Also for production surround-view systems</div>
+      <h2>The same engine, for the in-car display.</h2>
+      <p>If the rig, or the vehicle it prototypes, has a surround-view display, Vantage designs that too: the stitched
+        bird's-eye view and its seams, the 3D bowl, parking guidelines and what stitching does to standing people.</p>
+    </div>
 
     <article class="feature flip" id="surround">
       <div class="text">
@@ -240,28 +271,6 @@
       </div>
     </article>
 
-    <article class="feature" id="volume">
-      <div class="text">
-        <div class="eyebrow">3D analysis</div>
-        <h3>The blind volume: where something can stand unseen</h3>
-        <p>Ground coverage is not the whole story. Vantage samples the space around the car level by level and shows,
-          in 3D, every pocket no camera sees, and how close to the body a pole, a child or an adult can stand without
-          being detected.</p>
-        <ul>
-          <li>Blind volume, the height up to which the ground is covered, and the undetected area for each object height.</li>
-          <li>A polar chart of how far from the body something can hide in every direction.</li>
-          <li>A height slider over a plan slice, and the blind space cut away in 3D at that height.</li>
-        </ul>
-      </div>
-      <div class="media">
-        <div class="frame">
-          <video muted loop playsinline preload="none" poster="media/volume.jpg" aria-label="Sweeping the height slider through the 3D blind volume">
-            <source src="media/volume.mp4" type="video/mp4"></video>
-          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
-          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
-        </div>
-      </div>
-    </article>
   </div>
 </section>
 
@@ -312,10 +321,11 @@
   <div class="wrap">
     <article class="feature flip" style="border-top:0;padding-top:0">
       <div class="text">
-        <div class="eyebrow">End of line</div>
-        <h3>Check every installed camera from one image</h3>
-        <p>Lay the planned checkerboards on the floor and take one image per camera: from a file, a live stream
-          (V4L2, GStreamer, RTSP) or a synthetic capture with a simulated mounting error.</p>
+        <div class="eyebrow">Fit and calibrate</div>
+        <h3>Calibrate the real cameras from their live streams</h3>
+        <p>Point Vantage at each camera's stream (an RTSP or HTTP URL, a V4L2 device, or a GStreamer pipeline such as a
+          Jetson's GMSL cameras), lay the planned checkerboards on the floor, and check every installed camera against the
+          plan from one frame each.</p>
         <ul>
           <li>Boards are found in rectified patches cut out of the fisheye image with the exact lens model, and the pose is solved per camera.</li>
           <li>A <b>joint solve</b> refines all cameras together with each board's placement, so neighbouring cameras agree at the seams.</li>

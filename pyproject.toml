@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "vantage"
 dynamic = ["version"]
-description = "Surround-view camera planner: place cameras on a vehicle model, analyse coverage, check installations"
+description = "Sensor rig planner for autonomous-driving data collection: place cameras on a vehicle, prove what they record, calibrate them from live streams"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Vantage
-GenericName=Surround-view camera planner
+GenericName=Sensor rig planner
 Comment=Plan, analyse and check surround-view camera installations on vehicles
 Exec=@EXEC@ %f
 Icon=vantage

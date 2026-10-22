@@ -419,7 +419,7 @@ class AboutDialog(VDialog):
         l = QVBoxLayout(self.body)
         l.setContentsMargins(14, 12, 14, 12)
         from ... import __version__
-        l.addWidget(label(f'Vantage {__version__} · surround-view camera planner', bold=True))
+        l.addWidget(label(f'Vantage {__version__} · sensor rig planner for autonomous-driving data collection', bold=True))
         l.addWidget(label('Plans surround-view camera rigs: placement on the body, ground coverage, pixel density, stitch seams, '
                           'tolerance studies, optimisation, calibration targets and exports.', wrap=True))
         l.addWidget(label('Typeface: IBM Plex Sans and Plex Mono, SIL Open Font License 1.1.', muted=True, small=True, wrap=True))

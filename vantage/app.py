@@ -33,7 +33,7 @@ def make_app(theme=None, scale=None):
 
 def main(argv=None):
     from . import __version__
-    ap = argparse.ArgumentParser(prog='vantage', description='Vantage · surround-view camera planner')
+    ap = argparse.ArgumentParser(prog='vantage', description='Vantage · sensor rig planner for autonomous-driving data collection')
     ap.add_argument('--version', action='version', version=f'vantage {__version__}')
     ap.add_argument('--self-test', action='store_true',
                     help='check this installation (analysis, OpenCV, fonts, OpenGL, main window) without a window')

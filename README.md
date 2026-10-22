@@ -1,9 +1,15 @@
-# Vantage · surround-view camera planner
+# Vantage · sensor rig planner for autonomous-driving data collection
 
-A PyQt6 desktop app for planning surround-view (360°) camera rigs on vehicles. Import a 3D model of the car and the camera
-specifications, place cameras on the body, and see what each camera sees, where the ground is blind, how dense the pixels
-are, where the stitched bird's-eye view seams, and how sensitive the rig is to mounting errors. Export a mount sheet and
-calibration files.
+A desktop app for designing the sensor rigs of data-collection vehicles, the cars that record the camera data
+self-driving models are trained on. Import a 3D model of the vehicle, place the cameras on it, and prove in simulation
+what the rig will record before any hardware is fitted: what each camera sees through its real lens model, where the
+body blocks it, how many pixels land on the ground and on objects, where cameras overlap, and how sensitive the layout is
+to mounting errors and load. Then calibrate the real cameras from their live streams (RTSP/HTTP, V4L2, GStreamer
+pipelines such as a Jetson's GMSL cameras), check every installed camera against the plan, and hand the calibration to the
+data pipeline (OpenCV, ROS 2, Kalibr and more). Cameras today; lidar and radar are planned.
+
+The same engine also serves production surround-view systems: stitched bird's-eye remap tables, a 3D bowl view, parking
+guidelines and where standing people vanish at stitch seams.
 
 **Website and documentation:** <https://sherin-sef-ai.github.io/Vantage/> (feature videos recorded from the app, the full documentation, batch-mode reference). The site's source is `site/`; it is published by `.github/workflows/pages.yml`.
 

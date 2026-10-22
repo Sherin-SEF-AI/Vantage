@@ -98,7 +98,8 @@ kbd {
 }
 .hero .wrap { position: relative; }
 .eyebrow { font: 500 12.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--accent-ink); }
-.hero h1 { font-size: clamp(38px, 6vw, 66px); line-height: 1.04; letter-spacing: -.035em; margin: 18px 0 18px; font-weight: 600; max-width: 15ch; }
+.hero h1 { font-size: clamp(38px, 6vw, 66px); line-height: 1.04; letter-spacing: -.035em; margin: 18px 0 18px; font-weight: 600; max-width: 20ch; }
+.nowrap { white-space: nowrap; }
 .hero .lede { font-size: clamp(17px, 1.6vw, 20px); color: var(--ink2); max-width: 62ch; margin: 0 0 30px; }
 .cta { display: flex; gap: 12px; flex-wrap: wrap; }
 .hero-media { margin-top: 52px; }

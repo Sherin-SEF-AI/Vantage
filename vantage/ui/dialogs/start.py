@@ -82,7 +82,7 @@ class StartWindow(QDialog):
         ic.setPixmap(icons.pixmap('app', THEME.tok['ink'], 16))
         t = QLabel('Vantage')
         t.setFont(sans(15, QFont.Weight.DemiBold))
-        st = label('surround-view camera planner', muted=True)
+        st = label('sensor rig planner for data collection', muted=True)
         h.addWidget(ic)
         h.addWidget(t)
         h.addWidget(st)
