@@ -369,6 +369,9 @@ class Project:
     def snapshot(self) -> 'Project':
         """Copy safe to hand to a worker thread (the mesh is shared; it is never mutated in place)."""
         q = copy.copy(self)
+        q.vehicle = copy.copy(self.vehicle)             # its own fields (the mesh is still shared)
+        for k in ('wheel_centres', 'spec', 'landmarks'):
+            setattr(q.vehicle, k, copy.deepcopy(getattr(self.vehicle, k)))
         q.variants = [Variant.from_dict(v.to_dict()) for v in self.variants]
         for k in ('roi', 'analysis', 'targets', 'target_settings', 'obstacles', 'ecu', 'lenses', 'modules',
                   'custom_origin'):

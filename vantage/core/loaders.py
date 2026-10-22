@@ -1821,7 +1821,8 @@ def _fbx_extract(top: list[_FbxNode], name: str, prog: _Progress) -> LoadedMesh:
             continue
         if child in geoms and parent in models:
             geom_models.setdefault(child, []).append(parent)
-        elif child in models:
+        elif child in models and (parent in models or parent == 0):
+            # a model is also connected to display layers, selection sets...: only a model (or the root) is its parent
             parent_of.setdefault(child, parent)
         elif child in materials and parent in models:
             model_mats.setdefault(parent, []).append(child)
@@ -2121,6 +2122,9 @@ def _load_step_cascadio(cascadio, path: str, prog: _Progress) -> LoadedMesh:
         except OSError:
             pass
     mesh.fmt = 'step'
+    # cascadio writes metres but keeps the CAD axes (often Z up, X forward or rearward), not glTF's Y up / Z forward;
+    # STEP has no axis convention, so leave the orientation to the import wizard's guess, as for gmsh
+    mesh.up_hint = mesh.forward_hint = None
     mesh.notes.append('STEP model converted with cascadio')
     return mesh
 

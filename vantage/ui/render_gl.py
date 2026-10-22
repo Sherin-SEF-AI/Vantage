@@ -567,7 +567,6 @@ class GLRenderer:
         GL = self.GL
         tex = tex if tex is not None else GL.glGenTextures(1)
         GL.glBindTexture(GL.GL_TEXTURE_2D, tex)
-        GL.glPixelStorei(GL.GL_UNPACK_ALIGNMENT, 1)
         h, w = data.shape[:2]
         GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RGBA, w, h, 0, GL.GL_RGBA, GL.GL_UNSIGNED_BYTE,
                         np.ascontiguousarray(data, np.uint8))
@@ -744,6 +743,7 @@ class GLRenderer:
         GL.glDisable(GL.GL_DEPTH_TEST)
         GL.glDepthMask(GL.GL_TRUE)
         GL.glBlendFunc(GL.GL_SRC_ALPHA, GL.GL_ONE_MINUS_SRC_ALPHA)
+        _default_pixel_store(GL)
         GL.glMatrixMode(GL.GL_PROJECTION)
         GL.glLoadIdentity()
         GL.glMatrixMode(GL.GL_MODELVIEW)
@@ -968,12 +968,12 @@ class GLRenderer:
                 GL.glBindFramebuffer(GL.GL_DRAW_FRAMEBUFFER, res_fbo)
                 GL.glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL.GL_COLOR_BUFFER_BIT, GL.GL_NEAREST)
             GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, res_fbo)
-            GL.glPixelStorei(GL.GL_PACK_ALIGNMENT, 1)
             data = GL.glReadPixels(0, 0, w, h, GL.GL_RGBA, GL.GL_UNSIGNED_BYTE)
             img = np.frombuffer(data, np.uint8).reshape(h, w, 4)[::-1].copy()
             return img
         finally:
             GL.glBindFramebuffer(GL.GL_FRAMEBUFFER, 0)
+            _default_pixel_store(GL)
             if rbs:
                 GL.glDeleteRenderbuffers(len(rbs), rbs)
             if fbos:
@@ -1004,6 +1004,13 @@ class GLRenderer:
         self.prog = {}
         self._mesh = self._bowl = self._ground_tex = self._cube = self._shadow = self._ao = None
         self.ok = False
+
+
+def _default_pixel_store(GL):
+    """GL's default row alignment of 4: PyOpenGL sets 1 on its image calls, and QPainter's glyph cache uploads rows
+    assuming 4 (with 1 every label drawn after the 3D view comes out sheared)."""
+    GL.glPixelStorei(GL.GL_PACK_ALIGNMENT, 4)
+    GL.glPixelStorei(GL.GL_UNPACK_ALIGNMENT, 4)
 
 
 def _on_ground(l):

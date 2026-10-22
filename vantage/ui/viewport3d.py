@@ -459,7 +459,7 @@ class ViewportBase:
         if self._drag == 'provider':
             self.provider.mouse_release(self, None)
         self._drag = None
-        super().focusOutEvent(e)
+        QWidget.focusOutEvent(self, e)  # not super(): this mixin comes after the Qt class, so super() is object
 
     def mouseReleaseEvent(self, e):
         if self._drag is not None and e.button() != getattr(self, '_btn', e.button()):
@@ -530,7 +530,7 @@ class ViewportBase:
             self.cam.ortho = not self.cam.ortho
             self.update()
         else:
-            super().keyPressEvent(e)
+            QWidget.keyPressEvent(self, e)
 
     def dragEnterEvent(self, e):
         if self.provider.drag_enter(self, e):
@@ -1013,7 +1013,7 @@ if QOpenGLWidget is not None:
                 ptr = img.constBits()
                 ptr.setsize(img.sizeInBytes())
                 data = np.frombuffer(ptr, np.uint8).reshape(img.height(), img.bytesPerLine())[:, :img.width() * 4].copy()
-                GL.glPixelStorei(GL.GL_UNPACK_ALIGNMENT, 1)
+                GL.glPixelStorei(GL.GL_UNPACK_ALIGNMENT, 4)     # Qt's glyph cache relies on 4; RGBA rows always fit
                 GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RGBA, img.width(), img.height(), 0, GL.GL_RGBA,
                                 GL.GL_UNSIGNED_BYTE, data)
                 f = GL.GL_NEAREST if g.nearest else GL.GL_LINEAR

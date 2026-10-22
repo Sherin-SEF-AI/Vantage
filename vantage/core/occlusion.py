@@ -175,6 +175,8 @@ class CubeCache:
                 return self._d[key]
         cube = build_cube(geom, pos)
         with self._lock:
+            if key in self._d:                  # another thread built it meanwhile: keep one entry
+                return self._d[key]
             self._d[key] = cube
             self._order.append(key)
             while len(self._order) > self.size:

@@ -2,11 +2,12 @@
 viewport, plan view, scene, outliner and main window."""
 import math
 import os
+import sys
 
 import numpy as np
 import pytest
-from PyQt6.QtCore import Qt, QPoint, QPointF
-from PyQt6.QtGui import QWheelEvent
+from PyQt6.QtCore import Qt, QEvent, QPoint, QPointF
+from PyQt6.QtGui import QFocusEvent, QKeyEvent, QWheelEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
@@ -112,6 +113,34 @@ def test_second_button_during_a_drag_does_not_stick(app, win):
     assert st.dragging                                               # still the left button's drag
     QTest.mouseRelease(vp, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, pos)
     assert not st.dragging
+
+
+
+def test_focus_loss_and_unhandled_keys_reach_qt(app, win, monkeypatch):
+    """The viewport mixin comes after the Qt class, so super() in it is object: passing events on used to raise."""
+    errors = []
+    monkeypatch.setattr(sys, 'excepthook', lambda t, v, tb: errors.append(v))
+    vp = vp_of(win)
+    st = win.store
+    f = st.variant.by_tag('F')
+    st.select_cams([f.uid])
+    win.set_tool('select')
+    pump(app, 0.1)
+    QTest.mousePress(vp, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, screen_of(vp, f.pos()))
+    assert st.dragging
+    QApplication.sendEvent(vp, QFocusEvent(QEvent.Type.FocusOut))
+    QApplication.sendEvent(vp, QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_F13, Qt.KeyboardModifier.NoModifier))
+    assert not errors, errors
+    assert not st.dragging
+
+
+
+def test_issue_marker_is_cleared_by_another_project(app, win):
+    pane = win.viewarea.visible_panes()[0]
+    win.frame_point((2.0, 1.0))
+    assert pane.plan.pinned_marker == (2.0, 1.0)
+    win.store.project_replaced.emit()
+    assert pane.plan.pinned_marker is None
 
 
 def test_scale_and_gizmo_in_a_top_view(app, win):

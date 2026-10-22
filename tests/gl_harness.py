@@ -106,6 +106,7 @@ def main(out_dir):
     bw = r.render_offscreen(frame(cam, bowl=bd, style=Style(ground_plane=False, shadows=False, ao=False)))
     np.save(os.path.join(out_dir, 'bowl.npy'), bw)
     out['bowl_green'] = float((bw[..., 1].astype(int) - bw[..., 0].astype(int) > 100).mean())
+    out['pixel_store'] = [int(GL.glGetIntegerv(GL.GL_UNPACK_ALIGNMENT)), int(GL.glGetIntegerv(GL.GL_PACK_ALIGNMENT))]
     out['gl_error_end'] = int(GL.glGetError())
     r.release()
     print(json.dumps(out))

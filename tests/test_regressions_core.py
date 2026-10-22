@@ -344,3 +344,103 @@ def test_target_candidates_are_symmetric(sample):
     p, e, res = sample
     placed = targets.auto_place(e, p, res)
     assert len(placed) == len(targets.adjacent_pairs(res))       # every adjacent pair gets a board
+
+
+def test_obstacles_under_a_load_case_are_seen_from_the_moved_body(sample):
+    """With the body moved (a load case), obstacle points must go into the body frame like the ground grid does."""
+    import copy
+    from vantage.core.project import Obstacle
+    p0, e, res = sample
+    p = copy.deepcopy(p0)
+    ob = Obstacle(name='Pole', x=4.5, y=0.8, height=1.0)
+    p.obstacles = [ob]
+    t = np.array([0.6, 0.0, 0.0])                       # the body 0.6 m further forward in the world
+    moved = e.analyse(p, body_pose=(np.eye(3), t))
+    q = copy.deepcopy(p)
+    q.obstacles[0].x -= 0.6                              # the same pole, relative to the body
+    cams = [c for c in q.variant.cameras if c.visible]
+    expect = e.obstacle_visibility(q, cams, res.cubes)
+    still = e.obstacle_visibility(p, cams, res.cubes)
+    assert expect[ob.uid] and expect[ob.uid] != still[ob.uid]
+    got = moved.obstacles[ob.uid]
+    assert got.keys() == expect[ob.uid].keys()
+    assert all(np.allclose(got[k], expect[ob.uid][k]) for k in got)
+
+
+@pytest.mark.parametrize('projection', ['equidistant', 'equisolid', 'rectilinear'])
+@pytest.mark.parametrize('aspect', [1.0, 1.21])
+def test_density_counts_the_pixels_a_patch_covers(projection, aspect):
+    """Density is sqrt(pixels per cm^2) on a patch facing the camera, including a calibrated fy/fx aspect."""
+    from vantage.core.lens import Intrinsics
+    intr = Intrinsics(width=1920, height=1280, pixel_mm=0.003, f_mm=1.3 if projection != 'rectilinear' else 4.0,
+                      projection=projection, kb=(0, 0, 0, 0), cx=960, cy=640, max_theta=math.radians(95),
+                      focus_near=0.1, focus_far=100.0, aspect=aspect)
+    th, ph, rng, h = math.radians(25), math.radians(40), 2.0, 1e-4     # a 0.1 mm square patch at 2 m
+    d = np.array([math.sin(th) * math.cos(ph), math.sin(th) * math.sin(ph), math.cos(th)])
+    e1 = np.cross(d, [0.0, 0.0, 1.0])
+    e1 /= np.linalg.norm(e1)
+    e2 = np.cross(d, e1)
+    P = rng * d + h * np.array([[0, 0], [1, 0], [0, 1]]) @ np.stack([e1, e2])
+    u, v, _, ok = intr.project_dirs(P / np.linalg.norm(P, axis=1)[:, None])
+    assert ok.all()
+    px_area = abs((u[1] - u[0]) * (v[2] - v[0]) - (u[2] - u[0]) * (v[1] - v[0]))
+    expect = math.sqrt(px_area / (h * 100) ** 2)
+    assert float(intr.density_px_per_cm(th, rng)) == pytest.approx(expect, rel=2e-3)
+
+
+def test_ui_thread_on_another_car_does_not_disturb_a_running_analysis(sample):
+    """The UI asks the shared engine about the live project while the worker analyses an older snapshot (e.g. just
+    after a model import): each thread must keep its own car, and neither may rebuild the other's geometry."""
+    import threading
+    import time
+    from vantage.core import analysis
+    p0, _, clean = sample
+    other = samples.template_project('suv')
+    e = Engine()
+    e.vehicle_geom(p0)
+    builds = analysis._vg_counter[0]
+    stop = threading.Event()
+
+    def ui():
+        n = 0
+        while not stop.is_set():
+            e.vehicle_geom(other if n % 2 else p0)
+            n += 1
+            time.sleep(0.002)
+    t = threading.Thread(target=ui)
+    t.start()
+    try:
+        res = e.analyse(p0.snapshot())
+    finally:
+        stop.set()
+        t.join()
+    assert res.metrics['blind_m2'] == pytest.approx(clean.metrics['blind_m2'], abs=1e-9)
+    assert res.metrics['covered_pct'] == pytest.approx(clean.metrics['covered_pct'], abs=1e-9)
+    assert analysis._vg_counter[0] - builds <= 1                    # at most the other car, once
+    assert e.vehicle_geom(p0) is e.vg and e.vg.mesh is p0.vehicle.mesh
+
+
+def test_shared_engine_reuses_the_geometry_on_its_worker_thread(sample):
+    import threading
+    from vantage.core import analysis
+    p0, e, _ = sample
+    vg = e.vehicle_geom(p0)
+    w = e.share()
+    builds = analysis._vg_counter[0]
+    seen = []
+    t = threading.Thread(target=lambda: seen.append((w.vg, w.vehicle_geom(p0))))
+    t.start()
+    t.join()
+    assert seen == [(vg, vg)] and analysis._vg_counter[0] == builds
+    assert w.cubes is e.cubes
+
+
+def test_snapshot_keeps_its_own_vehicle_fields(sample):
+    p0, _, _ = sample
+    import copy
+    p = copy.deepcopy(p0)
+    q = p.snapshot()
+    p.vehicle.occluder_target = 1234
+    p.vehicle.wheel_centres['FL'] = [9.0, 9.0, 9.0]
+    assert q.vehicle.occluder_target != 1234 and q.vehicle.wheel_centres['FL'] != [9.0, 9.0, 9.0]
+    assert q.vehicle.mesh is p.vehicle.mesh

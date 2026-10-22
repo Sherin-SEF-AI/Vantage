@@ -699,6 +699,18 @@ def test_fbx_ascii(tmp_path):
     assert m.unit_hint == 'm' and m.up_hint == '+Z' and m.forward_hint == '-Y'
 
 
+def test_fbx_display_layer_before_parent(tmp_path):
+    """A model's display-layer connection written before its parent connection must not drop the parent's transform."""
+    text = fbx_ascii()
+    text = text.replace('\tMaterial: 4000,', '\tCollectionExclusive: 5000, "DisplayLayer::layer1", "DisplayLayer" {\n'
+                                             '\t\tProperties70:  {\n\t\t}\n\t}\n\tMaterial: 4000,')
+    text = text.replace('\tC: "OO",2000,3000\n', '\tC: "OO",2000,5000\n\tC: "OO",2000,3000\n')
+    assert 'DisplayLayer::layer1' in text and '"OO",2000,5000' in text
+    p = tmp_path / 'car.fbx'
+    p.write_text(text)
+    check_fbx_scene(load_mesh(str(p)))
+
+
 def test_fbx_ascii_v6_embedded_geometry(tmp_path):
     pvi = ','.join(map(str, PVI))
     text = f"""; FBX 6.1.0 project file
@@ -915,6 +927,52 @@ def test_step_without_backend(tmp_path, ext):
     p.write_text(STEP_MIN)
     with pytest.raises(MeshLoadError, match='gmsh'):
         load_mesh(str(p))
+
+
+def test_step_cascadio_gives_no_gltf_axes(tmp_path, monkeypatch):
+    """cascadio's GLB keeps the CAD axes, so glTF's +Y up / +Z forward must not be claimed (the car would lie on its
+    side, turned 90 degrees)."""
+    import types
+
+    def step_to_glb(src, dst):
+        with open(dst, 'wb') as fh:
+            fh.write(make_glb(gltf_doc(None), cube_buffer()))
+    monkeypatch.setitem(sys.modules, 'gmsh', None)
+    monkeypatch.setitem(sys.modules, 'cascadio', types.SimpleNamespace(step_to_glb=step_to_glb))
+    p = tmp_path / 'car.step'
+    p.write_text(STEP_MIN)
+    m = load_mesh(str(p))
+    assert m.fmt == 'step' and m.unit_hint == 'm'
+    assert m.up_hint is None and m.forward_hint is None
+
+
+@pytest.mark.skipif(importlib.util.find_spec('gmsh') is None, reason='needs gmsh to write the STEP file')
+def test_step_real_backends(tmp_path, monkeypatch):
+    """A car-like STEP in mm (x forward, z up, cabin on top, nose at the front) through every installed backend."""
+    import gmsh
+    path = str(tmp_path / 'car.step')
+    gmsh.initialize(readConfigFiles=False)
+    try:
+        gmsh.option.setNumber('General.Terminal', 0)
+        gmsh.model.add('car')
+        gmsh.model.occ.addBox(0, -900, 300, 4000, 1800, 1000)
+        gmsh.model.occ.addBox(500, -700, 1300, 1800, 1400, 500)
+        gmsh.model.occ.addBox(4000, -300, 300, 400, 600, 300)
+        gmsh.model.occ.synchronize()
+        gmsh.write(path)
+    finally:
+        gmsh.finalize()
+    backends = ['gmsh'] + (['cascadio'] if importlib.util.find_spec('cascadio') else [])
+    for backend in backends:
+        with monkeypatch.context() as mp:
+            if backend == 'cascadio':
+                mp.setitem(sys.modules, 'gmsh', None)
+            m = load_mesh(path)
+        scale = {'mm': 1e-3, 'm': 1.0}[m.unit_hint]
+        lo, hi = bbox(m)
+        assert (lo * scale) == pytest.approx([0, -0.9, 0.3], abs=1e-3), backend
+        assert (hi * scale) == pytest.approx([4.4, 0.9, 1.8], abs=1e-3), backend
+        assert m.up_hint is None and m.forward_hint is None, backend
 
 
 def test_step_not_step(tmp_path):

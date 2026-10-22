@@ -241,11 +241,12 @@ class Intrinsics:
 
     def density_px_per_cm(self, theta, rng_m):
         """Pixel density on a target facing the camera at range rng_m, in px/cm:
-        sqrt(radial x tangential) angular sampling, i.e. sqrt(pixels per cm^2)."""
+        sqrt(radial x tangential) angular sampling, i.e. sqrt(pixels per cm^2).  fy = aspect * fx stretches every
+        pixel area by the aspect, so the density by its square root."""
         th = np.maximum(theta, 1e-4)
         radial = np.maximum(dr_dtheta(th, self.f_mm, self.projection, self.kb), 1e-6) / self.pixel_mm
         tang = np.maximum(r_of_theta(th, self.f_mm, self.projection, self.kb), 1e-9) / self.pixel_mm / np.sin(np.minimum(th, math.pi - 1e-3))
-        return np.sqrt(radial * tang) / (np.maximum(rng_m, 1e-3) * 100.0)
+        return np.sqrt(radial * tang * self.aspect) / (np.maximum(rng_m, 1e-3) * 100.0)
 
 
 def resolve(module: Module, lens: Lens) -> Intrinsics:

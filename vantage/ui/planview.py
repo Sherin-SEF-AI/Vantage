@@ -131,6 +131,7 @@ class PlanView(QWidget):
 
     def _refit(self):
         self._fitted = False
+        self.pinned_marker = None           # an issue's location in the previous project
         self.update()
 
     # ------------------------------------------------------------------ coordinates

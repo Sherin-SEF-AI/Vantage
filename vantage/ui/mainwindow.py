@@ -2025,14 +2025,8 @@ class MainWindow(QMainWindow):
         return opt
 
     def _shared_engine(self):
-        from ..core.analysis import Engine
-        main = self.ctx.analysis.engine
-        e = Engine()
-        e.cubes = main.cubes
-        with self.ctx.analysis._lock:
-            vg = main.vehicle_geom(self.store.project)
-        e.vg = vg
-        e._vg_key = main._vg_key
+        e = self.ctx.analysis.engine.share()
+        e.vehicle_geom(self.store.project)      # built here (or found), so the worker thread starts on it
         return e
 
     def _show_job(self, name, frac, text=''):

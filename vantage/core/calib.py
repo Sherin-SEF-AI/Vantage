@@ -256,10 +256,12 @@ def _initial(intr: Intrinsics, w, h):
 
 def _fisheye(obj, pts, size, K0, D0):
     import cv2
-    flags = (cv2.fisheye.CALIB_USE_INTRINSIC_GUESS | cv2.fisheye.CALIB_RECOMPUTE_EXTRINSIC | cv2.fisheye.CALIB_FIX_SKEW)
+    # OpenCV 5 dropped the fisheye-only flags for the general CALIB_* ones, with different values
+    fl = (lambda n: getattr(cv2.fisheye, n)) if hasattr(cv2.fisheye, 'CALIB_FIX_SKEW') else (lambda n: getattr(cv2, n))
+    flags = fl('CALIB_USE_INTRINSIC_GUESS') | fl('CALIB_RECOMPUTE_EXTRINSIC') | fl('CALIB_FIX_SKEW')
     crit = (cv2.TERM_CRITERIA_COUNT + cv2.TERM_CRITERIA_EPS, 200, 1e-10)
-    o = [x.reshape(-1, 1, 3).astype(np.float64) for x in obj]
-    p = [x.reshape(-1, 1, 2).astype(np.float64) for x in pts]
+    o = [x.reshape(1, -1, 3).astype(np.float64) for x in obj]      # (1, N, 3): OpenCV 5 rejects (N, 1, 3) here
+    p = [x.reshape(1, -1, 2).astype(np.float64) for x in pts]
     rms, K, D, rv, tv = cv2.fisheye.calibrate(o, p, size, K0.copy(), D0.copy(), flags=flags, criteria=crit)
     errs = []
     for oo, pp, r, t in zip(o, p, rv, tv):

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import threading
 import time
 from dataclasses import dataclass, field
 
@@ -271,14 +272,39 @@ class AnalysisResult:
 
 
 class Engine:
-    """Stateful analysis engine; keeps vehicle geometry, ROI grid and cube maps cached."""
+    """Stateful analysis engine; keeps vehicle geometry, ROI grid and cube maps cached.
+
+    One engine serves the UI thread and the analysis worker at once: the UI asks about the live project while the
+    worker analyses a snapshot, which can hold a different car (just after an import or an undo).  So the geometry in
+    use (``vg``, what ``cube()`` looks into) is per thread, built geometries are shared, and the caches are locked."""
+
+    GEOMS_KEPT = 3
 
     def __init__(self):
         self.cubes = CubeCache(96)
-        self.vg: VehicleGeom | None = None
-        self._vg_key = None
-        self._roi = None
-        self._roi_key = None
+        self._geoms = {}                    # key -> VehicleGeom, the last few (each holds its mesh, so ids stay unique)
+        self._glock = threading.RLock()
+        self._tl = threading.local()
+        self._latest = (None, None)         # (key, geometry) set last by any thread, for a thread that never asked
+        self._rois = {}
+
+    def _current(self):
+        """(key, geometry) in use on this thread, read as one pair."""
+        return getattr(self._tl, 'cur', None) or self._latest
+
+    @property
+    def vg(self) -> VehicleGeom | None:
+        return self._current()[1]
+
+    def _use(self, key, vg):
+        self._tl.cur = self._latest = (key, vg)
+
+    def share(self) -> 'Engine':
+        """An engine for another worker: the same cube maps and built geometries, its own ROI and current geometry."""
+        e = Engine()
+        e.cubes, e._geoms, e._glock = self.cubes, self._geoms, self._glock
+        e._latest = self._latest
+        return e
 
     def vehicle_geom(self, project: Project) -> VehicleGeom | None:
         m = project.vehicle.mesh
@@ -286,11 +312,18 @@ class Engine:
             return None
         key = (id(m), m.n_tris, project.vehicle.occluder_target, tuple(p.role for p in m.parts),
                id(m.face_zone), tuple((z.name, z.kind) for z in m.zones))      # zones are copied into the occluder
-        if key != self._vg_key:
-            self.vg = prepare_vehicle(m, project.vehicle.occluder_target)
-            self._vg_key = key
-            self._roi_key = None
-        return self.vg
+        cur_key, cur = self._current()
+        if key == cur_key:
+            return cur
+        with self._glock:
+            vg = self._geoms.pop(key, None)
+            if vg is None:
+                vg = prepare_vehicle(m, project.vehicle.occluder_target)
+            self._geoms[key] = vg                                               # most recent last
+            while len(self._geoms) > self.GEOMS_KEPT:
+                self._geoms.pop(next(iter(self._geoms)))
+        self._use(key, vg)
+        return vg
 
     def roi_grid(self, project: Project, cell=None) -> RoiGrid | None:
         vg = self.vehicle_geom(project)
@@ -300,13 +333,17 @@ class Engine:
         r = project.roi
         key = (vg.version, cell, r.mode, round(r.distance, 4), r.measured_from, r.corners, r.exclude_under_body,
                tuple(map(tuple, r.polygon)))
-        if key != self._roi_key:
-            self._roi = compute_roi(vg, r, cell)
-            self._roi_key = key
-        return self._roi
+        with self._glock:
+            grid = self._rois.pop(key, None)
+            if grid is None:
+                grid = compute_roi(vg, r, cell)
+            self._rois[key] = grid
+            while len(self._rois) > self.GEOMS_KEPT:
+                self._rois.pop(next(iter(self._rois)))
+        return grid
 
-    def cube(self, pos):
-        return self.cubes.get(self.vg.occ, pos)
+    def cube(self, pos, vg: VehicleGeom | None = None):
+        return self.cubes.get((vg or self.vg).occ, pos)
 
     # --------------------------------------------------------------
     def analyse(self, project: Project, variant: Variant | None = None, cell=None, z: float | None = None,
@@ -355,7 +392,7 @@ class Engine:
         res.ms = (time.perf_counter() - t0) * 1000
         res.variant_uid = variant.uid
         res.cell = grid.cell
-        res.obstacles = self.obstacle_visibility(project, cams, cubes)
+        res.obstacles = self.obstacle_visibility(project, cams, cubes, body_pose)
         return res
 
     def _aggregate(self, project, variant, grid, evals, cams, z) -> AnalysisResult:
@@ -418,11 +455,13 @@ class Engine:
         return AnalysisResult(grid, evals, best, best_d, count, metrics, per, hist, seams, sector, blend, centre, 0.0, z)
 
     # --------------------------------------------------------------
-    def obstacle_visibility(self, project, cams, cubes):
+    def obstacle_visibility(self, project, cams, cubes, body_pose=None):
         out = {}
         for ob in project.obstacles:
             zs = np.linspace(0.05, ob.height, 8)
             P = np.stack([np.full_like(zs, ob.x), np.full_like(zs, ob.y), zs], 1)
+            if body_pose is not None:       # obstacles stand in the world; the cameras and occluders are in the body frame
+                P = (P - np.asarray(body_pose[1], float)) @ np.asarray(body_pose[0], float)
             seen = {}
             for cam in cams:
                 intr = resolve(project.module_for(cam), project.lens_for(cam))

@@ -47,3 +47,9 @@ def test_camera_light_matches_the_cpu_visibility(run):
 def test_bowl_texture_is_drawn(run):
     doc, _ = run
     assert doc['bowl_green'] > 0.2
+
+
+def test_leaves_the_pixel_store_as_qpainter_expects(run):
+    """QPainter's GL text cache uploads glyph rows assuming the default alignment of 4; 1 shears every label."""
+    doc, _ = run
+    assert doc['pixel_store'] == [4, 4]
