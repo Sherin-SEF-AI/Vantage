@@ -160,6 +160,12 @@ class CubeCache:
         self._order = []
         self._lock = threading.Lock()
 
+    def peek(self, geom: OccluderGeom, pos) -> CubeDepth | None:
+        """The cube map for this position if it is already built (never builds one)."""
+        key = (geom.version, tuple(np.round(np.asarray(pos, float), 3)))
+        with self._lock:
+            return self._d.get(key)
+
     def get(self, geom: OccluderGeom, pos) -> CubeDepth:
         key = (geom.version, tuple(np.round(np.asarray(pos, float), 3)))
         with self._lock:

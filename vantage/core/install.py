@@ -59,6 +59,7 @@ class PoseResult:
     single: tuple | None = None   # (R, pos) of the camera's own solve when the joint solve replaced it
     joint: bool = False
     detected: list = field(default_factory=list)   # every board found, incl. ones the camera's own solve set aside
+    rot_err_deg: float = float('nan')                # angle of the rotation from the planned to the measured pose
 
 
 def inner_corners(t: Target) -> np.ndarray:
@@ -213,7 +214,8 @@ def detect_boards(img, project: Project, cam: Camera, targets=None, pose=None) -
             if det is None:
                 continue
             pr = rays[:len(flat)] @ Rv
-            pred_patch = (pr[:, :2] / pr[:, 2:3] * f + n / 2).reshape(t.rows - 1, t.cols - 1, 2)
+            # patch pixel j samples the ray (j + 0.5 - n/2) / f; OpenCV puts pixel centres on integers
+            pred_patch = (pr[:, :2] / pr[:, 2:3] * f + n / 2 - 0.5).reshape(t.rows - 1, t.cols - 1, 2)
             m = _match_grid(det, pred_patch)
             if m is not None and m[0] <= n * 0.15:
                 break
@@ -221,7 +223,7 @@ def detect_boards(img, project: Project, cam: Camera, targets=None, pose=None) -
         if m is None:
             continue
         det = m[1].reshape(-1, 2)
-        rv = np.c_[(det - n / 2) / f, np.ones(len(det))]
+        rv = np.c_[(det - n / 2 + 0.5) / f, np.ones(len(det))]
         ro = rv @ Rv.T
         ro /= np.linalg.norm(ro, axis=1, keepdims=True)
         u, v, th, okd = intr.project_dirs(ro)
@@ -339,8 +341,11 @@ def _grade(res: PoseResult, cam: Camera, R, pos, rms, st: InstallSettings):
     res.pos, res.yaw, res.pitch, res.roll, res.rms_px = pos, yaw, pitch, roll, rms
     res.dpos_mm = (pos - cam.pos()) * 1000
     res.dang_deg = np.array([wrap180(yaw - cam.yaw), pitch - cam.pitch, wrap180(roll - cam.roll)])
+    # judge the angle by the rotation between plan and measurement: Euler differences blow up as pitch nears 90°
+    dR = rot_zyx(cam.yaw, cam.pitch, cam.roll).T @ np.asarray(R, float)
+    res.rot_err_deg = math.degrees(math.acos(max(-1.0, min(1.0, (float(np.trace(dR)) - 1) / 2))))
     worst_p = float(np.max(np.abs(res.dpos_mm)))
-    worst_a = float(np.max(np.abs(res.dang_deg)))
+    worst_a = res.rot_err_deg
     if worst_p <= st.pos_tol_mm and worst_a <= st.ang_tol_deg:
         res.status = 'good'
         res.message = 'Within tolerance'

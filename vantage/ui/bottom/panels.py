@@ -324,31 +324,45 @@ class CamerasModel(QAbstractTableModel):
     def setData(self, idx, value, role=Qt.ItemDataRole.EditRole):
         return self.set_cell(idx.row(), idx.column(), str(value))
 
-    def set_cell(self, r, col, text, merge=False):
+    def set_cell(self, r, col, text, merge=False, check=False):
+        """Apply a typed or pasted cell; with check=True only report whether it can be read."""
         c = self.cams[r]
         k = COLS[col][0]
         p = self.ctx.store.project
         o = p.origin_offset()
+        st = self.ctx.store
         try:
             if k in ('x', 'y', 'z'):
                 v = parse_number(text, 'length', p.units)
                 v = v / (1000.0 if p.units == 'mm' else 1.0) + o['xyz'.index(k)]
-                self.ctx.store.set_cam(c.uid, **{k: round(v, 4)})
+                edit = lambda: st.set_cam(c.uid, **{k: round(v, 4)})
             elif k in ('yaw', 'pitch', 'roll'):
-                self.ctx.store.set_cam(c.uid, **{k: round(parse_number(text, 'angle'), 2)})
+                v = round(parse_number(text, 'angle'), 2)
+                edit = lambda: st.set_cam(c.uid, **{k: v})
             elif k == 'tag':
                 t = text.strip()[:4]
-                if t:
-                    self.ctx.store.set_cam(c.uid, tag=t, text=f'Renamed tag {c.tag} to {t}')
+                edit = lambda: st.set_cam(c.uid, tag=t, text=f'Renamed tag {c.tag} to {t}') if t else None
             elif k == 'location':
-                self.ctx.store.set_cam(c.uid, location=text.strip(), text=f'Renamed {c.tag}')
+                edit = lambda: st.set_cam(c.uid, location=text.strip(), text=f'Renamed {c.tag}')
             elif k == 'port':
-                ops.assign_port(self.ctx, c.uid, int(float(text)))
+                port = 0 if text.strip() in ('—', '-', '') else float(text)
+                if port != int(port) or not 0 <= port <= p.ecu.ports:
+                    if not check:
+                        self.ctx.msg(f'GMSL port must be 1 to {p.ecu.ports}, or 0 to unassign.')
+                    return False
+                port = int(port)
+                # 0 unassigns: no other camera takes this one's port
+                edit = (lambda: ops.assign_port(self.ctx, c.uid, port)) if port else \
+                    (lambda: st.set_cam(c.uid, port=0, text=f'Unassigned {c.tag} from GMSL port {c.port}'))
             else:
                 return False
         except Exception:
-            self.ctx.msg(f'Could not read “{text}”. Use a number with an optional unit, for example 950 mm or 1.88+0.05.')
+            if not check:
+                self.ctx.msg(f'Could not read “{text}”. Use a number with an optional unit, for example 950 mm or 1.88+0.05.')
             return False
+        if check:
+            return True
+        edit()
         self.ctx.analysis.request()
         return True
 
@@ -447,22 +461,42 @@ class CamerasTab(QWidget):
         if lines and lines[0] and lines[0][0].strip() in ('Tag', 'tag'):
             lines = lines[1:]
             c0 = 0
-        n = 0
-        tags = {c.tag: i for i, c in enumerate(self.model.cams)}
+        cams = self.model.cams
+        tags = {c.tag: i for i, c in enumerate(cams)}
+        cells, locked, unknown, bad = [], [], [], 0
         for k, row in enumerate(lines):
             r = r0 + k
-            if c0 == 0 and row and row[0].strip() in tags:
+            if c0 == 0 and row and row[0].strip():
+                if row[0].strip() not in tags:
+                    unknown.append(row[0].strip())       # a row for a camera this variant does not have
+                    continue
                 r = tags[row[0].strip()]
-            if r >= len(self.model.cams):
+            if r >= len(cams):
                 break
+            if cams[r].locked:
+                locked.append(cams[r].tag)
+                continue
             for j, val in enumerate(row):
                 col = c0 + j
                 if col >= len(COLS) or COLS[col][0] in ('tag', 'module', 'lens', 'cable', 'unique', 'mind'):
                     continue
                 if val.strip():
-                    if self.model.set_cell(r, col, val.strip()):
-                        n += 1
-        self.ctx.msg(f'Pasted {n} values')
+                    if self.model.set_cell(r, col, val.strip(), check=True):
+                        cells.append((r, col, val.strip()))
+                    else:
+                        bad += 1
+        if cells:
+            # one undo step for the whole paste
+            st = self.ctx.store
+            st.undo.beginMacro(f'Pasted {len(cells)} values')
+            try:
+                for r, col, val in cells:
+                    self.model.set_cell(r, col, val)
+            finally:
+                st.undo.endMacro()
+        skipped = ([f'locked {", ".join(locked)}'] if locked else []) + ([f'unknown {", ".join(unknown)}'] if unknown else []) + \
+            ([f'{bad} unreadable'] if bad else [])
+        self.ctx.msg(f'Pasted {len(cells)} values' + (f' · skipped {"; ".join(skipped)}' if skipped else ''))
 
 
 # ---------------------------------------------------------------------------------------- tolerance (compact)
@@ -514,7 +548,8 @@ class ToleranceTab(QWidget):
         self.ctx.window.run_tolerance(self.settings())
 
     def show_result(self, r):
-        self.summary.setText(f'{len(r.blind)} samples in {r.seconds:.1f} s · zero blind in {r.zero_pct:.1f} % · '
+        ran = f'cancelled after {len(r.blind)} of {r.settings.samples} samples' if r.cancelled else f'{len(r.blind)} samples'
+        self.summary.setText(f'{ran} in {r.seconds:.1f} s · zero blind in {r.zero_pct:.1f} % · '
                              f'P95 {r.pct(95):.3f} m² · P99 {r.pct(99):.3f} m² · max {r.blind.max():.3f} m² · '
                              f'nominal {r.nominal_blind:.3f} m²')
 

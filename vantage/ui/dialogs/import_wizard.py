@@ -90,7 +90,7 @@ class PreviewScene(QObject):
         self.mode = mode            # 'orient' | 'side' | 'zones'
         self._key = None
         self._md = None
-        self.hover = None
+        self.hover_hit = None             # (point, normal) under the cursor; hover() is the provider method
         self.painting = False
 
     def background_color(self):
@@ -173,8 +173,8 @@ class PreviewScene(QObject):
                 p.drawRect(QRectF(x + 12, y - 9, fw, 18))
                 p.setPen(QColor(240, 239, 236))
                 p.drawText(QPointF(x + 17, y + 4), txt)
-        if self.mode == 'zones' and self.hover is not None:
-            hit, n = self.hover
+        if self.mode == 'zones' and self.hover_hit is not None:
+            hit, n = self.hover_hit
             r = self.wiz.brush_mm() / 1000
             t1 = np.cross([0, 0, 1.0], n)
             if np.linalg.norm(t1) < 1e-6:
@@ -239,7 +239,7 @@ class PreviewScene(QObject):
     def hover(self, vp, pos):
         if self.mode == 'zones' and pos is not None:
             h = self._hit(vp, pos)
-            self.hover = (h[0], h[1]) if h else None
+            self.hover_hit = (h[0], h[1]) if h else None
             self.changed.emit()
 
     def key_press(self, vp, e):
@@ -1259,11 +1259,18 @@ class ImportWizard(VDialog):
         name = os.path.splitext(os.path.basename(self.path))[0] if self.path and not self.reuse else self.ctx.store.project.vehicle.name
         wc = {k: [round(float(x), 4) for x in c] for k, c in self.wheels.items()}
         old = self.ctx.store.project.vehicle
+        landmarks = {}
+        if self.reuse and (self.units, self.up, self.fwd, self.flip_lr) == ('m', '+Z', '+X', False):
+            # the current body in its own axes: keep its other landmarks (moved with a new origin, if one was chosen)
+            off = getattr(self, '_base_off', np.zeros(3))
+            landmarks = {k: tuple(float(x) - float(o) for x, o in zip(v, off)) for k, v in old.landmarks.items()
+                         if not k.startswith('Wheel centre ')}
+        landmarks.update({f'Wheel centre {k}': tuple(c) for k, c in wc.items()})
         veh = Vehicle(name=name if not self.reuse else old.name, spec_name=old.spec_name if self.reuse else '',
                       source=self.path or old.source, template='' if not self.reuse else old.template,
                       import_units=self.units, import_up=self.up, import_forward=self.fwd, occluder_target=self.occ_target,
                       wheel_centres=wc, spec=dict(self.spec), mesh=mesh, imported_tris=mesh.n_tris,
-                      landmarks={f'Wheel centre {k}': tuple(c) for k, c in wc.items()})
+                      landmarks=landmarks)
         keep = self.keep_cams.isChecked()
 
         def fn(p):

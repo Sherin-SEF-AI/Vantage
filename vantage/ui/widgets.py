@@ -161,6 +161,9 @@ class ScrubSpinBox(QDoubleSpinBox):
             self.unit_w.setFont(mono(11))
             self.unit_w.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._last = None
+        self._shown = None             # the text set_value / a commit last put in the field
+        self._typed = False            # the user has edited the text since it was last set or committed
+        self.lineEdit().textEdited.connect(lambda _: setattr(self, '_typed', True))
         self.editingFinished.connect(self._on_finished)
         self.setFixedHeight(ROW_H)
         if width:
@@ -169,6 +172,10 @@ class ScrubSpinBox(QDoubleSpinBox):
 
     def set_display_unit(self, u):
         self._display_unit = u
+
+    def setDecimals(self, d):
+        if d != self.decimals():       # Qt rewrites the text even for the same value (a refresh would clobber typing)
+            super().setDecimals(d)
 
     def _layout_children(self):
         left = 6
@@ -206,13 +213,18 @@ class ScrubSpinBox(QDoubleSpinBox):
             self.lineEdit().setText(self.textFromValue(self.value()))
 
     def set_value(self, v, mixed=False):
+        if self._typed and self.hasFocus():
+            return                     # a refresh must not overwrite what the user is typing
         self.blockSignals(True)
         self._mixed = mixed
         self.setProperty('mixed', mixed)
         if v is not None and not (isinstance(v, float) and math.isnan(v)):
             self.setValue(v)
         self.lineEdit().setText(self.textFromValue(self.value()))
-        self._last = self.value()
+        # the unrounded value: typing exactly what the field shows (rounded) is still a change
+        self._last = float(v) if v is not None and math.isfinite(v) else self.value()
+        self._shown = self.lineEdit().text()
+        self._typed = False
         self.blockSignals(False)
 
     def textFromValue(self, v):
@@ -244,6 +256,7 @@ class ScrubSpinBox(QDoubleSpinBox):
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key.Key_Escape:
+            self._typed = False
             self.set_value(self._last if self._last is not None else self.value(), self._mixed)
             self.clearFocus()
             return
@@ -256,8 +269,10 @@ class ScrubSpinBox(QDoubleSpinBox):
                 step *= 10
             self.setValue(self.value() + (step if e.key() == Qt.Key.Key_Up else -step))
             self._mixed = False
+            self._typed = False
             self.committed.emit(self.value())
             self._last = self.value()
+            self._shown = self.lineEdit().text()
             return
         super().keyPressEvent(e)
 
@@ -269,16 +284,20 @@ class ScrubSpinBox(QDoubleSpinBox):
         if self._mixed and text.strip() in ('', '—'):
             self.lineEdit().setText('—')
             return
+        # focus leaving an untouched field is not an edit (its text is the rounded value)
+        edited = self._typed or text != self._shown
+        self._typed = False
         v = self.valueFromText(text)
         self.blockSignals(True)
         self.setValue(v)
         self.blockSignals(False)
-        if self._last is None or abs(v - self._last) > 10 ** -(self.decimals() + 2) or self._mixed:
+        if edited and (self._last is None or abs(v - self._last) > 10 ** -(self.decimals() + 2)) or self._mixed:
             self._mixed = False
             self.setProperty('mixed', False)
             self._last = v
             self.committed.emit(v)
         self.lineEdit().setText(self.textFromValue(self.value()))
+        self._shown = self.lineEdit().text()
 
 
 # ---------------------------------------------------------------------- toggle switch

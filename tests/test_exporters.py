@@ -97,7 +97,7 @@ def _cams(p):
 # ----------------------------------------------------------------------------- registry
 def test_formats_registry():
     ids = [f.id for f in ex.FORMATS]
-    assert len(ids) == len(set(ids)) == 16
+    assert len(ids) == len(set(ids)) == 17
     assert {f.group for f in ex.FORMATS} == set(ex.GROUPS)
     for f in ex.FORMATS:
         assert f.kind in ('text', 'binary')
@@ -111,8 +111,8 @@ def test_export_writes_every_file(sample, exported):
     out, paths, steps = exported
     n = len(_cams(p))
     # 11 single-file formats + N opencv + 2 ros + N views + (json, npz, txt, 2N bin, body mask) remap tables
-    # + 4 reference stitcher sources
-    assert len(paths) == 11 + 2 * n + 2 + (2 * n + 4) + 4
+    # + 4 reference stitcher sources + 5 bowl files (obj, mtl, png, npz, json)
+    assert len(paths) == 11 + 2 * n + 2 + (2 * n + 4) + 4 + 5
     for path in paths:
         assert os.path.isabs(path) and os.path.isfile(path) and os.path.getsize(path) > 0
         assert os.path.commonpath([path, str(out)]) == str(out)
@@ -123,7 +123,8 @@ def test_export_writes_every_file(sample, exported):
                      'extrinsics.csv', 'vantage_cameras.urdf', 'static_tf.launch.py', 'jetson_cameras.json',
                      'viewport.png', 'birds-eye.png', 'mount-points.dxf', 'mount-points.step', 'opencv/F.yaml',
                      'views/QR.png', 'bev_lut/bev_lut.json', 'bev_lut/F_map.bin', 'bev_lut/body_mask.bin',
-                     'bev_lut/bev_lut.txt', 'bev_lut/stitcher/bev_stitch.cpp', 'bev_lut/stitcher/bev_stitch.py'):
+                     'bev_lut/bev_lut.txt', 'bev_lut/stitcher/bev_stitch.cpp', 'bev_lut/stitcher/bev_stitch.py',
+                     'bowl/bowl.obj', 'bowl/bowl_lut.npz', 'bowl/bowl.png'):
         assert expected in names
 
 
@@ -174,7 +175,7 @@ def test_csv(sample, exported):
     for c, r in zip(_cams(p), rows):
         assert r['tag'] == c.tag
         assert float(r['x_m']) == pytest.approx(c.x) and float(r['y_m']) == pytest.approx(c.y)
-        assert r['yaw_deg'] == f'{c.yaw:.1f}'.replace('-0.0', '0.0')
+        assert float(r['yaw_deg']) == pytest.approx(c.yaw, abs=1e-4) and len(r['yaw_deg'].split('.')[1]) == 4
         assert len(r['x_m'].split('.')[1]) == 3
     assert '−' not in (out / 'extrinsics.csv').read_text('utf-8')
 
@@ -220,8 +221,8 @@ def test_radian_angles(sample, images, tmp_path):
     ex.export(['extrinsics_json'], p, res, _opts(tmp_path, images, angles='rad'))
     doc = json.loads((tmp_path / 'extrinsics.json').read_text('utf-8'))
     for c, jc in zip(_cams(p), doc['cameras']):
-        assert jc['yaw'] == round(math.radians(c.yaw), 5)
-        assert jc['pitch'] == round(math.radians(c.pitch), 5)
+        assert jc['yaw'] == pytest.approx(math.radians(c.yaw), abs=1e-6)
+        assert jc['pitch'] == pytest.approx(math.radians(c.pitch), abs=1e-6)
 
 
 def test_bad_options(sample):

@@ -149,6 +149,7 @@ class PlanView(QWidget):
 
     def fit(self, rect=None, margin=1.06):
         res = self.result()
+        explicit = rect is not None          # framing a selection is a view to keep, like a zoom
         if rect is None:
             if self.zoom_rect is not None:
                 rect = self.zoom_rect
@@ -164,13 +165,13 @@ class PlanView(QWidget):
         w, h = max(self.width(), 50), max(self.height(), 50)
         self.scale = min((w - 24) / max(x1 - x0, 0.1), (h - 40) / max(y1 - y0, 0.1)) / margin
         self._fitted = res is not None or rect is not None
+        self._user_view = explicit
         self.update()
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        if not self._fitted or e.oldSize().width() < 50:
-            self.fit()
-        else:
+        # keep a view the user zoomed or panned to; otherwise keep everything in frame
+        if not self._fitted or e.oldSize().width() < 50 or not getattr(self, '_user_view', False):
             self.fit()
 
     # ------------------------------------------------------------------ painting
@@ -549,11 +550,24 @@ class PlanView(QWidget):
     def _pick_target(self, w):
         for t in self.project.targets:
             tw, th = t.size_m
-            if abs(w[0] - t.x) < tw / 2 and abs(w[1] - t.y) < th / 2:
+            ca, sa = math.cos(math.radians(t.yaw)), math.sin(math.radians(t.yaw))
+            u = (w[0] - t.x) * ca + (w[1] - t.y) * sa              # into the board's own axes
+            v = -(w[0] - t.x) * sa + (w[1] - t.y) * ca
+            if abs(u) < tw / 2 and abs(v) < th / 2:
                 return t
         return None
 
+    def focusOutEvent(self, e):
+        if self.drag and not self.drag.get('pan'):
+            self.ctx.store.dragging = False
+            self.ctx.analysis.request()
+        self.drag = None
+        super().focusOutEvent(e)
+
     def mousePressEvent(self, e):
+        if self.drag is not None:
+            return                      # another button during a drag: its release must not end someone else's gesture
+        self._btn = e.button()
         self.setFocus()
         pos = e.position()
         self._press = pos
@@ -694,9 +708,13 @@ class PlanView(QWidget):
         self.setCursor(Qt.CursorShape.CrossCursor if info else Qt.CursorShape.ArrowCursor)
 
     def mouseReleaseEvent(self, e):
+        if self.drag is not None and e.button() != getattr(self, '_btn', e.button()):
+            return
         d = self.drag
         self.drag = None
         st = self.ctx.store
+        if d and d.get('pan') and d.get('moved'):
+            self._user_view = True
         if d and not d.get('pan'):
             st.dragging = False
             self.ctx.analysis.request()
@@ -747,7 +765,11 @@ class PlanView(QWidget):
         self.ctx.window.ground_menu(np.array([w[0], w[1], 0.0]), gpos)
 
     def wheelEvent(self, e):
-        k = 1.12 if e.angleDelta().y() > 0 else 1 / 1.12
+        dy = e.angleDelta().y()
+        if dy == 0:                     # horizontal scrolling is not a zoom
+            return
+        k = 1.12 ** (dy / 120.0)        # touchpads send many small steps
+        self._user_view = True
         pos = e.position()
         w0 = self.s2w(pos.x(), pos.y())
         self.scale = max(5, min(2000, self.scale * k))

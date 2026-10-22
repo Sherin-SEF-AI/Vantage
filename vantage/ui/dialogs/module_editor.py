@@ -90,7 +90,7 @@ class ModuleEditor(VDialog):
 
         def num(key, text, unit, dp=2, step=0.01):
             w = ScrubSpinBox('', 'plain', dp, unit, step=step)
-            w.committed.connect(lambda v: self.read_fields())
+            w.committed.connect(lambda v, key=key: self.read_fields(key))
             return field(key, text, w)
         head('Module')
         line('m_name', 'Name')
@@ -242,7 +242,7 @@ class ModuleEditor(VDialog):
         self.proj.set_value(l.projection if l.projection != 'orthographic' else 'equisolid')
         self._busy = False
 
-    def read_fields(self):
+    def read_fields(self, edited=None):
         if self._busy:
             return
         import re
@@ -273,7 +273,9 @@ class ModuleEditor(VDialog):
             l.focus_near_m = max(0.0, f['l_near'].value())
             sh = [float(x) for x in re.findall(r'\d+(?:\.\d+)?', f['l_sheet'].text())]
             l.sheet_fov = tuple((sh + [0, 0, 0])[:3])
-            l.max_half_deg = f['l_maxhalf'].value()
+            if edited == 'l_maxhalf':
+                # the field otherwise shows the derived limit, rounded: storing it would freeze the limit
+                l.max_half_deg = f['l_maxhalf'].value()
         except Exception as e:
             QMessageBox.warning(self, 'Could not read a field', str(e))
         self.preset.set_value('manual')
@@ -292,14 +294,19 @@ class ModuleEditor(VDialog):
         except ValueError:
             self.update_all()
             return
+        if not math.isfinite(v) or (c in (4, 5) and v <= 0):
+            self.update_all()
+            return
         l, m = self.lens, self.mod
         kb = list(l.kb)
         if c < 4:
             kb[c] = v
             l.kb = tuple(kb)
             l.projection = 'kannala_brandt'
-        elif c in (4, 5):
+        elif c == 4:
             l.focal_mm = v * m.pixel_um * 1e-3
+        elif c == 5:
+            l.aspect = v / (l.focal_mm / (m.pixel_um * 1e-3))       # fy / fx
         elif c == 6:
             l.pp_offset_px = (v - m.width_px / 2, l.pp_offset_px[1])
         elif c == 7:
@@ -360,7 +367,7 @@ class ModuleEditor(VDialog):
         src = f'measured · {len(l.measured)} samples' if l.measured else ('datasheet FOV points' if l.sheet_fov[0] else '')
         self.legend.setText(f'——  {PROJECTION_LABEL[l.projection]} · selected     ■  {src}     ----  other models     |  HFOV / 2 = {d["fov"][0] / 2:.2f}°')
         intr = resolve(m, l)
-        vals = list(l.kb) + [intr.f_px, intr.f_px, intr.cx, intr.cy]
+        vals = list(l.kb) + [intr.f_px, intr.f_px * intr.aspect, intr.cx, intr.cy]
         for i, v in enumerate(vals):
             it = QTableWidgetItem(f'{v:.4f}' if i < 4 else f'{v:.1f}')
             it.setFont(mono(12))
@@ -491,19 +498,20 @@ class ModuleEditor(VDialog):
 
     def _commit(self, new_ids=False, name=None):
         mod, lens = copy.deepcopy(self.mod), copy.deepcopy(self.lens)
-        mod.builtin = False if new_ids else mod.builtin
-        lens.builtin = False if new_ids else lens.builtin
         if new_ids:
             lens.id = new_uid()
             if name:
                 lens.name = name
-            lens.module_id = mod.id if mod.id in self.ctx.store.project.modules else self.mid
+            # an imported or edited module is added beside the one it started from, never written over it
+            old = self.ctx.store.project.modules.get(mod.id)
+            if old is not None and old.to_dict() != mod.to_dict():
+                mod.id = new_uid()
+            lens.module_id = mod.id
+            mod.builtin = lens.builtin = False
         lens.module_id = lens.module_id or self.mid
 
         def fn(p):
-            if mod.id not in p.modules or not new_ids:
-                p.modules[mod.id] = mod
-            else:
+            if not (new_ids and mod.id in p.modules):      # unchanged: the new lens joins the module as it is
                 p.modules[mod.id] = mod
             p.lenses[lens.id] = lens
         self.ctx.store.edit('library', fn, f'{"Added" if new_ids else "Edited"} {mod.name} + {lens.name}')

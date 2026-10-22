@@ -165,16 +165,16 @@ def parse_number(text: str, unit_kind: str = 'length', default_unit: str = 'm') 
     }[unit_kind]
     base = {'length': default_unit, 'angle': 'deg', 'plain': None}[unit_kind]
 
-    # attach units to each number token: "950 mm" -> "(950*0.001)"
+    # numbers are in the display unit; a number with its own unit is converted to it: "950 mm" in metres -> "(950*0.001)".
+    # (Converting every number and dividing once at the end would scale products and quotients twice.)
     def repl(mo):
         num, unit = mo.group(1), mo.group(2)
         unit = unit.strip().lower() if unit else ''
         if unit in ('', None):
-            f = scale.get(base, 1.0) if base else 1.0
-        elif unit in scale:
-            f = scale[unit]
-        else:
+            return f'({num})'
+        if unit not in scale:
             raise ValueError(f'unknown unit {unit}')
+        f = scale[unit] / (scale.get(base, 1.0) if base else 1.0)
         return f'({num}*{f!r})'
 
     expr = re.sub(r'(\d+(?:\.\d*)?(?:[eE][-+]?\d+)?|\.\d+)\s*(mm|cm|km|m|in|deg|rad|°)?', repl, s)
@@ -199,9 +199,6 @@ def parse_number(text: str, unit_kind: str = 'length', default_unit: str = 'm') 
     if len(expr) > 200:
         raise ValueError('expression too long')
     val = ev(tree)
-    # result is in metres (lengths) or degrees (angles); convert back to the display unit
-    if unit_kind == 'length' and base != 'm':
-        val = val / scale[base]
     if not math.isfinite(val):
         raise ValueError('not finite')
     return val

@@ -103,6 +103,14 @@ class MainScene(QObject):
         self.show_tooltip = True
         self.photo_frame = None
         self.label_prefix = ''
+        self._cube_hint = {}                # uid -> occlusion map from the camera's last analysed position
+        self._lights = (None, [])
+        self._bowl_tris = (None, None)
+        self.bowl = None
+        if mode == 'bowl':
+            from .bowlview import BowlController
+            self.bowl = BowlController(ctx)
+            self.bowl.ready.connect(self._emit)
         st = ctx.store
         # bound methods (not lambdas) so Qt drops the connections when this scene is deleted
         st.changed.connect(self._emit)
@@ -181,7 +189,7 @@ class MainScene(QObject):
 
     def ground(self):
         res = self.result
-        if res is None:
+        if res is None or (self.bowl is not None and self.bowl.draw is not None):
             return None
         heat = self.ctx.heatmap if self.mode == 'scene' else 'bev'
         fp = self.ctx.overlays.get('footprints', True)
@@ -196,6 +204,59 @@ class MainScene(QObject):
                                       nearest=mode in ('density', 'redundancy', 'coverage'), version=hash(key))
             self._ground_key = key
         return self._ground
+
+    def render_style(self, vp):
+        from .render_gl import Style
+        dark = THEME.name != 'light'
+        bg = np.array(THEME.color('viewport').getRgbF()[:3])
+        ink = np.array(THEME.color('ink').getRgbF()[:3])
+        photo = self.ctx.shading == 'photo' or vp.cam.custom is not None
+        lit = bool(self.ctx.overlays.get('shadows', True)) and not photo
+        return Style(shadows=lit and self.mode == 'scene', ao=lit and self.mode == 'scene',
+                     ground_plane=self.mode == 'scene' and not photo and lit,
+                     ground_rgb=tuple(bg * 0.9 + ink * 0.1), sky_rgb=(0.62, 0.66, 0.72) if dark else (0.86, 0.88, 0.91),
+                     bounce_rgb=(0.24, 0.23, 0.22) if dark else (0.50, 0.48, 0.45))
+
+    def camera_lights(self, vp):
+        """Cameras for the camera-light overlay (what each camera sees, painted on the body and the ground)."""
+        if self.mode != 'scene' or not self.ctx.overlays.get('camlight') or self.ctx.shading == 'photo':
+            return []
+        from ..core.visibility import cam_views
+        cams = [c for c in self.cameras() if c.visible and (not self.ctx.isolate or c.uid in self.ctx.isolate)][:8]
+        if not cams:
+            return []
+        eng = self.ctx.analysis.engine
+        views = cam_views(self.project, eng, cams, [THEME.cam(c.slot).getRgbF()[:3] for c in cams], 'cached',
+                          self._cube_hint)
+        for v in views:
+            if v.cube is not None:
+                self._cube_hint[v.uid] = v.cube
+        key = tuple((v.uid, v.pos.tobytes(), v.W2O.tobytes(), v.intr, id(v.cube), v.color) for v in views)
+        if self._lights[0] != key:
+            self._lights = (key, views)
+        return self._lights[1]
+
+    def bowl_draw(self, vp):
+        return self.bowl.draw if self.bowl is not None and self.bowl.source != 'sectors' else None
+
+    def _bowl_soft(self):
+        """The textured bowl as flat-coloured triangles for the software renderer."""
+        d = self.bowl.draw
+        if self._bowl_tris[0] is not d:
+            tex = d.texture
+            H, W = tex.shape[:2]
+            uv = d.uv[d.faces].mean(axis=1)
+            tri = d.vertices[d.faces]
+            # sample the texture at each face's centre (the seam column wraps)
+            col = tex[np.clip((uv[:, 1] * H).astype(int), 0, H - 1), np.clip((uv[:, 0] % 1.0 * W).astype(int), 0, W - 1)]
+            keep = col[:, 3] > 8
+            rgba = col[keep].astype(np.float32) / 255.0
+            self._bowl_tris = (d, TriDraw(tri[keep], rgba, depth=True))
+        return self._bowl_tris[1]
+
+    def leave_custom_view(self, vp):
+        if self.photo_frame is not None and self.ctx.window is not None:
+            self.ctx.window.leave_photo_view()
 
     def tris_extra(self, vp):
         out = []
@@ -237,7 +298,10 @@ class MainScene(QObject):
                         col += [cc, cc]
             out.append(TriDraw(np.array(tri), np.array(col)))
         if self.mode == 'bowl' and self.result is not None:
-            out.append(self._bowl())
+            if self.bowl_draw(vp) is None:
+                out.append(self._bowl())
+            elif not getattr(vp, 'gl_bowl', False):
+                out.append(self._bowl_soft())
         return out
 
     def _bowl(self):
@@ -304,10 +368,11 @@ class MainScene(QObject):
         p = self.project
         ov = self.ctx.overlays
         res = self.result
-        if ov.get('grid', True):
+        textured = self.bowl_draw(vp) is not None
+        if ov.get('grid', True) and not textured:
             out += self._grid()
         if res is not None:
-            if ov.get('roi', True):
+            if ov.get('roi', True) and not textured:
                 for b in res.grid.boundary:
                     pts = np.c_[b, np.full(len(b), 0.004)]
                     out.append(LineDraw(pts, THEME.color('ink', 0.9), 1.2, dash=True, dash_len=0.09))
@@ -354,13 +419,13 @@ class MainScene(QObject):
             out.append(LineDraw(ring, THEME.color('ink2'), 1.0))
             out.append(LineDraw(np.array([[ob.x, ob.y, 0], [ob.x, ob.y, ob.height]]), THEME.color('ink2'), 1.5))
             out.append(LineDraw(ring + np.array([0, 0, ob.height]), THEME.color('ink2'), 1.0))
-        if ov.get('dimensions') and p.vehicle.mesh is not None:
+        if ov.get('dimensions') and p.vehicle.mesh is not None and self.mode == 'scene':
             out += self._dimensions()
         if self.measure:
             pts = np.array(self.measure)
             if len(pts) >= 2:
                 out.append(LineDraw(pts[:2], THEME.color('ink'), 1.5, depth=False))
-        if self.mode == 'bowl' and hasattr(self, '_bowl_grid'):
+        if self.mode == 'bowl' and hasattr(self, '_bowl_grid') and not textured:
             P = self._bowl_grid
             for i in range(0, P.shape[0], 2):
                 out.append(LineDraw(P[i], THEME.color('ink', 0.18), 1.0))
@@ -427,8 +492,13 @@ class MainScene(QObject):
         if self.label_prefix:
             return self.label_prefix
         if self.mode == 'bowl':
+            if self.bowl is not None and self.bowl.source != 'sectors':
+                sh = self.bowl.shape
+                txt = (f'3D surround view · floor {sh.floor_m:.1f} m past the body, wall {sh.height_m:.1f} m high over '
+                       f'{sh.reach_m:.1f} m')
+                return txt + (f' · {self.bowl.status}' if self.bowl.status and self.bowl.draw is None else '')
             r = self.project.roi.distance
-            return f'Bowl view · flat to {r:.1f} m, then z = 0.42 · (r − {r:.1f})²'
+            return f'Bowl view · camera sectors · flat to {r:.1f} m'
         names = {'solid': 'Solid', 'wire': 'Wire', 'xray': 'X-ray', 'photo': 'Photo-matched'}
         view = 'Perspective' if not vp.cam.ortho else ('Top' if vp.cam.el > 80 else 'Side' if abs(vp.cam.az - 90) < 1 else 'Front' if abs(vp.cam.az) < 1 else 'Rear' if abs(abs(vp.cam.az) - 180) < 1 else 'Ortho')
         if vp.cam.custom is not None:
@@ -494,7 +564,7 @@ class MainScene(QObject):
                     p.setFont(mono(11))
                     p.setPen(THEME.color('ink') if not s or s.ok else QColor(STATUS['critical']))
                     p.drawText(QPointF(q[0][0] + 10, q[0][1] - 10), t.name)
-        if self.ctx.overlays.get('dimensions') and hasattr(self, '_dim_labels'):
+        if self.ctx.overlays.get('dimensions') and hasattr(self, '_dim_labels') and self.mode == 'scene':
             p.setFont(mono(11))
             p.setPen(THEME.color('ink'))
             for x, y, z, txt in self._dim_labels:
@@ -636,7 +706,7 @@ class MainScene(QObject):
 
     # ------------------------------------------------------------------ interaction
     def _pick_camera(self, vp, pos, radius=10):
-        cams = [c for c in self.cameras() if c.visible]
+        cams = [c for c in self.cameras() if c.visible and (not self.ctx.isolate or c.uid in self.ctx.isolate)]
         if not cams:
             return None
         sc, dep, ok = vp.project(np.array([c.pos() for c in cams]))
@@ -712,7 +782,8 @@ class MainScene(QObject):
                 if g[0] == 'axis':
                     self.drag = {'axis': g[1], 'uid': c.uid, 'start': c.pos(), 'mouse': pos}
                 else:
-                    self.drag = {'ring': g[1], 'uid': c.uid, 'yaw': c.yaw, 'pitch': c.pitch, 'mouse': pos}
+                    self.drag = {'ring': g[1], 'uid': c.uid, 'yaw': c.yaw, 'pitch': c.pitch, 'mouse': pos, 'turn': 0.0,
+                                 'last': None}
                 st.dragging = True
                 return True
         if tool == 'place':
@@ -779,9 +850,13 @@ class MainScene(QObject):
             st.set_cam(c.uid, merge=True, x=round(float(new[0]), 4), y=round(float(new[1]), 4), z=round(float(new[2]), 4))
         elif 'ring' in d:
             pc, _, _ = vp.project([c.pos()])
-            a0 = math.atan2(d['mouse'].y() - pc[0][1], d['mouse'].x() - pc[0][0])
+            if d['last'] is None:
+                d['last'] = math.atan2(d['mouse'].y() - pc[0][1], d['mouse'].x() - pc[0][0])
             a1 = math.atan2(pos.y() - pc[0][1], pos.x() - pc[0][0])
-            da = math.degrees(a1 - a0) * fine
+            # accumulate wrapped steps: the raw angle jumps by 360° when the cursor passes left of the camera
+            d['turn'] += (math.degrees(a1 - d['last']) + 180.0) % 360.0 - 180.0
+            d['last'] = a1
+            da = d['turn'] * fine
             if d['ring'] == 0:
                 # screen y points down: dragging counter-clockwise on screen turns the camera left when seen from above
                 sign = -1 if vp.cam.view()[2, 2] > 0 else 1
@@ -826,7 +901,10 @@ class MainScene(QObject):
         if g is not None and self.ctx.overlays.get('targets'):
             for t in self.project.targets:
                 w, h = t.size_m
-                if abs(g[0] - t.x) < w / 2 and abs(g[1] - t.y) < h / 2:
+                ca, sa = math.cos(math.radians(t.yaw)), math.sin(math.radians(t.yaw))
+                u = (g[0] - t.x) * ca + (g[1] - t.y) * sa              # into the board's own axes
+                v = -(g[0] - t.x) * sa + (g[1] - t.y) * ca
+                if abs(u) < w / 2 and abs(v) < h / 2:
                     st.select_obj(('target', t.uid))
                     return
         if g is not None and self.hover_info and self.hover_info.get('cams') and self.ctx.tool == 'select':

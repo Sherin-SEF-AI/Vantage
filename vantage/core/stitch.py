@@ -44,24 +44,37 @@ class StitchLUT:
 
 def build_lut(project: Project, engine, result, res=0.02, poses=None, extent=None, blend_m=None) -> StitchLUT:
     """poses: optional uid -> (R_body_to_world, pos) (e.g. measured by the installation check)."""
-    variant = project.variant_by_uid(result.variant_uid) or project.variant
-    cams = [c for c in variant.cameras if c.visible and result.cam_index(c.uid) >= 0]
     g = result.grid
     if extent is None:
         extent = (g.x0, g.y0, g.x0 + g.nx * g.cell, g.y0 + g.ny * g.cell)
     x0, y0, x1, y1 = extent
     nx = int(round((x1 - x0) / res))
     ny = int(round((y1 - y0) / res))
-    lut = StitchLUT(x0, y0, res, nx, ny, [c.uid for c in cams], [c.tag for c in cams], {}, {}, {}, {},
-                    np.zeros((ny, nx), bool), np.zeros((ny, nx), bool))
-    X, Y = lut.world_xy()
-    P = np.stack([X.ravel(), Y.ravel(), np.zeros(X.size)], 1)
+    xs = x0 + (np.arange(nx) + 0.5) * res
+    ys = y0 + (ny - np.arange(ny) - 0.5) * res     # row 0 = max y (image up = +y)
+    X, Y = np.meshgrid(xs, ys)
     # under-body mask from the analysis grid (nearest cell)
     gi = np.clip(((X - g.x0) / g.cell).astype(int), 0, g.nx - 1)
     gj = np.clip(((Y - g.y0) / g.cell).astype(int), 0, g.ny - 1)
-    lut.body = g.body[gj, gi]
+    P = np.stack([X, Y, np.zeros_like(X)], -1)
+    return lut_for_points(project, engine, result, P, g.body[gj, gi], poses=poses, blend_m=blend_m, x0=x0, y0=y0, res=res)
+
+
+def lut_for_points(project: Project, engine, result, P, body, poses=None, blend_m=None, x0=0.0, y0=0.0,
+                   res=0.0) -> StitchLUT:
+    """Remap tables for any grid of world points P (ny, nx, 3), e.g. the ground (build_lut) or a 3D bowl (core.bowl).
+    body (ny, nx) marks points hidden under the vehicle. Ownership follows the analysis seams by azimuth around the
+    body centre, blended across each seam line; holes fall back to the best-density camera."""
+    variant = project.variant_by_uid(result.variant_uid) or project.variant
+    cams = [c for c in variant.cameras if c.visible and result.cam_index(c.uid) >= 0]
+    ny, nx = P.shape[:2]
+    lut = StitchLUT(x0, y0, res, nx, ny, [c.uid for c in cams], [c.tag for c in cams], {}, {}, {}, {},
+                    np.asarray(body, bool).copy(), np.zeros((ny, nx), bool))
+    X, Y = P[..., 0], P[..., 1]
+    Pf = P.reshape(-1, 3)
     vis, dens = {}, {}
     has_body = engine.vehicle_geom(project) is not None
+    from .mathutil import euler_zyx
     for c in cams:
         intr = resolve(project.module_for(c), project.lens_for(c))
         if poses and c.uid in poses:
@@ -70,7 +83,7 @@ def build_lut(project: Project, engine, result, res=0.02, poses=None, extent=Non
         else:
             R, pos = rot_zyx(c.yaw, c.pitch, c.roll), c.pos()
         W2O = BODY_TO_OPTICAL @ R.T
-        d = P - pos
+        d = Pf - pos
         dist = np.linalg.norm(d, axis=1)
         u, v, th, ok = intr.project_dirs(d @ W2O.T)
         if has_body:
@@ -82,7 +95,6 @@ def build_lut(project: Project, engine, result, res=0.02, poses=None, extent=Non
         lut.map_y[c.uid] = np.where(ok, v, -1).reshape(ny, nx).astype(np.float32)
         vis[c.uid] = ok.reshape(ny, nx)
         dens[c.uid] = np.where(ok, intr.density_px_per_cm(th, dist), 0).reshape(ny, nx)
-        from .mathutil import euler_zyx
         yaw, pitch, roll = euler_zyx(R)
         lut.poses[c.uid] = (yaw, pitch, roll, float(pos[0]), float(pos[1]), float(pos[2]))
     W = {c.uid: np.zeros((ny, nx), np.float32) for c in cams}
@@ -275,15 +287,44 @@ def stitch(lut: StitchLUT, images: dict, body_rgb=(38, 38, 36), empty_rgb=(20, 2
         gains = estimate_gains(lut, warped=(warped, valid))
     if gains:
         warped = {u: w * np.asarray(gains.get(u, 1.0), np.float32) for u, w in warped.items()}
+    covered = lut.covered
     if blend == 'multiband' and warped:
         out = _multiband(lut, warped, valid, bands)
+        if len(warped) < len(lut.uids):
+            covered = sum(lut.weight[u] for u in warped) > 0
     else:
         out = np.zeros((lut.ny, lut.nx, 3), np.float32)
+        wsum = np.zeros((lut.ny, lut.nx), np.float32)
         for uid, smp in warped.items():
             out += smp * lut.weight[uid][..., None]
-    out[~lut.covered] = empty_rgb
+            wsum += lut.weight[uid]
+        if len(warped) < len(lut.uids):
+            # a camera without an image: share its ground among the others that see it
+            out /= np.where(wsum > 1e-6, wsum, 1.0)[..., None]
+            covered = wsum > 1e-6
+    out[~covered] = empty_rgb
     out[lut.body] = body_rgb
     return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def file_tags(uids, tags, variant=None) -> list[str]:
+    """File-name safe, unique (ignoring case) names for cameras: the export's safe_tags when the variant has them all,
+    so the files match the names the export lists, else the same rule applied to these tags."""
+    if variant is not None:
+        from .exporters import safe_tags
+        m = safe_tags(variant)
+        if all(u in m for u in uids):
+            return [m[u] for u in uids]
+    import re
+    out, used = [], set()
+    for tag in tags:
+        base = re.sub(r'[^A-Za-z0-9_-]+', '_', tag or '').strip('_') or 'cam'
+        t, k = base, 2
+        while t.lower() in used:
+            t, k = f'{base}_{k}', k + 1
+        used.add(t.lower())
+        out.append(t)
+    return out
 
 
 def lut_files(lut: StitchLUT, project: Project | None = None, variant=None) -> list[tuple[str, bytes]]:
@@ -293,8 +334,8 @@ def lut_files(lut: StitchLUT, project: Project | None = None, variant=None) -> l
     files = []
     arrays = {'body_mask': lut.body.astype(np.uint8), 'covered': lut.covered.astype(np.uint8)}
     cams = []
-    for uid, tag in zip(lut.uids, lut.tags):
-        safe = ''.join(ch if ch.isalnum() or ch in '-_' else '_' for ch in tag) or 'cam'
+    names = file_tags(lut.uids, lut.tags, variant or (project.variant if project is not None else None))
+    for uid, tag, safe in zip(lut.uids, lut.tags, names):
         mp = np.stack([lut.map_x[uid], lut.map_y[uid]], -1).astype(np.float32)
         wt = np.round(lut.weight[uid] * 255).astype(np.uint8)
         arrays[f'{safe}_map'] = mp

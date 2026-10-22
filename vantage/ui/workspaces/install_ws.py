@@ -215,6 +215,7 @@ class InstallPage(QWidget):
         self.images = {}           # uid -> captured (frozen) image
         self.truth = {}            # uid -> (dyaw, dpitch, droll, dx, dy, dz) simulated mounting error
         self.results = {}          # uid -> PoseResult
+        self.results_variant = ''  # uid of the variant the results were measured for
         self.live = {}             # uid -> capture.LiveSource
         self.stitched = {}         # 'planned' | 'measured' -> RGB, with the current exposure / blend settings
         self.luts = {}
@@ -514,6 +515,12 @@ class InstallPage(QWidget):
         return [c for c in self.ctx.store.variant.cameras if c.visible]
 
     def _on_store_changed(self, sections):
+        if 'variants' in sections and self.results and self.results_variant != self.ctx.store.project.active_uid:
+            # another variant is active: the poses were measured against the old plan
+            self.results, self.joint, self.luts = {}, None, {}
+            self._restitch()
+            self._fill_boards()
+            self._sync_buttons()
         if 'variant' in sections or 'variants' in sections:
             uids = [c.uid for c in self._cams()]
             if uids != list(self.tiles):
@@ -872,6 +879,7 @@ class InstallPage(QWidget):
         eng = self.ctx.window._shared_engine()
         result = self.ctx.analysis.result
         images = dict(self.images)
+        self._run_variant = project.active_uid
         self.busy = True
         self._sync_buttons()
         self.bar.setValue(0)
@@ -946,6 +954,7 @@ class InstallPage(QWidget):
             self.board_truth = {}
         if out['check']:
             self.results = dict(out['results'])
+            self.results_variant = self._run_variant
             self.joint = out.get('joint')
             self.luts = out.get('luts', {})
         else:
@@ -1024,7 +1033,7 @@ class InstallPage(QWidget):
     def _sync_buttons(self):
         if not hasattr(self, 'b_apply'):
             return
-        solved = any(r.pos is not None for r in self.results.values())
+        solved = bool(self._as_built())
         for b in (self.b_run, self.b_capture, self.b_folder):
             b.setEnabled(not self.busy)
         self.b_apply.setEnabled(solved and not self.busy)
@@ -1188,8 +1197,16 @@ class InstallPage(QWidget):
             json.dump(self.report(), fh, indent=1, ensure_ascii=False)
         self.ctx.msg(f'Saved {path}')
 
+    def _as_built(self):
+        """Solved poses of the active variant's cameras (none when the results are for another variant)."""
+        p = self.ctx.store.project
+        if self.results_variant != p.active_uid:
+            return {}
+        cams = {c.uid for c in p.variant.cameras}
+        return {u: r for u, r in self.results.items() if r.pos is not None and u in cams}
+
     def apply_as_built(self):
-        res = {u: r for u, r in self.results.items() if r.pos is not None}
+        res = self._as_built()
         if not res:
             return
         cur = self.ctx.store.project.variant

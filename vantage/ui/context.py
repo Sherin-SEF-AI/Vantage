@@ -6,6 +6,7 @@ from PyQt6.QtCore import QObject, pyqtSignal, QSettings
 from .store import ProjectStore, AnalysisController
 
 OVERLAYS = [('frustums', 'Frustums', 'frustum', True), ('footprints', 'Footprints', 'coverage', True),
+            ('camlight', 'Camera light', 'lens', False), ('shadows', 'Shadows and lighting', 'shading', True),
             ('occlusion', 'Occlusion rays', 'occlusion', False), ('seams', 'Seams', 'seam', True),
             ('roi', 'ROI', 'roi', True), ('targets', 'Calibration targets', 'checker', False),
             ('dimensions', 'Dimensions', 'measure', False), ('grid', 'Grid', 'snap-grid', True)]
@@ -38,6 +39,24 @@ class AppContext(QObject):
         self.photo_shading = False
         self.isolate: set = set()
         self.window = None
+        store.changed.connect(self._after_edit)
+        store.project_replaced.connect(self._after_edit)
+
+    def _after_edit(self, *_):
+        """Keep view state pointing at things that exist: an edit can delete cameras or switch the variant."""
+        uids = {c.uid for c in self.store.variant.cameras}
+        if self.isolate and not self.isolate <= uids:
+            self.isolate = self.isolate & uids
+            self.overlays_changed.emit()
+        dead = [u for u in self.store.sel_cams if u not in uids]
+        if dead:
+            self.store.select_cams([u for u in self.store.sel_cams if u in uids])
+        p = self.store.project
+        mid, lid = self.place_lens
+        if lid not in p.lenses or mid not in p.modules:
+            m = next(iter(p.modules), mid)
+            lens = next((k for k, l in p.lenses.items() if l.module_id in ('', m)), next(iter(p.lenses), lid))
+            self.place_lens = (m, lens)
 
     def set_overlay(self, key, on):
         self.overlays[key] = on

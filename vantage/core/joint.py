@@ -167,23 +167,31 @@ def joint_solve(project: Project, cams: list, obs: dict, init: dict, img_shapes:
         for bi in range(nb):
             for k in range(3):
                 S[r0 + 3 * bi + k, 6 * nc + 3 * bi + k] = 1
+        # tight tolerances: some directions (a camera that sees two boards side on) are shallow, and a loose stop leaves
+        # the answer depending on where the solve started
         return least_squares(residuals, x0, jac_sparsity=S, method='trf', loss='huber', f_scale=3.0, x_scale='jac',
-                             max_nfev=200)
+                             ftol=1e-12, xtol=1e-12, gtol=1e-12, max_nfev=600)
 
     blocks = list(allblocks)
     x = np.zeros(6 * nc + 3 * nb)
     rejected = []
     try:
-        for _ in range(3):
-            sol = solve(blocks, x)
+        rounds = max(3, len(allblocks) // 3) + 1         # at most a third of the observations can be set aside
+        for it in range(rounds):
+            # after a rejection start again from the cameras' own solves: the previous answer was pulled by the outlier
+            # and can sit in another minimum
+            sol = solve(blocks, np.zeros_like(x) if rejected else x)
             x = sol.x
+            if it == rounds - 1:
+                break
             rms = [float(np.sqrt(np.mean(np.sum(block_px(x, b) ** 2, axis=1)))) for b in blocks]
             lim = max(3.0, 4.0 * float(np.median(rms)))
-            # drop the worst offender only; the others may have been pulled off by it
-            worst = int(np.argmax(rms))
-            per_cam = sum(1 for b in blocks if b[0] == blocks[worst][0])
-            if rms[worst] <= lim or per_cam <= 1:
+            # drop the worst offender only (the others may have been pulled off by it), but never a camera's last board
+            order = [k for k in np.argsort(rms)[::-1] if rms[k] > lim and
+                     sum(1 for b in blocks if b[0] == blocks[k][0]) > 1]
+            if not order:
                 break
+            worst = int(order[0])
             rejected.append((cams[blocks[worst][0]].tag, blocks[worst][4].name, rms[worst]))
             blocks.pop(worst)
     except Exception as e:
@@ -194,8 +202,8 @@ def joint_solve(project: Project, cams: list, obs: dict, init: dict, img_shapes:
         Rw = _rotvec_to_matrix(cp[ci, :3]) @ W2O0[ci]
         R = (BODY_TO_OPTICAL.T @ Rw).T
         res.poses[c.uid] = (R, P0[ci] + cp[ci, 3:])
-        e = np.concatenate([np.linalg.norm(block_px(x, b), axis=1) for b in blocks if b[0] == ci])
-        res.rms_px[c.uid] = float(np.sqrt(np.mean(e ** 2)))
+        e = [np.linalg.norm(block_px(x, b), axis=1) for b in blocks if b[0] == ci]
+        res.rms_px[c.uid] = float(np.sqrt(np.mean(np.concatenate(e) ** 2))) if e else float('nan')
     res.rejected = rejected
     kept = {}
     for ci, _, _, _, o in blocks:

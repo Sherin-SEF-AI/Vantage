@@ -149,10 +149,14 @@ def calibrate(ps: PhotoSet, image_size=None) -> str:
             solved += 1
     if len(obj) >= 2:
         ps.f_px, ps.cx, ps.cy, ps.k1 = float(K[0, 0]), float(K[0, 2]), float(K[1, 2]), float(dist.ravel()[0])
+    elif not ps.f_px:
+        # no joint fit and no earlier intrinsics: PnP with the initial guess
+        ps.f_px, ps.cx, ps.cy = float(f0), w / 2, h / 2
     Kp = np.array([[ps.f_px, 0, ps.cx], [0, ps.f_px, ps.cy], [0, 0, 1]])
     dp = np.array([ps.k1, 0, 0, 0, 0], float)
+    joint = set(idx) if len(obj) >= 2 else set()       # frames the joint fit solved; the rest get PnP
     for k, fr in enumerate(ps.frames):
-        if k in idx:
+        if k in joint:
             continue
         pts = [(ps.landmarks[n], u, v) for n, u, v in fr.points if n in ps.landmarks]
         if len(pts) >= 4:

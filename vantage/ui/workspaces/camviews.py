@@ -1,9 +1,11 @@
 """B1 · Camera views, stitched bird's-eye and bowl view."""
 from __future__ import annotations
 
+import math
+
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QSplitter, QTableWidget, QTableWidgetItem,
-                             QHeaderView, QAbstractItemView)
+                             QHeaderView, QAbstractItemView, QComboBox, QCheckBox)
 
 from ..camview import CamImageView
 from ..planview import PlanView
@@ -66,7 +68,14 @@ class CamViewsPage(QWidget):
         self.bowl_scene = MainScene(ctx, mode='bowl')
         self.bowl = make_viewport(self.bowl_scene)
         self.bowl.cam.az, self.bowl.cam.el = 235.0, 38.0
-        right.addWidget(self.bowl)
+        bw = QWidget()
+        bw.setObjectName('panel')
+        bl = QVBoxLayout(bw)
+        bl.setContentsMargins(0, 0, 0, 0)
+        bl.setSpacing(0)
+        bl.addWidget(self._bowl_bar())
+        bl.addWidget(self.bowl, 1)
+        right.addWidget(bw)
         split.addWidget(right)
         split.setSizes([1230, 770])
         lay.addWidget(split)
@@ -76,6 +85,114 @@ class CamViewsPage(QWidget):
         ctx.store.changed.connect(lambda *_: self.rebuild())
         ctx.store.project_replaced.connect(self.rebuild)
         ctx.analysis.finished.connect(lambda *_: self.refresh())
+
+    # ------------------------------------------------------------------ 3D surround view
+    def _bowl_bar(self):
+        from ..bowlview import SOURCES
+        from ..widgets import ScrubSpinBox, button
+        ctl = self.bowl_scene.bowl
+        w = QWidget()
+        w.setObjectName('panel')
+        g = QGridLayout(w)
+        g.setContentsMargins(8, 4, 8, 4)
+        g.setHorizontalSpacing(6)
+        g.setVerticalSpacing(3)
+        g.addWidget(label('3D surround view'), 0, 0)
+        self.bowl_src = QComboBox()
+        for k, t in SOURCES:
+            self.bowl_src.addItem(t, k)
+        self.bowl_src.setToolTip('What is projected onto the bowl: a synthetic parking scene rendered through every camera, '
+                                 'the installation check\'s captures, or just each camera\'s sector')
+        self.bowl_src.currentIndexChanged.connect(lambda _=0: ctl.set_source(self.bowl_src.currentData()))
+        g.addWidget(self.bowl_src, 0, 1, 1, 2)
+        self.bowl_views = QComboBox()
+        for k in ('Rear left', 'Rear right', 'Front left', 'Front right', 'Behind', 'Ahead', 'Top'):
+            self.bowl_views.addItem(k)
+        self.bowl_views.setToolTip('Typical in-car display viewpoints')
+        self.bowl_views.activated.connect(lambda i: self.bowl_view(self.bowl_views.itemText(i)))
+        g.addWidget(self.bowl_views, 0, 3)
+        self.bowl_balance = QCheckBox('Balance exposure')
+        self.bowl_balance.setChecked(True)
+        self.bowl_balance.toggled.connect(lambda on: ctl.set_options(balance=on))
+        g.addWidget(self.bowl_balance, 0, 4)
+        b = button('Export…', None, 'export', 'Bowl mesh (OBJ), its per-vertex remap tables and the texture')
+        b.clicked.connect(self.export_bowl)
+        g.addWidget(b, 0, 5)
+        self.bowl_fields = {}
+        sh = ctl.shape
+        for i, (key, text, unit, step) in enumerate((('floor_m', 'Floor', 'm', 0.1), ('height_m', 'Wall', 'm', 0.1),
+                                                     ('reach_m', 'Reach', 'm', 0.1), ('power', 'Profile', '', 0.1),
+                                                     ('squareness', 'Square', '', 0.5))):
+            f = ScrubSpinBox('', 'plain', 1, unit, step=step, width=74)
+            f.set_value(getattr(sh, key))
+            f.setToolTip({'floor_m': 'Flat floor beyond the vehicle outline', 'height_m': 'Wall height at the rim',
+                          'reach_m': 'How far out the wall reaches', 'power': 'Wall curvature: 1 = straight cone, 2 = parabola',
+                          'squareness': 'Footprint: 2 = ellipse, higher = closer to the vehicle\'s rectangle'}[key])
+            f.committed.connect(lambda v, k=key: ctl.set_shape(**{k: max(0.0 if k == 'floor_m' else 0.2, v)}))
+            box = QWidget()
+            hb = QHBoxLayout(box)
+            hb.setContentsMargins(0, 0, 0, 0)
+            hb.setSpacing(4)
+            hb.addWidget(label(text, ink2=True))
+            hb.addWidget(f)
+            g.addWidget(box, 1, i)
+            self.bowl_fields[key] = f
+        self.bowl_status = label('', muted=True, small=True)
+        g.addWidget(self.bowl_status, 1, 5)
+        ctl.ready.connect(lambda: self.bowl_status.setText(ctl.status))
+        self.ctx.store.changed.connect(lambda *_: self._sync_bowl_fields())
+        self.ctx.store.project_replaced.connect(self._sync_bowl_fields)
+        return w
+
+    def _sync_bowl_fields(self, *_):
+        sh = self.bowl_scene.bowl.shape          # follows undo, redo and opening another project
+        for key, f in self.bowl_fields.items():
+            if not f.hasFocus():
+                f.set_value(getattr(sh, key))
+
+    def bowl_view(self, name):
+        """Orbit the bowl camera to a typical display viewpoint (eye behind and above the car, looking at it)."""
+        az, el, d = {'Rear left': (205.0, 28.0, 1.0), 'Rear right': (155.0, 28.0, 1.0), 'Front left': (-25.0, 28.0, 1.0),
+                     'Front right': (25.0, 28.0, 1.0), 'Behind': (180.0, 22.0, 0.9), 'Ahead': (0.0, 22.0, 0.9),
+                     'Top': (-90.0, 89.0, 1.3)}[name]
+        res = self.ctx.analysis.result
+        tgt = None
+        if res is not None:
+            tgt = (res.centre[0], res.centre[1], 0.4)
+        self.bowl.animate_to(az=az, el=el, dist=7.5 * d, target=tgt, ortho=False)
+
+    def export_bowl(self, out_dir=None):
+        from PyQt6.QtWidgets import QFileDialog
+        import os
+        from ...core import bowl as bowl_core
+        res = self.ctx.analysis.result
+        if res is None:
+            self.ctx.msg('Run the analysis first (F5).')
+            return None
+        if not out_dir:
+            out_dir = QFileDialog.getExistingDirectory(self, 'Write the bowl into')
+        if not out_dir:
+            return None
+        ctl = self.bowl_scene.bowl
+        files = bowl_core.export_files(self.ctx.store.project, self.ctx.window._shared_engine(), res, ctl.shape, ctl.texture)
+        d = os.path.join(out_dir, 'bowl')
+        os.makedirs(d, exist_ok=True)
+        paths = []
+        for n, data in files:
+            pth = os.path.join(d, n)
+            with open(pth, 'wb') as fh:
+                fh.write(data)
+            paths.append(pth)
+        self.ctx.msg(f'Wrote {len(paths)} files to {d}', 6000)
+        return paths
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self.bowl_scene.bowl.set_active(True)
+
+    def hideEvent(self, e):
+        self.bowl_scene.bowl.set_active(False)
+        super().hideEvent(e)
 
     def activate(self):
         self.rebuild()
@@ -144,6 +261,8 @@ class CamViewsPage(QWidget):
         try:
             v = float(it.text().replace('−', '-'))
         except ValueError:
+            v = math.nan
+        if not math.isfinite(v):
             self.refresh()
             return
         st = self.ctx.store

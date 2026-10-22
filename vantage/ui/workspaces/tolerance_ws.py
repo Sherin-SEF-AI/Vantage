@@ -236,11 +236,12 @@ class TolerancePage(QWidget):
     def show_result(self, r):
         self.result = r
         self.b_run.setEnabled(True)
-        self.bar.setValue(1000)
         st = r.settings
-        self.count.setText(f'{len(r.blind)} / {st.samples}')
-        self.last.setText(f'Last run {time.strftime("%H:%M", time.localtime(r.finished_at))} · {r.seconds:.1f} s · {r.threads} threads')
-        self.hist.title = f'Blind area in ROI · {len(r.blind)} samples'
+        self.bar.setValue(int(1000 * len(r.blind) / max(st.samples, 1)))
+        self.count.setText(f'{len(r.blind)} / {st.samples}' + (' · cancelled' if r.cancelled else ''))
+        self.last.setText(f'Last run {time.strftime("%H:%M", time.localtime(r.finished_at))} · {r.seconds:.1f} s · {r.threads} threads'
+                          + (f' · cancelled after {len(r.blind)} samples' if r.cancelled else ''))
+        self.hist.title = f'Blind area in ROI · {len(r.blind)} samples' + (' (cancelled)' if r.cancelled else '')
         self.hist.set_data(r.blind, bins=20, markers=[(r.pct(95), 'P95', True), (r.pct(99), 'P99', True), (float(r.blind.max()), 'max', False)],
                            xlabel='blind area, m²')
         self.stats.setText(f'zero {r.zero_pct:.1f} %    P95 {r.pct(95):.3f}    P99 {r.pct(99):.3f}    max {r.blind.max():.3f} m²'

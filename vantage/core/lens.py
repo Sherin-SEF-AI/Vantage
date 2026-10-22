@@ -259,7 +259,8 @@ def resolve(module: Module, lens: Lens) -> Intrinsics:
             max_half = min(d / 2 + 2.0, 95.0)
         else:
             hd = math.hypot(module.sensor_w_mm, module.sensor_h_mm) / 2
-            max_half = math.degrees(float(theta_of_r(hd, lens.focal_mm, proj, kb))) + 1.0
+            # the same 95° cap as the datasheet path: a short lens would otherwise reach past 180° (behind itself)
+            max_half = min(math.degrees(float(theta_of_r(hd, lens.focal_mm, proj, kb))) + 1.0, 95.0)
     if proj == 'rectilinear':
         max_half = min(max_half, 89.0)
     return Intrinsics(width=module.width_px, height=module.height_px, pixel_mm=pm, f_mm=lens.focal_mm,

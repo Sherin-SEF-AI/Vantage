@@ -1,6 +1,7 @@
 """B7 · Export dialog with live preview."""
 from __future__ import annotations
 
+import json
 import os
 
 from PyQt6.QtCore import Qt, QBuffer, QIODevice, QUrl, QTimer, QSize
@@ -23,6 +24,10 @@ MENU_TO_FMT = {'bev_lut': 'bev_lut', 'mount_sheet_pdf': 'mount_sheet_pdf', 'repo
 ICONS = {'Documents': 'report', 'Extrinsics': 'axes', 'Calibration and robotics': 'ecu', 'Surround view': 'bowl', 'Images': 'bev',
          'Mount points': 'mount-zone'}
 DEFAULT_ON = {'mount_sheet_pdf', 'report_html', 'extrinsics_json', 'ros2', 'jetson_json'}
+
+
+def _project_key(p) -> str:
+    return os.path.abspath(p.path) if p.path else f'{p.name}@{p.created:.0f}'
 
 
 def png_bytes(img: QImage) -> bytes:
@@ -75,6 +80,7 @@ class ExportDialog(VDialog):
         self.images = {}
         self.lut = None
         self.current = None
+        self.tab_ids = []          # the checked formats that have a preview tab (some write no file)
         pre = MENU_TO_FMT.get(preselect) if preselect else None
         body = QVBoxLayout(self.body)
         body.setContentsMargins(0, 0, 0, 0)
@@ -155,7 +161,7 @@ class ExportDialog(VDialog):
             out = ex.default_out_dir(p)
         except ValueError:
             out = os.path.join(os.path.expanduser('~'), 'Documents', 'vantage-exports', ex._slug(p.name), ex._slug(p.variant.name))
-        self.out = QLineEdit(ctx.settings.value('export/last_dir', '') or out)
+        self.out = QLineEdit(self._initial_dir(p, out))
         self.out.setProperty('mono', True)
         self.out.textChanged.connect(lambda _: self.changed(fast=True))
         browse = button('Browse…')
@@ -207,6 +213,25 @@ class ExportDialog(VDialog):
         self.changed()
 
     # ------------------------------------------------------------------
+    def _initial_dir(self, p, default):
+        """The last export folder when it was for this project and variant; for another variant of the same project, the
+        folder beside it named after this variant (the layout default_out_dir uses); otherwise the default. Never a
+        folder that holds another variant's files."""
+        st = self.ctx.settings
+        last = st.value('export/last_dir', '') or ''
+        try:
+            proj, vuid, vslug = json.loads(st.value('export/last_for', '') or '["", "", ""]')
+        except (ValueError, TypeError):
+            return default
+        if not last or proj != _project_key(p):
+            return default
+        if vuid == p.variant.uid:
+            return last
+        last = os.path.normpath(last)
+        if os.path.basename(last) == vslug:
+            return os.path.join(os.path.dirname(last), ex._slug(p.variant.name))
+        return default
+
     def opts(self, with_images=False):
         return ex.ExportOptions(frame=self.frame.currentData(), units=self.units.value(), angles=self.angles.value(),
                                 out_dir=self.out.text().strip(), images=self.images if with_images else self.images,
@@ -226,13 +251,17 @@ class ExportDialog(VDialog):
         self.tabs.blockSignals(True)
         while self.tabs.count():
             self.tabs.removeTab(0)
+        self.tab_ids = []
         for fid in ids:
             names = ex._names(ex.format_by_id(fid), p, p.variant)
+            if not names:
+                continue                   # nothing to write (no visible cameras): no tab
             self.tabs.addTab(os.path.basename(names[0]) + (f' +{len(names) - 1}' if len(names) > 1 else ''))
             self.tabs.setTabData(self.tabs.count() - 1, fid)
+            self.tab_ids.append(fid)
         self.tabs.blockSignals(False)
-        if self.current in ids:
-            self.tabs.setCurrentIndex(ids.index(self.current))
+        if self.current in self.tab_ids:
+            self.tabs.setCurrentIndex(self.tab_ids.index(self.current))
         self.timer.start()
 
     def select(self, fid):
@@ -240,7 +269,7 @@ class ExportDialog(VDialog):
         for k, r in self.rows.items():
             r.selected = k == fid
             r.update()
-        ids = self.checked()
+        ids = self.tab_ids
         if fid in ids:
             self.tabs.blockSignals(True)
             self.tabs.setCurrentIndex(ids.index(fid))
@@ -336,7 +365,9 @@ class ExportDialog(VDialog):
             self.changed()
             QMessageBox.critical(self, 'Export failed', str(e))
             return
+        p = self.ctx.store.project
         self.ctx.settings.setValue('export/last_dir', out)
+        self.ctx.settings.setValue('export/last_for', json.dumps([_project_key(p), p.variant.uid, ex._slug(p.variant.name)]))
         self.ctx.settings.setValue('export/open_after', self.open_after.isChecked())
         self.ctx.store.project.add_log('export', f'{len(paths)} files to {out}')
         self.ctx.msg(f'Exported {len(paths)} files to {out}', 6000)

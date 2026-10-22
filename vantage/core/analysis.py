@@ -284,7 +284,8 @@ class Engine:
         m = project.vehicle.mesh
         if m is None or m.n_tris == 0:
             return None
-        key = (id(m), m.n_tris, project.vehicle.occluder_target, tuple(p.role for p in m.parts))
+        key = (id(m), m.n_tris, project.vehicle.occluder_target, tuple(p.role for p in m.parts),
+               id(m.face_zone), tuple((z.name, z.kind) for z in m.zones))      # zones are copied into the occluder
         if key != self._vg_key:
             self.vg = prepare_vehicle(m, project.vehicle.occluder_target)
             self._vg_key = key

@@ -1,10 +1,14 @@
 """Smaller dialogs: preferences, shortcuts, spec check, cable route, custom frame, project settings, help, about."""
 from __future__ import annotations
 
+import copy
 import csv
 import json
+import math
 import os
+import re
 
+import numpy as np
 from PyQt6.QtCore import Qt, QSettings
 from PyQt6.QtGui import QKeySequence
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit, QComboBox, QCheckBox,
@@ -344,7 +348,7 @@ class ProjectSettingsDialog(VDialog):
             p.name = n
             p.analysis.tol_deg = d
             p.analysis.tol_mm = mm
-        self.ctx.store.edit('analysis', fn, 'Project settings')
+        self.ctx.store.edit(['analysis', 'name'], fn, 'Project settings')
         self.ctx.window.set_project_meta()
         self.ctx.analysis.request(force=True)
         self.accept()
@@ -410,35 +414,84 @@ class AboutDialog(VDialog):
 
 # ------------------------------------------------------------------------------------- layout import
 def import_layout_file(path, project) -> list[Camera]:
-    """CSV with columns tag,name,x,y,z,yaw,pitch[,roll,lens,port] or JSON as written by the extrinsics export."""
-    o = project.origin_offset()
+    """CSV with columns tag,name,x,y,z,yaw,pitch[,roll,lens,port] or JSON as written by the extrinsics export.
+    Units, angles and frame follow the file: the JSON 'frame' block, CSV headers such as x_mm / yaw_rad and a 'frame'
+    column; without them, metres and degrees in the current display frame."""
     cams = []
     if path.lower().endswith('.json'):
         with open(path) as fh:
             data = json.load(fh)
-        rows = data.get('cameras', data if isinstance(data, list) else [])
+        fr = data.get('frame') if isinstance(data, dict) else None
+        fr = fr if isinstance(fr, dict) else {}
+        L = _LENGTH.get(fr.get('units'), 1.0)
+        A = _ANGLE.get(fr.get('angles'), 1.0)
+        if isinstance(fr.get('origin_from_rear_axle'), list) and len(fr['origin_from_rear_axle']) == 3:
+            o = np.asarray(fr['origin_from_rear_axle'], float) * L
+        else:
+            o = _frame_origin(project, fr.get('id'))
+        rows = data.get('cameras', []) if isinstance(data, dict) else data if isinstance(data, list) else []
         for i, r in enumerate(rows):
-            pos = r.get('position', [r.get('x', 0), r.get('y', 0), r.get('z', 1)])
+            pos = r.get('position', [r.get('x', 0), r.get('y', 0), r.get('z', 1 / L)])
             cams.append(Camera(tag=str(r.get('tag', f'C{i + 1}'))[:4], name=r.get('name', r.get('tag', 'Camera')),
-                               location=r.get('name', ''), slot=i % 8, x=float(pos[0]) + o[0], y=float(pos[1]) + o[1],
-                               z=float(pos[2]) + o[2], yaw=float(r.get('yaw', 0)), pitch=float(r.get('pitch', 30)),
-                               roll=float(r.get('roll', 0)), lens_id=_lens_id(project, r.get('lens')), port=int(r.get('gmsl_port', r.get('port', i + 1)) or 0)))
+                               location=r.get('name', ''), slot=i % 8, x=float(pos[0]) * L + o[0], y=float(pos[1]) * L + o[1],
+                               z=float(pos[2]) * L + o[2], yaw=float(r.get('yaw', 0)) * A, pitch=float(r.get('pitch', 30 / A)) * A,
+                               roll=float(r.get('roll', 0)) * A, lens_id=_lens_id(project, r.get('lens')),
+                               port=int(r.get('gmsl_port', r.get('port', i + 1)) or 0)))
     else:
         with open(path, newline='') as fh:
             rd = csv.DictReader(fh)
             for i, r in enumerate(rd):
-                r = {k.strip().lower().split(' ')[0].replace('_m', '').replace('_deg', ''): v for k, v in r.items() if k}
-                cams.append(Camera(tag=(r.get('tag') or f'C{i + 1}')[:4], name=r.get('name') or r.get('tag') or 'Camera',
-                                   location=r.get('name', ''), slot=i % 8,
-                                   x=parse_number(r.get('x', '0'), 'length') + o[0], y=parse_number(r.get('y', '0'), 'length') + o[1],
-                                   z=parse_number(r.get('z', '1'), 'length') + o[2], yaw=parse_number(r.get('yaw', '0'), 'angle'),
-                                   pitch=parse_number(r.get('pitch', '30'), 'angle'), roll=parse_number(r.get('roll', '0') or '0', 'angle'),
-                                   lens_id=_lens_id(project, r.get('lens')), port=int(float(r.get('port') or r.get('gmsl') or i + 1))))
+                cols = dict(_column(k, v) for k, v in r.items() if k)
+
+                def text(key, default=''):
+                    return cols.get(key, ('', ''))[0].strip() or default
+                o = _frame_origin(project, text('frame'))
+                port = next((cols[k][0].strip() for k in ('port', 'gmsl_port', 'gmsl') if k in cols), None)
+                cams.append(Camera(tag=text('tag', f'C{i + 1}')[:4], name=text('name') or text('tag') or 'Camera',
+                                   location=text('name'), slot=i % 8,
+                                   x=_metres(cols, 'x', '0') + o[0], y=_metres(cols, 'y', '0') + o[1],
+                                   z=_metres(cols, 'z', '1') + o[2], yaw=_degrees(cols, 'yaw', '0'),
+                                   pitch=_degrees(cols, 'pitch', '30'), roll=_degrees(cols, 'roll', '0'),
+                                   lens_id=_lens_id(project, text('lens')),
+                                   port=int(float(port)) if port else 0 if port == '' else i + 1))
     if not cams:
         raise ValueError('No cameras found in the file.')
     if len(cams) > 8:
         raise ValueError(f'{len(cams)} cameras; the maximum is 8.')
     return cams
+
+
+_LENGTH = {'m': 1.0, 'mm': 1e-3, 'cm': 1e-2, 'in': 0.0254}
+_ANGLE = {'deg': 1.0, '°': 1.0, 'rad': 180.0 / math.pi}
+
+
+def _column(header, value):
+    """CSV header and cell -> (name, (text, unit)): 'x_mm' / 'X (mm)' / 'yaw_rad' / 'Yaw °' / 'gmsl_port' give
+    x mm, x mm, yaw rad, yaw °, gmsl_port without a unit."""
+    h = header.strip().lower()
+    mo = re.fullmatch(r'(.+?)(?:[\s_]+\(?|\s*\()(mm|cm|m|in|deg|rad|°)\)?', h)
+    name, unit = (mo.group(1).strip(), mo.group(2)) if mo else (h, '')
+    return name, (value or '', unit)
+
+
+def _metres(cols, key, default):
+    text, unit = cols.get(key, ('', ''))
+    unit = unit if unit in _LENGTH else 'm'
+    return parse_number(text.strip() or default, 'length', unit) * _LENGTH[unit]
+
+
+def _degrees(cols, key, default):
+    text, unit = cols.get(key, ('', ''))
+    return parse_number(text.strip() or default, 'angle') * _ANGLE.get(unit, 1.0)
+
+
+def _frame_origin(project, frame_id):
+    """World (rear-axle) position of a named frame's origin; the current display frame when the name is unknown."""
+    if frame_id not in FRAME_PRESETS:
+        return project.origin_offset()
+    q = copy.copy(project)          # shallow: only the frame differs
+    q.frame = frame_id
+    return q.origin_offset()
 
 
 def _lens_id(project, name):

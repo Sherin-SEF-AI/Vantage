@@ -218,9 +218,29 @@ class OptimiserPage(QWidget):
         self.timer = QTimer(self)
         self.timer.setInterval(500)
         self.timer.timeout.connect(self._tick)
-        ctx.store.project_replaced.connect(self.activate)
+        ctx.store.project_replaced.connect(self._project_replaced)
 
     # ------------------------------------------------------------------ setup
+    def _project_replaced(self):
+        """File > New / Open: candidates of the old project must not be applied to the new one."""
+        job = self.ctx.window._jobs.get('optimiser') if self.ctx.window else None
+        if job:
+            job['cancel'].set()
+        self.opt = None
+        self.cands = []
+        self.sel = None
+        self.sel_result = self.base_result = self.sel_cams = None
+        self.table.setRowCount(0)
+        self.scatter.set_data([], [], [], None, None)
+        self.summary.setText('')
+        for v in self.s.values():
+            v.setText('—')
+        self.bar.setValue(0)
+        for pv in (self.plan, self.delta):
+            pv._img_key = None
+            pv.update()
+        self.activate()
+
     def activate(self):
         p = self.ctx.store.project
         v = p.variant
@@ -317,7 +337,7 @@ class OptimiserPage(QWidget):
         self.s['Elapsed'].setText(f'{int(el // 60)}:{int(el % 60):02d}')
 
     def _progress(self, opt):
-        if opt is None:
+        if opt is None or opt is not self.opt:
             return
         st = opt.st
         g = opt.generation
@@ -361,6 +381,8 @@ class OptimiserPage(QWidget):
         self.timer.stop()
         self.b_run.setText('Start')
         self.b_run.setIcon(icons.icon('play', 12))
+        if opt is not self.opt:
+            return                         # a run for a project that has since been replaced
         self.bar.setValue(1000)
         self._update_chart(opt, final=True)
         if self.cands:

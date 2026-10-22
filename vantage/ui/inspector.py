@@ -12,9 +12,11 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdi
 
 from ..core.analysis import surface_frame
 from ..core.lens import resolve, derived, model_fov, PROJECTIONS, PROJECTION_LABEL
+from ..core.mathutil import parse_number
 from ..core.project import FRAME_PRESETS, Obstacle, Target
 from ..core.rules import route_length, route_text, EDGE_RULE_MM, camera_gbps, link_budget
 from . import icons, ops
+from .store import mirror_props
 from .theme import THEME, mono, sans, STATUS
 from .widgets import (Section, ScrubSpinBox, ToggleSwitch, SegmentedControl, Chip, ValueLabel, StatusLine, label,
                       button, tool_button, hline, ImageCircleDiagram, ROW_H, LABEL_W)
@@ -278,19 +280,32 @@ class CameraPage(Page):
             return
         st = self.ctx.store
         p = self.project
-        o = p.origin_offset()
-        unit = 1000.0 if p.units == 'mm' else 1.0
-        for c in self._cams():
-            if key in ('x', 'y', 'z'):
-                axis = 'xyz'.index(key)
-                world = val / unit + o[axis]
-                st.set_cam(c.uid, merge=merge, **{key: round(world, 4)})
-            elif key in ('yaw', 'pitch', 'roll'):
-                st.set_cam(c.uid, merge=merge, **{key: round(val, 2)})
-            else:
-                st.set_cam(c.uid, merge=merge, **{key: val})
-            if c.link_uid and c.link_uid in st.sel_cams:
-                break
+        if key in ('x', 'y', 'z'):
+            unit = 1000.0 if p.units == 'mm' else 1.0
+            val = round(val / unit + p.origin_offset()['xyz'.index(key)], 4)
+        elif key in ('yaw', 'pitch', 'roll'):
+            val = round(val, 2)
+        cams = self._cams()
+        if len(cams) == 1:
+            st.set_cam(cams[0].uid, merge=merge, **{key: val})
+        elif cams:
+            uids = [c.uid for c in cams]
+
+            def fn(pj):
+                done = set()
+                for u in uids:
+                    c = pj.variant.cam(u)
+                    if c is None or u in done:
+                        continue           # a linked partner already mirrored from its pair
+                    setattr(c, key, val)
+                    done.add(u)
+                    partner = pj.variant.cam(c.link_uid) if c.link_uid else None
+                    if partner is not None:
+                        mirror_props(c, partner, [key])
+                        done.add(partner.uid)
+            # one undo step for all selected cameras (one merge key while scrubbing)
+            st.edit('variant', fn, f"{'Moved' if key in ('x', 'y', 'z') else 'Changed'} {', '.join(c.tag for c in cams)}",
+                    merge_key=(tuple(uids), key) if merge else None)
         if not merge:
             self.ctx.analysis.request()
 
@@ -664,7 +679,6 @@ class RoiPage(Page):
         if c == 0:
             return
         try:
-            from ..core.mathutil import parse_number
             v = parse_number(it.text(), 'length')
         except Exception:
             self.refresh()
@@ -975,6 +989,8 @@ class EcuPage(Page):
         self.lay.addStretch(1)
 
     def _set(self, k, v):
+        if getattr(self.project.ecu, k) == v:
+            return                         # focus left a field without a change: no undo step
         self.ctx.store.edit('ecu', lambda p: setattr(p.ecu, k, v), f'ECU {k}')
 
     def refresh(self):
@@ -1082,6 +1098,9 @@ class ObstaclePage(Page):
 
     def _set(self, k, v):
         uid = self._uid()
+        ob = next((o for o in self.project.obstacles if o.uid == uid), None)
+        if ob is None or getattr(ob, k) == v:
+            return                         # focus left a field without a change: no undo step
 
         def fn(p):
             for o in p.obstacles:
@@ -1181,7 +1200,7 @@ class VariantPage(Page):
         self.name.editingFinished.connect(self._rename)
         s.row('Name', self.name)
         self.note = QLineEdit()
-        self.note.editingFinished.connect(lambda: ctx.store.edit('variant', lambda p: setattr(p.variant, 'note', self.note.text()), 'Variant note'))
+        self.note.editingFinished.connect(self._note)
         s.row('Note', self.note)
         self.ncam = ValueLabel()
         s.row('Cameras', self.ncam)
@@ -1212,6 +1231,11 @@ class VariantPage(Page):
         if t and t != self.project.variant.name:
             self.ctx.store.edit('variants', lambda p: setattr(p.variant, 'name', t), f'Variant renamed to {t}')
 
+    def _note(self):
+        t = self.note.text()
+        if t != self.project.variant.note:
+            self.ctx.store.edit('variant', lambda p: setattr(p.variant, 'note', t), 'Variant note')
+
     def _angle(self, it):
         if self._busy or it.column() != 1:
             return
@@ -1220,7 +1244,7 @@ class VariantPage(Page):
             return
         s = res.seams[it.row()]
         try:
-            v = float(it.text().replace('−', '-'))
+            v = parse_number(it.text(), 'angle')        # rejects nan / inf
         except ValueError:
             self.refresh()
             return

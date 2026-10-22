@@ -213,6 +213,7 @@ class AnalysisSettings:
     tol_deg: float = 5.0
     tol_mm: float = 100.0
     load_cases: list = field(default_factory=list)   # [[name, front drop mm, rear drop mm], ...]
+    bowl: dict = field(default_factory=dict)          # 3D surround-view bowl shape (core.bowl.BowlShape fields)
 
     def to_dict(self):
         return asdict(self)
@@ -304,7 +305,10 @@ class Vehicle:
                 'occluder_target': self.occluder_target, 'wheel_centres': self.wheel_centres, 'spec': self.spec,
                 'landmarks': {k: list(v) for k, v in self.landmarks.items()}, 'imported_tris': self.imported_tris,
                 'parts': [p.to_dict() for p in self.mesh.parts] if self.mesh else [],
-                'zones': [z.to_dict() for z in self.mesh.zones] if self.mesh else []}
+                'zones': [z.to_dict() for z in self.mesh.zones] if self.mesh else [],
+                # undo state only (project.json leaves it out; mesh.npz stores it): editing zones replaces this array
+                # on the shared mesh, so the state keeps the one that matches its zone list
+                'face_zone': self.mesh.face_zone if self.mesh else None}
 
     # measured dimensions from the mesh ------------------------------------------------
     def measured(self) -> dict:
@@ -458,6 +462,8 @@ class Project:
                     'lenses': {k: l.to_dict() for k, l in self.lenses.items()}}
         if key == 'frame':
             return {'frame': self.frame, 'custom': list(self.custom_origin), 'units': self.units}
+        if key == 'name':
+            return self.name
         if key == 'photos':
             return self.photos.to_dict()
         if key == 'vehicle':
@@ -493,6 +499,8 @@ class Project:
             self.lenses = {k: Lens.from_dict(l) for k, l in state['lenses'].items()}
         elif key == 'frame':
             self.frame, self.custom_origin, self.units = state['frame'], list(state['custom']), state['units']
+        elif key == 'name':
+            self.name = state
         elif key == 'photos':
             self.photos = PhotoSet.from_dict(state)
         elif key == 'vehicle':
@@ -505,6 +513,9 @@ class Project:
             if veh.mesh is not None and meta.get('zones') is not None:
                 veh.mesh.zones = [Zone.from_dict(z) for z in meta['zones']]
                 veh.mesh.parts = [Part.from_dict(p) for p in meta['parts']] or veh.mesh.parts
+            fz = meta.get('face_zone')
+            if veh.mesh is not None and fz is not None and len(fz) == veh.mesh.n_tris:
+                veh.mesh.face_zone = np.array(fz, np.int16)
             self.vehicle = veh
         else:
             raise KeyError(key)
@@ -513,7 +524,7 @@ class Project:
     def to_json(self) -> dict:
         return {
             'format': 'vantage', 'version': FORMAT_VERSION, 'name': self.name, 'created': self.created,
-            'saved_at': time.time(), 'vehicle': self.vehicle.meta(),
+            'saved_at': time.time(), 'vehicle': {k: v for k, v in self.vehicle.meta().items() if k != 'face_zone'},
             'modules': {k: m.to_dict() for k, m in self.modules.items()},
             'lenses': {k: l.to_dict() for k, l in self.lenses.items()},
             'variants': [v.to_dict() for v in self.variants], 'active': self.active_uid,
@@ -525,6 +536,7 @@ class Project:
         }
 
     def save(self, path: str, thumb_png: bytes | None = None):
+        thumb_png = thumb_png if thumb_png is not None else self.thumb_png     # re-saving keeps the stored thumbnail
         data = self.to_json()
         buf = io.BytesIO()
         m = self.vehicle.mesh

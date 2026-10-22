@@ -151,14 +151,13 @@ class LensCalibDialog(VDialog):
         self.live_timer = QTimer(self)
         self.live_timer.setInterval(150)
         self.live_timer.timeout.connect(self._live_tick)
-        cams = [c for c in ctx.store.variant.cameras]
-        for c in cams:
-            self.cam.addItem(f'{c.tag} · {c.location or c.name}', c.uid)
-        sel = uid or (ctx.store.selected.uid if ctx.store.selected else (cams[0].uid if cams else None))
-        if sel:
-            self.cam.setCurrentIndex(max(0, self.cam.findData(sel)))
+        self.run_uid = None          # the camera the running calibration / self.result belongs to
+        self._fill_cams(uid or (ctx.store.selected.uid if ctx.store.selected else None))
         self._cam_changed()
         self._sync()
+        # the camera list follows File > New / Open, variant switches and camera edits
+        ctx.store.project_replaced.connect(self._fill_cams)
+        ctx.store.changed.connect(self._store_changed)
 
     # ------------------------------------------------------------------ layout
     def _build_left(self):
@@ -346,9 +345,29 @@ class LensCalibDialog(VDialog):
     def _camera(self):
         return self.ctx.store.cam(self.cam.currentData())
 
+    def _fill_cams(self, sel=None):
+        sel = sel or self.cam.currentData()
+        self.cam.blockSignals(True)
+        self.cam.clear()
+        for c in self.ctx.store.variant.cameras:
+            self.cam.addItem(f'{c.tag} · {c.location or c.name}', c.uid)
+        self.cam.setCurrentIndex(max(0, self.cam.findData(sel)) if self.cam.count() else -1)
+        self.cam.blockSignals(False)
+        if self.cam.currentData() != sel:
+            self._cam_changed()
+        self._sync()
+
+    def _store_changed(self, sections):
+        if 'variant' in sections or 'variants' in sections:
+            self._fill_cams()
+
     def _cam_changed(self, *_):
         c = self._camera()
         if c is None:
+            self.cam_info.setText('No camera in this variant.')
+            self.b_apply.setText('Apply to camera')
+            self.result = None
+            self._fill_result()
             return
         p = self.ctx.store.project
         m, l = p.module_for(c), p.nominal_lens_for(c)
@@ -360,6 +379,7 @@ class LensCalibDialog(VDialog):
             self.serial.setText(cur.get('serial', ''))
         else:
             txt += '\nNo unit calibration: the library lens is used.'
+            self.serial.setText('')
         self.cam_info.setText(txt)
         self.live_spec.setText(cap.default_spec(c.port))
         self.b_apply.setText(f'Apply to {c.tag}')
@@ -376,10 +396,12 @@ class LensCalibDialog(VDialog):
 
     def _sync(self):
         self.n_views.setText(f'{len(self.views)} view' + ('' if len(self.views) == 1 else 's'))
-        self.b_run.setEnabled(not self.busy and len(self.views) >= 4)
-        ok = self.result is not None and self.result.ok
+        has_cam = self._camera() is not None
+        self.b_run.setEnabled(not self.busy and len(self.views) >= 4 and has_cam)
+        ok = self.result is not None and self.result.ok and has_cam
         self.b_apply.setEnabled(ok and not self.busy)
         self.b_save.setEnabled(ok)
+        self.cam.setEnabled(not self.busy)      # the result belongs to the camera it was run for
 
     def _fill_views(self):
         res = {v.name: v for v in self.result.views} if self.result else {}
@@ -427,6 +449,10 @@ class LensCalibDialog(VDialog):
             self._sync()
             return
         c = self._camera()
+        if c is None:
+            self.summary.setText('No camera in this variant.')
+            self._sync()
+            return
         p = self.ctx.store.project
         m, base = p.module_for(c), p.nominal_lens_for(c)
         self.summary.setText(r.message)
@@ -504,9 +530,9 @@ class LensCalibDialog(VDialog):
         self._fill_result()
 
     def render_synthetic(self):
-        if self.busy:
-            return
         c = self._camera()
+        if self.busy or c is None:
+            return
         p = self.ctx.store.project
         m, base = p.module_for(c), p.nominal_lens_for(c)
         seed = int(self.syn_seed.value())
@@ -567,9 +593,10 @@ class LensCalibDialog(VDialog):
         self._sync()
 
     def run(self):
-        if self.busy or len(self.views) < 4:
-            return
         c = self._camera()
+        if self.busy or len(self.views) < 4 or c is None:
+            return
+        self.run_uid = c.uid
         p = self.ctx.store.project
         m, base = p.module_for(c), p.nominal_lens_for(c)
         views, pat, sq = list(self.views), self._pattern(), max(1.0, self.square.value())
@@ -601,6 +628,12 @@ class LensCalibDialog(VDialog):
             self.serial.setText(extra.get('serial', ''))
             self.status.setText(f'Rendered {len(val)} views of a simulated unit (focal {extra["fx"]:.1f} px, centre '
                                 f'{extra["cx"]:.1f}, {extra["cy"]:.1f})')
+        elif self.cam.currentData() != self.run_uid or self._camera() is None:
+            # the camera is gone (or the list was rebuilt for another project): the result is not its lens
+            self.result = None
+            self.status.setText('The calibrated camera is no longer selected; the result was dropped.')
+            self._fill_views()
+            self._fill_result()
         else:
             self.result = val
             self.status.setText(val.message)
@@ -618,7 +651,7 @@ class LensCalibDialog(VDialog):
     def apply(self):
         r = self.result
         c = self._camera()
-        if r is None or not r.ok or c is None:
+        if r is None or not r.ok or c is None or c.uid != self.run_uid:
             return
         rec = calib.clean_record(dict(r.record, serial=self.serial.text().strip() or r.record.get('serial', '')))
         apply_calibrations(self.ctx, {c.uid: rec}, f'Calibrated the lens of {c.tag} ({rec["rms_px"]:.3f} px)')
@@ -629,9 +662,9 @@ class LensCalibDialog(VDialog):
 
     def save(self, path=None):
         r = self.result
-        if r is None or not r.ok:
-            return
         c = self._camera()
+        if r is None or not r.ok or c is None:
+            return
         if not path:
             path, _ = QFileDialog.getSaveFileName(self, 'Save lens calibration', f'{c.tag}.yaml',
                                                   'OpenCV YAML (*.yaml);;Vantage JSON (*.json)')

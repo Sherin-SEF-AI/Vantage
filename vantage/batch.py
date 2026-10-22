@@ -131,14 +131,21 @@ def install_check(project, eng, res, folder, st, lut_out=None, balance=True, ble
     from .core.mathutil import rot_zyx
     cams = [c for c in project.variant.cameras if c.visible]
     found = cap.match_folder(folder, [c.tag for c in cams])
-    images = {c.uid: cap.load_image(found[c.tag]) for c in cams if c.tag in found}
+    images, unreadable = {}, {}
+    for c in cams:
+        if c.tag in found:
+            try:
+                images[c.uid] = cap.load_image(found[c.tag])
+            except Exception as e:      # one bad file must not stop the check of the others
+                unreadable[c.uid] = str(e)
     results, jr = check_all(project, cams, images, st)
     rows = []
     for c in cams:
         row = {'tag': c.tag, 'planned': {'x': c.x, 'y': c.y, 'z': c.z, 'yaw': c.yaw, 'pitch': c.pitch, 'roll': c.roll}}
         r = results.get(c.uid)
         if r is None:
-            row.update(status='serious', message='No image for this camera in the folder')
+            row.update(status='serious', message=f'Could not read {os.path.basename(found[c.tag])}: {unreadable[c.uid]}'
+                       if c.uid in unreadable else 'No image for this camera in the folder')
             rows.append(row)
             continue
         row.update(image=os.path.basename(found[c.tag]), status=r.status, message=r.message,
@@ -151,6 +158,7 @@ def install_check(project, eng, res, folder, st, lut_out=None, balance=True, ble
             row['delta_mm'] = [_r(v, 1) for v in r.dpos_mm]
             row['delta_deg'] = [_r(v, 3) for v in r.dang_deg]
             row['rms_px'] = _r(r.rms_px)
+            row['rotation_error_deg'] = _r(r.rot_err_deg)
             if r.single is not None:
                 row['own_solve'] = pose_dict(*r.single)
         rows.append(row)
@@ -188,12 +196,17 @@ def calibrate_lens(project, args) -> tuple[dict, bool]:
         raise SystemExit(f'--board {args.board!r}: give inner corners as COLSxROWS, e.g. 9x6')
     folder = args.calibrate_lens
     files = [f for f in sorted(os.listdir(folder)) if f.lower().endswith(cap.IMAGE_EXTS)]
-    images = [(f, cap.load_image(os.path.join(folder, f))) for f in files]
+    images, unreadable = [], []
+    for f in files:
+        try:
+            images.append((f, cap.load_image(os.path.join(folder, f))))
+        except Exception as e:
+            unreadable.append({'image': f, 'error': str(e)})
     m, base = project.module_for(cam), project.nominal_lens_for(cam)
     r = calib.calibrate(images, (cols, rows), args.square, m, base, serial=args.serial or '', source='images')
     doc = {'schema': 'vantage.lens_calibration/1', 'camera': cam.tag, 'folder': os.path.abspath(folder),
            'board': {'inner_corners': [cols, rows], 'square_mm': args.square}, 'ok': r.ok, 'message': r.message,
-           'advice': r.advice, 'views': [{'image': v.name, 'used': v.used, 'corners': 0 if v.corners is None else len(v.corners),
+           'advice': r.advice, 'unreadable': unreadable, 'views': [{'image': v.name, 'used': v.used, 'corners': 0 if v.corners is None else len(v.corners),
                                           'rms_px': None if not v.used else _r(v.rms, 4), 'note': v.note} for v in r.views]}
     if r.ok:
         doc['calibration'] = calib.clean_record(r.record)
@@ -225,9 +238,14 @@ def import_calibrations(project, paths) -> tuple[dict, bool]:
         if r is None:
             continue
         probs = calib.problems(r, project.module_for(c), project.nominal_lens_for(c))
+        fatal = calib.fatal_problems(r, project.module_for(c))
+        row = {'camera': c.tag, 'file': os.path.basename(r.get('file', '')), 'name_in_file': r.get('hint', ''),
+               'fx': _r(r['fx'], 3), 'cx': _r(r['cx'], 3), 'cy': _r(r['cy'], 3), 'warnings': probs}
+        if fatal:
+            errors.append(dict(row, error='; '.join(fatal)))
+            continue
         c.calib = calib.clean_record(r)
-        rows.append({'camera': c.tag, 'file': os.path.basename(r.get('file', '')), 'name_in_file': r.get('hint', ''),
-                     'fx': _r(r['fx'], 3), 'cx': _r(r['cx'], 3), 'cy': _r(r['cy'], 3), 'warnings': probs})
+        rows.append(row)
     doc = {'schema': 'vantage.calibration_import/1', 'applied': rows, 'errors': errors,
            'unmatched': [{'file': os.path.basename(r.get('file', '')), 'name_in_file': r.get('hint', '')} for r in unmatched]}
     return doc, bool(rows) and not unmatched and not errors
@@ -265,14 +283,18 @@ def run(args) -> int:
     project = load_project(args)
     pick_variant(project, args.variant)
     code = 0
+    cal_docs = []
     if args.import_calib:
         cdoc, ok = import_calibrations(project, args.import_calib)
-        _out(cdoc, '-' if not args.report or args.install_check else args.report)
+        cal_docs.append(('import', cdoc))
         code = code if ok else 4
     if args.calibrate_lens:
         cdoc, ok = calibrate_lens(project, args)
-        _out(cdoc, '-' if not args.report or args.install_check else args.report)
+        cal_docs.append(('calibration', cdoc))
         code = code if ok else 4
+    if cal_docs:
+        doc_ = cal_docs[0][1] if len(cal_docs) == 1 else {'schema': 'vantage.batch_calibration/1', **dict(cal_docs)}
+        _out(doc_, '-' if not args.report or args.install_check else args.report)
     eng = Engine()
     t0 = time.time()
     res = eng.analyse(project)
@@ -309,7 +331,7 @@ def run(args) -> int:
                                       blend=args.blend)
         _out(idoc, args.report or '-')
         if any(r['status'] != 'good' and r['status'] != 'warning' for r in idoc['cameras']):
-            code = 3
+            code = max(code, 3)
         if args.as_built:
             v = as_built_variant(project, results)
             project.save(args.as_built)

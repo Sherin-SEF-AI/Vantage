@@ -252,6 +252,7 @@ def snap_to_surface(ctx, uids, keep_as_bracket=False):
         return
 
     def fn(project):
+        from .store import mirror_props
         for u in uids:
             c = project.variant.cam(u)
             if not c:
@@ -262,6 +263,10 @@ def snap_to_surface(ctx, uids, keep_as_bracket=False):
             else:
                 p = q + n * c.standoff_mm / 1000.0
                 c.x, c.y, c.z = (round(float(v), 4) for v in p)
+            partner = project.variant.cam(c.link_uid) if c.link_uid else None
+            if partner is not None and partner.uid not in uids:
+                # a linked pair stays a mirror image (snapping the partner on its own would not be exact)
+                mirror_props(c, partner, ['standoff_mm'] if keep_as_bracket else ['x', 'y', 'z'])
     ctx.store.edit('variant', fn, ('Kept as bracket ' if keep_as_bracket else 'Snapped to surface ') +
                    ', '.join(ctx.store.cam(u).tag for u in uids if ctx.store.cam(u)))
 
@@ -315,8 +320,9 @@ def assign_port(ctx, uid, port):
 
     def fn(project):
         var = project.variant
-        for o in var.cameras:
-            if o.port == port and o.uid != uid:
-                o.port = c.port if c else 0
+        if port:                        # unassigning (0) frees the port; nothing to swap
+            for o in var.cameras:
+                if o.port == port and o.uid != uid:
+                    o.port = c.port if c else 0
         var.cam(uid).port = port
     ctx.store.edit('variant', fn, f'Assigned {c.tag} to GMSL port {port}')

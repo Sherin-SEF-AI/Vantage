@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel, QComboBo
                              QAbstractItemView, QFileDialog)
 
 from ..core import photos as ph
+from ..core.mathutil import parse_number
 from ..core.project import Target
 from ..core.targets import suggest, auto_place, evaluate_targets
 from . import icons
@@ -228,12 +229,12 @@ class TargetsPage(Page):
         self._busy = False
 
     def _ts(self, k, v):
-        self.ctx.store.edit('targets', lambda p: setattr(p.target_settings, k, v), f'Target {k}')
-        if k in ('rows', 'cols', 'square_mm', 'pattern'):
-            def fn(p):
+        def fn(p):
+            setattr(p.target_settings, k, v)
+            if k in ('rows', 'cols', 'square_mm', 'pattern'):
                 for t in p.targets:
                     setattr(t, k, v)
-            self.ctx.store.edit('targets', fn, f'Target {k}')
+        self.ctx.store.edit('targets', fn, f'Target {k}')
         self.ctx.analysis.request()
 
     def _add(self, kind):
@@ -298,7 +299,7 @@ class TargetsPage(Page):
             return
         r = it.row()
         try:
-            v = float(it.text().replace('−', '-'))
+            v = parse_number(it.text(), 'length')        # rejects nan / inf
         except ValueError:
             self.refresh()
             return

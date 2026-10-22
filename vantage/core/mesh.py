@@ -177,8 +177,17 @@ class Mesh:
         return Mesh(nv, f[first], fp[first], self.parts, fz[first], self.zones)
 
     # ------------------------------------------------------------ ray casting
+    def _mask_key(self, faces_mask):
+        """Cache key for a face mask by its contents (callers pass fresh arrays, so id() would leak and go stale)."""
+        if faces_mask is None:
+            return None
+        import hashlib
+        m = np.asarray(faces_mask)
+        return hashlib.blake2b(np.packbits(m.astype(bool)).tobytes() if m.dtype == bool else m.tobytes(),
+                               digest_size=16).digest()
+
     def _mt(self, faces_mask=None):
-        key = ('mt', None if faces_mask is None else id(faces_mask))
+        key = ('mt', self._mask_key(faces_mask))
         if key not in self._cache:
             t = self.tri if faces_mask is None else self.tri[faces_mask]
             idx = np.arange(self.n_tris) if faces_mask is None else np.nonzero(faces_mask)[0]
@@ -239,7 +248,7 @@ class Mesh:
 
     # ------------------------------------------------------------ edges
     def crease_segments(self, angle_deg=35.0, faces_mask=None) -> np.ndarray:
-        key = ('crease', angle_deg, None if faces_mask is None else id(faces_mask))
+        key = ('crease', angle_deg, self._mask_key(faces_mask))
         if key in self._cache:
             return self._cache[key]
         f = self.faces if faces_mask is None else self.faces[faces_mask]

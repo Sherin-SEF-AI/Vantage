@@ -80,7 +80,14 @@ class LoadCasesDialog(VDialog):
         self.buttons.addWidget(b_close)
         self.buttons.addWidget(self.b_run)
         self._filling = False
+        self._run_for = None           # the project a running evaluation belongs to
         self.set_cases(cases_of(ctx.store.project))
+        # File > New / Open: show (and run) the new project's cases, never write the old ones into it
+        ctx.store.project_replaced.connect(self._project_replaced)
+
+    def _project_replaced(self):
+        self.set_cases(cases_of(self.ctx.store.project))
+        self.set_subtitle('body drop and pitch under load')
 
     # ------------------------------------------------------------------ table
     def set_cases(self, cases):
@@ -122,7 +129,7 @@ class LoadCasesDialog(VDialog):
         if it.column() in (1, 2):
             from ...core.mathutil import parse_number
             try:
-                v = parse_number(it.text())
+                v = parse_number(it.text(), 'length', 'mm')
             except ValueError:
                 v = 0.0
             self._filling = True
@@ -142,7 +149,7 @@ class LoadCasesDialog(VDialog):
             vals = []
             for j in (1, 2):
                 try:
-                    vals.append(float(parse_number(self.table.item(i, j).text())))
+                    vals.append(float(parse_number(self.table.item(i, j).text(), 'length', 'mm')))
                 except (ValueError, AttributeError):
                     vals.append(0.0)
             out.append((name, vals[0], vals[1]))
@@ -156,11 +163,15 @@ class LoadCasesDialog(VDialog):
         if not cases:
             return
         store = self.ctx.store
+        if self.ctx.analysis.result is None or not store.variant.cameras:
+            self.set_subtitle('Nothing to evaluate yet: the load cases need a vehicle, cameras and an analysis result.')
+            return
         if [list(c) for c in cases] != [[n, float(f), float(r)] for n, f, r in cases_of(store.project)]:
             store.edit('analysis', lambda p: setattr(p.analysis, 'load_cases', [list(c) for c in cases]), 'Edited load cases')
         project = store.project.snapshot()
         eng = self.ctx.window._shared_engine()
         cell = max(project.analysis.cell_m, 0.05)
+        self._run_for = store.project
         self.busy = True
         self.b_run.setEnabled(False)
         self.bar.show()
@@ -176,6 +187,8 @@ class LoadCasesDialog(VDialog):
         self.busy = False
         self.b_run.setEnabled(True)
         self.bar.hide()
+        if self._run_for is not self.ctx.store.project:
+            return                         # evaluated for a project that has since been replaced
         self.results = results
         self._filling = True
         for i, r in enumerate(results):

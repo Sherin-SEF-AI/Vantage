@@ -99,6 +99,12 @@ def problems(rec: dict, module: Module, base: Lens | None = None) -> list[str]:
     return out
 
 
+def fatal_problems(rec: dict, module: Module) -> list[str]:
+    """The problems that make a record unusable for this camera (as opposed to ones worth a look)."""
+    out = [m for m in problems(rec, module) if m.startswith(('missing', 'resolution and')) or 'aspect' in m]
+    return out
+
+
 def model_difference(a: Intrinsics, b: Intrinsics, n: int = 48, max_theta: float | None = None) -> dict:
     """How far apart two lens models put the same ray, over b's image: max / rms pixels and max degrees.
     Rays are taken from b (the measured unit) and projected with a (e.g. the nominal lens); max_theta (radians)
@@ -271,6 +277,12 @@ def calibrate(images, pattern, square_mm, module: Module, lens: Lens, progress=N
         return res
     h, w = images[0][1].shape[:2]
     res.width, res.height = w, h
+    sensor = module.width_px / module.height_px
+    if abs(w / h - sensor) > 0.005 * sensor:
+        res.message = (f'The images are {w} × {h}, not the {module.width_px} × {module.height_px} sensor\'s aspect: a crop '
+                       'or another sensor mode moves the principal point, so the result would not fit this camera. '
+                       'Capture at the full field (any resolution with the sensor\'s aspect).')
+        return res
     intr = resolve(module, lens)
     obj = board_points(pattern, square_mm)
     found = []
@@ -296,7 +308,7 @@ def calibrate(images, pattern, square_mm, module: Module, lens: Lens, progress=N
     K0, D0 = _initial(intr, w, h)
     use = list(found)
     K = D = None
-    for attempt in range(4):
+    for attempt in range(5):
         try:
             K, D, errs = _fisheye([obj] * len(use), [v.corners for v in use], (w, h), K0, D0)
         except Exception as e:
@@ -312,8 +324,8 @@ def calibrate(images, pattern, square_mm, module: Module, lens: Lens, progress=N
             v.rms = r
         med = float(np.median(per))
         bad = [i for i, r in enumerate(per) if r > max(3 * med, 1.0)]
-        if not bad or len(use) - len(bad) < 4:
-            break
+        if not bad or len(use) - len(bad) < 4 or attempt == 4:
+            break                       # the result always comes from a solve over exactly the views kept
         for i in sorted(bad, reverse=True):
             use[i].note = f'dropped: {per[i]:.2f} px'
             use.pop(i)
@@ -496,6 +508,10 @@ def _rec_from(K, D, w, h, model='', hint='', serial='', path='') -> dict:
     D = [] if D is None else np.asarray(D, float).ravel().tolist()
     if not _kb_model(model):
         raise ValueError(f'distortion model “{model}” is not fisheye (Kannala-Brandt / equidistant)')
+    if not model and len(D) != 4:
+        # cv::calibrateCamera files name no model and carry 5+ pinhole coefficients (k1 k2 p1 p2 k3 ...)
+        raise ValueError(f'no distortion model named and {len(D)} coefficients: looks like a pinhole calibration '
+                         '(a fisheye one has exactly 4)')
     if len(D) < 4:
         raise ValueError(f'{len(D)} distortion coefficients; a fisheye model has 4')
     if not (w and h):
@@ -509,7 +525,9 @@ def _rec_from(K, D, w, h, model='', hint='', serial='', path='') -> dict:
 
 def _fs_array(n):
     if n.isSeq():
-        return np.array([n.at(i).real() for i in range(n.size())], float)
+        # a flat list, or a list of rows ([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
+        parts = [_fs_array(n.at(i)).ravel() if n.at(i).isSeq() else np.array([n.at(i).real()]) for i in range(n.size())]
+        return np.concatenate(parts) if parts else np.zeros(0)
     m = n.mat()
     if m is None:
         raise ValueError(f'{n.name()} is not a matrix')
@@ -542,6 +560,9 @@ def _opencv_storage(path) -> list:
             w, h = int(sz[0]), int(sz[1])
         mn = node('distortion_model', 'model')
         model = mn.string() if mn is not None else ''
+        fm = node('fisheye_model')                   # the OpenCV calibration sample writes this flag instead
+        if not model and fm is not None:
+            model = 'fisheye' if int(fm.real()) else 'pinhole'
         name = node('camera_name', 'name', 'tag', 'camera')
         sn = node('serial', 'serial_number')
         return [_rec_from(K, D, w, h, model, name.string() if name is not None else '',
@@ -642,6 +663,10 @@ def _tokens(s: str) -> list:
 
 def match(records: list, cams: list) -> tuple[dict, list]:
     """Assign records to cameras by tag, then by serial. Returns ({uid: record}, unmatched records)."""
+    def contains(src, tag):
+        a, b = _tokens(src), _tokens(tag)
+        return bool(b) and any(a[k:k + len(b)] == b for k in range(len(a) - len(b) + 1))
+
     scores = []
     for i, r in enumerate(records):
         for c in cams:
@@ -649,11 +674,11 @@ def match(records: list, cams: list) -> tuple[dict, list]:
             s = 0
             for src, w in ((r.get('hint', ''), 3), (r.get('stem', ''), 2)):
                 if src.lower() == tag:
-                    s = max(s, 2 * w)
-                elif tag in _tokens(src):
-                    s = max(s, w)
+                    s = max(s, 20 * w)
+                elif contains(src, tag):
+                    s = max(s, 10 * w + len(_tokens(tag)))      # 'FL_1' beats 'FL' in 'calib_FL_1'
             if r.get('serial') and c.calib and c.calib.get('serial') == r['serial']:
-                s = max(s, 7)
+                s = max(s, 70)
             if s:
                 scores.append((s, i, c.uid))
     scores.sort(key=lambda t: -t[0])

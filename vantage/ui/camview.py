@@ -193,7 +193,9 @@ class CamImageView(QWidget):
         k = self.res_scale * (0.5 if self.ctx.store.dragging else 1.0)
         w, h = max(int(w * k), 16), max(int(h * k), 12)
         res = self.ctx.analysis.result
-        key = (cam.x, cam.y, cam.z, cam.yaw, cam.pitch, cam.roll, cam.lens_id, cam.module_id, w, h, id(res), THEME.name)
+        # the resolved intrinsics, not just the lens id: lens edits and unit calibrations change the image too
+        key = (cam.x, cam.y, cam.z, cam.yaw, cam.pitch, cam.roll, intr, cam.slot, w, h, id(res), THEME.name,
+               id(project.vehicle.mesh))
         if key == self._key:
             return
         try:

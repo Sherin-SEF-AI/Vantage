@@ -26,12 +26,15 @@ class EditCommand(QUndoCommand):
         self.merge_key = merge_key
         self.first = True
         self.t = time.time()
+        self.gesture = store.gesture
 
     def id(self):
         return _MERGE_ID if self.merge_key else -1
 
     def mergeWith(self, other):
         if other.merge_key is None or other.merge_key != self.merge_key or other.keys != self.keys:
+            return False
+        if other.gesture != self.gesture:      # a new drag is a new undo step, however soon it follows
             return False
         if other.t - self.t > 2.5:
             return False
@@ -64,10 +67,23 @@ class ProjectStore(QObject):
         self.undo.cleanChanged.connect(lambda c: self.dirty_changed.emit(not c))
         self.sel_cams: list[str] = []
         self.sel_obj: tuple = ()           # ('roi',) ('target', uid) ('vehicle',) ...
-        self.dragging = False
+        self.gesture = 0                   # bumped when a drag starts
+        self.revision = 0                  # bumped by every change to the project (edits, undo, redo, replace)
+        self._dragging = False
+
+    @property
+    def dragging(self):
+        return self._dragging
+
+    @dragging.setter
+    def dragging(self, on):
+        if on and not self._dragging:
+            self.gesture += 1
+        self._dragging = bool(on)
 
     # ------------------------------------------------------------------ project
     def set_project(self, project: Project):
+        self.revision += 1
         self.project = project
         self.undo.clear()
         self.sel_cams = [project.variant.cameras[0].uid] if project.variant.cameras else []
@@ -124,6 +140,7 @@ class ProjectStore(QObject):
         if 'vehicle' in keys:
             before['vehicle'] = {'meta': copy.deepcopy(before['vehicle']['meta']), 'vehicle': copy.copy(self.project.vehicle)}
         result = fn(self.project)
+        self.revision += 1
         after = {k: copy.deepcopy(self.project.section(k)) if k != 'vehicle' else None for k in keys}
         if 'vehicle' in keys:
             after['vehicle'] = {'meta': copy.deepcopy(self.project.vehicle.meta()), 'vehicle': self.project.vehicle}
@@ -146,6 +163,7 @@ class ProjectStore(QObject):
                 self.project.restore('vehicle', {'meta': state[k]['meta'], 'vehicle': v})
             else:
                 self.project.restore(k, copy.deepcopy(state[k]))
+        self.revision += 1
         # drop selection of removed cameras
         self.sel_cams = [u for u in self.sel_cams if self.cam(u)]
         self.changed.emit(self._sections(keys))
@@ -162,11 +180,13 @@ class ProjectStore(QObject):
                 setattr(c, k, v)
             if c.link_uid:
                 partner = p.variant.cam(c.link_uid)
-                if partner is not None:
+                if partner is not None and not partner.locked:      # a locked camera stays where it is
                     mirror_props(c, partner, props.keys())
+        partner = self.cam(cam.link_uid) if cam.link_uid else None
         label = text or f"{'Moved' if set(props) & {'x', 'y', 'z'} else 'Changed'} {cam.tag}" + (
             f' to {cam.x if "x" not in props else props["x"]:.3f}, {props.get("y", cam.y):.3f}, {props.get("z", cam.z):.3f}'
-            if set(props) & {'x', 'y', 'z'} else '') + (f' · {self.cam(cam.link_uid).tag} mirrored' if cam.link_uid and self.cam(cam.link_uid) else '')
+            if set(props) & {'x', 'y', 'z'} else '') + (
+            (f' · {partner.tag} locked, not mirrored' if partner.locked else f' · {partner.tag} mirrored') if partner else '')
         self.edit('variant', fn, label, merge_key=(uid, tuple(sorted(props))) if merge else None)
 
 
@@ -189,6 +209,7 @@ class AnalysisController(QObject):
     secondary = pyqtSignal(str, object)    # ('issues', list) ('worst', tuple) ('mounts', dict) ('targets', list)
     failed = pyqtSignal(str)
     stale_changed = pyqtSignal(bool)
+    _rerun = pyqtSignal()                  # from the worker: a run was asked for while it was busy
 
     def __init__(self, store: ProjectStore):
         super().__init__()
@@ -210,6 +231,8 @@ class AnalysisController(QObject):
         self.timer.timeout.connect(self._kick)
         self.finished.connect(self._on_finished)
         self.secondary.connect(self._on_secondary)
+        self._rerun.connect(self._kick)        # queued into the main thread (a Python thread has no Qt timers)
+        self._qlock = threading.Lock()
 
     def request(self, force=False):
         if not force and not self.store.project.analysis.live:
@@ -226,20 +249,23 @@ class AnalysisController(QObject):
             self.stale_changed.emit(s)
 
     def _kick(self):
-        if self._busy:
-            self._pending = True
-            return
-        self._busy = True
+        with self._qlock:
+            if self._busy:
+                self._pending = True
+                return
+            self._busy = True
         self._gen += 1
         gen = self._gen
         self.started.emit()
         project = self.store.project.snapshot()
-        threading.Thread(target=self._run, args=(project, gen), daemon=True).start()
+        threading.Thread(target=self._run, args=(project, gen, self.store.revision), daemon=True).start()
 
-    def _run(self, project, gen):
+    def _run(self, project, gen, revision=0):
         try:
             with self._lock:
                 res = self.engine.analyse(project)
+            if res is not None:
+                res.revision = revision
             self.finished.emit(res)
             if res is None:
                 return
@@ -265,14 +291,16 @@ class AnalysisController(QObject):
         except Exception as e:
             self.failed.emit(f'{type(e).__name__}: {e}\n{traceback.format_exc()}')
         finally:
-            self._busy = False
-            if self._pending:
-                self._pending = False
-                QTimer.singleShot(0, self._kick)
+            with self._qlock:
+                self._busy = False
+                again, self._pending = self._pending, False
+            if again:
+                self._rerun.emit()
 
     def _on_finished(self, res):
         self.result = res
-        self.set_stale(False)
+        # an older run finishing after an edit (manual mode) is not up to date
+        self.set_stale(res is not None and getattr(res, 'revision', self.store.revision) != self.store.revision)
         if res is not None:
             self.store.project.add_log('analysis', f'{len(res.cams)} cameras · {res.metrics["cells"]:,} cells at '
                                                    f'{res.cell * 100:.0f} cm · {res.ms:.0f} ms'.replace(',', ' '))

@@ -23,7 +23,12 @@ def load_image(path: str) -> np.ndarray:
     if img is None:
         raise ValueError(f'Not an image OpenCV can read: {os.path.basename(path)}')
     if img.dtype != np.uint8:
-        img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        # scale by the type's range, never per image (that would shift the black level and differ camera to camera)
+        if np.issubdtype(img.dtype, np.integer):
+            img = (img.astype(np.float64) * (255.0 / np.iinfo(img.dtype).max)).round()
+        else:
+            img = np.asarray(img, np.float64) * (255.0 if np.nanmax(img) <= 1.0 else 1.0)
+        img = np.clip(np.nan_to_num(img), 0, 255).astype(np.uint8)
     if img.ndim == 3:
         img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB if img.shape[2] == 4 else cv2.COLOR_BGR2RGB)
     return img
@@ -89,14 +94,16 @@ class LiveSource:
         return self._thread is not None and self._thread.is_alive()
 
     def start(self):
-        if self.running:
+        if self.running and not self._stop.is_set():
             return
-        self._stop.clear()
+        # a fresh event per reader: a reader still stuck in read() after stop() keeps its own (set) event and exits
+        self._stop = threading.Event()
         self.error = ''
-        self._thread = threading.Thread(target=self._run, name=f'live:{self.spec}', daemon=True)
+        self._thread = threading.Thread(target=self._run, args=(self._stop,), name=f'live:{self.spec}', daemon=True)
         self._thread.start()
 
-    def _run(self):
+    def _run(self, stop=None):
+        stop = stop or self._stop
         import cv2
         try:
             cap = _open(self.spec)
@@ -109,7 +116,7 @@ class LiveSource:
         fails = 0
         is_file = os.path.isfile(self.spec)
         try:
-            while not self._stop.is_set():
+            while not stop.is_set():
                 ok, f = cap.read()
                 if not ok or f is None:
                     fails += 1
@@ -124,6 +131,8 @@ class LiveSource:
                 fails = 0
                 if f.ndim == 3:
                     f = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
+                if stop.is_set():
+                    break
                 with self._lock:
                     self._frame = f
                     self.frames += 1

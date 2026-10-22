@@ -36,13 +36,11 @@ class Stitcher:
         self.tags = [c['tag'] for c in self.meta['cameras']]
         self.sensor = {c['tag']: (c['sensor_width'], c['sensor_height']) for c in self.meta['cameras']}
         key = {c['tag']: os.path.splitext(c['map'])[0][:-4] for c in self.meta['cameras']}   # '<safe>_map.bin'
+        self.file_tag = key
         self.map = {t: arrays[f'{key[t]}_map'] for t in self.tags}
         self.weight = {t: arrays[f'{key[t]}_weight'].astype(np.float32) for t in self.tags}
         self.valid = {t: self.map[t][..., 0] >= 0 for t in self.tags}
         self.body = arrays['body_mask'].astype(bool)
-        tot = sum(self.weight.values())
-        self.covered = tot > 0
-        self.norm = np.where(self.covered, 1.0 / np.maximum(tot, 1), 0).astype(np.float32)
         self.cuda = cuda and hasattr(cv2, 'cuda') and cv2.cuda.getCudaEnabledDeviceCount() > 0
         self._maps = {}
         self.gains = {t: np.ones(3, np.float32) for t in self.tags}
@@ -127,9 +125,14 @@ class Stitcher:
             for t, g in new.items():
                 self.gains[t] = (1 - smooth) * self.gains[t] + smooth * g
         out = np.zeros((self.h, self.w, 3), np.float32)
+        wsum = np.zeros((self.h, self.w), np.float32)
         for t, img in warped.items():
-            out += img * (self.weight[t] * self.norm)[..., None] * (self.gains[t] if balance else 1.0)
-        out[~self.covered] = EMPTY_RGB
+            out += img * self.weight[t][..., None] * (self.gains[t] if balance else 1.0)
+            wsum += self.weight[t]
+        # normalise over the cameras that delivered a frame, so a dropped frame does not black out its sector
+        covered = wsum > 0
+        out /= np.where(covered, wsum, 1.0)[..., None]
+        out[~covered] = EMPTY_RGB
         out[self.body] = BODY_RGB
         return np.clip(out, 0, 255).astype(np.uint8)
 
@@ -142,11 +145,12 @@ def _read(path):
     return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
 
-def _frames_from_dir(folder, tags):
+def _frames_from_dir(folder, tags, file_tag=None):
     out = {}
     files = {os.path.splitext(f)[0].lower(): f for f in os.listdir(folder) if f.lower().endswith(EXTS)}
     for t in tags:
-        f = files.get(t.lower())
+        # the camera tag, or the file-safe name the C++ stitcher and the remap files use
+        f = files.get(t.lower()) or files.get((file_tag or {}).get(t, t).lower())
         if f:
             out[t] = _read(os.path.join(folder, f))
     return out
@@ -179,7 +183,7 @@ def main(argv=None):
     print(f'{len(st.tags)} cameras ({", ".join(st.tags)}) · {st.w} x {st.h} px · '
           f'{"CUDA" if st.cuda else "CPU"} remap', file=sys.stderr)
     if a.frames:
-        frames = _frames_from_dir(a.frames, st.tags)
+        frames = _frames_from_dir(a.frames, st.tags, st.file_tag)
         missing = [t for t in st.tags if t not in frames]
         if missing:
             print(f'no image for {", ".join(missing)}', file=sys.stderr)

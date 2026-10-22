@@ -229,6 +229,7 @@ class ViewportBase:
     def _init_base(self, provider):
         self.provider = provider
         self.cam = OrbitCam()
+        self._anim = None
         self._drag = None
         self._last = None
         self._press_pos = None
@@ -287,25 +288,39 @@ class ViewportBase:
         return o + d * t
 
     def px_per_m(self, at):
-        p, _, ok = self.project([at, np.asarray(at) + np.array([0, 0, 1.0])])
+        """Screen pixels per metre at a point, measured across the screen (a vertical metre is a dot from above)."""
+        right = self.cam.view()[0, :3]
+        p, _, ok = self.project([at, np.asarray(at, float) + right])
         return float(np.linalg.norm(p[1] - p[0])) if ok.all() else 50.0
 
     # ---- view control
-    def set_view(self, name):
+    def _leave_custom(self):
+        """Leave a photo-matched (custom) view properly: the provider also drops the photo and its label."""
+        if self.cam.custom is None:
+            return
+        hook = getattr(self.provider, 'leave_custom_view', None)
+        if hook is not None:
+            hook(self)
+        self.cam.custom = None
+
+    def set_view(self, name, animate=False):
         pr = VIEW_PRESETS.get(name)
         if not pr:
             return
-        self.cam.custom = None
+        self._leave_custom()
+        if animate:
+            self.animate_to(az=pr['az'], el=pr['el'], ortho=pr['ortho'])
+            return
+        self._stop_anim()
         self.cam.az, self.cam.el, self.cam.ortho = pr['az'], pr['el'], pr['ortho']
         self.update()
         self._emit_view()
 
-    def frame_box(self, lo, hi, margin=1.25):
+    def frame_box(self, lo, hi, margin=1.25, animate=False):
         lo, hi = np.asarray(lo, float), np.asarray(hi, float)
         c = (lo + hi) / 2
         r = float(np.linalg.norm(hi - lo)) / 2 * margin
-        self.cam.target = c
-        self.cam.custom = None
+        self._leave_custom()
         if self.cam.ortho:
             aspect = max(self.width(), 1) / max(self.height(), 1)
             ext = hi - lo
@@ -313,11 +328,70 @@ class ViewportBase:
                 need = max(ext[1], ext[0] / aspect)
             else:
                 need = max(ext[2], max(ext[0], ext[1]) / aspect)
-            self.cam.ortho_h = max(need * margin, 0.5)
+            goal = dict(target=c, ortho_h=max(need * margin, 0.5))
         else:
-            self.cam.dist = max(r / math.tan(math.radians(self.cam.fov) / 2), 0.5)
+            goal = dict(target=c, dist=max(r / math.tan(math.radians(self.cam.fov) / 2), 0.5))
+        if animate:
+            self.animate_to(**goal)
+            return
+        self._stop_anim()
+        self.cam.target = goal['target']
+        if 'ortho_h' in goal:
+            self.cam.ortho_h = goal['ortho_h']
+        else:
+            self.cam.dist = goal['dist']
         self.update()
         self._emit_view()
+
+    # ---- smooth view changes
+    def _stop_anim(self):
+        if self._anim is not None:
+            self._anim['timer'].stop()
+            self._anim = None
+
+    def animate_to(self, az=None, el=None, dist=None, target=None, ortho=None, ortho_h=None, ms=280):
+        """Ease the orbit camera to a new view. Perspective and orthographic do not interpolate, so the switch happens
+        at the end (into ortho, with the matching height) or at the start (out of ortho, at the matching distance)."""
+        from PyQt6.QtCore import QElapsedTimer
+        self._stop_anim()
+        cam = self.cam
+        half = math.tan(math.radians(cam.fov) / 2)
+        if ortho is False and cam.ortho:
+            cam.ortho = False
+            cam.dist = max(cam.ortho_h / (2 * half), 0.5)
+        a0 = dict(az=cam.az, el=cam.el, dist=cam.dist, target=cam.target.copy(), ortho_h=cam.ortho_h)
+        az1 = cam.az if az is None else cam.az + ((az - cam.az + 180.0) % 360.0 - 180.0)    # the short way round
+        a1 = dict(az=az1, el=cam.el if el is None else el, dist=cam.dist if dist is None else dist,
+                  target=cam.target.copy() if target is None else np.asarray(target, float),
+                  ortho_h=cam.ortho_h if ortho_h is None else ortho_h)
+        if ortho and not cam.ortho and dist is None:
+            a1['dist'] = cam.dist
+        clock = QElapsedTimer()
+        clock.start()
+        timer = QTimer(self)
+        timer.setInterval(15)
+
+        def step():
+            t = min(1.0, clock.elapsed() / max(ms, 1))
+            e = t * t * (3 - 2 * t)
+            cam.az = a0['az'] + (a1['az'] - a0['az']) * e
+            cam.el = a0['el'] + (a1['el'] - a0['el']) * e
+            cam.dist = a0['dist'] + (a1['dist'] - a0['dist']) * e
+            cam.target = a0['target'] + (a1['target'] - a0['target']) * e
+            cam.ortho_h = a0['ortho_h'] + (a1['ortho_h'] - a0['ortho_h']) * e
+            if t >= 1.0:
+                cam.az = (a1['az'] + 180.0) % 360.0 - 180.0
+                if ortho and not cam.ortho:
+                    cam.ortho = True
+                    if ortho_h is None:
+                        cam.ortho_h = max(2 * cam.dist * half, 0.3)
+                self._stop_anim()
+            self.update()
+            self._emit_view()
+        timer.timeout.connect(step)
+        self._anim = {'timer': timer}
+        timer.start()
+        step()
 
     def _emit_view(self):
         if hasattr(self, 'viewChanged'):
@@ -325,7 +399,12 @@ class ViewportBase:
 
     # ---- events
     def mousePressEvent(self, e):
+        if self._drag is not None:
+            # another button during a drag: ignore it, or the drag's release would never reach the provider
+            return
+        self._stop_anim()
         self.setFocus()
+        self._btn = e.button()
         self._press_pos = e.position()
         self._last = e.position()
         if self.provider.mouse_press(self, e):
@@ -376,7 +455,15 @@ class ViewportBase:
             self.provider.hover(self, pos)
         self._last = pos
 
+    def focusOutEvent(self, e):
+        if self._drag == 'provider':
+            self.provider.mouse_release(self, None)
+        self._drag = None
+        super().focusOutEvent(e)
+
     def mouseReleaseEvent(self, e):
+        if self._drag is not None and e.button() != getattr(self, '_btn', e.button()):
+            return                      # the release of a button pressed during the drag
         d = self._drag
         self._drag = None
         if d == 'provider':
@@ -395,15 +482,31 @@ class ViewportBase:
     def wheelEvent(self, e):
         if self.cam.custom is not None:
             return
-        k = 0.88 if e.angleDelta().y() > 0 else 1 / 0.88
-        # zoom toward the cursor on the ground
-        g = self.ground_at(e.position().x(), e.position().y(), self.cam.target[2])
+        dy = e.angleDelta().y()
+        if dy == 0:                     # horizontal scrolling is not a zoom
+            return
+        self._stop_anim()
+        k = 0.88 ** (dy / 120.0)        # touchpads send many small steps
+        sx, sy = e.position().x(), e.position().y()
+        tgt = self.cam.target
         if self.cam.ortho:
-            self.cam.ortho_h = max(0.3, min(200, self.cam.ortho_h * k))
+            # the point under the cursor on the plane through the target, square to the view
+            o, d = self.ray(sx, sy)
+            g = o + d * float((tgt - o) @ d)
         else:
-            self.cam.dist = max(0.4, min(200, self.cam.dist * k))
+            g = self.ground_at(sx, sy, tgt[2])
+            if g is not None and np.linalg.norm(g - tgt) > 3 * self.cam.dist:
+                g = None                # a grazing ray: zoom about the target instead of flinging it away
+        if self.cam.ortho:
+            new_h = max(0.3, min(200, self.cam.ortho_h * k))
+            k = new_h / self.cam.ortho_h
+            self.cam.ortho_h = new_h
+        else:
+            new_d = max(0.4, min(200, self.cam.dist * k))
+            k = new_d / self.cam.dist
+            self.cam.dist = new_d
         if g is not None:
-            self.cam.target = g + (self.cam.target - g) * k
+            self.cam.target = g + (tgt - g) * k
         self.update()
         self._emit_view()
 
@@ -423,6 +526,7 @@ class ViewportBase:
         elif k == Qt.Key.Key_3 and num:
             self.set_view('side')
         elif k == Qt.Key.Key_5 and num:
+            self._leave_custom()
             self.cam.ortho = not self.cam.ortho
             self.update()
         else:
@@ -501,6 +605,68 @@ class ViewportBase:
     def grab_image(self) -> QImage:
         return self.grabFramebuffer() if hasattr(self, 'grabFramebuffer') else self.grab().toImage()
 
+    # ---- high-resolution renders
+    def render_image(self, scale=2.0, transparent=False) -> QImage:
+        """The view at scale x its size, overlays included (vectors stay crisp). transparent: no background."""
+        w, h = max(1, int(round(self.width() * scale))), max(1, int(round(self.height() * scale)))
+        img = QImage(w, h, QImage.Format.Format_ARGB32_Premultiplied)
+        img.fill(Qt.GlobalColor.transparent)
+        scene = self._scene_image(w, h, scale)          # GL: the 3D layer rendered off-screen; None: painted below
+        p = QPainter(img)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.scale(scale, scale)
+        if not transparent:
+            self.paint_background(p)
+        if scene is not None:
+            p.save()
+            p.resetTransform()
+            p.drawImage(0, 0, scene)
+            p.restore()
+        else:
+            self._paint_scene(p)
+        self.paint_overlay(p)
+        p.end()
+        return img
+
+    def _scene_image(self, w, h, scale):
+        return None
+
+    def _render_style(self):
+        st = getattr(self.provider, 'render_style', None)
+        return st(self) if st is not None else None
+
+
+def soft_shadow(md, res=0.02, light=None):
+    """(QImage, extent) of the vehicle's shadow along the key light plus contact darkening under the body, for the
+    software renderer (the GL renderer uses real shadow maps)."""
+    import cv2
+    L = np.asarray(light if light is not None else LIGHT, float)
+    T = md.tri.astype(np.float64)
+    keep = md.alpha > 0.5
+    T = T[keep] if keep.any() else T
+    z = T[..., 2:3]
+    proj = T[..., :2] - L[:2] * (z / max(L[2], 0.2))             # along the light onto z = 0
+    pts = np.concatenate([proj.reshape(-1, 2), T[..., :2].reshape(-1, 2)])
+    lo, hi = pts.min(axis=0) - 0.8, pts.max(axis=0) + 0.8
+    nx, ny = int(np.ceil((hi[0] - lo[0]) / res)), int(np.ceil((hi[1] - lo[1]) / res))
+
+    def raster(P, mask=None):
+        img = np.zeros((ny, nx), np.uint8)
+        q = np.empty_like(P)
+        q[..., 0] = (P[..., 0] - lo[0]) / res
+        q[..., 1] = (hi[1] - P[..., 1]) / res
+        sel = q if mask is None else q[mask]
+        cv2.fillPoly(img, np.round(sel * 4).astype(np.int32), 255, lineType=cv2.LINE_8, shift=2)
+        return img.astype(np.float32) / 255.0
+    sh = cv2.GaussianBlur(raster(proj), (0, 0), 2.5)
+    low = T[..., 2].min(axis=1) < 0.55                           # parts near the ground darken it most
+    ao = cv2.GaussianBlur(raster(T[..., :2], low), (0, 0), 9.0) if low.any() else np.zeros_like(sh)
+    a = np.clip(np.maximum(sh * 0.30, ao * 0.55), 0, 1)
+    rgba = np.zeros((ny, nx, 4), np.uint8)
+    rgba[..., 3] = (a * 255).astype(np.uint8)                  # black, premultiplied
+    img = QImage(rgba.tobytes(), nx, ny, nx * 4, QImage.Format.Format_RGBA8888_Premultiplied).copy()
+    return img, (float(lo[0]), float(lo[1]), float(lo[0] + nx * res), float(hi[1]))
+
 
 # ---------------------------------------------------------------------------- software renderer
 class SoftViewport(QWidget, ViewportBase):
@@ -544,13 +710,19 @@ class SoftViewport(QWidget, ViewportBase):
                     p.restore()
         lines = prov.lines(self)
         self._paint_lines(p, [l for l in lines if l.depth and self._on_ground(l)])
+        md = prov.mesh()
+        st = self._render_style()
+        if md is not None and len(md.tri) and (st is None or st.shadows or st.ao):
+            self._paint_soft_shadow(p, md)
         # triangles (mesh + extra), painter's algorithm
         items = []
-        md = prov.mesh()
         view_dir = -(V[2, :3])
         if md is not None and len(md.tri):
             tri = md.tri
             cols = shade_faces(md, view_dir)
+            views = getattr(prov, 'camera_lights', lambda vp: [])(self)
+            if views:
+                cols = self._camlight_colors(md, cols, views, st.camlight_mix if st else 0.6)
             eye = np.linalg.inv(V)[:3, 3]
             cen = tri.mean(axis=1)
             facing = np.einsum('ij,ij->i', md.normals, (eye - cen) if not self.cam.ortho else np.tile(view_dir, (len(cen), 1)))
@@ -588,6 +760,37 @@ class SoftViewport(QWidget, ViewportBase):
         pts = l.pts.reshape(-1, 3)
         return len(pts) and float(np.abs(pts[:, 2]).max()) < 0.03
 
+    def _paint_soft_shadow(self, p: QPainter, md):
+        """The vehicle's shadow and contact darkening on the ground, as a soft texture computed once per mesh."""
+        cache = getattr(self, '_shadow_cache', None)
+        if cache is None or cache[0] is not md:
+            cache = (md,) + soft_shadow(md)
+            self._shadow_cache = cache
+        _, img, (x0, y0, x1, y1) = cache
+        corners = np.array([[x0, y1, 0.001], [x1, y1, 0.001], [x1, y0, 0.001], [x0, y0, 0.001]])
+        sc, dep, ok = self.project(corners)
+        if not ok.all():
+            return
+        src = QPolygonF([QPointF(0, 0), QPointF(img.width(), 0), QPointF(img.width(), img.height()), QPointF(0, img.height())])
+        tr = QTransform()
+        if QTransform.quadToQuad(src, self._poly(sc), tr):
+            p.save()
+            p.setTransform(tr, True)
+            p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+            p.drawImage(0, 0, img)
+            p.restore()
+
+    def _camlight_colors(self, md, cols, views, mix):
+        from ..core.visibility import seen_by, tint
+        key = (id(md), tuple((v.uid, v.pos.tobytes(), v.W2O.tobytes(), id(v.intr), id(v.cube), v.color) for v in views), mix)
+        c = getattr(self, '_camlight_cache', None)
+        if c is None or c[0] != key:
+            cen = md.tri.mean(axis=1)
+            seen = seen_by(cen + md.normals * 0.03, views)
+            c = (key, seen, cen)
+            self._camlight_cache = c
+        return tint(cols, c[1], views, mix, points=c[2])
+
     def _paint_lines(self, p: QPainter, lines):
         for l in lines:
             segs = l.pts if l.segments else np.stack([l.pts[:-1], l.pts[1:]], 1) if len(l.pts) > 1 else np.zeros((0, 2, 3))
@@ -622,23 +825,70 @@ if QOpenGLWidget is not None:
             self._tex = {}
             self._mesh_cache = None
             self.gl_failed = False
+            self.renderer = None
 
         def initializeGL(self):
             from OpenGL import GL
+            from .render_gl import GLRenderer
             self.GL = GL
+            self._tex = {}                      # a new context (the widget was re-parented): old ids are gone
+            r = GLRenderer()
+            self.renderer = r if (not os.environ.get('VANTAGE_LEGACY_GL') and r.init()) else None
+            if self.renderer is None and r.error:
+                print('Shader renderer unavailable, using fixed-function GL:', r.error.splitlines()[0][:200])
+
+        @property
+        def gl_bowl(self):
+            return self.renderer is not None
+
+        def _frame(self, w, h, scale=1.0, clear=None):
+            from .render_gl import Frame, Style
+            prov = self.provider
+            V, P, _ = self.matrices()
+            f = Frame(V, P, w, h, target=self.cam.target.copy(), mesh=prov.mesh(), ground=prov.ground(),
+                      lines=prov.lines(self), tris=prov.tris_extra(self), clear=clear, ortho=self.cam.ortho)
+            f.bowl = getattr(prov, 'bowl_draw', lambda vp: None)(self)
+            f.cams = getattr(prov, 'camera_lights', lambda vp: [])(self)
+            f.style = self._render_style() or Style()
+            self.renderer.dpr = scale
+            return f
 
         def paintGL(self):
             p = QPainter(self)
             self.paint_background(p)
             p.beginNativePainting()
             try:
-                self._gl_scene()
+                if self.renderer is not None:
+                    dpr = self.devicePixelRatioF()
+                    self.renderer.render(self._frame(int(self.width() * dpr), int(self.height() * dpr), dpr),
+                                         self.defaultFramebufferObject())
+                else:
+                    self._gl_scene()
             except Exception as ex:  # keep the overlay alive if a driver call fails
                 self.gl_failed = True
                 print('GL error:', ex)
+                if self.renderer is not None:       # fall back to the fixed-function path from now on
+                    self.renderer = None
             p.endNativePainting()
             self.paint_overlay(p)
             p.end()
+
+        def _scene_image(self, w, h, scale):
+            if self.renderer is None:
+                return None
+            self.makeCurrent()
+            try:
+                rgba = self.renderer.render_offscreen(self._frame(w, h, scale, clear=(0, 0, 0, 0)))
+            finally:
+                self.doneCurrent()
+            return QImage(rgba.tobytes(), w, h, w * 4, QImage.Format.Format_RGBA8888_Premultiplied).copy()
+
+        def render_image(self, scale=2.0, transparent=False) -> QImage:
+            if self.renderer is None:       # fixed-function path: the framebuffer, scaled
+                img = self.grabFramebuffer()
+                return img.scaled(int(img.width() * scale), int(img.height() * scale), Qt.AspectRatioMode.IgnoreAspectRatio,
+                                  Qt.TransformationMode.SmoothTransformation)
+            return ViewportBase.render_image(self, scale, transparent)
 
         def _gl_scene(self):
             GL = self.GL

@@ -154,7 +154,14 @@ class ComparePage(QWidget):
         lay.addWidget(bottom, 2)
         self.ref_uid = None
         ctx.store.changed.connect(lambda *_: self.activate() if self.isVisible() else None)
-        ctx.store.project_replaced.connect(lambda: (self.results.clear(), self._keys.clear(), self.worsts.clear()))
+        ctx.store.project_replaced.connect(self._project_replaced)
+
+    def _project_replaced(self):
+        self.results.clear()
+        self._keys.clear()
+        self.worsts.clear()
+        if self.isVisible():
+            self.activate()            # the combos list the new project's variants
 
     # ------------------------------------------------------------------
     def activate(self):
@@ -184,9 +191,14 @@ class ComparePage(QWidget):
         self.refresh()
 
     def _vkey(self, v):
+        """Everything a variant's analysis depends on: a result is reused only while this is unchanged."""
         import json
         p = self.ctx.store.project
-        return json.dumps([v.to_dict()['cameras'], v.seams, p.roi.to_dict(), p.analysis.cell_m], sort_keys=True, default=str)
+        m = p.vehicle.mesh
+        vehicle = [id(m), m.n_tris, [pt.role for pt in m.parts]] if m is not None else None
+        return json.dumps([v.to_dict()['cameras'], v.seams, v.blend_m, p.roi.to_dict(), p.analysis.to_dict(), p.section('library'),
+                           [o.to_dict() for o in p.obstacles], vehicle, p.vehicle.occluder_target, p.vehicle.wheel_centres],
+                          sort_keys=True, default=str)
 
     def _compute(self, uid):
         p = self.ctx.store.project
@@ -206,14 +218,19 @@ class ComparePage(QWidget):
             vv = snap.variant_by_uid(uid)
             with lock:
                 res = eng.analyse(snap, variant=vv)
-            self.sig.ready.emit(uid, res)
+            self.sig.ready.emit(uid, (key, res))
+            if res is None:
+                return                     # no vehicle yet: nothing to perturb
             snap.active_uid = uid
             with lock:
                 w = worst_single_camera(eng, snap, snap.analysis.tol_deg, snap.analysis.tol_mm / 1000)
-            self.sig.worst.emit(uid, w)
+            self.sig.worst.emit(uid, (key, w))
         threading.Thread(target=run, daemon=True).start()
 
-    def _ready(self, uid, res):
+    def _ready(self, uid, out):
+        key, res = out
+        if self._keys.get(uid) != key:
+            return                         # computed for inputs that have changed since (or another project)
         self.results[uid] = res
         for c in self.cols:
             if c['uid'] == uid:
@@ -223,7 +240,10 @@ class ComparePage(QWidget):
         self.delta.fit()
         self.refresh()
 
-    def _worst(self, uid, w):
+    def _worst(self, uid, out):
+        key, w = out
+        if self._keys.get(uid) != key:
+            return
         self.worsts[uid] = w
         self.refresh()
 

@@ -60,6 +60,7 @@ class TolResult:
     settings: TolSettings
     nominal_blind: float
     finished_at: float = 0.0
+    cancelled: bool = False    # stopped early: the arrays hold only the samples that ran
 
     @property
     def zero_pct(self):
@@ -168,6 +169,7 @@ def run_monte_carlo(engine: Engine, project: Project, st: TolSettings, progress=
     blind = np.zeros(len(perts))
     mind = np.zeros(len(perts))
     seam = np.zeros(len(perts))
+    ran = np.zeros(len(perts), bool)
     masks = {}
     done = [0]
     cams_by_uid = {c.uid: c for c in ctx.cams}
@@ -186,13 +188,19 @@ def run_monte_carlo(engine: Engine, project: Project, st: TolSettings, progress=
             seam[i] = max(shifts) if shifts else 0.0
         if b > 0:
             masks[i] = bm
+        ran[i] = True
         done[0] += 1
         if progress and done[0] % 20 == 0:
             progress(done[0] / len(perts))
 
     with ThreadPoolExecutor(threads) as ex:
         list(ex.map(work, range(len(perts))))
-    order = np.argsort(-blind - 1e-6 * (10 - mind))
+    # a cancelled study keeps only the samples that were evaluated (the others are not 'zero blind')
+    idx = np.nonzero(ran)[0]
+    cancelled = len(idx) < len(perts)
+    if not len(idx):
+        raise RuntimeError('Cancelled before any sample was evaluated.')
+    order = idx[np.argsort(-blind[idx] - 1e-6 * (10 - mind[idx]))]
     worst = []
     for i in order[:10]:
         i = int(i)
@@ -208,10 +216,11 @@ def run_monte_carlo(engine: Engine, project: Project, st: TolSettings, progress=
         else:
             culprit = max(perts[i], key=lambda u: sum(abs(x) for x in perts[i][u][:3])) if perts[i] else ''
         worst.append(Case(i, float(blind[i]), float(mind[i]), float(seam[i]), perts[i], culprit, where, cen))
-    sens = sensitivity(ctx, st)
+    sens = sensitivity(ctx, st) if not cancelled else []
     if progress:
         progress(1.0)
-    return TolResult(blind, mind, seam, worst, sens, time.perf_counter() - t0, threads, st, nb, time.time())
+    return TolResult(blind[idx], mind[idx], seam[idx], worst, sens, time.perf_counter() - t0, threads, st, nb, time.time(),
+                     cancelled)
 
 
 def sensitivity(ctx: _Ctx, st: TolSettings):

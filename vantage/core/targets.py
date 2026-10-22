@@ -70,8 +70,11 @@ def suggest(engine: Engine, project: Project, result, statuses=None, step=0.25):
     if not failing:
         return []
     grid = result.grid
-    xs = np.arange(grid.x0 + 0.4, grid.x0 + grid.nx * grid.cell - 0.4, step)
-    ys = np.arange(grid.y0 + 0.4, grid.y0 + grid.ny * grid.cell - 0.4, step)
+    # candidates on multiples of the step, so a symmetric ROI gets a symmetric grid (mirror pairs get mirror spots)
+    def axis(lo, hi):
+        return np.arange(math.ceil(lo / step) * step, hi, step)
+    xs = axis(grid.x0 + 0.4, grid.x0 + grid.nx * grid.cell - 0.4)
+    ys = axis(grid.y0 + 0.4, grid.y0 + grid.ny * grid.cell - 0.4)
     X, Y = np.meshgrid(xs, ys)
     cand = np.stack([X.ravel(), Y.ravel()], 1)
     keep = []
@@ -80,6 +83,8 @@ def suggest(engine: Engine, project: Project, result, statuses=None, step=0.25):
         if g and grid.roi[g[1], g[0]] and grid.dist[g[1], g[0]] > 0.35:
             keep.append((x, y))
     cand = np.array(keep) if keep else np.zeros((0, 2))
+    if not len(cand):               # no ROI ground far enough from the body for a board
+        return []
     cams = {c.uid: c for c in variant.cameras if c.visible}
     # score every candidate board for every camera
     proto = failing[0]

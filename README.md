@@ -47,7 +47,8 @@ with the board placement unless `--no-joint`; `--board-tol MM` is how far a boar
 Captures are matched to cameras by tag in the file name (`F.png`, `cam_QR.jpg`, `ML-capture.tif`); imported
 calibrations by the camera name or ROS topic in the file, the file name, or the serial number. Exit code: 0 fine, 2 the
 plan has critical issues (with `--analyse` or `--export`), 3 a camera has to be re-mounted or could not be checked,
-4 a lens calibration failed or an imported calibration matched no camera.
+4 a lens calibration failed or an imported calibration matched no camera (or did not fit it); when several apply, the
+highest is returned.
 
 ## What is in it
 
@@ -58,6 +59,8 @@ plan has critical issues (with `--analyse` or `--export`), 3 a camera has to be 
 | Placement | Place on surface (C, Alt-click for a mirrored pair), drag from the library, move gizmo (G) and rotate rings (R), drag along the body with surface snapping, aim at a ground point (Camera ▸ Aim ▸ At ground point, then click in 3D or the top view), linked L/R pairs, scrubbable number fields that accept expressions and units, editable camera spreadsheet with paste from Excel, coordinate frames (rear axle, front axle, front bumper, centre, custom) in m or mm. |
 | Analysis | Live, incremental ground coverage on a 5/2/1 cm grid inside an ROI (true offset or polygon): blind area, redundancy, best-camera pixel density, focus, per-camera unique/overlap areas, "if removed" figures, stitch seams, worst single-camera error, obstacle poles and vertical targets. Body occlusion is exact per camera (cube depth maps). |
 | Views | 3D (OpenGL, QPainter fallback), top coverage/density/redundancy maps, simulated fisheye camera images, stitched bird's-eye with draggable seams, bowl view, 1/2/4 viewport layouts, photo-matched shading (the active 3D view looks through a calibrated reference photo with the model drawn translucent over it; [ and ] step through the photos). |
+| 3D rendering | Shader renderer (GLSL 1.20, falls back to fixed-function GL, then to QPainter): geometry kept on the GPU, smooth normals with crease angles, hemisphere + key + rim lighting with specular, a shadow map for the vehicle on the ground and on itself, contact shadow (ambient occlusion) under the body, a ground plane that fades into the background, MSAA. **Camera light** (View ▸ Overlays, Alt+3): every camera's real lens model and body occlusion evaluated per pixel, so the body and the ground show what each camera sees (overlaps hatched) live while a camera is dragged; the software renderer computes the same on the CPU. Animated view changes; **Render image…** (Ctrl+Shift+R, up to 4× the view size, vector overlays stay crisp) and **Turntable video…** (MP4 with ffmpeg, else PNG frames). |
+| 3D surround view (Camera views ▸ bowl) | The view an in-car display shows: camera images projected through each lens onto a bowl around the car (flat floor, curved wall; floor, wall height, reach, profile and squareness are tunable and saved with the project) with the seams, exposure balancing and blending of the bird's-eye view, and the car model in the middle; typical display viewpoints. Images come from a synthetic parking scene rendered through every camera (bay markings, parked cars, a pillar, a bollard, the project's obstacles, a garage wall), from the installation check's captures, or just the camera sectors. Export the bowl as OBJ + texture with per-vertex remap tables (sensor pixel and weight per camera) for an ECU renderer. |
 | Studies | Monte Carlo tolerance study with sensitivity tornado and pinned worst cases; evolutionary placement optimiser scored under tolerance with a Pareto front; side-by-side variant comparison with Δ density map; calibration target planner with auto-place and suggestions; reference-photo matching (spin scrubber, landmarks, OpenCV calibration, matched 3D view). |
 | Installation check (Calibrate ▸ Installation check…, Ctrl+Shift+I) | One image per camera from a file, a live stream (V4L2 device, GStreamer pipeline, RTSP/HTTP URL; preview and grab) or a synthetic capture rendered from the plan with an optional simulated mounting error. The floor boards are cut out of each fisheye image as rectified pinhole patches (exact lens model), the chessboard corners found with OpenCV, and the installed pose solved by PnP on the bearing rays; boards that do not agree with the rest are dropped and the detection is repeated around the solved pose. Per camera: boards, corners, RMS, Δx Δy Δz, Δψ Δθ Δφ and a verdict against the tolerance (OK / adjust / re-mount). The captures are stitched into the bird's-eye view with the planned and with the measured poses side by side; save the report, the PNG, the remap tables, or apply the measured poses as an *as-built* variant. |
 | Unit lens calibration (Calibrate ▸ Lens calibration…, Ctrl+Shift+L) | Every camera can carry its own intrinsics instead of the library lens: calibrate from 10–20 views of a hand-held checkerboard (image files, a live stream, or a synthetic set rendered through a simulated unit), fitted as cv::fisheye (Kannala–Brandt, fx/fy/cx/cy/k1–k4). Boards the raw fisheye distorts too much are found in rectified views and mapped back exactly; poor views are dropped. Shows per-view RMS, corner coverage over the image with advice, parameters against the library lens, and how far the library lens would put a ray on this unit. Import calibrations made elsewhere (OpenCV YAML/XML, ROS camera_info, Kalibr camchain, JSON), matched to cameras by name, topic, file name or serial. The unit calibration replaces the library lens in the analysis, the installation check, the remap tables and every export (which says so). |
@@ -83,8 +86,10 @@ Core engine, loaders (all formats, malformed files), exporters (OpenCV reproject
 installation check (known mounting errors recovered from synthetic captures), unit lens calibration (a simulated unit
 recovered from synthetic board views; every calibration file format), the joint solve (misplaced boards), exposure
 balancing and multi-band blending, the C++ and Python reference stitchers (compiled and compared pixel by pixel with
-the app's stitcher; the C++ test is skipped without g++), stitching, load cases, link budget, batch mode, and GUI tests
-that drive the app with real mouse and keyboard events.
+the app's stitcher; the C++ test is skipped without g++), stitching, load cases, link budget, batch mode, the shader
+renderer (run headless through EGL in a subprocess and checked against the CPU visibility test; skipped where there is no
+EGL OpenGL), the 3D surround view, regression tests for every bug found in review (`test_regressions_*.py`), and GUI
+tests that drive the app with real mouse and keyboard events.
 
 ## Layout
 
@@ -92,10 +97,12 @@ that drive the app with real mouse and keyboard events.
 vantage/core   engine: lens models, mesh, loaders, body generator, occlusion, analysis, tolerance, optimiser,
                targets, photos, rules, exporters, project model, synthetic captures (synth), installation
                check (install), joint extrinsic solve (joint), unit lens calibration (calib), stitching,
-               exposure balancing and remap tables (stitch), load cases, image sources (capture)
+               exposure balancing and remap tables (stitch), 3D surround-view bowl (bowl), camera visibility
+               (visibility), load cases, image sources (capture)
 vantage/runtime  reference bird's-eye stitchers shipped with the remap tables (C++17, Python)
 vantage/batch  command-line batch mode
-vantage/ui     Qt UI: main window, docks, viewports, plan views, camera images, charts, dialogs, workspaces
+vantage/ui     Qt UI: main window, docks, viewports (render_gl: the shader renderer), plan views, camera images,
+               charts, dialogs, workspaces, the bowl controller
 tests/         pytest suites
 ```
 

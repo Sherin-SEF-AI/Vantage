@@ -80,6 +80,8 @@ class ExportOptions:
     worst_single: tuple | None = None   # (blind m2, cam uid, perturbation) or None
     lut: object | None = None           # stitch.StitchLUT for the bird's-eye remap tables (built on demand if None)
     engine: object | None = None        # analysis.Engine to build them with (a fresh one if None)
+    bowl_shape: object | None = None    # bowl.BowlShape for the 3D surround-view bowl (the project's if None)
+    bowl_texture: object | None = None  # RGBA texture for it (a synthetic parking scene is rendered if None)
 
 
 @dataclass
@@ -134,6 +136,9 @@ FORMATS: list[ExportFormat] = [
                  lambda p, v: ['bev_lut/bev_lut.json', 'bev_lut/bev_lut.npz'] + [f'bev_lut/{t}_{k}.bin' for t in safe_tags(v).values()
                                                                                  for k in ('map', 'weight')] + ['bev_lut/body_mask.bin',
                                                                                                                 'bev_lut/bev_lut.txt'],
+                 'binary', multi=True),
+    ExportFormat('bowl_mesh', 'Surround view', '3D surround-view bowl', 'OBJ, NPZ, PNG',
+                 lambda p, v: ['bowl/bowl.obj', 'bowl/bowl.mtl', 'bowl/bowl.png', 'bowl/bowl_lut.npz', 'bowl/bowl_lut.json'],
                  'binary', multi=True),
     ExportFormat('bev_stitcher', 'Surround view', 'Reference stitcher', 'C++, PY',
                  lambda p, v: ['bev_lut/stitcher/bev_stitch.cpp', 'bev_lut/stitcher/CMakeLists.txt',
@@ -325,6 +330,13 @@ class _Ctx:
     def As(self, deg):
         return _fs(math.radians(deg) if self.angles == 'rad' else deg, self.adp)
 
+    # machine-readable files keep the angles to 0.0001° (or 1 µrad), not the 0.1° shown on sheets
+    def Ap(self, deg):
+        return _fn(math.radians(deg) if self.angles == 'rad' else deg, 6 if self.angles == 'rad' else 4)
+
+    def Aps(self, deg):
+        return _fs(math.radians(deg) if self.angles == 'rad' else deg, 6 if self.angles == 'rad' else 4)
+
     @property
     def angle_unit(self):
         return 'rad' if self.angles == 'rad' else '°'
@@ -448,7 +460,7 @@ def _extrinsics_doc(ctx: _Ctx) -> dict:
             'tag': c.tag, 'name': c.location or c.name, 'gmsl_port': c.port or None,
             'module': cm.module.name, 'lens': cm.lens.name,
             'position': [ctx.L(c.x - ctx.origin[0]), ctx.L(c.y - ctx.origin[1]), ctx.L(c.z - ctx.origin[2])],
-            'yaw': ctx.A(c.yaw), 'pitch': ctx.A(c.pitch), 'roll': ctx.A(c.roll),
+            'yaw': ctx.Ap(c.yaw), 'pitch': ctx.Ap(c.pitch), 'roll': ctx.Ap(c.roll),
             'intrinsics': _intrinsics_dict(cm),
             'T_world_optical': _T_world_optical(ctx, cm),
         })
@@ -507,7 +519,7 @@ def _extrinsics_csv(ctx: _Ctx) -> str:
         c = cm.cam
         w.writerow([c.tag, c.location or c.name, c.port or '', cm.module.name, cm.lens.name,
                     ctx.Ls(c.x - ctx.origin[0]), ctx.Ls(c.y - ctx.origin[1]), ctx.Ls(c.z - ctx.origin[2]),
-                    ctx.As(c.yaw), ctx.As(c.pitch), ctx.As(c.roll), cm.intr.width, cm.intr.height,
+                    ctx.Aps(c.yaw), ctx.Aps(c.pitch), ctx.Aps(c.roll), cm.intr.width, cm.intr.height,
                     _fs(cm.fx, 4), _fs(cm.fy, 4), _fs(cm.cx, 4), _fs(cm.cy, 4)] + [repr(_sig(k)) for k in cm.k]
                    + [ctx.frame])
     return buf.getvalue()
@@ -577,7 +589,8 @@ def _opencv_yaml(ctx: _Ctx, cm: CameraModel) -> str:
 
 # ====================================================================== ROS 2
 def _xml_comment(s: str) -> str:
-    return str(s).replace('--', '-').replace('\n', ' ')
+    # XML forbids '--' anywhere in a comment and a '-' right before its end
+    return re.sub(r'-{2,}', '-', str(s).replace('\n', ' ')).rstrip('-')
 
 
 def _urdf(ctx: _Ctx) -> str:
@@ -651,8 +664,9 @@ def _launch(ctx: _Ctx) -> str:
         xyz = tuple(_fs(v, 3) for v in (c.x - o[0], c.y - o[1], c.z - o[2]))
         qb = tuple(_fs(v, 6) for v in _quat(cm.R))
         qo = tuple(_fs(v, 6) for v in q_opt)
-        L.append(f'        _static_tf({("tf_" + t.lower())!r}, {xyz!r}, {qb!r}, {"base_link"!r}, {t + "_link"!r}),')
-        L.append(f'        _static_tf({("tf_" + t.lower() + "_optical")!r}, {("0", "0", "0")!r}, {qo!r}, '
+        node = 'tf_' + re.sub(r'[^a-z0-9_]', '_', t.lower())         # ROS node names: letters, digits and '_'
+        L.append(f'        _static_tf({node!r}, {xyz!r}, {qb!r}, {"base_link"!r}, {t + "_link"!r}),')
+        L.append(f'        _static_tf({(node + "_optical")!r}, {("0", "0", "0")!r}, {qo!r}, '
                  f'{t + "_link"!r}, {t + "_optical_frame"!r}),')
     L.append('    ])')
     return '\n'.join(L) + '\n'
@@ -735,6 +749,7 @@ def _dxf(ctx: _Ctx) -> str:
 
     g(0, 'SECTION'); g(2, 'HEADER')
     g(9, '$ACADVER'); g(1, 'AC1009')
+    g(9, '$DWGCODEPAGE'); g(3, 'ANSI_1252')          # R12 text is 8-bit; the file is written in cp1252
     g(9, '$INSUNITS'); g(70, 4 if ctx.units == 'mm' else 6)
     g(9, '$MEASUREMENT'); g(70, 1)
     g(9, '$EXTMIN'); g(10, num(lo[0])); g(20, num(lo[1])); g(30, num(lo[2]))
@@ -1927,11 +1942,33 @@ def _render(fmt_id: str, ctx: _Ctx) -> list:
     if fmt_id == 'bev_stitcher':
         from .stitch import runtime_files
         return [(f'bev_lut/stitcher/{n}', d) for n, d in runtime_files()]
+    if fmt_id == 'bowl_mesh':
+        return [(f'bowl/{n}', d) for n, d in _bowl(ctx)]
     if fmt_id == 'dxf':
-        return [(name(), t(_dxf(ctx)))]
+        return [(name(), _dxf(ctx).encode('cp1252', errors='replace'))]
     if fmt_id == 'step':
         return [(name(), t(_step(ctx)))]
     raise ValueError(f'Unknown export format {fmt_id!r}')
+
+
+def _bowl(ctx: _Ctx):
+    if 'bowl' in ctx.meta:
+        return ctx.meta['bowl']
+    if ctx.result is None:
+        raise ValueError('The 3D surround-view bowl needs an analysis result.')
+    from . import bowl as bowl_core
+    from .analysis import Engine
+    eng = ctx.opts.engine or Engine()
+    shape = ctx.opts.bowl_shape or bowl_core.BowlShape.from_dict(getattr(ctx.project.analysis, 'bowl', None) or {})
+    tex = ctx.opts.bowl_texture
+    if tex is None:
+        from .synth import parking_world, render_capture
+        world = parking_world(ctx.project)
+        cams = [c for c in ctx.variant.cameras if c.visible]
+        images = {c.uid: render_capture(ctx.project, eng, c, 640, 512, world=world, seed=c.slot, noise=1.0) for c in cams}
+        tex = bowl_core.bowl_texture(bowl_core.bowl_lut(ctx.project, eng, ctx.result, shape, 1024, 320), images)
+    ctx.meta['bowl'] = bowl_core.export_files(ctx.project, eng, ctx.result, shape, tex)
+    return ctx.meta['bowl']
 
 
 def _lut(ctx: _Ctx):
@@ -2009,6 +2046,15 @@ def preview(fmt_id: str, project: Project, result, opts: ExportOptions) -> tuple
             desc += f' · missing: {", ".join(missing)}; export will fail until every view is supplied'
         return first, desc + (f' · {_size_text(total)}' if total else ''), total
 
+    if fmt_id == 'bowl_mesh':
+        if ctx.result is None:
+            return first, 'Not available: the bowl needs an analysis result.', 0
+        files = _render(fmt_id, ctx)
+        total = sum(len(d) for _, d in files)
+        meta = json.loads(dict(files)['bowl/bowl_lut.json'])
+        return (f'{base}/bowl/bowl_lut.json', f'{len(files)} files · {meta["vertices"]} vertices, {meta["faces"]} triangles · '
+                f'{len(meta["cameras"])} cameras · {_size_text(total)}\n\n' + dict(files)['bowl/bowl_lut.json'].decode('utf-8'),
+                total)
     if fmt_id == 'bev_lut':
         if ctx.result is None and ctx.opts.lut is None:
             return first, 'Not available: the remap tables need an analysis result.', 0
@@ -2053,6 +2099,8 @@ def export(fmt_ids, project: Project, result, opts: ExportOptions, progress=None
             _camera_view_files(ctx)
         elif fid == 'bev_lut':
             _lut(ctx)
+        elif fid == 'bowl_mesh':
+            _bowl(ctx)
     written = []
     for i, fid in enumerate(ids):
         for rel, data in _render(fid, ctx):

@@ -278,10 +278,14 @@ class MainWindow(QMainWindow):
             self.actions_by_id[k].triggered.connect(lambda _=False, v=v: self.set_view(v))
         A('look_through', 'Look through', lambda: self.set_view('through'), 'Ctrl+0', 'through', category='Camera')
         A('camviews', 'Camera views, bird’s-eye, bowl', lambda: self.set_page('camviews'), 'Ctrl+Shift+B', 'bev', category='View')
+        A('render_image', 'Render image…', self.render_image, 'Ctrl+Shift+R', 'photo-spin', category='View',
+          tip='Save the active 3D view at up to 4× its size')
+        A('turntable', 'Turntable video…', self.turntable, None, 'rotate', category='View',
+          tip='Orbit the active 3D view once around the vehicle and save it as a video')
         A('back', 'Back to viewports', lambda: self.set_page('viewports'), category='View')
         for i, (key, text, ic, _) in enumerate(OVERLAYS):
-            sc = {'frustums': 'Alt+1', 'footprints': 'Alt+2', 'occlusion': 'Alt+4', 'seams': 'Alt+5', 'roi': 'Alt+6',
-                  'targets': 'Alt+7', 'dimensions': 'Alt+8', 'grid': 'Alt+9'}[key]
+            sc = {'frustums': 'Alt+1', 'footprints': 'Alt+2', 'camlight': 'Alt+3', 'shadows': 'Alt+0', 'occlusion': 'Alt+4',
+                  'seams': 'Alt+5', 'roi': 'Alt+6', 'targets': 'Alt+7', 'dimensions': 'Alt+8', 'grid': 'Alt+9'}[key]
             A(f'ov_{key}', text, lambda on, k=key: c.set_overlay(k, on), sc, ic, True, 'View ▸ Overlays', checked=c.overlays[key])
         for key, text in HEATMAPS:
             A(f'heat_{key}', text, None, None, None, True, 'View ▸ Overlays ▸ Heatmap', checked=key == 'none')
@@ -491,6 +495,8 @@ class MainWindow(QMainWindow):
             ov.addAction(a[f'ov_{key}'])
         v.addSeparator()
         v.addActions([a['camviews'], a['back']])
+        v.addSeparator()
+        v.addActions([a['render_image'], a['turntable']])
         v.addSeparator()
         v.addActions([a['frame_sel'], a['frame_all']])
         v.addSeparator()
@@ -786,8 +792,7 @@ class MainWindow(QMainWindow):
         for u in e.mimeData().urls():
             path = u.toLocalFile()
             if path.lower().endswith('.vantage'):
-                if self._maybe_save():
-                    self.open_project(path)
+                self.open_project(path)
                 return
             if path.lower().endswith(SUPPORTED_EXTS):
                 QTimer.singleShot(0, lambda p=path: self.import_vehicle(path=p))
@@ -840,6 +845,19 @@ class MainWindow(QMainWindow):
             self._fill_variant_combo()
         if 'frame' in sections:
             self._sync_frame()
+        if 'analysis' in sections:
+            self._sync_analysis_menu()
+
+    def _sync_analysis_menu(self):
+        """Radio items that mirror project settings follow undo, redo and opening a project."""
+        an = self.store.project.analysis
+        cm = min((5, 2, 1), key=lambda k: abs(k / 100 - an.cell_m))
+        for key in (f'res_{cm}', f'obs_{an.obstacle_mode}'):
+            a = self.actions_by_id.get(key)
+            if a is not None and not a.isChecked():
+                a.setChecked(True)
+        if self.actions_by_id['live'].isChecked() != an.live:
+            self.actions_by_id['live'].setChecked(an.live)
 
     def _on_project_replaced(self):
         self.ctx.isolate.clear()
@@ -847,7 +865,7 @@ class MainWindow(QMainWindow):
         self._fill_variant_combo()
         self.set_project_meta()
         self._sync_frame()
-        self.actions_by_id['live'].setChecked(self.store.project.analysis.live)
+        self._sync_analysis_menu()
         self.ctx.analysis.result = None
         self.ctx.analysis.request(force=True)
         QTimer.singleShot(50, self.viewarea.frame_all)
@@ -1022,11 +1040,16 @@ class MainWindow(QMainWindow):
         self.sync_view_buttons()
         QTimer.singleShot(30, self.viewarea.frame_all)
 
-    def set_view(self, kind):
+    def leave_photo_view(self):
+        """Back from a photo-matched view to a free one: photo, label and shading all go."""
+        self.photo_unmatch_view()
         if self.ctx.shading == 'photo':
-            self.photo_unmatch_view()
             self.ctx.set_shading('solid')
             self.actions_by_id['shade_solid'].setChecked(True)
+
+    def set_view(self, kind):
+        if self.ctx.shading == 'photo':
+            self.leave_photo_view()
         if self.page_name() != 'viewports':
             self.set_page('viewports')
         pane = self.viewarea.active
@@ -1453,6 +1476,10 @@ class MainWindow(QMainWindow):
         self.store.edit('vehicle', fn, 'Auto-detected glass')
 
     def clear_zones(self):
+        if self.store.project.vehicle.mesh is None:
+            self.msg('There is no vehicle model.')
+            return
+
         def fn(p):
             mesh = p.vehicle.mesh
             mesh.zones = []
@@ -1572,9 +1599,9 @@ class MainWindow(QMainWindow):
         self.store.set_project(samples.template_project(key))
 
     def open_project(self, path=None):
+        if not self._maybe_save():          # every route here (dialog, recent menu, start window, drop) replaces the project
+            return
         if not path:
-            if not self._maybe_save():
-                return
             path, _ = QFileDialog.getOpenFileName(self, 'Open project', self.ctx.settings.value('dir/projects', os.path.expanduser('~')),
                                                   'Vantage project (*.vantage)')
             if not path:
@@ -1693,6 +1720,89 @@ class MainWindow(QMainWindow):
             return
         from .dialogs.module_editor import ModuleEditor
         ModuleEditor(self.ctx, mid, lid, self).exec()
+
+    # ------------------------------------------------------------------ renders
+    def _render_target(self):
+        page = self.page_name()
+        if page == 'camviews' and 'camviews' in self._page_widgets:
+            return self._page_widgets['camviews'].bowl
+        pane = self.viewarea.active
+        return pane.vp3d if pane is not None else None
+
+    def render_image(self, path=None, scale=None, transparent=False):
+        vp = self._render_target()
+        if vp is None:
+            self.msg('No 3D view to render.')
+            return None
+        if scale is None:
+            from PyQt6.QtWidgets import QInputDialog
+            items = [f'{k}× · {vp.width() * k} × {vp.height() * k} px' for k in (1, 2, 3, 4)]
+            ch, ok = QInputDialog.getItem(self, 'Render image', 'Size', items, 1, False)
+            if not ok:
+                return None
+            scale = items.index(ch) + 1
+        if not path:
+            path, _ = QFileDialog.getSaveFileName(self, 'Render image', f'{self.store.project.name}-3d.png',
+                                                  'PNG (*.png);;JPEG (*.jpg)')
+        if not path:
+            return None
+        img = vp.render_image(scale, transparent=transparent)
+        if not img.save(path):
+            QMessageBox.critical(self, 'Render image', f'Could not write {path}')
+            return None
+        self.msg(f'Rendered {img.width()} × {img.height()} px to {path}', 6000)
+        return path
+
+    def turntable(self, path=None, frames=None, scale=1.0, fps=30, progress=None):
+        """Orbit the active 3D view once around its target and write the frames as an MP4 (with ffmpeg) or PNGs."""
+        import shutil
+        import subprocess
+        import tempfile
+        vp = self._render_target()
+        if vp is None:
+            return None
+        if not path:
+            path, _ = QFileDialog.getSaveFileName(self, 'Turntable video', f'{self.store.project.name}-turntable.mp4',
+                                                  'MP4 video (*.mp4);;PNG frames (folder) (*)')
+        if not path:
+            return None
+        n = int(frames or 8 * fps)
+        cam0 = vp.cam.copy()
+        vp.cam.custom = None
+        tmp = tempfile.mkdtemp(prefix='vantage-turntable-', dir=os.path.dirname(os.path.abspath(path)))
+        try:
+            for i in range(n):
+                vp.cam.az = cam0.az + 360.0 * i / n
+                img = vp.render_image(scale)
+                w, h = img.width() // 2 * 2, img.height() // 2 * 2       # even sizes for H.264
+                img.copy(0, 0, w, h).save(os.path.join(tmp, f'f{i:05d}.png'))
+                if progress:
+                    progress((i + 1) / n)
+                QApplication.processEvents()
+            ff = shutil.which('ffmpeg')
+            if path.lower().endswith('.mp4') and ff:
+                r = subprocess.run([ff, '-y', '-loglevel', 'error', '-framerate', str(fps), '-i', os.path.join(tmp, 'f%05d.png'),
+                                    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '18', '-movflags', '+faststart', path],
+                                   capture_output=True, text=True)
+                if r.returncode != 0:
+                    raise RuntimeError(r.stderr.strip()[-300:])
+                out = path
+            else:
+                out = os.path.splitext(path)[0] + '-frames'
+                if os.path.exists(out):
+                    shutil.rmtree(out)
+                shutil.move(tmp, out)
+                tmp = None
+        except Exception as e:
+            QMessageBox.critical(self, 'Turntable video', str(e))
+            return None
+        finally:
+            vp.cam = cam0
+            vp.update()
+            if tmp and os.path.isdir(tmp):
+                shutil.rmtree(tmp, ignore_errors=True)
+        self.msg(f'Wrote {out} ({n} frames)', 6000)
+        return out
 
     # ------------------------------------------------------------------ unit lens calibration
     def lens_calibration(self, uid=None):
@@ -1953,8 +2063,14 @@ class MainWindow(QMainWindow):
         if kind == 'tolerance':
             self.page('tolerance').show_result(result)
             self.bottom.tolerance.show_result(result)
-            self.store.project.add_log('tolerance', f'{len(result.blind)} samples · {result.seconds:.1f} s · max {result.blind.max():.3f} m²')
-            self.msg(f'Tolerance study finished · {len(result.blind)} samples in {result.seconds:.1f} s', 6000)
+            n = len(result.blind)
+            if getattr(result, 'cancelled', False):
+                total = getattr(getattr(result, 'settings', None), 'samples', None) or '?'
+                text = f'Tolerance study cancelled after {n} of {total} samples'
+            else:
+                text = f'Tolerance study finished · {n} samples in {result.seconds:.1f} s'
+            self.store.project.add_log('tolerance', f'{text} · max {result.blind.max():.3f} m²')
+            self.msg(text, 6000)
         elif kind == 'optimiser':
             self.page('optimiser').finished(result)
             self.store.project.add_log('optimiser', f'{result.evals} evaluations · {len(result.front)} on the Pareto front')
@@ -1962,10 +2078,13 @@ class MainWindow(QMainWindow):
         self._update_state()
 
     def _job_failed(self, kind, m):
-        self._jobs.pop(kind, None)
+        job = self._jobs.pop(kind, None)
         self._hide_job()
-        print(m)
-        QMessageBox.critical(self, f'{kind.capitalize()} failed', m.splitlines()[0])
+        if job and job.get('cancel') is not None and job['cancel'].is_set():
+            self.msg(f'{kind.capitalize()} cancelled')          # a cancel before the first sample is not a failure
+        else:
+            print(m)
+            QMessageBox.critical(self, f'{kind.capitalize()} failed', m.splitlines()[0])
         self._update_state()
 
     def _hide_job(self):

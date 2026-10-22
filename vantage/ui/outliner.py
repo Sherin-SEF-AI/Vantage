@@ -1,7 +1,7 @@
 """Outliner (scene tree) and Library docks."""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QSize, QRect, QRectF, QPointF, QMimeData, pyqtSignal, QModelIndex
+from PyQt6.QtCore import Qt, QSize, QRect, QRectF, QPointF, QMimeData, pyqtSignal, QModelIndex, QTimer
 from PyQt6.QtGui import QPainter, QColor, QFont, QPen, QDrag, QFontMetrics
 from PyQt6.QtWidgets import (QTreeWidget, QTreeWidgetItem, QStyledItemDelegate, QStyle, QWidget, QVBoxLayout,
                              QHBoxLayout, QLineEdit, QComboBox, QLabel, QAbstractItemView, QMenu, QStyleOptionViewItem)
@@ -118,6 +118,11 @@ class Outliner(QTreeWidget):
         THEME.changed.connect(lambda *_: self.viewport().update())
         self.rebuild()
 
+    def closeEditor(self, editor, hint):
+        super().closeEditor(editor, hint)
+        if getattr(self, '_rebuild_pending', False):
+            QTimer.singleShot(0, self.rebuild)
+
     def count(self):
         n = 0
         it = self.invisibleRootItem()
@@ -146,6 +151,10 @@ class Outliner(QTreeWidget):
         return it
 
     def rebuild(self):
+        if self.state() == QAbstractItemView.State.EditingState:
+            self._rebuild_pending = True    # rebuilding now would close the editor and lose what is being typed
+            return
+        self._rebuild_pending = False
         for i in range(self.topLevelItemCount()):
             it = self.topLevelItem(i)
             self.expanded_state[it.data(0, ROLE_ID)] = it.isExpanded()
