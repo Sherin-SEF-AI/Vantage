@@ -13,6 +13,45 @@ The studio photos themselves are not part of the repository. To use the photo-ma
 `Tata-Tigor-EV-360.zip` in `data/` (or next to the project folder) or set `VANTAGE_TIGOR_PHOTOS` to its path; without
 it the sample opens normally with the photo poses but no images.
 
+## Install
+
+**Linux, no Python needed.** Download `Vantage-<version>-linux-x86_64.tar.gz`, then:
+
+```bash
+tar xf Vantage-*-linux-x86_64.tar.gz
+cd Vantage-*-linux-x86_64
+./install.sh            # per user: ~/.local/opt/vantage, a menu entry, the .vantage file type, ~/.local/bin/vantage
+vantage --self-test     # checks analysis, OpenCV, fonts, the OpenGL renderer and the main window
+```
+
+`~/.local/opt/vantage/uninstall.sh` removes it again (projects and settings are kept). Without installing, run
+`./Vantage` from the extracted folder.
+
+**Windows, no Python needed.** Run `Vantage-<version>-windows-x64-setup.exe`. It installs for the current user without
+administrator rights, adds a Start menu entry and opens `.vantage` projects. `Vantage.exe` is the window;
+`vantage-cli.exe` in the same folder is for batch mode and `--self-test` from a terminal. The `.zip` is the same program
+without the installer.
+
+**macOS.** Unzip `Vantage-<version>-macos-arm64.zip` and move `Vantage.app` to Applications. The app is not signed: the
+first time, right-click it and choose Open. Batch mode: `Vantage.app/Contents/MacOS/vantage-cli`.
+
+**With Python 3.10 or later:**
+
+```bash
+python3 -m pip install .            # from this folder; add [step] for STEP import through gmsh
+vantage                             # the window (vantage-gui on Windows starts it without a console)
+vantage project.vantage --analyse report.json
+```
+
+**Building the downloads.** Push a tag (`git tag v1.0.0 && git push origin v1.0.0`) or start *Build installers* in the
+repository's Actions tab: GitHub builds and smoke-tests all three and attaches them to the run. To build for the machine
+you are on:
+
+```bash
+python3 -m pip install -r requirements.txt pyinstaller
+python3 packaging/build.py --smoke  # dist/: the bundle, the archive and on Windows the installer (needs Inno Setup 6)
+```
+
 ## Run
 
 ```bash
@@ -25,7 +64,7 @@ python3 run_vantage.py project.vantage          # open a project
 ```
 
 Options: `--theme dark|light|system`, `--scale 1.15`, `--software-3d` (QPainter 3D view instead of OpenGL),
-`--template sedan|hatchback|suv|van|truck|tigor`.
+`--template sedan|hatchback|suv|van|truck|tigor`, `--self-test`, `--version`.
 
 ### Batch mode (no window)
 
@@ -101,9 +140,12 @@ vantage/core   engine: lens models, mesh, loaders, body generator, occlusion, an
                (visibility), load cases, image sources (capture)
 vantage/runtime  reference bird's-eye stitchers shipped with the remap tables (C++17, Python)
 vantage/batch  command-line batch mode
+vantage/selftest  --self-test: checks an installation without a window
 vantage/ui     Qt UI: main window, docks, viewports (render_gl: the shader renderer), plan views, camera images,
                charts, dialogs, workspaces, the bowl controller
 tests/         pytest suites
+packaging/     PyInstaller spec, build script, icons, Linux install scripts and desktop entry,
+               Windows installer (Inno Setup); .github/workflows/build.yml builds them on GitHub
 ```
 
 Fonts: IBM Plex Sans and IBM Plex Mono, SIL Open Font License 1.1 (`vantage/resources/fonts`).

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Vantage
+GenericName=Surround-view camera planner
+Comment=Plan, analyse and check surround-view camera installations on vehicles
+Exec=@EXEC@ %f
+Icon=vantage
+Terminal=false
+Categories=Science;Engineering;
+MimeType=application/x-vantage-project;
+Keywords=camera;surround view;bird's-eye;calibration;vehicle;
+StartupWMClass=Vantage
+StartupNotify=true

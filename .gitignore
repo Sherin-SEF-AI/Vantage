@@ -6,6 +6,8 @@ __pycache__/
 venv/
 
 # generated output
+build/
+dist/
 exports/
 demo/out/
 demo/build/

@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vantage"
+dynamic = ["version"]
+description = "Surround-view camera planner: place cameras on a vehicle model, analyse coverage, check installations"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "PyQt6>=6.5",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "PyOpenGL>=3.1",
+    "PyYAML>=6.0",
+    "opencv-python>=4.7",
+]
+
+[project.optional-dependencies]
+step = ["gmsh"]
+test = ["pytest"]
+
+[project.urls]
+Source = "https://github.com/Sherin-SEF-AI/Vantage"
+
+# `vantage` works everywhere (window, batch mode, --self-test); `vantage-gui` starts the window without a console
+# window on Windows, where a console launcher would otherwise open one next to the app.
+[project.scripts]
+vantage = "vantage.app:main"
+
+[project.gui-scripts]
+vantage-gui = "vantage.app:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "vantage.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["vantage", "vantage.*"]
+
+[tool.setuptools.package-data]
+vantage = [
+    "resources/fonts/*.ttf",
+    "resources/fonts/OFL.txt",
+    "resources/icons/*.png",
+    "runtime/CMakeLists.txt",
+    "runtime/*.cpp",
+    "runtime/README.md",
+]

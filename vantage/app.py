@@ -6,8 +6,37 @@ import os
 import sys
 
 
+APP_ICON = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources', 'icons', 'vantage.png')
+
+
+def make_app(theme=None, scale=None):
+    """The QApplication with Vantage's fonts, theme and icon; returns (app, settings)."""
+    from PyQt6.QtCore import Qt, QSettings
+    from PyQt6.QtGui import QIcon
+    from PyQt6.QtWidgets import QApplication
+    from .ui.viewport3d import configure_default_format
+    configure_default_format()
+    QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+    app = QApplication(sys.argv[:1])
+    app.setApplicationName('Vantage')
+    app.setOrganizationName('Vantage')
+    app.setApplicationDisplayName('Vantage')
+    app.setDesktopFileName('vantage')              # Wayland matches windows to vantage.desktop by this id
+    from .ui.theme import THEME, load_fonts
+    from .ui import icons
+    load_fonts()
+    settings = QSettings('Vantage', 'Vantage')
+    THEME.apply(app, theme or settings.value('ui/theme', 'dark'), scale or float(settings.value('ui/scale', 1.0)))
+    app.setWindowIcon(QIcon(APP_ICON) if os.path.exists(APP_ICON) else icons.icon('app', 16, THEME.tok['ink']))
+    return app, settings
+
+
 def main(argv=None):
+    from . import __version__
     ap = argparse.ArgumentParser(prog='vantage', description='Vantage · surround-view camera planner')
+    ap.add_argument('--version', action='version', version=f'vantage {__version__}')
+    ap.add_argument('--self-test', action='store_true',
+                    help='check this installation (analysis, OpenCV, fonts, OpenGL, main window) without a window')
     ap.add_argument('path', nargs='?', help='a .vantage project, or a vehicle model to import')
     ap.add_argument('--sample', action='store_true', help='open the Tata Tigor EV sample project')
     ap.add_argument('--template', help='start from a template: tigor, sedan, hatchback, suv, van, truck')
@@ -18,28 +47,16 @@ def main(argv=None):
     from . import batch
     batch.add_arguments(ap)
     args = ap.parse_args(argv)
+    if args.self_test:
+        from . import selftest
+        return selftest.run()
     if batch.wanted(args):
         return batch.run(args)
 
     if args.software_3d:
         os.environ['VANTAGE_SOFTWARE_3D'] = '1'
-    from PyQt6.QtCore import Qt, QSettings
-    from PyQt6.QtWidgets import QApplication
-    from .ui.viewport3d import configure_default_format, gl_available
-    configure_default_format()
-    QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
-    app = QApplication(sys.argv[:1])
-    app.setApplicationName('Vantage')
-    app.setOrganizationName('Vantage')
-    app.setApplicationDisplayName('Vantage')
-    from .ui.theme import THEME, load_fonts
-    from .ui import icons
-    load_fonts()
-    settings = QSettings('Vantage', 'Vantage')
-    theme = args.theme or settings.value('ui/theme', 'dark')
-    scale = args.scale or float(settings.value('ui/scale', 1.0))
-    THEME.apply(app, theme, scale)
-    app.setWindowIcon(icons.icon('app', 16, THEME.tok['ink']))
+    app, settings = make_app(args.theme, args.scale)
+    from .ui.viewport3d import gl_available
 
     from .core import samples
     from .core.project import Project
