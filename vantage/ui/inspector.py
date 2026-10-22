@@ -21,6 +21,7 @@ from .theme import THEME, mono, sans, STATUS
 from .widgets import (Section, ScrubSpinBox, ToggleSwitch, SegmentedControl, Chip, ValueLabel, StatusLine, label,
                       button, tool_button, hline, ImageCircleDiagram, ROW_H, LABEL_W)
 
+SYNC_LINES = list('ABCDEFGH')        # hardware trigger lines a camera can be put on
 BRACKETS = ['Flat plate · 25 mm', 'Mirror underside clip', 'Quarter-panel pod · 40 mm', 'Boot-lid wedge 10°', 'None']
 
 
@@ -237,9 +238,10 @@ class CameraPage(Page):
         self.port_note = label('', muted=True, small=True)
         self.s_link.row('GMSL port', self.port, self.port_note)
         self.sync = QComboBox()
-        self.sync.addItems(['A · 30 fps', 'B · 30 fps', 'free-running'])
-        self.sync.activated.connect(lambda i: self._set('sync', ['A', 'B', '-'][i]))
-        self.s_link.row('Sync group', self.sync)
+        self.sync.addItems([f'Line {x}' for x in SYNC_LINES] + ['free-running'])
+        self.sync.activated.connect(lambda i: self._set('sync', (SYNC_LINES + [''])[i]))
+        self.s_link.row('Trigger line', self.sync, tip='Cameras on one hardware trigger line fire together; '
+                                                         'Analysis ▸ Sync and timing… suggests the lines.')
         self.cable = QComboBox()
         self.cable.activated.connect(lambda i: self._set('cable_m', float(self.cable.currentData())))
         self.s_link.row('Cable', self.cable)
@@ -506,7 +508,8 @@ class CameraPage(Page):
         else:
             self.port.setCurrentIndex(-1)
         self.port_note.setText(p.ecu.deserializer(c.port))
-        self.sync.setCurrentIndex({'A': 0, 'B': 1}.get(c.sync, 2))
+        line = (c.sync or '').strip().upper()
+        self.sync.setCurrentIndex(SYNC_LINES.index(line) if line in SYNC_LINES else len(SYNC_LINES))
         self.cable.clear()
         for x in mod.cables_m:
             self.cable.addItem(f'{x:.2f} m', x)
@@ -525,7 +528,9 @@ class CameraPage(Page):
         if alt:
             self.b_cable.setText(f'Use {alt[0]:g} m cable')
         self.link_icon.setPixmap(icons.pixmap('serious' if over else 'good', STATUS['serious' if over else 'good'], 12))
-        self.s_link.header.set_summary(f'port {c.port or "—"} · sync {c.sync} · {rl:.2f} / {c.cable_m:.2f} m')
+        sync = (c.sync or '').strip().upper()
+        sync = f'line {sync}' if sync in SYNC_LINES else 'free-running'
+        self.s_link.header.set_summary(f'port {c.port or "—"} · {sync} · {rl:.2f} / {c.cable_m:.2f} m')
         # this camera
         res = self.ctx.analysis.result
         rows = []
@@ -1308,11 +1313,12 @@ class Inspector(QWidget):
         lay.addWidget(self.scroll)
         from .inspector_extra import PhotosPage, TargetsPage
         from .rigview import RigPage
+        from .sensorview import SensorPage
         self.pages = {
             'empty': EmptyPage(ctx), 'camera': CameraPage(ctx), 'roi': RoiPage(ctx), 'vehicle': VehiclePage(ctx),
             'wheels': WheelsPage(ctx), 'zones': ZonesPage(ctx), 'ecu': EcuPage(ctx), 'obstacle': ObstaclePage(ctx),
             'obstacles': ObstaclesPage(ctx), 'variant': VariantPage(ctx), 'photos': PhotosPage(ctx), 'targets': TargetsPage(ctx),
-            'rig': RigPage(ctx),
+            'rig': RigPage(ctx), 'sensor': SensorPage(ctx),
         }
         for pg in self.pages.values():
             pg.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
@@ -1341,7 +1347,7 @@ class Inspector(QWidget):
         k = o[0]
         return {'target': 'targets', 'targets': 'targets', 'roi': 'roi', 'vehicle': 'vehicle', 'wheels': 'wheels',
                 'zones': 'zones', 'ecu': 'ecu', 'obstacle': 'obstacle', 'obstacles': 'obstacles', 'variant': 'variant',
-                'photos': 'photos', 'rig': 'rig'}.get(k, 'empty')
+                'photos': 'photos', 'rig': 'rig', 'sensor': 'sensor', 'sensors': 'sensor'}.get(k, 'empty')
 
     def refresh(self):
         key = self.page_for_selection()

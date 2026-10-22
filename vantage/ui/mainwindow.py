@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (QMainWindow, QDockWidget, QToolBar, QWidget, QHBoxL
                              QLineEdit, QToolButton, QMenu, QStatusBar, QStackedWidget, QFileDialog, QMessageBox,
                              QProgressBar, QSizePolicy, QApplication, QWidgetAction, QCheckBox, QPushButton)
 
-from ..core.project import Project, Variant, FRAME_PRESETS, MAX_CAMERAS, new_uid, Obstacle
+from ..core.project import Project, Variant, FRAME_PRESETS, MAX_CAMERAS, new_uid, Obstacle, Sensor
 from ..core import samples
 from . import icons, ops
 from .context import AppContext, OVERLAYS, HEATMAPS, TOOLS
@@ -115,6 +115,15 @@ class MainWindow(QMainWindow):
         elif name == 'rig':
             from .workspaces.rig_ws import RigPage
             w = RigPage(self.ctx)
+        elif name == 'coverage':
+            from .workspaces.coverage_ws import SensorCoveragePage
+            w = SensorCoveragePage(self.ctx)
+        elif name == 'timing':
+            from .workspaces.timing_ws import TimingPage
+            w = TimingPage(self.ctx)
+        elif name == 'recording':
+            from .workspaces.recording_ws import RecordingPage
+            w = RecordingPage(self.ctx)
         self.pages.addWidget(w)
         self._page_widgets[name] = w
         return w
@@ -138,6 +147,9 @@ class MainWindow(QMainWindow):
         'volume': (),
         'perception': (),
         'rig': (),
+        'coverage': (),
+        'timing': (),
+        'recording': (),
     }
 
     def set_page(self, name):
@@ -388,6 +400,11 @@ class MainWindow(QMainWindow):
         for k, t in RIG_PRESETS:
             A(f'rig_{k}', t, lambda _=False, k=k: add_preset(self.ctx, k), None, 'cylinder' if k == 'sensor_mast' else 'cube',
               category='Vehicle ▸ Add rig part')
+        from .sensorview import add_sensor
+        A('add_lidar', 'Add lidar', lambda: add_sensor(self.ctx, 'lidar'), None, 'sensor', category='Vehicle',
+          tip='A lidar on the highest rig part or the roof (Ouster OS1-128 by default; pick another in the Inspector)')
+        A('add_radar', 'Add radar', lambda: add_sensor(self.ctx, 'radar'), None, 'sensor', category='Vehicle',
+          tip='A radar in the middle of the front bumper, facing forward')
         # camera
         A('add_cam', 'Add from library…', self.add_from_library, 'Shift+A', 'plus', category='Camera')
         A('place', 'Place on surface', lambda: self.set_tool('place'), None, 'place', category='Camera')
@@ -440,6 +457,13 @@ class MainWindow(QMainWindow):
           tip='Where around the vehicle something can stand unseen by every camera, in 3D')
         A('perception_range', 'Perception range…', lambda: self.set_page('perception'), None, 'target',
           category='Analysis', tip='How far out the rig resolves cars, pedestrians, cyclists and signs in each direction')
+        A('sensor_coverage', 'Lidar and radar coverage…', lambda: self.set_page('coverage'), None, 'sensor',
+          category='Analysis', tip='Where the lidars and radars reach, what they hit on the vehicle, how far they detect '
+                                   'each object, and how much of each camera image they cover')
+        A('sync_plan', 'Sync and timing…', lambda: self.set_page('timing'), None, 'sync', category='Analysis',
+          tip='Camera trigger offsets against the lidar sweep, trigger groups, motion blur and rolling shutter at speed')
+        A('recording_budget', 'Recording budget…', lambda: self.set_page('recording'), None, 'ecu', category='Analysis',
+          tip='Data rate of every sensor, the network and storage it needs, and hours of driving per disk set')
         A('an_settings', 'Settings…', self.preferences, None, 'gear', category='Analysis')
         # calibrate
         A('targets', 'Target planner…', lambda: self.set_page('targets'), None, 'checker', category='Calibrate')
@@ -549,6 +573,10 @@ class MainWindow(QMainWindow):
         sub(ve, 'Occluder', ['occ_full', 'occ_hull', 'occ_level'])
         sub(ve, 'Reference photos', ['photo_load', 'photo_cal', 'photo_pane'])
         sub(ve, 'Add rig part', ['rig_roof_rack', 'rig_sensor_mast', 'rig_enclosure', 'rig_bar'])
+        for kind in ('lidar', 'radar'):
+            sm = ve.addMenu(f'Add {kind}')
+            sm.setIcon(icons.icon('sensor'))
+            sm.aboutToShow.connect(lambda sm=sm, kind=kind: self._fill_sensor_menu(sm, kind))
         ve.addSeparator()
         ve.addAction(a['spec'])
         ca = menu('Camera')
@@ -577,7 +605,11 @@ class MainWindow(QMainWindow):
         sub(an, 'Obstacles', ['obs_ground', 'obs_pole05', 'obs_pole10', 'obs_child', '-', 'obs_add'])
         an.addSeparator()
         an.addActions([a['thresholds'], a['tolerance'], a['sensitivity'], a['load_cases'], a['blind_volume'],
-                       a['perception_range'], a['an_settings']])
+                       a['perception_range']])
+        an.addSeparator()
+        an.addActions([a['sensor_coverage'], a['sync_plan'], a['recording_budget']])
+        an.addSeparator()
+        an.addAction(a['an_settings'])
         cb = menu('Calibrate')
         cb.addAction(a['targets'])
         sub(cb, 'Add target', ['target_checkerboard', 'target_charuco', 'target_aprilgrid'])
@@ -1357,6 +1389,12 @@ class MainWindow(QMainWindow):
                 m.addAction('Delete obstacle', lambda: self.inspector.pages['obstacle']._delete())
         elif kind == 'ecu':
             m.addAction(a['assign_port'])
+        elif kind == 'sensor' or (kind == 'group' and ident == 'sensors'):
+            m.addActions([a['add_lidar'], a['add_radar']])
+            if kind == 'sensor':
+                from .sensorview import delete_sensors
+                m.addSeparator()
+                m.addAction('Delete sensor', lambda: delete_sensors(self.ctx, [ident]))
         elif kind == 'rig' or (kind == 'group' and ident == 'rig'):
             m.addActions([a['rig_roof_rack'], a['rig_sensor_mast'], a['rig_enclosure'], a['rig_bar']])
             if kind == 'rig':
@@ -1366,6 +1404,16 @@ class MainWindow(QMainWindow):
         else:
             return
         m.exec(gpos)
+
+    def _fill_sensor_menu(self, menu, kind):
+        """Vehicle ▸ Add lidar / Add radar: every model of that kind in the project's library."""
+        from .sensorview import add_sensor
+        menu.clear()
+        for mid, m in self.store.project.sensor_models.items():
+            if m.kind == kind:
+                act = menu.addAction(f'{m.vendor} {m.name}'.strip(), lambda mid=mid: add_sensor(self.ctx, kind, mid))
+                act.setToolTip(m.summary())
+        menu.setToolTipsVisible(True)
 
     def _fill_lens_menu(self, menu, modules=False):
         menu.clear()
@@ -1472,6 +1520,9 @@ class MainWindow(QMainWindow):
         elif st.sel_obj and st.sel_obj[0] == 'rig' and len(st.sel_obj) > 1:
             from .rigview import delete_parts
             delete_parts(self.ctx, [st.sel_obj[1]])
+        elif st.sel_obj and st.sel_obj[0] == 'sensor' and len(st.sel_obj) > 1:
+            from .sensorview import delete_sensors
+            delete_sensors(self.ctx, [st.sel_obj[1]])
 
     def _delete_target(self, uid):
         self.store.edit('targets', lambda p: setattr(p, 'targets', [t for t in p.targets if t.uid != uid]), 'Deleted target')
@@ -1612,6 +1663,7 @@ class MainWindow(QMainWindow):
             cams = samples.template_layout(m, spec, nn)
         vv = Variant(name=f'{len(cams)}-cam preset')
         vv.cameras = cams
+        vv.sensors = [Sensor.from_dict(x.to_dict()) for x in self.store.variant.sensors]   # the lidars and radars stay
         samples.link_pairs(vv)
 
         def fn(pj):

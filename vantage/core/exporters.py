@@ -45,6 +45,8 @@ SCHEMA_JETSON = 'vantage.jetson/1'
 ROTATION_TEXT = 'intrinsic Z-Y-X (yaw, pitch, roll); pitch positive down'
 AXES_TEXT = 'x forward, y left, z up'
 OPTICAL_TEXT = 'OpenCV optical: x right, y down, z forward'
+SENSOR_FRAME_TEXT = ('lidars and radars: x forward, y left, z up (REP 103) at the optical centre; T_world_sensor maps '
+                     'sensor-frame points into this frame')
 PLATFORM = 'Jetson AGX Orin'
 AIM_LENGTH_M = 0.3
 
@@ -113,6 +115,19 @@ def safe_tags(variant: Variant) -> dict:
     return out
 
 
+def sensor_tags(variant: Variant) -> dict:
+    """uid -> file and frame safe tag of each lidar and radar, unique ignoring case and apart from the cameras'."""
+    out, used = {}, {t.lower() for t in safe_tags(variant).values()}
+    for s in variant.sensors:
+        base = _safe(s.tag)
+        t, k = base, 2
+        while t.lower() in used:
+            t, k = f'{base}_{k}', k + 1
+        used.add(t.lower())
+        out[s.uid] = t
+    return out
+
+
 def _view_cams(variant: Variant) -> list:
     return [c for c in variant.cameras if c.visible]
 
@@ -128,6 +143,14 @@ FORMATS: list[ExportFormat] = [
     ExportFormat('perception_range', 'Documents', 'Perception range', 'JSON, PNG',
                  lambda p, v: ['perception_range/perception_range.json', 'perception_range/perception_range.png'],
                  'binary', multi=True),
+    ExportFormat('sensor_coverage', 'Documents', 'Lidar and radar coverage', 'JSON, PNG',
+                 lambda p, v: ['sensor_coverage/sensor_coverage.json', 'sensor_coverage/sensor_coverage.png'],
+                 'binary', multi=True),
+    ExportFormat('sync_plan', 'Documents', 'Sync and timing plan', 'JSON, PNG',
+                 lambda p, v: ['sync_plan/sync_plan.json', 'sync_plan/sync_plan.png'], 'binary', multi=True),
+    ExportFormat('recording_budget', 'Documents', 'Recording budget', 'JSON, CSV',
+                 lambda p, v: ['recording_budget/recording_budget.json', 'recording_budget/recording_budget.csv'],
+                 'text', multi=True),
     ExportFormat('extrinsics_json', 'Extrinsics', 'Extrinsics', 'JSON', lambda p, v: 'extrinsics.json', 'text'),
     ExportFormat('extrinsics_yaml', 'Extrinsics', 'Extrinsics', 'YAML', lambda p, v: 'extrinsics.yaml', 'text'),
     ExportFormat('extrinsics_csv', 'Extrinsics', 'Extrinsics', 'CSV', lambda p, v: 'extrinsics.csv', 'text'),
@@ -141,7 +164,8 @@ FORMATS: list[ExportFormat] = [
                  lambda p, v: ['nuscenes/calibrated_sensor.json', 'nuscenes/sensor.json', 'nuscenes/README.md'], 'text',
                  multi=True),
     ExportFormat('kitti_calib', 'Datasets', 'KITTI calibration', 'TXT',
-                 lambda p, v: ['kitti/calib_cam_to_cam.txt', 'kitti/calib_cams_to_vehicle.txt', 'kitti/README.txt'],
+                 lambda p, v: ['kitti/calib_cam_to_cam.txt', 'kitti/calib_cams_to_vehicle.txt', 'kitti/README.txt']
+                 + (['kitti/calib_velo_to_cam.txt'] if v.cameras and any(s.kind == 'lidar' for s in v.sensors) else []),
                  'text', multi=True),
     ExportFormat('ros_camera_info', 'Datasets', 'ROS camera_info, per camera', 'YAML ×N',
                  lambda p, v: [f'camera_info/{t}.yaml' for t in safe_tags(v).values()], 'text', multi=True),
@@ -493,6 +517,53 @@ def _rig_doc(ctx: _Ctx) -> list:
     return out
 
 
+def _sensors(ctx: _Ctx) -> list:
+    """(safe tag, sensor, model) for the variant's lidars and radars."""
+    tags = sensor_tags(ctx.variant)
+    return [(tags[s.uid], s, ctx.project.sensor_model_for(s)) for s in ctx.variant.sensors]
+
+
+def _T_vehicle_sensor(ctx: _Ctx, s) -> np.ndarray:
+    """4x4 mapping points in the sensor's frame (x forward, y left, z up; REP 103) into the export frame, metres."""
+    from .sensors import rotation
+    T = np.eye(4)
+    T[:3, :3] = rotation(s)
+    T[:3, 3] = s.pos() - ctx.origin
+    return T
+
+
+def _sensor_field(ctx: _Ctx, m) -> dict:
+    if m.is_lidar:
+        lo, hi = m.v_fov()
+        d = {'scan': m.scan, 'channels': m.n_channels(), 'elevation_min': ctx.Ap(lo), 'elevation_max': ctx.Ap(hi),
+             'horizontal_fov': ctx.Ap(m.h_fov), 'azimuth_step': ctx.Ap(m.h_res), 'rate_hz': _fn(m.rate_hz, 3),
+             'range_10pct': ctx.L(m.range_m), 'range_min': ctx.L(m.range_min_m), 'points_per_s': int(m.pps())}
+        if m.spinning:
+            d['rotation'] = 'clockwise' if m.rotation == 'cw' else 'counter-clockwise'
+        if m.beams:
+            d['beam_elevations'] = [ctx.Ap(b) for b in m.elevations()]
+        return d
+    return {'zones': [{'range_car': ctx.L(r), 'azimuth_half': ctx.Ap(a), 'elevation_half': ctx.Ap(e)}
+                      for r, a, e in m.zones], 'rate_hz': _fn(m.rate_hz, 3), 'range_min': ctx.L(m.range_min_m)}
+
+
+def _sensors_doc(ctx: _Ctx) -> list:
+    out = []
+    for t, s, m in _sensors(ctx):
+        T = _T_vehicle_sensor(ctx, s)
+        rows = [[_fn(T[i, j], 6) for j in range(3)] + [ctx.L(T[i, 3])] for i in range(3)] + [[0, 0, 0, 1]]
+        d = {'tag': s.tag, 'frame': f'{t}_link', 'kind': s.kind, 'name': s.name, 'model': m.name, 'vendor': m.vendor,
+             'position': [ctx.L(s.x - ctx.origin[0]), ctx.L(s.y - ctx.origin[1]), ctx.L(s.z - ctx.origin[2])],
+             'yaw': ctx.Ap(s.yaw), 'pitch': ctx.Ap(s.pitch), 'roll': ctx.Ap(s.roll),
+             'field': _sensor_field(ctx, m), 'T_world_sensor': rows, 'visible': s.visible}
+        if m.spinning:
+            d['sync_phase'] = ctx.Ap(s.phase_deg)
+        if s.port:
+            d['port'] = s.port
+        out.append(d)
+    return out
+
+
 def _extrinsics_doc(ctx: _Ctx) -> dict:
     meas, spec = ctx.measured(), ctx.project.vehicle.spec or {}
 
@@ -532,6 +603,10 @@ def _extrinsics_doc(ctx: _Ctx) -> dict:
                     'wheelbase': dim('Wheelbase')},
         'cameras': cams,
     }
+    sensors = _sensors_doc(ctx)
+    if sensors:
+        doc['frame']['sensor_frame'] = SENSOR_FRAME_TEXT
+        doc['sensors'] = sensors    # lidars and radars: position of the optical centre, T_world_sensor its pose
     rig = _rig_doc(ctx)
     if rig:
         doc['rig'] = rig         # roof racks, masts, enclosures: centre in this frame, length along x, width along y
@@ -573,6 +648,10 @@ def _extrinsics_csv(ctx: _Ctx) -> str:
                     ctx.Aps(c.yaw), ctx.Aps(c.pitch), ctx.Aps(c.roll), cm.intr.width, cm.intr.height,
                     _fs(cm.fx, 4), _fs(cm.fy, 4), _fs(cm.cx, 4), _fs(cm.cy, 4)] + [repr(_sig(k)) for k in cm.k]
                    + [ctx.frame])
+    for _, s, m in _sensors(ctx):             # lidars and radars: the model in 'module', the kind in 'lens'
+        w.writerow([s.tag, s.name, s.port, m.name, s.kind,
+                    ctx.Ls(s.x - ctx.origin[0]), ctx.Ls(s.y - ctx.origin[1]), ctx.Ls(s.z - ctx.origin[2]),
+                    ctx.Aps(s.yaw), ctx.Aps(s.pitch), ctx.Aps(s.roll)] + [''] * 10 + [ctx.frame])
     return buf.getvalue()
 
 
@@ -675,6 +754,28 @@ def _urdf(ctx: _Ctx) -> str:
             f'    <origin xyz="0 0 0" rpy="{_fs(-math.pi / 2, 5)} 0 {_fs(-math.pi / 2, 5)}"/>',
             '  </joint>',
         ]
+    for t, s, m in _sensors(ctx):
+        from .sensors import body_box
+        _, half, _, rnd = body_box(s, m)
+        geom = (f'<cylinder radius="{_fs(half[0], 4)}" length="{_fs(2 * half[2], 4)}"/>' if rnd else
+                f'<box size="{_fs(2 * half[0], 4)} {_fs(2 * half[1], 4)} {_fs(2 * half[2], 4)}"/>')
+        off = f'0 0 {_fs(half[2] - m.optical_z_mm / 1000.0, 4)}'          # the housing centre above the optical centre
+        xyz = ' '.join(_fs(v, 3) for v in (s.x - o[0], s.y - o[1], s.z - o[2]))
+        rpy = ' '.join(_fs(math.radians(v), 5) for v in (s.roll, s.pitch, s.yaw))
+        L += [
+            '',
+            f'  <!-- {s.kind} {_xml_comment(s.tag)}: {_xml_comment((m.vendor + " " + m.name).strip())}; frame at the '
+            f'optical centre, x forward, y left, z up -->',
+            f'  <link name="{t}_link">',
+            f'    <visual><origin xyz="{off}" rpy="0 0 0"/><geometry>{geom}</geometry></visual>',
+            f'    <collision><origin xyz="{off}" rpy="0 0 0"/><geometry>{geom}</geometry></collision>',
+            '  </link>',
+            f'  <joint name="{t}_joint" type="fixed">',
+            '    <parent link="base_link"/>',
+            f'    <child link="{t}_link"/>',
+            f'    <origin xyz="{xyz}" rpy="{rpy}"/>',
+            '  </joint>',
+        ]
     for t, q in _rig_parts(ctx):
         geom = {'box': f'<box size="{_fs(q.length, 4)} {_fs(q.width, 4)} {_fs(q.height, 4)}"/>',
                 'cylinder': f'<cylinder radius="{_fs(q.radius, 4)}" length="{_fs(q.height, 4)}"/>',
@@ -738,6 +839,12 @@ def _launch(ctx: _Ctx) -> str:
         L.append(f'        _static_tf({node!r}, {xyz!r}, {qb!r}, {"base_link"!r}, {t + "_link"!r}),')
         L.append(f'        _static_tf({(node + "_optical")!r}, {("0", "0", "0")!r}, {qo!r}, '
                  f'{t + "_link"!r}, {t + "_optical_frame"!r}),')
+    for t, s, _ in _sensors(ctx):              # lidars and radars: x forward, y left, z up at the optical centre
+        T = _T_vehicle_sensor(ctx, s)
+        xyz = tuple(_fs(v, 3) for v in T[:3, 3])
+        qs = tuple(_fs(v, 6) for v in _quat(T[:3, :3]))
+        node = 'tf_' + re.sub(r'[^a-z0-9_]', '_', t.lower())
+        L.append(f'        _static_tf({node!r}, {xyz!r}, {qs!r}, {"base_link"!r}, {t + "_link"!r}),')
     L.append('    ])')
     return '\n'.join(L) + '\n'
 
@@ -809,6 +916,15 @@ def _nuscenes(ctx: _Ctx) -> list:
                 'source': 'unit_calibration' if cm.cam.calib else 'library_lens',
             },
         })
+    for t, s, m in _sensors(ctx):                 # lidars and radars: no intrinsics, as in nuScenes
+        st = _token('vantage', 'sensor', p.name, v.name, t)
+        sensors.append({'token': st, 'channel': f'{s.kind.upper()}_{t.upper()}', 'modality': s.kind})
+        T = _T_vehicle_sensor(ctx, s)
+        x, y, z, w = _quat(T[:3, :3])
+        cal.append({'token': _token('vantage', 'calibrated_sensor', p.name, v.name, t), 'sensor_token': st,
+                    'translation': [_r(q, 6) for q in T[:3, 3]],
+                    'rotation': [_r(w, 10), _r(x, 10), _r(y, 10), _r(z, 10)], 'camera_intrinsic': [],
+                    'vantage_sensor': {'tag': s.tag, 'model': f'{m.vendor} {m.name}'.strip(), 'kind': s.kind}})
     head = f'Vantage {p.name} / {v.name}, exported {ctx.stamp}'
     rah = ''
     wc = p.vehicle.wheel_centres or {}
@@ -818,13 +934,17 @@ def _nuscenes(ctx: _Ctx) -> list:
     readme = f"""# nuScenes calibration · {head}
 
 `sensor.json` and `calibrated_sensor.json` follow the nuScenes tables of the same names, one camera per row
-(channel `CAM_<TAG>`).
+(channel `CAM_<TAG>`), then the lidars and radars (channels `LIDAR_<TAG>`, `RADAR_<TAG>`; `camera_intrinsic` empty,
+as nuScenes has it for them).
 
 - **translation**: the camera's position in the ego frame, metres. Ego frame here: {_frame_sentence(ctx)}.
   nuScenes puts its ego frame at the rear axle with x forward, y left, z up, which is this export's default
   (rear-axle) frame.{rah}
 - **rotation**: quaternion `[w, x, y, z]` rotating the camera frame into the ego frame, as nuScenes does:
   `p_ego = R(rotation) · p_camera + translation`. The camera frame is the optical frame: x right, y down, z forward.
+  A lidar's or radar's frame is x forward, y left, z up at its optical centre (REP 103). Drivers differ (nuScenes'
+  own Velodyne frame has x to the right, an Ouster's lidar frame has x towards the connector): if your point clouds
+  are in the driver's frame, add the driver's fixed rotation.
 - **camera_intrinsic**: the 3×3 pinhole matrix. {DATASET_NOTE}
 - **vantage_distortion** (an extra field the nuScenes tools ignore): these are fisheye cameras, Kannala-Brandt
   (`cv2.fisheye`, k1..k4). nuScenes assumes pinhole images, so undistort the images with these coefficients and
@@ -871,6 +991,18 @@ def _kitti(ctx: _Ctx) -> list:
               f'S_rect_{n}: {_ke(size)}', f'R_rect_{n}: {_ke(np.eye(3))}',
               f'P_rect_{n}: {_ke(np.c_[K, np.zeros(3)])}']
         b.append(f'Tr_cam_{n}_to_vehicle: {_ke(T[:3, :4])}')
+    sens = _sensors(ctx)
+    for t, s, _ in sens:
+        b.append(f'Tr_{t}_to_vehicle: {_ke(_T_vehicle_sensor(ctx, s)[:3, :4])}')
+    lidars = [(t, s) for t, s, _ in sens if s.kind == 'lidar']
+    velo = None
+    if lidars and cams:
+        t, s = lidars[0]
+        rel = _T_inv(T0) @ _T_vehicle_sensor(ctx, s)          # lidar coordinates -> camera 00
+        velo = [f'calib_time: {when}', f'R: {_ke(rel[:3, :3])}', f'T: {_ke(rel[:3, 3])}',
+                f'delta_f: {_ke([0, 0])}', f'delta_c: {_ke([0, 0])}',
+                f'note: lidar {s.tag} ({t}_link: x forward, y left, z up) into camera 00 {cams[0].cam.tag} '
+                f'(x right, y down, z forward): X_cam = R X_lidar + T, metres']
     order = '\n'.join(f'  {i:02d}  {cm.cam.tag:<6} {cm.cam.location or cm.cam.name}' for i, cm in enumerate(cams))
     readme = f"""KITTI-style calibration · Vantage {ctx.project.name} / {ctx.variant.name}, exported {ctx.stamp}
 
@@ -888,11 +1020,17 @@ Cameras:
   misread them: undistort with cv2.fisheye first. A rectilinear lens has D = 0 and plumb_bob.
 - The images are not rectified: S_rect = S, R_rect = I, P_rect = [K | 0] (no stereo baseline term).
 - corner_dist is the floor calibration board's square ({square:.3f} m).
+- Lidars and radars: Tr_<tag>_to_vehicle in calib_cams_to_vehicle.txt maps the sensor's frame (x forward, y left,
+  z up at its optical centre) into the vehicle frame. With a lidar, calib_velo_to_cam.txt gives the first lidar's
+  frame in camera 00 (R, T as KITTI's velodyne-to-camera file).
 - The extra lines (camera_names, note, DISTORTION_MODEL) are not numbers, so KITTI readers such as pykitti skip them.
 """
-    return [('kitti/calib_cam_to_cam.txt', ('\n'.join(a) + '\n').encode('utf-8')),
-            ('kitti/calib_cams_to_vehicle.txt', ('\n'.join(b) + '\n').encode('utf-8')),
-            ('kitti/README.txt', readme.encode('utf-8'))]
+    out = [('kitti/calib_cam_to_cam.txt', ('\n'.join(a) + '\n').encode('utf-8')),
+           ('kitti/calib_cams_to_vehicle.txt', ('\n'.join(b) + '\n').encode('utf-8')),
+           ('kitti/README.txt', readme.encode('utf-8'))]
+    if velo:
+        out.append(('kitti/calib_velo_to_cam.txt', ('\n'.join(velo) + '\n').encode('utf-8')))
+    return out
 
 
 def _yaml_mat(name: str, M) -> str:
@@ -1495,6 +1633,17 @@ def _report_html(ctx: _Ctx, qt: bool = False, img_src: Callable | None = None) -
                     f'⌀{_fs(2 * r["radius"], ctx.pdp)} × {_fs(r.get("height", r.get("length")), ctx.pdp)}')
             w(f'<tr><td>{E(r["name"])}</td><td>{E(r["kind"])}</td>' + ''.join(num(_fs(v, ctx.pdp)) for v in r['centre'])
               + num(size) + f'<td>{"yes" if r["occludes"] else "no"}</td><td>{"yes" if r["mountable"] else "no"}</td></tr>\n')
+        w(tbl_end)
+    sens = _sensors(ctx)
+    if sens:
+        w('<h3>Lidars and radars</h3>\n' if not qt else
+          '<p style="margin-top:10px; font-weight:600">Lidars and radars</p>\n')
+        w(table([('Tag', False), ('Kind', False), ('Model', False), (f'X ({u})', True), (f'Y ({u})', True),
+                 (f'Z ({u})', True), ('Yaw', True), ('Pitch', True), ('Field', False)]))
+        for _, s, m in sens:
+            w(f'<tr><td>{E(s.tag)}</td><td>{E(s.kind)}</td><td>{E((m.vendor + " " + m.name).strip())}</td>'
+              + ''.join(num(_fs(ctx.L(v - o), ctx.pdp)) for v, o in zip((s.x, s.y, s.z), ctx.origin))
+              + num(f'{s.yaw:.1f}°') + num(f'{s.pitch:.1f}°') + f'<td>{E(m.summary())}</td></tr>\n')
         w(tbl_end)
 
     # ---------------------------------------------------------------- per-camera coverage
@@ -2255,6 +2404,13 @@ def _render(fmt_id: str, ctx: _Ctx) -> list:
         return [(f'stitched_objects/{n}', d) for n, d in _stitched(ctx)]
     if fmt_id == 'perception_range':
         return [(f'perception_range/{n}', d) for n, d in _perception(ctx)]
+    if fmt_id == 'sensor_coverage':
+        return [(f'sensor_coverage/{n}', d) for n, d in _sensor_coverage(ctx)]
+    if fmt_id == 'sync_plan':
+        return [(f'sync_plan/{n}', d) for n, d in _sync_plan(ctx)]
+    if fmt_id == 'recording_budget':
+        from . import recording as RB
+        return [(f'recording_budget/{n}', d) for n, d in RB.files(RB.budget(ctx.project, ctx.variant), ctx.project)]
     if fmt_id == 'dxf':
         return [(name(), _dxf(ctx).encode('cp1252', errors='replace'))]
     if fmt_id == 'step':
@@ -2415,6 +2571,47 @@ def _perception(ctx: _Ctx):
     return ctx.meta['perception']
 
 
+def sensor_coverage_doc(ctx: _Ctx, res=None) -> dict:
+    """The lidar and radar coverage of the export's variant as JSON, in the export frame, units and angles."""
+    from . import sensor_coverage as SC
+    from .analysis import Engine
+    res = res or SC.run(ctx.project, ctx.opts.engine or Engine(), ctx.variant)
+    doc = SC.to_doc(res, ctx.project, L=ctx.L, A=ctx.Ap, origin=ctx.origin)
+    head = {'project': ctx.project.name, 'variant': ctx.variant.name, 'created': ctx.stamp, 'frame': ctx.frame,
+            'units': ctx.units, 'angles': ctx.angles}
+    return {'schema': doc.pop('schema'), **head, **{k: v for k, v in doc.items() if k not in ('project', 'variant')}}
+
+
+def _sensor_coverage(ctx: _Ctx):
+    """sensor_coverage.json (lidar, radar and camera ranges per object and direction, sector verdicts, what the
+    vehicle blocks, camera-lidar overlap, ground density) and the plan PNG."""
+    if 'sensor_coverage' in ctx.meta:
+        return ctx.meta['sensor_coverage']
+    from . import sensor_coverage as SC
+    from .analysis import Engine
+    res = SC.run(ctx.project, ctx.opts.engine or Engine(), ctx.variant)
+    ctx.meta['sensor_coverage'] = [('sensor_coverage.json', _json(sensor_coverage_doc(ctx, res)).encode('utf-8')),
+                                   ('sensor_coverage.png', SC.png(res))]
+    return ctx.meta['sensor_coverage']
+
+
+def sync_plan_doc(ctx: _Ctx, res=None) -> dict:
+    """The sync and timing plan of the export's variant as JSON, in the export frame, units and angles."""
+    from . import timing as TM
+    res = res or TM.plan(ctx.project, ctx.variant)
+    doc = TM.to_doc(res, ctx.project, L=ctx.L, A=ctx.Ap, origin=ctx.origin)
+    head = {'project': ctx.project.name, 'variant': ctx.variant.name, 'created': ctx.stamp, 'frame': ctx.frame,
+            'units': ctx.units, 'angles': ctx.angles}
+    return {'schema': doc.pop('schema'), **head, **{k: v for k, v in doc.items() if k not in ('project', 'variant')}}
+
+
+def _sync_plan(ctx: _Ctx):
+    """sync_plan.json (trigger offsets against the lidar sweep, groups, motion blur) and the dial PNG."""
+    from . import timing as TM
+    res = TM.plan(ctx.project, ctx.variant)
+    return [('sync_plan.json', _json(sync_plan_doc(ctx, res)).encode('utf-8')), ('sync_plan.png', TM.png(res))]
+
+
 def _lut(ctx: _Ctx):
     if ctx.opts.lut is not None:
         return ctx.opts.lut
@@ -2534,6 +2731,20 @@ def preview(fmt_id: str, project: Project, result, opts: ExportOptions) -> tuple
                 f'{len(doc["classes"])} objects × {len(doc["azimuth"])} directions · {passed} of {checks} sector checks '
                 f'pass · {len(doc["stereo"]["pairs"])} overlapping camera pairs · {_size_text(total)}\n\n'
                 f'(the per-direction ranges are left out of this preview)\n' + _json(head), total)
+    if fmt_id == 'sensor_coverage':
+        files = _render(fmt_id, ctx)
+        total = sum(len(d) for _, d in files)
+        doc = json.loads(dict(files)['sensor_coverage/sensor_coverage.json'])
+        head = {k: v for k, v in doc.items() if k not in ('azimuth', 'per_class', 'ground_density', 'lidars', 'radars',
+                                                          'ground_blind_from_body')}
+        verdicts = [c['verdict'] for s in doc['sectors'] for c in s['classes'].values()] \
+            if doc.get('sectors') and isinstance(doc['sectors'][0].get('classes'), dict) else []
+        counts = ', '.join(f'{verdicts.count(v)} {v}' for v in ('redundant', 'single', 'gap')) if verdicts else ''
+        return (f'{base}/sensor_coverage/sensor_coverage.json',
+                f'{len(doc.get("lidars", []))} lidars, {len(doc.get("radars", []))} radars'
+                + (f' · sector checks: {counts}' if counts else '') + f' · {_size_text(total)}\n\n'
+                f'(the per-direction ranges, per-lidar figures and the ground density are left out of this preview)\n'
+                + _json(head), total)
     if fmt_id == 'bev_lut':
         if ctx.result is None and ctx.opts.lut is None:
             return first, 'Not available: the remap tables need an analysis result.', 0
@@ -2584,6 +2795,8 @@ def export(fmt_ids, project: Project, result, opts: ExportOptions, progress=None
             _stitched(ctx)
         elif fid == 'perception_range':
             _perception(ctx)
+        elif fid == 'sensor_coverage':
+            _sensor_coverage(ctx)
     written = []
     for i, fid in enumerate(ids):
         for rel, data in _render(fid, ctx):

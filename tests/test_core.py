@@ -116,7 +116,8 @@ def test_rules(sample):
     assert all(not m.floating for m in mounts.values())
     assert all(m.zone_kind == 'allowed' for m in mounts.values())
     issues = collect_issues(p, r, e.vg, mounts)
-    assert [i.severity for i in issues] == ['critical']
+    assert [i.severity for i in issues] == ['critical', 'warning']
+    assert 'disk set holds' in issues[1].message          # six raw cameras fill 8 TB within the shift
     c = p.variant.by_tag('F')
     c.cable_m = 1.0
     issues = collect_issues(p, r, e.vg, mounts)

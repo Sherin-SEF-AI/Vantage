@@ -14,6 +14,7 @@ import numpy as np
 
 from .lens import Module, Lens, builtin_modules, builtin_lenses
 from .mesh import Mesh, Part, Zone
+from .sensors import SensorModel, builtin_sensor_models
 from . import credentials as _credentials
 
 FORMAT_VERSION = 1
@@ -72,6 +73,47 @@ class Camera:
         return Camera(**{k: v for k, v in d.items() if k in known})
 
 
+@dataclass
+class Sensor:
+    """A lidar or radar of the rig, in the vehicle frame (core.sensors has the conventions). The position is its optical
+    centre; yaw/pitch/roll as a camera's, pitch positive down."""
+    uid: str = field(default_factory=new_uid)
+    tag: str = 'L1'
+    name: str = 'Lidar'
+    kind: str = 'lidar'                # lidar | radar
+    model_id: str = 'ouster_os1_128'
+    x: float = 1.5
+    y: float = 0.0
+    z: float = 1.6
+    yaw: float = 0.0
+    pitch: float = 0.0
+    roll: float = 0.0
+    phase_deg: float = 0.0             # spinning lidar: sensor-frame azimuth it faces at the top of each sync period
+    port: str = ''                     # network port or link on the recorder
+    visible: bool = True
+    locked: bool = False
+
+    def pos(self):
+        return np.array([self.x, self.y, self.z])
+
+    def to_dict(self):
+        return asdict(self)
+
+    @staticmethod
+    def from_dict(d):
+        known = Sensor.__dataclass_fields__.keys()
+        s = Sensor(**{k: v for k, v in d.items() if k in known})
+        s.kind = s.kind if s.kind in ('lidar', 'radar') else 'lidar'
+        for k in ('x', 'y', 'z', 'yaw', 'pitch', 'roll', 'phase_deg'):
+            try:
+                v = float(getattr(s, k))
+            except (TypeError, ValueError):
+                v = float('nan')
+            setattr(s, k, v if math.isfinite(v) else getattr(Sensor(), k))
+        s.phase_deg %= 360.0
+        return s
+
+
 def mirror_props(src: Camera, dst: Camera, keys):
     for k in keys:
         if k == 'y':
@@ -80,7 +122,8 @@ def mirror_props(src: Camera, dst: Camera, keys):
             dst.yaw = -src.yaw
         elif k == 'roll':
             dst.roll = -src.roll
-        elif k in ('x', 'z', 'pitch', 'module_id', 'lens_id', 'standoff_mm', 'bracket', 'snap_normal', 'cable_m', 'sync'):
+        elif k in ('x', 'z', 'pitch', 'module_id', 'lens_id', 'standoff_mm', 'bracket', 'snap_normal', 'cable_m'):
+            # not the trigger line ('sync'): partners on opposite sides are swept at different times
             setattr(dst, k, getattr(src, k))
 
 
@@ -90,6 +133,7 @@ class Variant:
     name: str = 'Variant'
     note: str = ''
     cameras: list = field(default_factory=list)
+    sensors: list = field(default_factory=list)     # lidars and radars (Sensor)
     seams: dict = field(default_factory=dict)       # 'uidA|uidB' -> angle deg (manual)
     blend_m: float = 0.20
     created: float = field(default_factory=time.time)
@@ -106,6 +150,16 @@ class Variant:
                 return c
         return None
 
+    def sensor(self, uid):
+        for s in self.sensors:
+            if s.uid == uid:
+                return s
+        return None
+
+    def tags(self) -> set:
+        """Every tag in use, cameras and sensors."""
+        return {c.tag for c in self.cameras} | {s.tag for s in self.sensors}
+
     def free_slot(self):
         used = {c.slot for c in self.cameras}
         for i in range(MAX_CAMERAS):
@@ -115,12 +169,14 @@ class Variant:
 
     def to_dict(self):
         return {'uid': self.uid, 'name': self.name, 'note': self.note, 'cameras': [c.to_dict() for c in self.cameras],
+                'sensors': [s.to_dict() for s in self.sensors],
                 'seams': dict(self.seams), 'blend_m': self.blend_m, 'created': self.created}
 
     @staticmethod
     def from_dict(d):
         v = Variant(uid=d.get('uid', new_uid()), name=d.get('name', 'Variant'), note=d.get('note', ''),
-                    cameras=[Camera.from_dict(c) for c in d.get('cameras', [])], seams=dict(d.get('seams', {})),
+                    cameras=[Camera.from_dict(c) for c in d.get('cameras', [])],
+                    sensors=[Sensor.from_dict(x) for x in d.get('sensors', [])], seams=dict(d.get('seams', {})),
                     blend_m=float(d.get('blend_m', 0.2)), created=float(d.get('created', time.time())))
         return v
 
@@ -259,6 +315,9 @@ class AnalysisSettings:
     stitched: dict = field(default_factory=dict)      # standing objects in the stitched view (core.stitched_objects.Settings)
     assistant: dict = field(default_factory=dict)     # the assistant's project brief: {'brief': text}
     perception: dict = field(default_factory=dict)    # perception range study (core.perception.PerceptionSettings)
+    sensor_coverage: dict = field(default_factory=dict)   # lidar and radar coverage (core.sensor_coverage)
+    timing: dict = field(default_factory=dict)        # sync and timing plan (core.timing)
+    recording: dict = field(default_factory=dict)     # recording budget (core.recording)
 
     def to_dict(self):
         return asdict(self)
@@ -393,6 +452,7 @@ class Project:
         self.vehicle = Vehicle()
         self.modules: dict[str, Module] = {m.id: m for m in builtin_modules()}
         self.lenses: dict[str, Lens] = {l.id: l for l in builtin_lenses()}
+        self.sensor_models: dict[str, SensorModel] = {m.id: m for m in builtin_sensor_models()}
         self.variants: list[Variant] = []
         self.active_uid = ''
         self.roi = ROI()
@@ -421,7 +481,7 @@ class Project:
             setattr(q.vehicle, k, copy.deepcopy(getattr(self.vehicle, k)))
         q.variants = [Variant.from_dict(v.to_dict()) for v in self.variants]
         for k in ('roi', 'analysis', 'targets', 'target_settings', 'obstacles', 'rig', 'ecu', 'lenses', 'modules',
-                  'custom_origin', 'streams'):
+                  'sensor_models', 'custom_origin', 'streams'):
             setattr(q, k, copy.deepcopy(getattr(self, k)))
         q.photos = self.photos
         q.log = []
@@ -459,6 +519,15 @@ class Project:
 
     def nominal_lens_for(self, cam: Camera) -> Lens:
         return self.lenses.get(cam.lens_id) or next(iter(self.lenses.values()))
+
+    def sensor_model_for(self, s: Sensor) -> SensorModel:
+        """The sensor's library model; a missing one falls back to the first of the same kind."""
+        kind = s.kind if s.kind in ('lidar', 'radar') else 'lidar'
+        m = self.sensor_models.get(s.model_id)
+        if m is not None and m.kind == kind:
+            return m
+        return next((m for m in self.sensor_models.values() if m.kind == kind), None) or \
+            next(m for m in builtin_sensor_models() if m.kind == kind)
 
     def add_log(self, kind, text):
         self.log.append(LogEntry(time.time(), kind, text))
@@ -511,7 +580,8 @@ class Project:
             return self.ecu.to_dict()
         if key == 'library':
             return {'modules': {k: m.to_dict() for k, m in self.modules.items()},
-                    'lenses': {k: l.to_dict() for k, l in self.lenses.items()}}
+                    'lenses': {k: l.to_dict() for k, l in self.lenses.items()},
+                    'sensors': {k: m.to_dict() for k, m in self.sensor_models.items()}}
         if key == 'frame':
             return {'frame': self.frame, 'custom': list(self.custom_origin), 'units': self.units}
         if key == 'name':
@@ -553,6 +623,8 @@ class Project:
         elif key == 'library':
             self.modules = {k: Module.from_dict(m) for k, m in state['modules'].items()}
             self.lenses = {k: Lens.from_dict(l) for k, l in state['lenses'].items()}
+            if 'sensors' in state:
+                self.sensor_models = {k: SensorModel.from_dict(m) for k, m in state['sensors'].items()}
         elif key == 'frame':
             self.frame, self.custom_origin, self.units = state['frame'], list(state['custom']), state['units']
         elif key == 'name':
@@ -585,6 +657,7 @@ class Project:
             'saved_at': time.time(), 'vehicle': {k: v for k, v in self.vehicle.meta().items() if k != 'face_zone'},
             'modules': {k: m.to_dict() for k, m in self.modules.items()},
             'lenses': {k: l.to_dict() for k, l in self.lenses.items()},
+            'sensor_models': {k: m.to_dict() for k, m in self.sensor_models.items()},
             'variants': [v.to_dict() for v in self.variants], 'active': self.active_uid,
             'roi': self.roi.to_dict(), 'analysis': self.analysis.to_dict(),
             'targets': [t.to_dict() for t in self.targets], 'target_settings': self.target_settings.to_dict(),
@@ -654,6 +727,8 @@ class Project:
         p.vehicle = veh
         p.modules = {k: Module.from_dict(m) for k, m in data.get('modules', {}).items()} or p.modules
         p.lenses = {k: Lens.from_dict(l) for k, l in data.get('lenses', {}).items()} or p.lenses
+        # the built-in sensors stay available in older projects; a saved model (edited or custom) wins
+        p.sensor_models.update({k: SensorModel.from_dict(m) for k, m in (data.get('sensor_models') or {}).items()})
         p.variants = [Variant.from_dict(v) for v in data.get('variants', [])]
         p.active_uid = data.get('active', p.variants[0].uid if p.variants else '')
         p.roi = ROI.from_dict(data.get('roi', {}))

@@ -97,7 +97,8 @@ def expand_slash(text: str):
 PAGES = {'viewports': '3D and top views', 'camviews': 'Camera views', 'tolerance': 'Tolerance study',
          'optimiser': 'Optimiser', 'compare': 'Compare variants', 'photo': 'Photo matching', 'targets': 'Targets',
          'install': 'Installation check', 'volume': 'Blind volume', 'perception': 'Perception range',
-         'rig': 'Live rig'}
+         'rig': 'Live rig', 'coverage': 'Lidar and radar coverage', 'timing': 'Sync and timing',
+         'recording': 'Recording budget'}
 
 
 # ============================================================================================ controller

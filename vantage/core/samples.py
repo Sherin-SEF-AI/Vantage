@@ -8,7 +8,7 @@ import numpy as np
 
 from .bodygen import build_body, tigor_spec, template_specs, BodySpec
 from .mathutil import look_rotation, euler_zyx
-from .project import (Project, Vehicle, Variant, Camera, Target, Obstacle, PhotoSet, PhotoFrame, new_uid)
+from .project import (Project, Vehicle, Variant, Camera, Target, Obstacle, PhotoSet, PhotoFrame, Sensor, new_uid)
 
 TAGS_6 = [('F', 'Front'), ('R', 'Rear'), ('ML', 'Mirror left'), ('MR', 'Mirror right'),
           ('QL', 'Quarter left'), ('QR', 'Quarter right')]
@@ -110,7 +110,33 @@ def tigor_variants(mesh) -> list[Variant]:
                   cam('FL', 'Front left', 'Front bumper, left corner', 3.235, 0.718, 0.620, 45.0, 40.0, 4, 5),
                   cam('FR', 'Front right', 'Front bumper, right corner', 3.235, -0.718, 0.620, -45.0, 40.0, 5, 6)]
     link_pairs(fh)
-    return [v3, four, off, fh]
+    rig = Variant(name='Data rig · 6-cam + lidar + radars',
+                  note='Collection rig: the v3 cameras, a 128-channel lidar on the roof and five radars.')
+    rig.cameras = [Camera.from_dict(dict(c.to_dict(), uid=new_uid(), link_uid='')) for c in v3.cameras]
+    link_pairs(rig)
+    rig.sensors = data_rig_sensors(mesh)
+    return [v3, four, off, fh, rig]
+
+
+def data_rig_sensors(mesh) -> list[Sensor]:
+    """A roof lidar (Ouster OS1-128), a long-range radar in the front bumper and a corner radar at each bumper corner,
+    placed on the body's surface (the radars just behind the fascia)."""
+    from .sensors import builtin_sensor_models, default_pose
+    models = {m.id: m for m in builtin_sensor_models()}
+    out = [Sensor(tag='L1', name='Roof lidar', kind='lidar', model_id='ouster_os1_128',
+                  **default_pose('lidar', models['ouster_os1_128'], mesh))]
+    front = default_pose('radar', models['radar_long'], mesh)
+    out.append(Sensor(tag='RD1', name='Front radar', kind='radar', model_id='radar_long', **front))
+    lo, hi = mesh.bbox
+    for i, (name, x, side, yaw) in enumerate((('Front left corner', hi[0] - 0.25, 1, 45.0),
+                                               ('Front right corner', hi[0] - 0.25, -1, -45.0),
+                                               ('Rear left corner', lo[0] + 0.25, 1, 135.0),
+                                               ('Rear right corner', lo[0] + 0.25, -1, -135.0))):
+        d = np.array([math.cos(math.radians(yaw)), math.sin(math.radians(yaw)), 0.0])
+        p, _ = snap_point(mesh, np.array([x, side * (hi[1] - 0.2), 0.5]), d, -0.01)
+        out.append(Sensor(tag=f'RD{i + 2}', name=f'{name} radar', kind='radar', model_id='radar_corner',
+                          x=round(float(p[0]), 3), y=round(float(p[1]), 3), z=0.5, yaw=yaw))
+    return out
 
 
 def tigor_photos(mesh) -> PhotoSet:

@@ -108,7 +108,7 @@ class Outliner(QTreeWidget):
         self.itemChanged.connect(self._on_rename)
         self._block = False
         self.expanded_state = {'vehicle': True, 'cameras': True, 'compute': True, 'targets': False, 'analysis': True,
-                               'obstacles': False, 'ports': False, 'rig': True}
+                               'obstacles': False, 'ports': False, 'rig': True, 'sensors': True}
         st = ctx.store
         st.changed.connect(lambda *_: self.rebuild())
         st.project_replaced.connect(self.rebuild)
@@ -190,6 +190,13 @@ class Outliner(QTreeWidget):
             for q in p.rig:
                 self._item(rg, q.name, 'rig', q.uid, 'cylinder' if q.kind == 'cylinder' else 'cube',
                            q.kind if q.occludes else f'{q.kind} · see-through', flags={'hidden': not q.visible})
+        if v.sensors:
+            sg = self._item(self, f'Lidars and radars ({len(v.sensors)})', 'group', 'sensors', 'sensor', v.name)
+            for q in v.sensors:
+                m = p.sensor_model_for(q)
+                it = self._item(sg, f'{q.tag} · {q.name}', 'sensor', q.uid, 'sensor', m.name,
+                                sev_by_uid.get(q.uid), {'hidden': not q.visible, 'locked': q.locked})
+                it.setToolTip(0, m.summary())
         cg = self._item(self, f'Cameras ({len(v.cameras)})', 'group', 'cameras', 'camera-wide', v.name)
         for c in v.cameras:
             it = self._item(cg, c.name, 'camera', c.uid, (c.slot, c.tag), f'port {c.port}' if c.port else 'no port',
@@ -268,13 +275,16 @@ class Outliner(QTreeWidget):
             st.select_obj(('obstacle', ident))
         elif k == 'rig':
             st.select_obj(('rig', ident))
+        elif k == 'sensor':
+            st.select_obj(('sensor', ident))
         elif k == 'roi':
             st.select_obj(('roi',))
         elif k == 'ecu':
             st.select_obj(('ecu',))
         elif k == 'group':
             st.select_obj({'cameras': ('variant',), 'targets': ('targets',), 'compute': ('ecu',),
-                           'vehicle': ('vehicle',), 'analysis': ('roi',), 'rig': ('rig',)}.get(ident, ()))
+                           'vehicle': ('vehicle',), 'analysis': ('roi',), 'rig': ('rig',),
+                           'sensors': ('sensors',)}.get(ident, ()))
         elif k == 'group2':
             st.select_obj(('obstacles',))
 
@@ -295,6 +305,10 @@ class Outliner(QTreeWidget):
             if c:
                 ops.set_visible(self.ctx, [uid], not c.visible)
             return
+        if it is not None and e.position().x() < GUTTER and it.data(0, ROLE_KIND) == 'sensor':
+            from .sensorview import set_visible as sensor_visible
+            sensor_visible(self.ctx, it.data(0, ROLE_ID), bool((it.data(0, ROLE_FLAGS) or {}).get('hidden')))
+            return
         if it is not None and e.position().x() < GUTTER and it.data(0, ROLE_KIND) == 'rig':
             from .rigview import set_visible
             set_visible(self.ctx, it.data(0, ROLE_ID), bool((it.data(0, ROLE_FLAGS) or {}).get('hidden')))
@@ -311,6 +325,11 @@ class Outliner(QTreeWidget):
             ops.delete_cameras(self.ctx, list(self.ctx.store.sel_cams))
             return
         if e.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            sens = [it.data(0, ROLE_ID) for it in self.selectedItems() if it.data(0, ROLE_KIND) == 'sensor']
+            if sens:
+                from .sensorview import delete_sensors
+                delete_sensors(self.ctx, sens)
+                return
             rig = [it.data(0, ROLE_ID) for it in self.selectedItems() if it.data(0, ROLE_KIND) == 'rig']
             if rig:
                 from .rigview import delete_parts
@@ -355,6 +374,10 @@ def _obj_match(obj, kind, ident):
         return kind == obj[0] and ident == obj[1]
     if obj[0] == 'rig':
         return (kind == 'rig' and ident == obj[1]) if len(obj) > 1 else (kind == 'group' and ident == 'rig')
+    if obj[0] == 'sensor':
+        return kind == 'sensor' and ident == obj[1]
+    if obj[0] == 'sensors':
+        return kind == 'group' and ident == 'sensors'
     if obj[0] == 'roi':
         return kind == 'roi'
     if obj[0] in ('vehicle', 'wheels', 'zones', 'photos'):

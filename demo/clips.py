@@ -545,6 +545,123 @@ class Stage:
         self.orbit(r, self.vp, -50, 3.5, d_el=-4)
         r.hold(0.6)
 
+    def sensors(self, r):
+        """Lidars and radars: a lidar on the sensor mast with its ground rings, radars with their fields."""
+        from vantage.core.samples import data_rig_sensors
+        from vantage.ui.sensorview import add_sensor, set_props
+        w = self.window()
+        r.win = w
+        st = w.store
+        r.chapter('Sensors', 'Lidars and radars on the rig')
+        r.menu('Vehicle', 'Add rig part', 'Sensor mast')
+        self.settle(3)
+        r.menu('Vehicle', 'Add lidar', 'Ouster OS1-128')
+        self.settle(3)
+        r.menu('Vehicle', 'Add radar', 'Long-range radar')
+        self.settle(2)
+        for s in data_rig_sensors(st.project.vehicle.mesh)[2:]:          # the four corner radars
+            q = add_sensor(w.ctx, 'radar', 'radar_corner')
+            set_props(w.ctx, q.uid, f'Placed {q.tag}', x=s.x, y=s.y, z=s.z, yaw=s.yaw)
+        lid = next(s for s in st.variant.sensors if s.kind == 'lidar')
+        st.select_obj(('sensor', lid.uid))
+        self.settle(3)
+        r.cursor_on = False
+        self.orbit(r, self.vp, 70, 4.5, d_el=8)
+        r.hold(0.4)
+        w.set_view('top')
+        self.settle(2)
+        plan = w.viewarea.panes[0].plan
+        s0 = plan.scale
+        n = round(2.4 * self.fps)
+        for k in range(1, n + 1):                         # zoom out to the rings and the radar fields
+            plan.scale = s0 * (1 - 0.72 * ease(k / n))
+            plan._user_view = True
+            plan.update()
+            r.tick()
+        r.hold(2.0)
+        w.set_view('persp')
+        r.hold(0.5)
+
+    def _rig_window(self):
+        """The sample with its data-rig variant (six cameras, a roof lidar, five radars) active."""
+        def edit(p):
+            p.active_uid = next(v.uid for v in p.variants if v.sensors)
+        return self.window(edit)
+
+    def sensorcoverage(self, r):
+        """Lidar and radar coverage: what the roof blocks, the sector verdicts, then the lidar raised on a riser."""
+        w = self._rig_window()
+        r.win = w
+        st = w.store
+        r.chapter('Coverage', 'What the lidars and radars add to the cameras')
+        r.menu('Analysis', 'Lidar and radar coverage')
+        pg = w.page('coverage')
+        r.wait_for(lambda: pg.ctl.result is not None, timeout=60)
+        r.hold(2.0)
+        r.click(pg.reach.buttons['60'] if '60' in pg.reach.buttons else next(iter(pg.reach.buttons.values())))
+        r.hold(1.4)
+        r.click(pg.layer.buttons['rings'])
+        r.hold(1.8)
+        r.zoom(r.wrect(pg.lidars), 0.9, margin=60)
+        r.hold(2.0)
+        r.zoom(None, 0.6)
+        lid = next(s for s in st.variant.sensors if s.kind == 'lidar')
+        from vantage.ui.sensorview import set_props
+        before = pg.ctl.result
+        set_props(w.ctx, lid.uid, f'Raised {lid.tag} 0.6 m', z=round(lid.z + 0.6, 3))
+        r.wait_for(lambda: pg.ctl.result is not None and pg.ctl.result is not before, timeout=60)
+        r.hold(2.4)
+        r.click(pg.layer.buttons['density'])
+        r.hold(2.0)
+        r.zoom(r.wrect(pg.grid), 0.9, margin=60)
+        r.hold(1.8)
+        r.zoom(None, 0.6)
+        r.hold(0.4)
+
+    def timing(self, r):
+        """Sync and timing: camera triggers against the lidar sweep, then the suggested trigger lines."""
+        w = self._rig_window()
+        r.win = w
+        r.chapter('Sync', 'Camera triggers against the lidar sweep')
+        r.menu('Analysis', 'Sync and timing')
+        pg = w.page('timing')
+        self.settle(2)
+        r.hold(2.0)
+        right = r.wrect(pg.table)
+        r.zoom(QRectF(right.x() - 8, right.y() - 30, right.width() + 16, right.height() * 0.42), 0.9)
+        r.hold(1.6)
+        r.zoom(None, 0.6)
+        r.click(pg.b_suggest)
+        r.hold(1.8)
+        r.click(pg.b_apply)
+        self.settle(2)
+        r.hold(2.4)
+        r.zoom(r.wrect(pg.dial), 0.9)
+        r.hold(1.6)
+        r.zoom(None, 0.6)
+        r.hold(0.4)
+
+    def recording(self, r):
+        """Recording budget: every sensor's data rate, the recorder's disks and the links, raw against H.265."""
+        w = self._rig_window()
+        r.win = w
+        r.chapter('Recording', 'How much the rig records, and whether the recorder keeps up')
+        r.menu('Analysis', 'Recording budget')
+        pg = w.page('recording')
+        self.settle(2)
+        r.hold(2.2)
+        r.click(pg.cam_fmt.buttons['h265'])
+        self.settle(1)
+        r.hold(2.2)
+        r.click(pg.cam_fmt.buttons['raw'])
+        self.settle(1)
+        r.hold(1.2)
+        top = r.wrect(pg)
+        r.zoom(QRectF(top.x() + top.width() * 0.2, top.y(), top.width() * 0.8, top.height() * 0.62), 0.9)
+        r.hold(2.0)
+        r.zoom(None, 0.6)
+        r.hold(0.4)
+
     def liverig(self, r):
         """Live rig health: every camera's stream with frame rate, drops, exposure, sharpness and drift."""
         w = self.window()
@@ -593,7 +710,8 @@ class Stage:
 
 
 CLIPS = ['hero', 'coverage', 'placement', 'camlight', 'bowl', 'guidelines', 'stitched', 'volume', 'install',
-         'tolerance', 'assistant', 'perception', 'rig', 'liverig', 'datasets']
+         'tolerance', 'assistant', 'perception', 'rig', 'liverig', 'datasets', 'sensors', 'sensorcoverage', 'timing',
+         'recording']
 POSTER_AT = {'hero': 2.0}
 
 

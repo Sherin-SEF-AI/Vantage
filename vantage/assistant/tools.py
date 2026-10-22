@@ -199,6 +199,7 @@ def get_overview(tc, **_):
                   _r(q.height if q.kind == 'cylinder' else q.length)},
                  'yaw': _r(q.yaw, 1), 'occludes': q.occludes, 'mountable': q.mountable, 'visible': q.visible}
                 for q in getattr(p, 'rig', ())],
+        'sensors': [_sensor_row(p, s) for s in p.variant.sensors],
         'roi': {'mode': p.roi.mode, 'distance_m': _r(p.roi.distance), 'measured_from': p.roi.measured_from},
         'analysis': {'ground_cell_m': _r(a.cell_m), 'min_density_px_cm': _r(a.min_density, 2),
                      'target_density_px_cm': _r(a.target_density, 2), 'evaluated_at': a.obstacle_mode,
@@ -206,6 +207,24 @@ def get_overview(tc, **_):
         'selected_cameras': tc.selection, 'open_page': tc.page,
         'frame': 'ISO 8855: x forward, y left, z up; origin rear-axle centre on the ground; yaw + left, pitch + down',
     }
+
+
+def _sensor_row(p, s) -> dict:
+    """A lidar or radar for the model: pose, product and field (no network addresses)."""
+    m = p.sensor_model_for(s)
+    d = {'tag': s.tag, 'kind': s.kind, 'model': f'{m.vendor} {m.name}'.strip(), 'visible': s.visible,
+         'x': _r(s.x), 'y': _r(s.y), 'z': _r(s.z), 'yaw': _r(s.yaw, 1), 'pitch': _r(s.pitch, 1), 'roll': _r(s.roll, 1)}
+    if m.is_lidar:
+        lo, hi = m.v_fov()
+        d.update(channels=m.n_channels(), elevation_deg=[_r(lo, 2), _r(hi, 2)], horizontal_fov_deg=_r(m.h_fov, 1),
+                 azimuth_step_deg=_r(m.h_res, 4), rate_hz=_r(m.rate_hz, 2), range_10pct_m=_r(m.range_m, 1),
+                 points_per_s=int(m.pps()), scan=m.scan)
+        if m.spinning:
+            d.update(rotation=m.rotation, sync_phase_deg=_r(s.phase_deg, 1))
+    else:
+        d['zones'] = [{'range_car_m': _r(r, 1), 'azimuth_half_deg': _r(a, 1), 'elevation_half_deg': _r(e, 1)}
+                      for r, a, e in m.zones]
+    return d
 
 
 def get_coverage(tc, **_):
@@ -488,6 +507,25 @@ def get_rig_health(tc, **_):
 
 
 # =========================================================================== changes
+def get_sync_plan(tc, **_):
+    from ..core import timing as TM
+    return {**TM.summary(TM.plan(tc.project)),
+            'meaning': 'times in ms after the reference spinning lidar\'s sync pulse: when its sweep crosses each '
+                       'camera\'s view, the trigger that centres the middle row\'s exposure on it, the misalignment of '
+                       'each camera\'s trigger line (cameras with one sync letter fire together) and the vehicle\'s '
+                       'travel in that time; suggested_groups is the best split over the available trigger lines. '
+                       'Blur and skew are px for a static object at object_m while driving straight at speed_kmh. '
+                       'The user applies groups and phases on the Sync and timing page.'}
+
+
+def get_recording_budget(tc, **_):
+    from ..core import recording as RB
+    return {**RB.summary(RB.budget(tc.project)),
+            'meaning': 'data rate per camera, lidar and radar as recorded (camera bits per pixel and the compressed '
+                       'formats are the project\'s assumptions), each sensor link\'s load, the uplink to the recorder, '
+                       'the sustained write speed needed with headroom, and hours of driving per disk set'}
+
+
 def _norm_angle(a):
     a = (float(a) + 180.0) % 360.0 - 180.0
     return 180.0 if a == -180.0 else a
@@ -785,7 +823,7 @@ def compare_variants(tc, variants=None, **_):
     return {'variants': out}
 
 
-STUDIES = ('blind_volume', 'stitched_objects', 'load_cases', 'mounting_tolerance', 'perception_range')
+STUDIES = ('blind_volume', 'stitched_objects', 'load_cases', 'mounting_tolerance', 'perception_range', 'sensor_coverage')
 
 
 def run_study(tc, study='', height=None, object_height=None, tolerance_deg=None, tolerance_mm=None, **_):
@@ -851,6 +889,22 @@ def run_study(tc, study='', height=None, object_height=None, tolerance_deg=None,
                                'camera resolves the object (in the image, not hidden by the body, at least min_px tall '
                                'through the real lens); a sector passes when min_m reaches required_m. Stereo pairs: '
                                'cameras that both see a car 20 m out; depth_error_m is z^2*0.25px/(f*baseline).'}
+        if study == 'sensor_coverage':
+            from ..core import sensor_coverage as SC
+            if not p.variant.sensors:
+                return {'error': 'this variant has no lidar or radar (Vehicle ▸ Add lidar / Add radar)'}
+            tc.status('Lidar and radar coverage…')
+            cr = SC.run(p, eng, cancel=tc.cancelled)
+            if cr is None:
+                return {'error': 'cancelled'}
+            return {'study': study, **SC.summary(cr),
+                    'meaning': 'per object class and sector the shortest range out to which the cameras, the lidars '
+                               '(points on the object at least the class minimum, summed over lidars, within range on '
+                               'a 10 % target, not blocked by the vehicle) and the radars (object centre in a zone, '
+                               'range scaled by the fourth root of its cross-section) detect it; verdict redundant = '
+                               'two or more modalities reach the required range, single = one, gap = none. '
+                               'blocked_pct: share of a lidar\'s points that land on the vehicle or the rig. '
+                               'ground_blind_from_body: how far from the body the nearest lidar ground point lies.'}
         if study == 'load_cases':
             from ..core import loadcases as LC
             tc.status('Load cases…')
@@ -1064,8 +1118,9 @@ class Tool:
 TOOLS = [
     Tool('get_overview', 'Read the design overview',
          'The project, vehicle size, every camera (tag, pose, lens, module, field of view, locked, mirrored partner), '
-         'the rig on the vehicle (roof racks, masts, enclosures: centre, size, whether they block cameras or carry '
-         'them), the ROI and the analysis thresholds. Start here.', {}, get_overview),
+         'the lidars and radars (tag, pose, model, channels and field, range, rate), the rig on the vehicle (roof '
+         'racks, masts, enclosures: centre, size, whether they block cameras or carry them), the ROI and the analysis '
+         'thresholds. Start here.', {}, get_overview),
     Tool('get_coverage', 'Read coverage figures',
          'Ground coverage figures: blind area, coverage, redundancy, minimum pixel density, and per camera the area it '
          'sees, sees alone, and what would go blind without it; the worst single-camera mounting error.', {},
@@ -1097,6 +1152,15 @@ TOOLS = [
          'ok / warning / fault verdict and reasons; for the rig the cameras up, the worst frame rate and the sync '
          'skew (software timestamps). Otherwise says it is not streaming and which cameras have a stream set.', {},
          get_rig_health),
+    Tool('get_sync_plan', 'Read the sync and timing plan',
+         'Camera triggers against the spinning lidar\'s sweep: per camera the crossing time, trigger time, '
+         'misalignment of its trigger line and the travel at speed, suggested trigger lines and the worst '
+         'misalignment they give, phases for other lidars, and motion blur and rolling-shutter skew at speed with '
+         'the longest exposure for the blur limit. Cheap.', {}, get_sync_plan),
+    Tool('get_recording_budget', 'Read the recording budget',
+         'How much data the rig records: per camera, lidar and radar the data rate and its link load; the totals '
+         '(Mbit/s, GB per hour, TB per shift), the write speed the recorder needs against what it has, the network '
+         'uplink, hours of driving per disk set, and findings with severities. Cheap.', {}, get_recording_budget),
     Tool('compare_variants', 'Compare variants',
          'Analyse layout variants of this project side by side (blind area, coverage, redundancy, density, issues). '
          'All variants unless named.', {'variants': {'type': 'array', 'items': {'type': 'string'}}},
@@ -1106,7 +1170,10 @@ TOOLS = [
          'up to `height`), stitched_objects (where an object of `object_height` vanishes at the seams, with seam '
          'advice), load_cases (the project\'s axle drops), mounting_tolerance (worst blind area when one camera is off '
          'by tolerance_deg / tolerance_mm), perception_range (how far out cars, pedestrians, cyclists and signs are '
-         'resolved per sector against the required ranges, and the stereo camera pairs).',
+         'resolved per sector against the required ranges, and the stereo camera pairs), sensor_coverage (with '
+         'lidars or radars: per object and sector the camera, lidar and radar ranges and whether two, one or no '
+         'modality reaches the required range; the share of each lidar\'s points the vehicle blocks, its ground blind '
+         'zone, and how much of each camera image a lidar covers).',
          {'study': {'type': 'string', 'enum': list(STUDIES)}, 'height': {'type': 'number'},
           'object_height': {'type': 'number'}, 'tolerance_deg': {'type': 'number'}, 'tolerance_mm': {'type': 'number'}},
          run_study, 'compute', ('study',)),
@@ -1141,7 +1208,8 @@ TOOLS = [
          'Show something to the user in the app (does not change the design): select_cameras (cameras), '
          'frame_point (x, y: frames the views on a ground point and marks it), frame_all, heatmap '
          '(none | coverage | density | redundancy | stitched), overlay (overlay key such as camlight, volume, '
-         'guidelines, frustums; on), open_page (viewports | camviews | volume | perception | tolerance | compare | rig).',
+         'guidelines, frustums, sensors; on), open_page (viewports | camviews | volume | perception | tolerance | '
+         'compare | rig | coverage | timing | recording).',
          {'action': {'type': 'string', 'enum': list(UI_ACTIONS)}, 'cameras': {'type': 'array', 'items': {'type': 'string'}},
           'x': {'type': 'number'}, 'y': {'type': 'number'}, 'heatmap': {'type': 'string'}, 'overlay': {'type': 'string'},
           'on': {'type': 'boolean'}, 'page': {'type': 'string'}}, show_in_app, 'ui', ('action',)),

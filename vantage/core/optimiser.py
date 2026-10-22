@@ -333,6 +333,7 @@ class Optimiser:
             v.cameras.append(c)
         for c in v.cameras:
             c.link_uid = uid_map.get(c.link_uid, '')
+        v.sensors = copy.deepcopy(self.variant.sensors)   # the lidars and radars stay as they were
         return v
 
 

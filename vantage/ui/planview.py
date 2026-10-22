@@ -193,6 +193,9 @@ class PlanView(QWidget):
         self._car(p)
         from .rigview import paint_plan as paint_rig
         paint_rig(self, p)
+        if self.mode in ('coverage', 'targets', 'compare', 'footprints'):
+            from .sensorview import paint_plan as paint_sensors
+            paint_sensors(self, p, fields=self.ctx.overlays.get('sensors', True) and self.mode == 'coverage')
         if res is not None:
             self._lines(p, res)
             self._stitched_marks(p, res)
@@ -751,6 +754,19 @@ class PlanView(QWidget):
                         st.dragging = True
                         return
         c = self._pick_camera(pos)
+        if self.mode == 'coverage' and self.result_fn is None and self.project.variant.sensors:
+            from .sensorview import plan_pick
+            s = plan_pick(self, pos)
+            if s is not None and c is not None:          # a radar on the bumper under a camera: the nearer one wins
+                qc, qs = self.w2s(c.x, c.y), self.w2s(s.x, s.y)
+                if math.hypot(qc.x() - pos.x(), qc.y() - pos.y()) <= math.hypot(qs.x() - pos.x(), qs.y() - pos.y()):
+                    s = None
+            if s is not None:
+                st.select_obj(('sensor', s.uid))
+                if not s.locked and self.ctx.tool in ('select', 'move'):
+                    self.drag = {'sensor': s.uid, 'start': (s.x, s.y), 'w0': w}
+                    st.dragging = True
+                return
         if c is not None and self.result_fn is None:
             add = bool(e.modifiers() & (Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.ControlModifier))
             st.select_cams([c.uid], add=add)
@@ -795,6 +811,15 @@ class PlanView(QWidget):
                         pp = q + n * c.standoff_mm / 1000
                         nx, ny, nz = pp
                 st.set_cam(c.uid, merge=True, x=round(float(nx), 4), y=round(float(ny), 4), z=round(float(nz), 4))
+        elif d and 'sensor' in d:
+            dw = (w - d['w0']) * fine
+            nx, ny = d['start'][0] + dw[0], d['start'][1] + dw[1]
+            if self.ctx.snap == 'grid':
+                nx, ny = round(nx / 0.05) * 0.05, round(ny / 0.05) * 0.05
+            s = st.variant.sensor(d['sensor'])
+            if s is not None:
+                from .sensorview import set_props
+                set_props(self.ctx, s.uid, f'Moved {s.tag}', merge=True, x=round(float(nx), 4), y=round(float(ny), 4))
         elif d and 'target' in d:
             dw = (w - d['w0']) * fine
             nx, ny = d['start'][0] + dw[0], d['start'][1] + dw[1]

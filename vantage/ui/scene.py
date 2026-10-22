@@ -316,9 +316,11 @@ class MainScene(QObject):
                 out.append(self._bowl_soft())
         if self.mode in ('scene', 'bowl'):                      # the rig rides on the car in the bowl view too
             from .rigview import scene_tris
-            td = scene_tris(self.ctx, getattr(vp, 'renderer', None) is not None)
-            if td is not None:
-                out.append(td)
+            from .sensorview import scene_tris as sensor_tris
+            for fn in (scene_tris, sensor_tris):
+                td = fn(self.ctx, getattr(vp, 'renderer', None) is not None)
+                if td is not None:
+                    out.append(td)
         out += guides.scene_tris(self, vp)
         return out
 
@@ -449,6 +451,9 @@ class MainScene(QObject):
                 out.append(LineDraw(P[i], THEME.color('ink', 0.18), 1.0))
             for j in range(0, P.shape[1], 6):
                 out.append(LineDraw(P[:, j], THEME.color('ink', 0.18), 1.0))
+        if self.mode == 'scene' and self.ctx.overlays.get('sensors', True) and self.project.variant.sensors:
+            from .sensorview import scene_lines
+            out += scene_lines(self.ctx)
         out += guides.scene_lines(self, vp)
         return out
 
@@ -920,6 +925,12 @@ class MainScene(QObject):
         if c is not None:
             st.select_cams([c.uid], add=add)
             return
+        if self.project.variant.sensors:
+            from .sensorview import pick as pick_sensor
+            uid = pick_sensor(self.project, *vp.ray(pos.x(), pos.y()))
+            if uid is not None:
+                st.select_obj(('sensor', uid))
+                return
         if self.project.rig:
             from .rigview import pick
             uid = pick(self.project, self.ctx.analysis.engine.vehicle_geom(self.project), *vp.ray(pos.x(), pos.y()))

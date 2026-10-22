@@ -9,8 +9,12 @@
     vantage project.vantage --blind-volume volume.json
     vantage project.vantage --perception-range ranges.json --variant 2
     vantage project.vantage --rig-health 10 health.json
+    vantage project.vantage --sensor-coverage coverage.json
+    vantage project.vantage --sync-plan sync.json --units mm
+    vantage project.vantage --recording-budget budget.json
 
-The exit code is 0 when everything is fine, 2 when an analysis or export finds critical issues in the plan,
+The exit code is 0 when everything is fine, 2 when an analysis or export finds critical issues in the plan (or the
+recording budget finds the recorder or a sensor link cannot keep up),
 3 when an installation check finds a camera that has to be re-mounted (or could not be solved) or the rig health check
 finds a camera faulty (or without a stream), and 4 when a lens calibration fails or an imported calibration matches no
 camera.
@@ -338,6 +342,35 @@ def run(args) -> int:
         _out(blind_volume_doc(project, eng, res), args.blind_volume)
     if args.perception_range is not None:
         _out(perception_range_doc(project, eng, res), args.perception_range)
+    if args.sensor_coverage is not None:
+        from .core import sensor_coverage as SC
+        ctx = ex._context(project, None, ex.ExportOptions(frame=args.frame, units=args.units, angles=args.angles,
+                                                          engine=eng))
+        cres = SC.run(project, eng)
+        _out(ex.sensor_coverage_doc(ctx, cres), args.sensor_coverage)
+        m = cres.metrics
+        print(f'  sector checks: ' + ', '.join(f'{m[v]} {v}' for v in SC.VERDICTS), file=sys.stderr)
+        for L_ in cres.lidars:
+            print(f'  {L_.tag}: {100 * L_.blocked:.0f} % of its points land on the vehicle', file=sys.stderr)
+    if args.sync_plan is not None:
+        from .core import timing as TM
+        ctx = ex._context(project, None, ex.ExportOptions(frame=args.frame, units=args.units, angles=args.angles))
+        sdoc = ex.sync_plan_doc(ctx)
+        _out(sdoc, args.sync_plan)
+        s = TM.summary(TM.plan(project))
+        if s.get('no_sweep_plan'):
+            print(f'  no sweep plan: {s["no_sweep_plan"]}', file=sys.stderr)
+        else:
+            print(f'  worst misalignment {s["worst_misalignment_ms"]} ms ({s["worst_travel_cm"]} cm at '
+                  f'{s["speed_kmh"]:g} km/h); suggested lines: {s["suggested_worst_misalignment_ms"]} ms', file=sys.stderr)
+    if args.recording_budget is not None:
+        from .core import recording as RB
+        rb = RB.budget(project)
+        _out(RB.to_doc(rb, project), args.recording_budget)
+        for f in rb.findings:
+            print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
+        if any(f['severity'] == 'critical' for f in rb.findings):
+            code = max(code, 2)
     if args.export:
         if args.formats:
             ids = [f.strip() for f in args.formats.split(',') if f.strip()]
@@ -404,6 +437,13 @@ def add_arguments(ap):
                    help='3D blind volume: space up to the study height no camera sees, undetectable objects, reach rose')
     g.add_argument('--perception-range', nargs='?', const='-', metavar='OUT.json',
                    help='how far out the rig resolves each object class per direction, sector verdicts, stereo pairs')
+    g.add_argument('--sensor-coverage', nargs='?', const='-', metavar='OUT.json',
+                   help='lidar and radar coverage: what the vehicle blocks, detection range per object and sector '
+                        'against the cameras\', camera-lidar overlap')
+    g.add_argument('--sync-plan', nargs='?', const='-', metavar='OUT.json',
+                   help='camera trigger offsets against the lidar sweep, trigger lines, motion blur and rolling shutter')
+    g.add_argument('--recording-budget', nargs='?', const='-', metavar='OUT.json',
+                   help='data rate of every camera, lidar and radar, links, write speed and hours per disk set')
     g.add_argument('--export', metavar='DIR', help='export into DIR')
     g.add_argument('--formats', help='comma-separated export format ids (default: every non-image format)')
     g.add_argument('--variant', help='variant name or 1-based index (default: the active one)')
@@ -438,4 +478,5 @@ def add_arguments(ap):
 def wanted(args) -> bool:
     return any(getattr(args, k) not in (None, False) for k in ('analyse', 'load_cases', 'export', 'install_check',
                                                                'calibrate_lens', 'import_calib', 'blind_volume',
-                                                               'perception_range', 'rig_health'))
+                                                               'perception_range', 'rig_health',
+                                                               'recording_budget', 'sync_plan', 'sensor_coverage'))

@@ -660,9 +660,16 @@ class IssuesTab(QWidget):
         if not (0 <= r < len(iss)):
             return
         x = iss[r]
-        if x.uids:
-            self.ctx.store.select_cams(x.uids)
+        st = self.ctx.store
+        cams = [u for u in x.uids if st.cam(u) is not None]
+        sensor = next((u for u in x.uids if st.variant.sensor(u) is not None), None)
+        if cams:
+            st.select_cams(cams)
             self.ctx.window.frame_selection()
+        elif sensor is not None:                     # a lidar or radar: select it and frame where it is
+            st.select_obj(('sensor', sensor))
+            s = st.variant.sensor(sensor)
+            self.ctx.window.frame_point((s.x, s.y))
         elif x.where is not None:
             self.ctx.window.frame_point(x.where)
 

@@ -167,7 +167,59 @@ def collect_issues(project: Project, result, vg, mounts: dict | None = None) -> 
             worst = min(mi.edge_mm for _, mi in edge_cams)
             out.append(Issue('warning', f'Camera sits {worst:.0f} mm from the body edge; the clearance rule is {EDGE_RULE_MM:.0f} mm.',
                              ', '.join(c.tag for c, _ in edge_cams), [c.uid for c, _ in edge_cams]))
+    out += sensor_issues(project, vg)
+    from . import recording                     # imports this module
+    out += recording.issues(project)
     out.sort(key=lambda i: SEVERITY_ORDER.get(i.severity, 9))
+    return out
+
+
+def _inside(mesh, p) -> bool:
+    """Whether p is inside the closed surface: rays in the six axis directions leave it through a face (the face
+    normal points along the ray) for at least five of them."""
+    d = np.array([[0, 0, 1], [0, 0, -1], [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0]], float)
+    _, f = mesh.raycast(np.repeat(np.asarray(p, float)[None], 6, axis=0), d)
+    hit = f >= 0
+    if hit.sum() < 5:
+        return False
+    return int((np.einsum('ij,ij->i', mesh.normals[f[hit]], d[hit]) > 0).sum()) >= 5
+
+
+RADAR_FASCIA_M = 0.15             # a radar may sit this far behind the bumper fascia (it sees through the plastic)
+
+
+def sensor_issues(project: Project, vg) -> list[Issue]:
+    """Lidars and radars: a tag a camera uses too, a sensor below the ground, a lidar inside the body or a rig part, a
+    radar deeper inside the body than behind a bumper fascia."""
+    out = []
+    v = project.variant
+    cam_tags = {c.tag.lower(): c for c in v.cameras}
+    for s in v.sensors:
+        c = cam_tags.get(s.tag.lower())
+        if c is not None:
+            out.append(Issue('warning', f'Tag {s.tag} is used by camera {c.name} and by a {s.kind}: exported frames '
+                                        f'get a suffix. Rename one.', s.tag, [s.uid, c.uid]))
+    occ = vg.occ_mesh if vg is not None else None
+    for s in v.sensors:
+        if not s.visible:
+            continue
+        m = project.sensor_model_for(s)
+        base = s.z - m.optical_z_mm / 1000.0
+        if base < -0.005:
+            out.append(Issue('critical', f'{s.tag} ({m.name}) is {-base * 1000:.0f} mm below the ground.', s.tag, [s.uid]))
+            continue
+        if occ is None or not _inside(occ, s.pos()):
+            continue
+        if s.kind == 'lidar':
+            out.append(Issue('critical', f'Lidar {s.tag} sits inside the body or a rig part: its beams start inside '
+                                         f'the vehicle. Raise it onto the surface (Inspector ▸ Optical centre Z).',
+                             s.tag, [s.uid], where=(s.x, s.y)))
+        else:
+            _, _, d = occ.closest_point(s.pos())
+            if d > RADAR_FASCIA_M:
+                out.append(Issue('warning', f'Radar {s.tag} is {d * 1000:.0f} mm inside the body: a radar sees through a '
+                                            f'plastic bumper fascia, not through the body.', s.tag, [s.uid],
+                                 where=(s.x, s.y)))
     return out
 
 
