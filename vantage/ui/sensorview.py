@@ -13,12 +13,12 @@ from PyQt6.QtWidgets import QComboBox, QFileDialog, QHBoxLayout, QLineEdit, QWid
 from ..core import sensors as S
 from ..core.project import Sensor
 from .inspector import Page, _table, _cell, _fit_table
+from . import overlays3d as O3
 from .theme import THEME, STATUS
-from .viewport3d import LIGHT, LineDraw, TriDraw
+from .viewport3d import LineDraw, TriDraw
 from .widgets import Section, ScrubSpinBox, StatusLine, ToggleSwitch, button, label
 
 COLORS = {'lidar': '#0aa5b8', 'radar': '#a0743c', 'gnss': '#7f9a1c', 'imu': '#6e7f96'}   # apart from the cameras' eight
-SEL_RGB = np.array(QColor(STATUS['warning']).getRgbF()[:3])
 RING_FAR = 15.0                  # ground rings and radar edges are drawn this far out in 3D
 MAX_RINGS = 16                   # at most this many of a lidar's channels are drawn as ground rings
 
@@ -105,55 +105,94 @@ def own_model(project, s: Sensor):
 
 
 # ------------------------------------------------------------------ 3D
-def _housing(s: Sensor, model) -> tuple[np.ndarray, np.ndarray]:
-    """Triangles (K, 3, 3) and face normals (K, 3) of the housing: a cylinder or a box."""
-    c, half, R, rnd = S.body_box(s, model)
-    if rnd:
-        n = 20
-        t = np.linspace(0, 2 * math.pi, n, endpoint=False)
-        ring = np.c_[np.cos(t) * half[0], np.sin(t) * half[1]]
-        bot = np.c_[ring, np.full(n, -half[2])]
-        top = np.c_[ring, np.full(n, half[2])]
-        tri = []
-        for i in range(n):
-            j = (i + 1) % n
-            tri += [[bot[i], bot[j], top[j]], [bot[i], top[j], top[i]], [[0, 0, half[2]], top[i], top[j]],
-                    [[0, 0, -half[2]], bot[j], bot[i]]]
-        T = np.array(tri, float)
-    else:
-        q = np.array([[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1], [-1, -1, 1], [1, -1, 1], [1, 1, 1],
-                      [-1, 1, 1]], float) * half
-        F = [(0, 2, 1), (0, 3, 2), (4, 5, 6), (4, 6, 7), (0, 1, 5), (0, 5, 4), (1, 2, 6), (1, 6, 5), (2, 3, 7),
-             (2, 7, 6), (3, 0, 4), (3, 4, 7)]
-        T = q[np.array(F)]
-    T = T @ R.T + c
-    fn = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])
-    fn /= np.maximum(np.linalg.norm(fn, axis=1, keepdims=True), 1e-12)
-    out = np.einsum('ij,ij->i', fn, T.mean(axis=1) - c) < 0           # wind outward (convex solids)
-    T[out] = T[out][:, ::-1]
-    fn[out] *= -1
-    return T, fn
+def _drawn(project):
+    """The visible sensors with a pose to draw."""
+    return [s for s in visible(project) if O3.finite_pose(s)]
+
+
+def _rgb(kind):
+    return np.array(color(kind).getRgbF()[:3])
+
+
+def scene_draws(ctx, gl: bool) -> list:
+    """The visible sensors' housings (models at their real sizes, overlays3d.sensor_model): one draw for the rest and
+    one for the selected sensor with the selection outline (tinted where the renderer has no outlines)."""
+    p = ctx.store.project
+    sel = selected_uid(ctx)
+    smooth = not ctx.store.dragging          # while dragging, nothing here casts shadows (see draw_parts)
+    rest, chosen = [], []
+    for s in _drawn(p):
+        (chosen if s.uid == sel else rest).append(O3.sensor_parts(p, s, _rgb(s.kind), gl))
+    out = [O3.draw_parts(rest, gl, smooth=smooth)]
+    if chosen:
+        out.append(O3.draw_parts(chosen, gl, outline=O3.sel_outline(), smooth=smooth) if O3.has_outline() else
+                   O3.draw_parts(chosen, gl, tint=0.55, smooth=smooth))
+    return [d for d in out if d is not None]
 
 
 def scene_tris(ctx, gl: bool) -> TriDraw | None:
-    """The visible sensors' housings, lit; the selected one tinted."""
+    """Every visible sensor's housing as one draw, the selected one tinted."""
     p = ctx.store.project
-    sensors = visible(p)
-    if not sensors:
-        return None
     sel = selected_uid(ctx)
-    tri, col, nrm = [], [], []
-    for s in sensors:
-        T, fn = _housing(s, p.sensor_model_for(s))
-        base = np.array(color(s.kind).getRgbF()[:3])
-        if s.uid == sel:
-            base = base * 0.4 + SEL_RGB * 0.6
-        rgb = np.tile(base, (len(T), 1)) if gl else base[None] * (0.55 + 0.45 * np.clip(fn @ LIGHT, 0, 1))[:, None]
-        tri.append(T)
-        col.append(np.c_[np.clip(rgb, 0, 1), np.ones(len(T))])
-        nrm.append(np.repeat(fn[:, None], 3, axis=1))
-    return TriDraw(np.concatenate(tri).astype(np.float32), np.concatenate(col).astype(np.float32), depth=True,
-                   normals=np.concatenate(nrm).astype(np.float32) if gl else None)
+    parts = [O3.sensor_parts(p, s, _rgb(s.kind), gl) for s in _drawn(p)]
+    tint = [s.uid == sel for s in _drawn(p)]
+    if not parts:
+        return None
+    if any(tint):
+        k = tint.index(True)
+        parts[k] = (parts[k][0], parts[k][1], parts[k][2] * 0.45 + O3.sel_rgb() * 0.55)
+    return O3.draw_parts(parts, gl)
+
+
+_VOL = {}
+
+
+def radar_draws(ctx, gl: bool, far: float = RING_FAR, vp=None) -> list:
+    """Each visible radar's zones as translucent volumes (overlays3d.radar_volume) fading with range, the selected
+    radar's denser; with a viewport, only the faces turned towards it (one see-through layer per field, half the
+    fill)."""
+    p = ctx.store.project
+    sel = selected_uid(ctx)
+    radars = [s for s in _drawn(p) if p.sensor_model_for(s).is_radar]
+    if not radars:
+        return []
+    vols = [(s, _volumes(s, p.sensor_model_for(s), far, gl)) for s in radars]
+    key = (tuple(id(v) for _, v in vols), sel, THEME.name)
+    if _RADAR_DRAW.get('key') != key:
+        tri, nrm, col = [], [], []
+        rgb = _rgb('radar')
+        for s, vv in vols:
+            for T, N, frac, _ in vv:
+                tri.append(T)
+                nrm.append(N)
+                col.append(np.c_[np.tile(rgb, (len(T), 1)), O3.radar_alpha(frac, s.uid == sel)])
+        _RADAR_DRAW.update(key=key, keep=vols, view=None, draws=[],
+                           all=(np.concatenate(tri).astype(np.float32), np.concatenate(nrm),
+                                np.concatenate(col).astype(np.float32)) if tri else None)
+    if _RADAR_DRAW['all'] is None:
+        return []
+    T, N, C = _RADAR_DRAW['all']
+    view = None if vp is None else tuple(np.round(np.linalg.inv(vp.cam.view())[:3, :4].ravel(), 3)) + (vp.cam.ortho,)
+    if view is None:
+        return [TriDraw(T, C, depth=True)]
+    if _RADAR_DRAW['view'] != view:
+        k = O3.facing(T, N, vp)
+        _RADAR_DRAW.update(view=view, draws=[TriDraw(T[k], C[k], depth=True)] if k.any() else [])
+    return _RADAR_DRAW['draws']
+
+
+_RADAR_DRAW = {}
+
+
+def _volumes(s, m, far, gl):
+    key = (s.uid, O3._pose_key(s), tuple(map(tuple, m.zones)), far, gl)
+    hit = _VOL.get(key)
+    if hit is None:
+        hit = O3.radar_volume(s, m, far, step_deg=4.0 if gl else 10.0, rings=6 if gl else 3)
+        if len(_VOL) > 64:
+            _VOL.clear()
+        _VOL[key] = hit
+    return hit
 
 
 def _ring_channels(model, n=MAX_RINGS):
@@ -172,8 +211,10 @@ def baseline(project):
 
 
 def scene_lines(ctx, far: float = RING_FAR) -> list:
-    """Each lidar's ground rings (where its downward beams meet the ground, out to `far`), each radar's field edges
-    and arc at its own height, out to `far` or its range, each IMU's x axis and the GNSS heading baseline."""
+    """Each lidar's ground rings (where its downward beams meet the ground, out to `far`; not while the lidar points
+    are shown, which land on them), the outline of each radar
+    zone's volume (out to `far` or its range, cut at the ground), the GNSS heading baseline and each IMU's lever arm
+    to the vehicle origin (with the IMU selected, also to every GNSS antenna: the lever arms its INS needs)."""
     p = ctx.store.project
     sel = selected_uid(ctx)
     out = []
@@ -181,31 +222,34 @@ def scene_lines(ctx, far: float = RING_FAR) -> list:
     if pair:
         a, b = pair
         out.append(LineDraw(np.array([a.pos(), b.pos()]), color('gnss', 0.9), 1.4, dash=True, dash_len=0.06))
-    for s in visible(p):
+    for s in _drawn(p):
         m = p.sensor_model_for(s)
         w = 1.6 if s.uid == sel else 1.0
         if m.kind == 'imu':
-            R = S.rotation(s)
-            for k, ln in ((0, 0.30), (1, 0.15), (2, 0.15)):
-                out.append(LineDraw(np.array([s.pos(), s.pos() + R[:, k] * ln]), color('imu', 0.95 if k == 0 else 0.6),
-                                    w + (0.6 if k == 0 else 0.0)))
+            out.append(LineDraw(np.array([s.pos(), [0.0, 0.0, 0.0]]), color('imu', 0.9 if s.uid == sel else 0.6), w,
+                                dash=True, dash_len=0.05))
+            if s.uid == sel:
+                for g in _drawn(p):
+                    if g.kind == 'gnss':
+                        out.append(LineDraw(np.array([s.pos(), g.pos()]), color('imu', 0.85), 1.2, dash=True,
+                                            dash_len=0.05))
             continue
         if not m.has_field:
             continue
         if m.is_lidar:
+            if ctx.overlays.get('lidarpts'):        # the simulated points land on these rings, minus what is blocked
+                continue
             keep = _ring_channels(m)
             for ch, P in S.ground_rings(s, m, 1.0, far=min(far, m.range_m)):
                 if ch in keep:
                     out.append(LineDraw(np.c_[P[:, :2], np.full(len(P), 0.008)], color('lidar', 0.55 if s.uid == sel
                                                                                        else 0.35), w))
         else:
-            for poly in S.radar_wedges(s, m):
-                d = poly - [s.x, s.y]
-                r = np.linalg.norm(d, axis=1, keepdims=True)
-                poly = np.where(r > far, [s.x, s.y] + d / np.maximum(r, 1e-9) * far, poly)
-                P = np.c_[poly, np.full(len(poly), s.z)]
-                out.append(LineDraw(np.vstack([P, P[:1]]), color('radar', 0.8 if s.uid == sel else 0.5), w, dash=True,
-                                    dash_len=0.12))
+            on = s.uid == sel
+            for *_, polys in _volumes(s, m, far, True):
+                out.append(LineDraw(polys[0], color('radar', 0.8 if on else 0.22), w))      # where the field ends
+                if on:                                                                      # and its edges
+                    out += [LineDraw(P, color('radar', 0.55), 1.0) for P in polys[1:]]
     return out
 
 

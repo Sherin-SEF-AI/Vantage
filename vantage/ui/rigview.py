@@ -72,31 +72,47 @@ _cache = {}
 
 
 def scene_tris(ctx, gl: bool) -> TriDraw | None:
-    """The visible rig parts as lit triangles; the selected part tinted, parts that block nothing see-through."""
+    """The visible rig parts as lit triangles; parts that block nothing see-through. The selected part is tinted
+    (where the renderer draws outlines, scene_draws gives it its own draw with the selection outline instead)."""
+    draws = scene_draws(ctx, gl, outline=False)
+    return draws[0] if draws else None
+
+
+def scene_draws(ctx, gl: bool, outline: bool | None = None) -> list:
+    """The visible rig parts: one draw, or with the renderer's outlines, the selected part apart with the selection
+    outline. Smooth corner normals (and so shadows in the shader renderer) except while something is dragged."""
     parts = [p for p in ctx.store.project.rig if p.visible]
     if not parts:
-        return None
+        return []
     sel = selected_uid(ctx)
-    key = (R.rig_key(parts), sel, gl, THEME.name)
+    from . import overlays3d as O3
+    split = (O3.has_outline() if outline is None else outline) and any(p.uid == sel for p in parts)
+    smooth = gl and not ctx.store.dragging       # while dragging the rig casts no shadows (maps redone per frame)
+    key = (R.rig_key(parts), sel, gl, smooth, THEME.name, split)
     if _cache.get('key') == key:
-        return _cache['draw']
-    tri, col, nrm = [], [], []
+        return _cache['draws']
+    groups = {False: ([], [], []), True: ([], [], [])}
     for p in parts:
         V, F = R.part_geometry(p)
         T = V[F]
         fn = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])
         fn /= np.maximum(np.linalg.norm(fn, axis=1, keepdims=True), 1e-12)
         base = np.array(R.COLOR) * (1.25 if THEME.name == 'light' else 1.0)
-        if p.uid == sel:
+        if p.uid == sel and not split:
             base = base * 0.45 + SEL_RGB * 0.55
         rgb = np.tile(base, (len(T), 1)) if gl else base[None] * (0.55 + 0.45 * np.clip(fn @ LIGHT, 0, 1))[:, None]
+        tri, col, nrm = groups[split and p.uid == sel]
         tri.append(T)
         col.append(np.c_[np.clip(rgb, 0, 1), np.full(len(T), 1.0 if p.occludes else 0.35)])
         nrm.append(_corner_normals(p, T, fn))
-    draw = TriDraw(np.concatenate(tri).astype(np.float32), np.concatenate(col).astype(np.float32), depth=True,
-                   normals=np.concatenate(nrm).astype(np.float32) if gl else None)
-    _cache.update(key=key, draw=draw)
-    return draw
+    draws = []
+    for chosen, (tri, col, nrm) in groups.items():
+        if tri:
+            draws.append(O3.tri_draw(np.concatenate(tri), np.concatenate(col),
+                                     normals=np.concatenate(nrm) if smooth else None,
+                                     outline=O3.sel_outline() if chosen else None))
+    _cache.update(key=key, draws=draws)
+    return draws
 
 
 def pick(project, vg, o, d) -> str | None:

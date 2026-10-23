@@ -92,3 +92,58 @@ def test_self_test_passes():
     assert lines[-1] == 'self-test passed'
     for check in ('analysis', 'opencv', 'fonts', 'opengl', 'main window'):
         assert any(ln.split()[:1] == [check.split()[0]] for ln in lines), check
+
+
+def test_desktop_entry_and_icon_install_and_uninstall(tmp_path, monkeypatch):
+    """vantage --install-desktop writes vantage.desktop (the id the window announces), the icon at every theme size
+    and the file type into the user's data folder, and --uninstall-desktop removes exactly that."""
+    import configparser
+    from PyQt6.QtGui import QImage
+    from vantage import app, desktop
+    monkeypatch.setattr(desktop, '_refresh', lambda base: None)          # leave the real desktop databases alone
+    monkeypatch.setattr(desktop, 'desktop_dir', lambda: str(tmp_path / 'Desktop'))    # and the real desktop
+    monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path))
+    assert app.main(['--install-desktop']) == 0
+    p = desktop.paths()
+    cp = configparser.ConfigParser(interpolation=None)
+    cp.optionxform = str
+    cp.read(p['desktop'])
+    e = cp['Desktop Entry']
+    assert e['Icon'] == 'vantage' == desktop.APP_ID and e['Type'] == 'Application' and e['Exec'].endswith(' %f')
+    assert 'run_vantage.py' in e['Exec'] and 'application/x-vantage-project' in e['MimeType']
+    for path, n in zip(p['icons'], desktop.SIZES):
+        img = QImage(path)
+        assert not img.isNull() and img.width() == img.height() == n
+    assert '*.vantage' in open(p['mime']).read()
+    assert app.main(['--install-desktop']) == 0                         # again: replaces its own files
+    removed = desktop.uninstall()
+    assert set(removed) == {p['desktop'], p['mime'], *p['icons']}
+    assert not any(os.path.exists(x) for x in removed)
+    # an entry someone else wrote (the bundle's install.sh) is left alone
+    os.makedirs(os.path.dirname(p['desktop']), exist_ok=True)
+    with open(p['desktop'], 'w') as fh:
+        fh.write('[Desktop Entry]\nName=Vantage\n')
+    assert app.main(['--install-desktop']) == 1 and app.main(['--uninstall-desktop']) == 1
+    assert open(p['desktop']).read() == '[Desktop Entry]\nName=Vantage\n'
+
+
+def test_exec_quoting():
+    from vantage.desktop import _q
+    assert _q('/usr/bin/python3') == '/usr/bin/python3'
+    assert _q('/home/a b/run.py') == '"/home/a b/run.py"' and _q('/x/$HOME') == '"/x/\\$HOME"'
+
+
+def test_desktop_shortcut(tmp_path, monkeypatch):
+    """--desktop-shortcut installs the menu entry and puts an executable launcher on the desktop; uninstall removes
+    it, and leaves a launcher it did not write."""
+    from vantage import app, desktop
+    monkeypatch.setattr(desktop, '_refresh', lambda base: None)
+    monkeypatch.setattr(desktop, 'desktop_dir', lambda: str(tmp_path / 'Desktop'))
+    monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path / 'share'))
+    assert app.main(['--desktop-shortcut']) == 0
+    sc = tmp_path / 'Desktop' / 'vantage.desktop'
+    assert sc.is_file() and os.access(sc, os.X_OK) and desktop.MARK in sc.read_text()
+    assert os.path.isfile(desktop.paths()['desktop'])
+    assert str(sc) in desktop.uninstall() and not sc.exists()
+    sc.write_text('[Desktop Entry]\nName=Mine\n')
+    assert app.main(['--uninstall-desktop']) == 0 and sc.read_text() == '[Desktop Entry]\nName=Mine\n'

@@ -169,6 +169,18 @@ class ProjectStore(QObject):
         self.changed.emit(self._sections(keys))
         self.selection_changed.emit()
 
+    def cancel_gesture(self) -> bool:
+        """Undo the edits of the drag in progress and drop them from the history (Esc during a drag); False when the
+        drag has not changed anything yet."""
+        i = self.undo.index()
+        cmd = self.undo.command(i - 1) if i > 0 else None
+        if not self._dragging or cmd is None or getattr(cmd, 'gesture', None) != self.gesture or i != self.undo.count():
+            return False
+        cmd.undo()                         # restore, then let the stack delete it rather than keep it for redo
+        cmd.setObsolete(True)
+        self.undo.undo()
+        return True
+
     def set_cam(self, uid, merge=False, text=None, **props):
         """Set camera properties (and its linked partner, mirrored)."""
         cam = self.cam(uid)

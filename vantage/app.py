@@ -44,12 +44,29 @@ def main(argv=None):
     ap.add_argument('--scale', type=float, help='UI scale, e.g. 1.15')
     ap.add_argument('--software-3d', action='store_true', help='draw the 3D view with QPainter instead of OpenGL')
     ap.add_argument('--no-start', action='store_true', help='skip the start window')
+    ap.add_argument('--install-desktop', action='store_true',
+                    help='Linux: add Vantage to the app menu with its icon (dock, app grid) and the .vantage file type '
+                         'for this user, for a checkout or pip install (the bundle\'s install.sh does this itself)')
+    ap.add_argument('--desktop-shortcut', action='store_true',
+                    help='Linux: --install-desktop, plus a Vantage launcher on the desktop')
+    ap.add_argument('--uninstall-desktop', action='store_true',
+                    help='Linux: remove what --install-desktop and --desktop-shortcut added')
     from . import batch
     batch.add_arguments(ap)
     args = ap.parse_args(argv)
     if args.self_test:
         from . import selftest
         return selftest.run()
+    if args.install_desktop or args.desktop_shortcut or args.uninstall_desktop:
+        from . import desktop
+        try:
+            done = (desktop.uninstall() if args.uninstall_desktop else
+                    desktop.shortcut() if args.desktop_shortcut else desktop.install())
+        except (OSError, FileExistsError) as e:
+            print(f'vantage: {e}', file=sys.stderr)
+            return 1
+        print('\n'.join(done) if done else 'nothing to remove')
+        return 0
     if batch.wanted(args):
         return batch.run(args)
 

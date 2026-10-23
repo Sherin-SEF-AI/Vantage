@@ -407,6 +407,10 @@ class PhotoPage(QWidget):
         self.ctx.msg('Click a point on the model in the 3D view to add it as a landmark.', 6000)
 
     def eventFilter(self, obj, e):
+        if obj is self.vp and e.type() == QEvent.Type.KeyPress and e.key() in (Qt.Key.Key_Left, Qt.Key.Key_Right,
+                                                                               Qt.Key.Key_Space):
+            self.keyPressEvent(e)          # here the arrows step through the photos rather than orbit the view
+            return True
         if obj is self.vp and self.picking_model and e.type() == QEvent.Type.MouseButtonPress and e.button() == Qt.MouseButton.LeftButton:
             hit = self.scene._mesh_hit(self.vp, e.position())
             self.picking_model = False

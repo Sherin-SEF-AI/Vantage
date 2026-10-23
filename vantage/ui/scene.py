@@ -11,7 +11,7 @@ from ..core.analysis import surface_frame, camera_frames
 from ..core.lens import resolve
 from ..core.mathutil import rot_zyx, BODY_TO_OPTICAL, wrap180, yaw_pitch_from_dir
 from ..core.mesh import ROLE_GLASS, ROLE_WHEELS, ROLE_IGNORED
-from . import guides, maps, ops, icons
+from . import guides, maps, ops, icons, overlays3d as O3
 from .theme import THEME, mono, sans, STATUS
 from .viewport3d import MeshDraw, GroundDraw, LineDraw, TriDraw
 from .widgets import paint_chip
@@ -49,6 +49,20 @@ def mesh_colors(mesh, shading):
     return base, alpha, keep
 
 
+def mesh_materials_for(mesh) -> np.ndarray:
+    """Per-triangle material ids for the shader renderer (viewport3d MAT_*): its guess from the parts' roles and names
+    (glass, tyres, lights, trim, rig metal), and faces in a mount zone named like glass are glass."""
+    from . import viewport3d as V3
+    fn = getattr(V3, 'mesh_materials', None)
+    out = np.asarray(fn(mesh), np.int8).copy() if fn is not None else np.zeros(mesh.n_tris, np.int8)
+    fz = getattr(mesh, 'face_zone', None)
+    if fz is not None and len(fz) == mesh.n_tris:
+        for zi, z in enumerate(getattr(mesh, 'zones', ()) or ()):
+            if any(k in z.name.lower() for k in ('glass', 'window', 'windscreen', 'windshield')):
+                out[np.asarray(fz) == zi] = getattr(V3, 'MAT_GLASS', 1)
+    return out
+
+
 class FrustumCache:
     def __init__(self):
         self.d = {}
@@ -81,6 +95,14 @@ class FrustumCache:
         return self.d[key]
 
 
+SNAP_M, SNAP_DEG = 0.01, 5.0           # Ctrl while dragging a handle: 1 cm steps, 5° steps
+
+
+def _pos(obj) -> np.ndarray:
+    """A camera's, sensor's or rig part's position."""
+    return np.array([obj.x, obj.y, obj.z], float)
+
+
 class MainScene(QObject):
     changed = pyqtSignal()
 
@@ -98,6 +120,7 @@ class MainScene(QObject):
         self.place_preview = None
         self.measure = []
         self.drag = None
+        self.gizmo_hot = None               # the handle under the pointer: ('axis', k), ('plane',), ('ring', k)
         self.result_override = None         # pinned results (tolerance worst case)
         self.cameras_override = None
         self.show_tooltip = True
@@ -185,6 +208,11 @@ class MainScene(QObject):
             base, alpha, keep = mesh_colors(src, sh)
             self._mesh = MeshDraw(src.tri[keep].astype(np.float32), src.normals[keep], base[keep], alpha[keep],
                                   version=id(src), wire=(sh == 'wire'))
+            if 'materials' in getattr(MeshDraw, '__dataclass_fields__', {}):
+                try:
+                    self._mesh.materials = mesh_materials_for(src)[keep]
+                except Exception as ex:          # a mesh without parts or zones: all paint
+                    print('mesh materials:', ex)
             self._mesh_key = key
         return self._mesh
 
@@ -201,14 +229,16 @@ class MainScene(QObject):
         sres = getattr(getattr(self.ctx, 'stitched', None), 'result', None) if mode == 'stitched' else None
         if mode == 'stitched' and sres is None:
             mode = 'blank'
-        key = (id(res), mode, THEME.name, iso, id(sres))
+        a = self.project.analysis
+        thr = (a.min_density, a.target_density) if mode == 'density' else None
+        key = (id(res), mode, THEME.name, iso, id(sres), thr)
         if key != self._ground_key:
             if sres is not None:
                 img, ext = maps.stitched(sres, k=4), maps.stitched_extent(sres)
             else:
-                img, ext = maps.make(res, mode, k=4, isolate=iso), maps.extent(res)
-            self._ground = GroundDraw(maps.to_qimage(img), ext, 0.002,
-                                      nearest=mode in ('density', 'redundancy', 'coverage', 'stitched'), version=hash(key))
+                img, ext = maps.make(res, mode, k=4, isolate=iso, thresholds=thr), maps.extent(res)
+            self._ground = GroundDraw(maps.to_qimage(img), ext, 0.002,       # density is drawn smooth, the rest crisp
+                                      nearest=mode in ('redundancy', 'coverage', 'stitched'), version=hash(key))
             self._ground_key = key
         return self._ground
 
@@ -265,28 +295,34 @@ class MainScene(QObject):
         if self.photo_frame is not None and self.ctx.window is not None:
             self.ctx.window.leave_photo_view()
 
+    def _ov3d(self):
+        """The 3D overlays' background work (lidar sweeps, sky views), told what the shown overlays need."""
+        c = O3.controller(self.ctx)
+        if not getattr(self, '_ov3d_hooked', False):
+            c.ready.connect(self._emit)
+            self._ov3d_hooked = True
+        bc = getattr(self.ctx, 'brackets_ctl', None)
+        if bc is not None and getattr(self, '_br_hooked', None) is not bc:
+            bc.changed.connect(self._emit)          # brackets generated or gone stale: redraw them
+            self._br_hooked = bc
+        ov = self.ctx.overlays
+        c.want(bool(ov.get('lidarpts')), bool(ov.get('gnsssky')))
+        return c
+
+    def points(self, vp):
+        """Point sprites: one simulated sweep per visible lidar (View ▸ Overlays ▸ Lidar points)."""
+        if self.mode != 'scene' or not self.ctx.overlays.get('lidarpts') or not self.project.variant.sensors:
+            return []
+        return self._ov3d().point_draws()
+
     def tris_extra(self, vp):
-        out = []
+        out, late = [], []                      # late: translucent draws, after every opaque one
         p = self.project
-        # camera mount blocks
-        boxes, cols = [], []
-        sel = set(self.ctx.store.sel_cams)
-        for c in self.cameras():
-            if not c.visible or (self.ctx.isolate and c.uid not in self.ctx.isolate):
-                continue
-            R = rot_zyx(c.yaw, c.pitch, c.roll)
-            s = np.array([0.045, 0.04, 0.04])
-            corners = np.array([[x, y, z] for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)]) * s / 2
-            corners[:, 0] -= 0.02
-            V = c.pos() + corners @ R.T
-            F = [[0, 1, 3], [0, 3, 2], [4, 6, 7], [4, 7, 5], [0, 4, 5], [0, 5, 1], [2, 3, 7], [2, 7, 6],
-                 [0, 2, 6], [0, 6, 4], [1, 5, 7], [1, 7, 3]]
-            body = np.array(QColor(THEME.tok['body']).getRgbF()[:3]) * (1.05 if c.uid in sel else 0.95)
-            for f in F:
-                boxes.append(V[f])
-                cols.append([*np.clip(body, 0, 1), 1.0])
-        if boxes:
-            out.append(TriDraw(np.array(boxes), np.array(cols)))
+        gl = getattr(vp, 'renderer', None) is not None
+        # camera modules at their real size, the selected ones outlined
+        sel = set(self.ctx.store.sel_cams) if self.cameras_override is None else set()
+        cams = [c for c in self.cameras() if c.visible and not (self.ctx.isolate and c.uid not in self.ctx.isolate)]
+        out += O3.camera_draws(p, cams, sel, gl, smooth=not self.ctx.store.dragging)
         # calibration targets
         if self.ctx.overlays.get('targets') and p.targets and self.mode == 'scene':
             tri, col = [], []
@@ -315,14 +351,21 @@ class MainScene(QObject):
             elif not getattr(vp, 'gl_bowl', False):
                 out.append(self._bowl_soft())
         if self.mode in ('scene', 'bowl'):                      # the rig rides on the car in the bowl view too
-            from .rigview import scene_tris
-            from .sensorview import scene_tris as sensor_tris
-            for fn in (scene_tris, sensor_tris):
-                td = fn(self.ctx, getattr(vp, 'renderer', None) is not None)
-                if td is not None:
-                    out.append(td)
+            from .rigview import scene_draws as rig_draws
+            from .sensorview import scene_draws as sensor_draws
+            out += rig_draws(self.ctx, gl)
+            out += sensor_draws(self.ctx, gl)
+        if self.mode == 'scene':
+            ov = self.ctx.overlays
+            if ov.get('brackets', True):
+                out += O3.bracket_draws(self.ctx, gl)
+            if ov.get('sensors', True) and p.variant.sensors:
+                from .sensorview import radar_draws
+                late += radar_draws(self.ctx, gl, vp=vp)
+            if ov.get('gnsssky') and p.variant.sensors:
+                late += self._ov3d().dome_draws(gl)[0]
         out += guides.scene_tris(self, vp)
-        return out
+        return out + late
 
     def _bowl(self):
         res = self.result
@@ -454,6 +497,8 @@ class MainScene(QObject):
         if self.mode == 'scene' and self.ctx.overlays.get('sensors', True) and self.project.variant.sensors:
             from .sensorview import scene_lines
             out += scene_lines(self.ctx)
+        if self.mode == 'scene' and ov.get('gnsssky') and self.project.variant.sensors:
+            out += self._ov3d().dome_draws(getattr(vp, 'renderer', None) is not None)[1]
         out += guides.scene_lines(self, vp)
         return out
 
@@ -556,6 +601,8 @@ class MainScene(QObject):
                 c = cams[k]
                 x, y = sc[k]
                 s = MARKER + (2 if c.uid in sel else 0)
+                if self._module_px(vp, c) > 30:          # the module model itself shows: a small marker on it
+                    s = 4 + (1 if c.uid in sel else 0)
                 r = QRectF(x - s / 2, y - s / 2, s, s)
                 p.setPen(QPen(QColor(0, 0, 0, 160), 1))
                 p.setBrush(THEME.cam(c.slot))
@@ -576,12 +623,13 @@ class MainScene(QObject):
                     p.setPen(QColor(240, 239, 236))
                     p.drawText(QPointF(x + 30, y - 9), txt)
         # gizmo
-        c = self.ctx.store.selected
-        if c is not None and self.mode == 'scene' and self.cameras_override is None:
-            if self.ctx.tool == 'move' or (self.ctx.tool == 'select' and c is not None):
-                self._gizmo_move(p, vp, c, faint=self.ctx.tool != 'move')
+        tg = self._gizmo_target()
+        if tg is not None:
+            c = tg[2]
+            if self.ctx.tool in ('move', 'select'):
+                self._gizmo_move(p, vp, c, faint=self.ctx.tool != 'move' and not self.drag and not self.gizmo_hot)
             elif self.ctx.tool == 'rotate':
-                self._gizmo_rotate(p, vp, c)
+                self._gizmo_rotate(p, vp, c, rings=self._rings(tg))
         # target labels
         if self.ctx.overlays.get('targets') and self.mode == 'scene':
             st = {s.uid: s for s in self.ctx.analysis.targets}
@@ -604,13 +652,163 @@ class MainScene(QObject):
             self._paint_disc(p, vp, *self.place_preview)
         if self.measure:
             self._paint_measure(p, vp)
+        self._paint_ov3d(p, vp)
         if self.show_tooltip and self.hover_info and self.ctx.tool in ('select', 'move') and self.drag is None:
             self._paint_tooltip(p, vp)
+        if self.drag and self.drag.get('readout') and self.drag.get('at') is not None:
+            at = self.drag['at']
+            self._label_box(p, QPointF(at.x() + 18, at.y() - 12),
+                            [self.drag['readout'], 'Ctrl snaps · Shift fine · Esc cancels'])
+
+    def _module_px(self, vp, c):
+        """Length of a camera's module on screen, pixels."""
+        try:
+            L = max(float(v) for v in self.project.module_for(c).size_mm) / 1000.0
+        except (TypeError, ValueError):
+            L = 0.044
+        return vp.px_per_m(c.pos()) * L
+
+    def _plate(self, p, r):
+        p.setPen(QPen(THEME.color('strong'), 1))
+        p.setBrush(THEME.color('raised', 0.92))
+        p.drawRoundedRect(r, 4, 4)
+
+    def _paint_ov3d(self, p, vp):
+        """Labels of the 3D overlays: each sky dome's open share, and the lidar points' range scale with the share
+        of each lidar's beams the vehicle blocks."""
+        if self.mode != 'scene' or not self.project.variant.sensors:
+            return
+        ov = self.ctx.overlays
+        c = getattr(self.ctx, 'overlays3d', None)
+        if c is None:
+            return
+        if ov.get('gnsssky'):
+            p.setFont(mono(10))
+            fm = p.fontMetrics()
+            placed = []
+            skies = c.fresh_skies()
+            tops = [np.asarray(sv.pos, float) + np.asarray(sv.frame, float)[:, 2] * (O3.SKY_R + 0.05) for sv in skies]
+            for sv, top in sorted(zip(skies, tops), key=lambda st: -vp.project([st[1]])[1][0]):   # far first
+                q, _, ok = vp.project([top])
+                if not ok[0]:
+                    continue
+                txt = f'{sv.tag} · {sv.visible * 100:.0f} % sky'
+                w = fm.horizontalAdvance(txt) + 10
+                r = QRectF(q[0][0] - w / 2, q[0][1] - 20, w, 16)
+                while any(r.intersects(o) for o in placed):        # stack labels that would overlap
+                    r.translate(0, -18)
+                placed.append(r)
+                self._plate(p, r)
+                p.setPen(QColor(STATUS['critical']) if sv.no_sky else THEME.color('ink'))
+                p.drawText(r, Qt.AlignmentFlag.AlignCenter, txt)
+        if not ov.get('lidarpts') or not any(s.visible and s.kind == 'lidar' for s in self.project.variant.sensors):
+            return
+        sweeps = c.fresh_sweeps()
+        far = sweeps[0].far if sweeps else O3.POINTS_FAR
+        x0, h = 46.0, vp.height()
+        p.setFont(sans(10))
+        fm = p.fontMetrics()
+        blocked = '  '.join(f'{sw.tag} {sw.blocked * 100:.0f} %' for sw in sweeps[:4])
+        lines = 'Beams the vehicle blocks: ' + blocked if sweeps else 'Tracing the lidar sweeps…'
+        bar_w = 150.0
+        w = max(bar_w + 74, fm.horizontalAdvance(lines) + 30)
+        r = QRectF(x0, h - 52, w, 44)
+        self._plate(p, r)
+        p.setPen(THEME.color('ink2'))
+        p.drawText(QPointF(x0 + 8, h - 38), 'Lidar range')
+        dark = THEME.name != 'light'
+        from PyQt6.QtGui import QLinearGradient
+        g = QLinearGradient(x0 + 70, 0, x0 + 70 + bar_w, 0)
+        for f, rgb in zip(np.linspace(0, 1, 9), O3.ramp(np.linspace(0, 1, 9), dark)):
+            g.setColorAt(float(f), QColor.fromRgbF(*[float(v) for v in rgb]))
+        bar = QRectF(x0 + 70, h - 46, bar_w, 8)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(g))
+        p.drawRect(bar)
+        p.setPen(THEME.color('muted'))
+        p.setFont(mono(9))
+        p.drawText(QRectF(bar.left() - 20, bar.bottom() + 1, 40, 11), Qt.AlignmentFlag.AlignCenter, '0')
+        p.drawText(QRectF(bar.right() - 30, bar.bottom() + 1, 60, 11), Qt.AlignmentFlag.AlignCenter, f'{far:g} m')
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(STATUS['critical']))
+        p.drawEllipse(QPointF(x0 + 12, h - 16), 3.5, 3.5)
+        p.setFont(sans(10))
+        p.setPen(THEME.color('ink'))
+        p.drawText(QPointF(x0 + 21, h - 12), lines)
+
+    # ------------------------------------------------------------------ move and rotate handles
+    def _gizmo_target(self):
+        """What the handles move: the selected camera, sensor or rig part, as (kind, uid, object) with kind 'cam',
+        'sensor' or 'rig'; None when nothing movable is selected (or this is not the editable scene)."""
+        if self.mode != 'scene' or self.cameras_override is not None:
+            return None
+        st = self.ctx.store
+        c = st.selected
+        if c is not None:
+            return ('cam', c.uid, c)
+        so = st.sel_obj
+        if len(so) == 2 and so[0] == 'sensor':
+            sn = st.variant.sensor(so[1])
+            if sn is not None and sn.visible:
+                return ('sensor', sn.uid, sn)
+        if len(so) == 2 and so[0] == 'rig':
+            part = next((q for q in self.project.rig if q.uid == so[1]), None)
+            if part is not None and part.visible:
+                return ('rig', part.uid, part)
+        return None
+
+    def _obj(self, kind, uid):
+        if kind == 'cam':
+            return self.ctx.store.cam(uid)
+        if kind == 'sensor':
+            return self.ctx.store.variant.sensor(uid)
+        return next((q for q in self.project.rig if q.uid == uid), None)
+
+    @staticmethod
+    def _rings(tg):
+        """The rotate rings a target has: a rig part turns about z only; cameras and sensors also tilt."""
+        return (0,) if tg[0] == 'rig' else (0, 1)
+
+    def _gizmo_set(self, kind, uid, **props):
+        """Write a handle drag's values, merging the steps of one drag into one undo step."""
+        st = self.ctx.store
+        if kind == 'cam':
+            st.set_cam(uid, merge=True, **props)
+            return
+        moved = bool(set(props) & {'x', 'y', 'z'})
+        if kind == 'sensor':
+            from .sensorview import set_props
+            sn = st.variant.sensor(uid)
+            if sn is not None:
+                set_props(self.ctx, uid, f'{"Moved" if moved else "Turned"} {sn.tag}', merge=True, **props)
+            return
+        part = next((q for q in self.project.rig if q.uid == uid), None)
+        if part is None or all(getattr(part, k) == v for k, v in props.items()):
+            return
+
+        def fn(pr):
+            for q in pr.rig:
+                if q.uid == uid:
+                    for k, v in props.items():
+                        setattr(q, k, v)
+        st.edit('rig', fn, f'{"Moved" if moved else "Turned"} {part.name}', merge_key=(uid, tuple(sorted(props))))
 
     def _gizmo_axes(self, vp, c):
-        pos = c.pos()
+        pos = _pos(c)
         L = 64.0 / max(vp.px_per_m(pos), 1e-3)
         return pos, L, [np.array([1.0, 0, 0]), np.array([0, 1.0, 0]), np.array([0, 0, 1.0])]
+
+    def _plane_quad(self, vp, c):
+        """The square handle between the x and y arrows that moves in the horizontal plane: its screen corners, or
+        None when it is seen edge on."""
+        pos, L, _ = self._gizmo_axes(vp, c)
+        a, b = 0.2 * L, 0.42 * L
+        q, _, ok = vp.project([pos + [a, a, 0], pos + [b, a, 0], pos + [b, b, 0], pos + [a, b, 0]])
+        if not ok.all():
+            return None
+        poly = QPolygonF([QPointF(*x) for x in q])
+        r = poly.boundingRect()
+        return poly if min(r.width(), r.height()) > 3 else None
 
     def _gizmo_move(self, p, vp, c, faint=False):
         pos, L, axes = self._gizmo_axes(vp, c)
@@ -618,29 +816,44 @@ class MainScene(QObject):
         o, _, ok = vp.project([pos])
         if not ok[0]:
             return
+        d = self.drag or {}
+        quad = self._plane_quad(vp, c)
+        if quad is not None:
+            hot = d.get('plane') or self.gizmo_hot == ('plane',)
+            col = QColor(cols[2])
+            col.setAlphaF(0.75 if hot else (0.3 if faint else 0.45))
+            p.setPen(QPen(QColor(cols[2]), 1.4 if hot else 1.0))
+            p.setBrush(col)
+            p.drawPolygon(quad)
         for k, a in enumerate(axes):
             e, _, ok2 = vp.project([pos + a * L])
             if not ok2[0]:
                 continue
             col = QColor(cols[k])
-            if faint:
-                col.setAlphaF(0.55)
-            hot = self.drag and self.drag.get('axis') == k
-            p.setPen(QPen(col, 2.2 if hot else 1.6))
+            hot = d.get('axis') == k or self.gizmo_hot == ('axis', k)
+            if hot:
+                col = col.lighter(120)
+            elif faint:
+                col.setAlphaF(0.6)
+            p.setPen(QPen(col, 3.4 if hot else 2.0))
             p.drawLine(QPointF(*o[0]), QPointF(*e[0]))
-            d = e[0] - o[0]
-            n = np.linalg.norm(d)
+            dv = e[0] - o[0]
+            n = np.linalg.norm(dv)
             if n > 1:
-                d /= n
-                perp = np.array([-d[1], d[0]])
-                tip = e[0]
-                poly = QPolygonF([QPointF(*tip), QPointF(*(tip - d * 8 + perp * 3.5)), QPointF(*(tip - d * 8 - perp * 3.5))])
+                dv /= n
+                perp = np.array([-dv[1], dv[0]])
+                tip = e[0] + dv * 3
+                w = 5.0 if hot else 4.0
+                poly = QPolygonF([QPointF(*tip), QPointF(*(tip - dv * 11 + perp * w)), QPointF(*(tip - dv * 11 - perp * w))])
                 p.setBrush(col)
                 p.setPen(Qt.PenStyle.NoPen)
                 p.drawPolygon(poly)
+        p.setPen(QPen(THEME.color('ink'), 1.2))
+        p.setBrush(THEME.color('panel'))
+        p.drawEllipse(QPointF(*o[0]), 3.0, 3.0)
 
     def _ring(self, vp, c, which):
-        pos = c.pos()
+        pos = _pos(c)
         L = 56.0 / max(vp.px_per_m(pos), 1e-3)
         a = np.linspace(0, 2 * math.pi, 64)
         if which == 0:      # yaw ring around world z
@@ -651,18 +864,18 @@ class MainScene(QObject):
             pts = pos + (np.outer(np.cos(a), fwd) + np.outer(np.sin(a), up)) * L
         return pts
 
-    def _gizmo_rotate(self, p, vp, c):
+    def _gizmo_rotate(self, p, vp, c, rings=(0, 1)):
         cols = [QColor('#3d86e6'), QColor('#3fae49')]
-        for k in (0, 1):
+        for k in rings:
             pts = self._ring(vp, c, k)
             sc, _, ok = vp.project(pts)
-            hot = self.drag and self.drag.get('ring') == k
-            p.setPen(QPen(cols[k], 2.2 if hot else 1.5))
+            hot = (self.drag or {}).get('ring') == k or self.gizmo_hot == ('ring', k)
+            p.setPen(QPen(cols[k].lighter(120) if hot else cols[k], 3.4 if hot else 2.0))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawPolyline(QPolygonF([QPointF(*q) for q, o in zip(sc, ok) if o]))
         # aim direction
-        R = rot_zyx(c.yaw, c.pitch, c.roll)
-        pos = c.pos()
+        R = rot_zyx(c.yaw, getattr(c, 'pitch', 0.0), getattr(c, 'roll', 0.0))
+        pos = _pos(c)
         L = 70.0 / max(vp.px_per_m(pos), 1e-3)
         sc, _, ok = vp.project([pos, pos + R[:, 0] * L])
         if ok.all():
@@ -764,14 +977,20 @@ class MainScene(QObject):
         allowed = 'not mountable' not in part.role
         return hit, n, allowed, part.name
 
-    def _gizmo_pick(self, vp, pos, c):
+    GIZMO_TOL = 10.0                    # px from a handle that still grabs it
+
+    def _gizmo_pick(self, vp, pos, c, rings=(0, 1)):
+        """The handle of object c under screen position pos: ('axis', k), ('plane',) or ('ring', k); None."""
         if self.ctx.tool == 'rotate':
-            for k in (0, 1):
+            best = None
+            for k in rings:
                 sc, _, ok = vp.project(self._ring(vp, c, k))
-                d = np.hypot(sc[:, 0] - pos.x(), sc[:, 1] - pos.y())
-                if ok.any() and d[ok].min() < 6:
-                    return ('ring', k)
-            return None
+                if not ok.any():
+                    continue
+                dmin = float(np.hypot(sc[:, 0] - pos.x(), sc[:, 1] - pos.y())[ok].min())
+                if dmin < self.GIZMO_TOL and (best is None or dmin < best[1]):
+                    best = (k, dmin)
+            return ('ring', best[0]) if best else None
         if self.ctx.tool not in ('move', 'select'):
             return None
         p0, L, axes = self._gizmo_axes(vp, c)
@@ -781,14 +1000,63 @@ class MainScene(QObject):
             e, _, ok2 = vp.project([p0 + a * L])
             if not (ok[0] and ok2[0]):
                 continue
-            A, B = o[0], e[0]
+            A, B = o[0], e[0] + (e[0] - o[0]) * 0.08          # the arrow head reaches a little past the end
             AB = B - A
+            if AB @ AB < 16:                                    # seen end on: the plane handle and the others
+                continue
             t = np.clip(((pos.x() - A[0]) * AB[0] + (pos.y() - A[1]) * AB[1]) / max(AB @ AB, 1e-9), 0, 1)
             q = A + AB * t
             dist = math.hypot(pos.x() - q[0], pos.y() - q[1])
-            if dist < 6 and t > 0.25 and (best is None or dist < best[1]):
+            if dist < self.GIZMO_TOL and t > 0.12 and (best is None or dist < best[1]):
                 best = (k, dist)
-        return ('axis', best[0]) if best else None
+        if best:
+            return ('axis', best[0])
+        quad = self._plane_quad(vp, c)
+        if quad is not None and quad.containsPoint(pos, Qt.FillRule.OddEvenFill):
+            return ('plane',)
+        return None
+
+    def _object_under(self, vp, pos, kind, uid) -> bool:
+        """Whether the sensor or rig part uid is under screen position pos."""
+        o, d = vp.ray(pos.x(), pos.y())
+        if kind == 'sensor':
+            from .sensorview import pick as pick_sensor
+            return pick_sensor(self.project, o, d) == uid
+        if kind == 'rig':
+            from .rigview import pick as pick_rig
+            return pick_rig(self.project, self.ctx.analysis.engine.vehicle_geom(self.project), o, d) == uid
+        return False
+
+    def home_box(self, vp):
+        """What the 3D view's frame button shows: the vehicle and the ground round it, as Home does."""
+        win = self.ctx.window
+        if win is None or not hasattr(win, 'viewarea'):
+            return None
+        lo, hi = win.viewarea._bbox()
+        return lo, hi, 0.82
+
+    def pick_point(self, vp, pos):
+        """The 3D point under screen position pos that the view orbits about and zooms towards: a camera, the body or
+        a rig part where the ray meets it, a sensor's housing; None over the ground or the sky."""
+        c = self._pick_camera(vp, pos)
+        if c is not None:
+            return c.pos()
+        o, d = vp.ray(pos.x(), pos.y())
+        best = None
+        vg = self.ctx.analysis.engine.vehicle_geom(self.project)
+        if vg is not None:
+            t, f = vg.occ_mesh.raycast(o[None], d[None])
+            if f[0] >= 0:
+                best = float(t[0])
+        if self.project.variant.sensors:
+            from .sensorview import pick as pick_sensor
+            uid = pick_sensor(self.project, o, d)
+            sn = self.project.variant.sensor(uid) if uid else None
+            if sn is not None:
+                ts = float((sn.pos() - o) @ d)
+                if ts > 0 and (best is None or ts < best):
+                    best = ts
+        return o + d * best if best is not None else None
 
     def mouse_press(self, vp, e):
         if e.button() != Qt.MouseButton.LeftButton or self.mode != 'scene' or self.cameras_override is not None:
@@ -804,15 +1072,23 @@ class MainScene(QObject):
                     ops.aim_at(self.ctx, u, (float(g[0]), float(g[1]), 0.0))
                 self.ctx.set_tool('select')
             return True
-        if c is not None and tool in ('move', 'rotate', 'select'):
-            g = self._gizmo_pick(vp, pos, c)
-            if g and not c.locked:
+        tg = self._gizmo_target()
+        if tg is not None and tool in ('move', 'rotate', 'select'):
+            kind, uid, obj = tg
+            g = self._gizmo_pick(vp, pos, obj, self._rings(tg))
+            if g is None and tool in ('move', 'select') and kind != 'cam' and self._pick_camera(vp, pos) is None \
+                    and self._object_under(vp, pos, kind, uid):
+                g = ('plane',)                  # pressing on the selected sensor or rig part drags it about
+            if g and not getattr(obj, 'locked', False):
+                base = {'kind': kind, 'uid': uid, 'start': _pos(obj), 'mouse': pos, 'at': pos, 'readout': ''}
                 if g[0] == 'axis':
-                    self.drag = {'axis': g[1], 'uid': c.uid, 'start': c.pos(), 'mouse': pos}
+                    self.drag = dict(base, axis=g[1])
+                elif g[0] == 'plane':
+                    self.drag = dict(base, plane=True)
                 else:
-                    self.drag = {'ring': g[1], 'uid': c.uid, 'yaw': c.yaw, 'pitch': c.pitch, 'mouse': pos, 'turn': 0.0,
-                                 'last': None}
-                st.dragging = True
+                    self.drag = dict(base, ring=g[1], yaw=obj.yaw, pitch=getattr(obj, 'pitch', 0.0), turn=0.0,
+                                     last=None)
+                st.dragging = True             # (gizmo_hot stays: the hover after the release resets the cursor)
                 return True
         if tool == 'place':
             hit = self._mesh_hit(vp, pos)
@@ -841,7 +1117,8 @@ class MainScene(QObject):
             if not (hitc.uid in st.sel_cams and not add):
                 st.select_cams([hitc.uid], add=add)
             if tool in ('move', 'select') and not hitc.locked and not add:
-                self.drag = {'surface': True, 'uid': hitc.uid, 'start': hitc.pos(), 'mouse': pos}
+                self.drag = {'surface': True, 'kind': 'cam', 'uid': hitc.uid, 'start': hitc.pos(), 'mouse': pos,
+                             'at': pos, 'readout': ''}
                 st.dragging = True
             return True
         return False
@@ -851,11 +1128,15 @@ class MainScene(QObject):
         if not d:
             return
         st = self.ctx.store
-        c = st.cam(d['uid'])
+        kind = d.get('kind', 'cam')
+        c = self._obj(kind, d['uid'])
         if c is None:
             return
         pos = e.position()
+        d['at'] = pos
         fine = 0.1 if e.modifiers() & Qt.KeyboardModifier.ShiftModifier else 1.0
+        snap = bool(e.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        set_ = lambda **kw: self._gizmo_set(kind, c.uid, **kw)
         if 'axis' in d:
             k = d['axis']
             a = np.zeros(3)
@@ -872,12 +1153,28 @@ class MainScene(QObject):
                     return 0.0
                 return (b * (r @ w0) - (a @ w0)) / den
             delta = (closest(o, r) - closest(o0, r0)) * fine
-            if self.ctx.snap == 'grid':
+            if snap:
+                delta = round(delta / SNAP_M) * SNAP_M
+            elif self.ctx.snap == 'grid':
                 delta = round(delta / 0.05) * 0.05
             new = d['start'] + a * delta
-            st.set_cam(c.uid, merge=True, x=round(float(new[0]), 4), y=round(float(new[1]), 4), z=round(float(new[2]), 4))
+            set_(x=round(float(new[0]), 4), y=round(float(new[1]), 4), z=round(float(new[2]), 4))
+            d['readout'] = f'Δ{"xyz"[k]} {delta * 1000:+.0f} mm  ·  {"xyz"[k]} {new[k]:.3f} m'
+        elif d.get('plane'):
+            g = vp.ground_at(pos.x(), pos.y(), d['start'][2])
+            g0 = vp.ground_at(d['mouse'].x(), d['mouse'].y(), d['start'][2])
+            if g is not None and g0 is not None:
+                dv = (g - g0) * fine
+                if snap:
+                    dv[:2] = np.round(dv[:2] / SNAP_M) * SNAP_M
+                newp = d['start'] + dv
+                if not snap and self.ctx.snap == 'grid':
+                    newp[:2] = np.round(newp[:2] / 0.05) * 0.05
+                set_(x=round(float(newp[0]), 4), y=round(float(newp[1]), 4))
+                dd = (newp - d['start']) * 1000
+                d['readout'] = f'Δx {dd[0]:+.0f}  Δy {dd[1]:+.0f} mm'
         elif 'ring' in d:
-            pc, _, _ = vp.project([c.pos()])
+            pc, _, _ = vp.project([_pos(c)])
             if d['last'] is None:
                 d['last'] = math.atan2(d['mouse'].y() - pc[0][1], d['mouse'].x() - pc[0][0])
             a1 = math.atan2(pos.y() - pc[0][1], pos.x() - pc[0][0])
@@ -888,24 +1185,40 @@ class MainScene(QObject):
             if d['ring'] == 0:
                 # screen y points down: dragging counter-clockwise on screen turns the camera left when seen from above
                 sign = -1 if vp.cam.view()[2, 2] > 0 else 1
-                st.set_cam(c.uid, merge=True, yaw=round(wrap180(d['yaw'] + sign * da), 1))
+                yaw = d['yaw'] + sign * da
+                if snap:
+                    yaw = round(yaw / SNAP_DEG) * SNAP_DEG
+                yaw = round(wrap180(yaw), 1)
+                set_(yaw=yaw)
+                d['readout'] = f'yaw {yaw:.1f}°  ·  {wrap180(yaw - d["yaw"]):+.1f}°'
             else:
-                st.set_cam(c.uid, merge=True, pitch=round(max(-89.0, min(89.0, d['pitch'] - da)), 1))
+                pitch = d['pitch'] - da
+                if snap:
+                    pitch = round(pitch / SNAP_DEG) * SNAP_DEG
+                pitch = round(max(-89.0, min(89.0, pitch)), 1)
+                set_(pitch=pitch)
+                d['readout'] = f'pitch {pitch:.1f}°  ·  {pitch - d["pitch"]:+.1f}°'
         elif d.get('surface'):
             if self.ctx.snap == 'surface':
                 hit = self._mesh_hit(vp, pos)
                 if hit is not None:
                     n = hit[1]
                     newp = hit[0] + n * (c.standoff_mm / 1000)
-                    st.set_cam(c.uid, merge=True, x=round(float(newp[0]), 4), y=round(float(newp[1]), 4), z=round(float(newp[2]), 4))
+                    set_(x=round(float(newp[0]), 4), y=round(float(newp[1]), 4), z=round(float(newp[2]), 4))
+                    dd = (newp - d['start']) * 1000
+                    d['readout'] = f'on {hit[3]}  ·  Δx {dd[0]:+.0f}  Δy {dd[1]:+.0f}  Δz {dd[2]:+.0f} mm'
             else:
                 g = vp.ground_at(pos.x(), pos.y(), d['start'][2])
                 g0 = vp.ground_at(d['mouse'].x(), d['mouse'].y(), d['start'][2])
                 if g is not None and g0 is not None:
                     newp = d['start'] + (g - g0) * fine
-                    if self.ctx.snap == 'grid':
+                    if snap:
+                        newp[:2] = d['start'][:2] + np.round((newp[:2] - d['start'][:2]) / SNAP_M) * SNAP_M
+                    elif self.ctx.snap == 'grid':
                         newp[:2] = np.round(newp[:2] / 0.05) * 0.05
-                    st.set_cam(c.uid, merge=True, x=round(float(newp[0]), 4), y=round(float(newp[1]), 4))
+                    set_(x=round(float(newp[0]), 4), y=round(float(newp[1]), 4))
+                    dd = (newp - d['start']) * 1000
+                    d['readout'] = f'Δx {dd[0]:+.0f}  Δy {dd[1]:+.0f} mm'
         self.changed.emit()
 
     def mouse_release(self, vp, e):
@@ -914,6 +1227,17 @@ class MainScene(QObject):
             self.ctx.store.dragging = False
             self.ctx.analysis.request()
             self.changed.emit()
+
+    def cancel_drag(self) -> bool:
+        """Esc during a handle drag: put the object back where the drag started, leaving no undo step."""
+        if not self.drag:
+            return False
+        self.ctx.store.cancel_gesture()
+        self.drag = None
+        self.ctx.store.dragging = False
+        self.ctx.analysis.request()
+        self.changed.emit()
+        return True
 
     def click(self, vp, e):
         if self.mode != 'scene' or self.cameras_override is not None:
@@ -960,6 +1284,17 @@ class MainScene(QObject):
             self.ctx.window.frame_selection()
 
     def hover(self, vp, pos):
+        hot = None
+        tg = self._gizmo_target() if pos is not None and not self.drag else None
+        if tg is not None and not getattr(tg[2], 'locked', False):
+            hot = self._gizmo_pick(vp, pos, tg[2], self._rings(tg))
+        if hot != self.gizmo_hot:
+            self.gizmo_hot = hot
+            if hot is None:
+                vp.unsetCursor()
+            else:
+                vp.setCursor(Qt.CursorShape.SizeAllCursor if hot[0] != 'ring' else Qt.CursorShape.OpenHandCursor)
+            self.changed.emit()
         if pos is None:
             self.hover_info = None
             self.place_preview = None
@@ -1008,6 +1343,9 @@ class MainScene(QObject):
 
     def key_press(self, vp, e):
         if e.key() == Qt.Key.Key_Escape:
+            if self.cancel_drag():
+                vp.cancel_provider_drag()
+                return True
             if self.measure:
                 self.measure = []
                 self.changed.emit()

@@ -63,6 +63,22 @@ class VDialog(QDialog):
         head.mouseMoveEvent = self._move
         head.mouseReleaseEvent = lambda e: setattr(self, '_drag', None)
 
+    def fit_screen(self, margin=16):
+        """Shrink the dialog to the screen it opens on and move it fully onto it, so its buttons are never off-screen."""
+        host = self.parentWidget()
+        scr = (host.screen() if host is not None else None) or self.screen()
+        if scr is None:
+            return
+        a = scr.availableGeometry().adjusted(margin, margin, -margin, -margin)
+        w, h = min(self.width(), a.width()), min(self.height(), a.height())
+        if (w, h) != (self.width(), self.height()):
+            self.resize(w, h)
+        g = self.frameGeometry()
+        x = min(max(g.x(), a.left()), a.right() - g.width() + 1)
+        y = min(max(g.y(), a.top()), a.bottom() - g.height() + 1)
+        if (x, y) != (g.x(), g.y()):
+            self.move(x, y)
+
     def set_subtitle(self, s):
         self.sub_lbl.setText(s)
 
@@ -87,3 +103,4 @@ class VDialog(QDialog):
         if par is not None:
             g = par.window().geometry()
             self.move(g.center() - self.rect().center())
+        self.fit_screen()

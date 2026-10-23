@@ -11,7 +11,10 @@ OVERLAYS = [('frustums', 'Frustums', 'frustum', True), ('footprints', 'Footprint
             ('roi', 'ROI', 'roi', True), ('targets', 'Calibration targets', 'checker', False),
             ('dimensions', 'Dimensions', 'measure', False), ('grid', 'Grid', 'snap-grid', True),
             ('volume', 'Blind volume', 'blind', False), ('guidelines', 'Parking guidelines', 'axle', False),
-            ('sensors', 'Lidar rings and radar fields', 'sensor', True)]
+            ('sensors', 'Lidar rings and radar fields', 'sensor', True),
+            ('lidarpts', 'Lidar points', 'density', False),      # one simulated sweep per lidar
+            ('gnsssky', 'GNSS sky', 'sun', False),               # the sky each antenna sees, as a dome over it
+            ('brackets', 'Mount brackets', 'bracket', True)]     # generated brackets on the vehicle
 HEATMAPS = [('none', 'None'), ('coverage', 'Coverage'), ('density', 'Density'), ('redundancy', 'Redundancy'),
             ('stitched', 'Objects')]       # objects standing in the stitched bird's-eye view
 TOOLS = [('select', 'Select', 'select', 'V'), ('move', 'Move', 'move', 'G'), ('rotate', 'Rotate', 'rotate', 'R'),

@@ -55,6 +55,7 @@ class ToolContext:
     cache: dict = field(default_factory=dict)
     rig_health: dict | None = None       # the Live rig page's snapshot while it streams (core.rig_health)
     drive_log: dict | None = None        # the Drive-log check page's last result (core.drivelog.summary)
+    working_dir: str = ''                # where outputs go (workdir.get of the settings); never sent to the model
     _proposals: int = 0
 
     def status(self, text):
@@ -590,8 +591,50 @@ def get_sample_dataset(tc, **_):
                 'ok', 'reason', 'frames', 'samples', 'keyframe_hz', 'images', 'sweeps', 'scans', 'bytes', 'seconds',
                 'notes')},
             'meaning': 'what a synthetic sample drive with these settings would record: frames per nuScenes channel '
-                       'and bag topic, keyframes, approximate size and time; the user writes it on Export ▸ Sample '
-                       'dataset (a nuScenes version folder and a ROS 2 bag). The scene is synthetic, for testing '
+                       'and bag topic, keyframes, approximate size and time; generate_sample_dataset writes it into the '
+                       'working folder when the user asks (or they use Export ▸ Sample dataset): a nuScenes version '
+                       'folder and a ROS 2 bag. The scene is synthetic, for testing pipelines, not for training'}
+
+
+def generate_sample_dataset(tc, duration_s=None, speed_kmh=None, scene=None, image_scale=None, nuscenes=None,
+                            rosbag=None, seed=None, **_):
+    """Write a sample dataset (core.dataset) into a new folder in the user's working folder. The model is told the
+    folder relative to the working folder only; the app shows the full path."""
+    from .. import workdir
+    from ..core import dataset as DSET
+    over = {k: v for k, v in dict(duration_s=duration_s, speed_kmh=speed_kmh, scene=scene, image_scale=image_scale,
+                                  nuscenes=nuscenes, rosbag=rosbag, seed=seed).items() if v is not None}
+    st = DSET.DatasetSettings.from_dict({**(tc.project.analysis.dataset or {}), **over})
+    est = DSET.estimate(tc.project, st)
+    if not est.get('ok'):
+        return {'error': est.get('reason') or 'nothing to record in this variant'}
+    base = tc.working_dir or workdir.default()
+    out = workdir.dataset_dir(tc.project, base=base)
+    last = [-1.0]
+
+    def progress(f, text=''):
+        if f - last[0] >= 0.05 or f >= 1.0:            # a status line every 5 %
+            last[0] = f
+            tc.status(f'Writing the sample dataset · {f * 100:.0f} %' + (f' · {text}' if text else ''))
+    tc.status(f'Writing the sample dataset (about {est.get("seconds", 0):.0f} s, '
+              f'{est.get("bytes", 0) / 1e6:.0f} MB)…')
+    try:
+        res = DSET.generate(tc.project, tc.engine, st, out, progress, tc.cancelled)
+    except ValueError as e:
+        return {'error': str(e)}
+    if res is None:
+        return {'error': 'cancelled: what was written was removed'}
+    if tc.on_ui is not None:
+        tc.on_ui({'action': 'dataset_written', 'result': res})
+    s = DSET.summary(res)
+    return {'written': True, 'folder_in_working_folder': workdir.display(res.out_dir, base),
+            'settings': {k: st.to_dict()[k] for k in ('duration_s', 'speed_kmh', 'scene', 'image_scale', 'nuscenes',
+                                                      'rosbag', 'seed')},
+            **{k: s[k] for k in ('samples', 'annotations', 'seconds', 'size_mb') if k in s},
+            'notes': list(res.notes),
+            'meaning': 'a synthetic drive recorded by this rig, written as a nuScenes version folder (nuscenes/) and a '
+                       'ROS 2 bag (rosbag/) in a new folder of the user\'s working folder; the app shows the full path '
+                       'and the snippet to load it on Export ▸ Sample dataset. Synthetic geometry: for testing '
                        'pipelines, not for training'}
 
 
@@ -1372,6 +1415,16 @@ TOOLS = [
     Tool('get_sample_dataset', 'Read the sample dataset plan',
          'The synthetic drive the rig would record for pipeline tests: settings, frames per channel, keyframes, '
          'approximate size and generation time. Cheap; writes nothing.', {}, get_sample_dataset),
+    Tool('generate_sample_dataset', 'Write a sample dataset',
+         'Write a synthetic drive recorded by this rig (nuScenes folder and ROS 2 bag) into a new folder in the user\'s '
+         'working folder, with the project\'s sample-dataset settings or the ones given (duration_s up to 30, speed_kmh, '
+         'scene urban|highway, image_scale 0.1-1, nuscenes, rosbag, seed). Takes about a minute and writes a few '
+         'hundred MB at the defaults, so call it only when the user asks for a dataset to be written; '
+         'get_sample_dataset gives the estimate first.',
+         {'duration_s': {'type': 'number'}, 'speed_kmh': {'type': 'number'},
+          'scene': {'type': 'string', 'enum': ['urban', 'highway']}, 'image_scale': {'type': 'number'},
+          'nuscenes': {'type': 'boolean'}, 'rosbag': {'type': 'boolean'}, 'seed': {'type': 'integer'}},
+         generate_sample_dataset, 'compute'),
     Tool('get_drive_log_check', 'Read the drive-log check',
          'The last recorded drive checked against the plan (Calibrate ▸ Drive-log check): streams OK/missing, dropped '
          'frames, data rate against the budget, lidar phase lock, worst camera trigger offset, camera rotations with '

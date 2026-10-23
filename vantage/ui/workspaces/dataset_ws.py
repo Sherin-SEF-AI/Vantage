@@ -4,23 +4,30 @@ before any hardware exists. The settings are saved with the project (undoable); 
 background; generating is a background job with progress and Cancel."""
 from __future__ import annotations
 
+import json
 import os
 import threading
+import time
 import traceback
+from collections import OrderedDict
 
 from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
-from PyQt6.QtWidgets import (QApplication, QFileDialog, QGridLayout, QHBoxLayout, QPlainTextEdit, QProgressBar,
-                             QScrollArea, QSlider, QSplitter, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QApplication, QFileDialog, QGridLayout, QHBoxLayout, QLineEdit, QPlainTextEdit,
+                             QProgressBar, QScrollArea, QSlider, QSplitter, QVBoxLayout, QWidget)
 
+from ... import workdir
 from ...core import dataset as DSET
 from ...core.timing import plan_outline
 from ..datasetview import CameraGrid, TopView
 from ..theme import THEME, mono
+from .. import icons
 from ..widgets import ScrubSpinBox, SegmentedControl, ToggleSwitch, button, hline, label
 from .recording_ws import Tile
 
 JOB = 'dataset'
 PREVIEW_WIDTH = 320                        # px across each camera thumbnail
+FRAME_S = 0.2                              # wall seconds per frame while playing (a frame renders in about 0.2 s)
+PLAY_CACHE = 48                            # played frames kept (about 2.5 MB each), so a loop replays smoothly
 # (group, key, label, unit, decimals, step, scale, tip); scale: stored value × scale = shown value
 FIELDS = (
     ('Drive', 'duration_s', 'Duration', 's', 1, 0.5, 1.0, 'Length of the recorded drive'),
@@ -93,6 +100,14 @@ class DatasetPage(QWidget):
         self.sig.failed.connect(self._failed)
         self.result: DSET.DatasetResult | None = None
         self.preview_data = None
+        self.playing = False
+        self._frames = OrderedDict()                     # (frame key) -> (data, outline), most recently used last
+        self._pkey = None
+        self._play_t = 0.0
+        self._shown_at = 0.0
+        self._play_timer = QTimer(self)
+        self._play_timer.setSingleShot(True)
+        self._play_timer.timeout.connect(self._play_step)
         self.busy = False                  # a generation is running
         self._cancel = threading.Event()
         self._pgen = 0
@@ -234,14 +249,23 @@ class DatasetPage(QWidget):
         tl.addLayout(tiles)
         head = QHBoxLayout()
         head.addWidget(label('Preview', bold=True))
+        self.b_play = button('', 'ghost', 'play', 'Play the drive (Space): the preview steps through it at the '
+                                                  'chosen speed and loops; frames already played replay at once')
+        self.b_play.setFixedWidth(30)
+        self.b_play.clicked.connect(self.toggle_play)
+        head.addWidget(self.b_play)
         self.t_label = label('t = 0.0 s', mono_=True)
         head.addWidget(self.t_label)
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setToolTip('The instant of the drive the preview shows')
         self.slider.valueChanged.connect(lambda v: self.t_label.setText(f't = {v / 10:.1f} s'))
         self.slider.sliderReleased.connect(self._slider_released)
+        self.slider.sliderPressed.connect(lambda: self.stop_play())
         self.slider.setMinimumWidth(160)
         head.addWidget(self.slider, 1)
+        self.speed = SegmentedControl([('0.5', '0.5×'), ('1', '1×'), ('2', '2×')], '1')
+        self.speed.setToolTip('Playback speed against the drive\'s own time (0.5× shows every lidar sweep)')
+        head.addWidget(self.speed)
         self.reach = SegmentedControl([('20', '20 m'), ('40', '40 m'), ('80', '80 m')], '40')
         self.reach.setToolTip('How far the top view reaches from the vehicle')
         self.reach.changed.connect(lambda v: self.top.set_reach(float(v)))
@@ -270,8 +294,9 @@ class DatasetPage(QWidget):
         gl.setContentsMargins(10, 6, 10, 8)
         gl.setSpacing(4)
         row = QHBoxLayout()
-        self.b_generate = button('Generate…', 'primary', 'export',
-                                 'Choose a folder and write the drive there (nuscenes/, rosbag/, dataset.json)')
+        self.b_generate = button('Generate', 'primary', 'export',
+                                 'Write the drive into a new folder in the working folder (nuscenes/, rosbag/, '
+                                 'dataset.json); Generate into… picks another folder')
         self.b_generate.clicked.connect(lambda: self.generate())
         row.addWidget(self.b_generate)
         self.bar = QProgressBar()
@@ -286,6 +311,17 @@ class DatasetPage(QWidget):
         self.b_copy.clicked.connect(self._copy)
         row.addWidget(self.b_copy)
         gl.addLayout(row)
+        wrow = QHBoxLayout()
+        self.where = label('', muted=True, small=True)
+        wrow.addWidget(self.where, 1)
+        b = button('Generate into…', 'ghost', 'folder', 'Choose any folder for this drive (the working folder stays)')
+        b.clicked.connect(self._generate_into)
+        wrow.addWidget(b)
+        b = button('Working folder…', 'ghost', 'folder', 'Where Vantage writes sample datasets and other outputs '
+                                                          '(also in Preferences ▸ General)')
+        b.clicked.connect(self._choose_working)
+        wrow.addWidget(b)
+        gl.addLayout(wrow)
         self.g_status = label('', muted=True, small=True, wrap=True)
         gl.addWidget(self.g_status)
         self.out = QPlainTextEdit()
@@ -359,6 +395,8 @@ class DatasetPage(QWidget):
             self._dirty = True
 
     def _on_replaced(self, *_):
+        self.stop_play()
+        self._frames.clear()
         self._pgen += 1                        # a preview still rendering is for the old project
         self._pbusy = False
         self.preview_data = None
@@ -378,6 +416,7 @@ class DatasetPage(QWidget):
         self.activate()
 
     def activate(self):
+        self._show_where()
         if self._dirty:
             self.refresh()
         if self._pstale or self.preview_data is None:
@@ -421,13 +460,91 @@ class DatasetPage(QWidget):
         return win._shared_engine() if win is not None and hasattr(win, '_shared_engine') else \
             self.ctx.analysis.engine.share()
 
+    # ------------------------------------------------------------------ playing the drive
+    def _frame_key(self, t) -> tuple:
+        """A rendered frame's identity: the settings, the design (the store's revision) and the instant."""
+        st = self.ctx.store
+        return (json.dumps(self.settings.to_dict(), sort_keys=True), st.revision, st.project.active_uid,
+                int(round(float(t) * 10)))
+
+    def toggle_play(self):
+        if self.playing:
+            self.stop_play()
+        else:
+            self.start_play()
+
+    def start_play(self) -> bool:
+        if self.playing or self.busy or not getattr(self, 'estimate', {}).get('ok', False):
+            return False
+        self.playing = True
+        self.b_play.setIcon(icons.icon('pause', 12))
+        self.b_play.setToolTip('Pause (Space)')
+        if self.slider.value() >= self.slider.maximum():
+            self.slider.setValue(0)
+        self._play_t = self.slider.value() / 10.0 - self._step()      # the first frame shown is the slider's
+        self._shown_at = 0.0
+        self._play_step()
+        return True
+
+    def stop_play(self):
+        if not self.playing:
+            return
+        self.playing = False
+        self._play_timer.stop()
+        self.b_play.setIcon(icons.icon('play', 12))
+        self.b_play.setToolTip('Play the drive (Space)')
+
+    def _step(self) -> float:
+        return FRAME_S * float(self.speed.value())
+
+    def _play_step(self):
+        """Show the next instant: from the cache at once, else rendered on the thread (_preview_done comes back)."""
+        if not self.playing:
+            return
+        if self.busy or not self.isVisible():
+            self.stop_play()
+            return
+        T = self.slider.maximum() / 10.0
+        t = round((self._play_t + self._step()) * 10) / 10
+        if t > T + 1e-9:
+            t = 0.0                                      # loop
+        self._play_t = t
+        self.slider.blockSignals(True)
+        self.slider.setValue(int(round(t * 10)))
+        self.slider.blockSignals(False)
+        self.t_label.setText(f't = {t:.1f} s')
+        out = self._frames.get(self._frame_key(t))
+        if out is not None:
+            self._frames.move_to_end(self._frame_key(t))
+            self._show_frame(out)
+            self._next_frame()
+        elif not self.run_preview(t):
+            self._play_timer.start(50)                    # a render is still running: try again shortly
+
+    def _next_frame(self):
+        """The next step once this frame has been up for FRAME_S (rendering slower than that plays slower)."""
+        wait = FRAME_S - (time.monotonic() - self._shown_at) if self._shown_at else 0.0
+        self._play_timer.start(int(max(wait, 0.0) * 1000))
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key.Key_Space and not isinstance(QApplication.focusWidget(), (QLineEdit, QPlainTextEdit)):
+            self.toggle_play()
+            e.accept()
+            return
+        super().keyPressEvent(e)
+
+    def hideEvent(self, e):
+        self.stop_play()
+        super().hideEvent(e)
+
     # ------------------------------------------------------------------ preview
     def _slider_released(self):
         self._pstale = True
         self.run_preview()
 
-    def run_preview(self):
-        """Render the preview instant on a thread; a request while one renders runs again after it."""
+    def run_preview(self, t=None):
+        """Render the preview instant (the slider's, or t) on a thread; a request while one renders runs again after
+        it."""
         if not getattr(self, 'estimate', {}).get('ok', False):
             self.grid.set_empty(self.estimate.get('reason', 'Nothing to record.'))
             self.top.set_empty('')
@@ -438,10 +555,11 @@ class DatasetPage(QWidget):
         p = self.ctx.store.project
         snap = p.snapshot()
         st = self.settings
-        t = self.slider.value() / 10.0
+        t = self.slider.value() / 10.0 if t is None else float(t)
         eng = self._engine()
         self._pgen += 1
         gen = self._pgen
+        self._pkey = self._frame_key(t)
         self._pbusy, self._pagain, self._pstale = True, False, False
         self.p_status.setText(f'Rendering the drive at {t:.1f} s…')
 
@@ -463,6 +581,18 @@ class DatasetPage(QWidget):
         if gen != self._pgen:
             return
         self._pbusy = False
+        self._frames[self._pkey] = out
+        while len(self._frames) > PLAY_CACHE:
+            self._frames.popitem(last=False)
+        self._show_frame(out)
+        if self.playing:
+            self._pagain = self._pstale = False         # playing renders fresh frames anyway
+            self._next_frame()
+            return
+        if self._pagain or self._pstale:
+            self.timer.start()
+
+    def _show_frame(self, out):
         data, outline = out
         self.preview_data = data
         self.grid.set_cameras(data['cameras'])
@@ -473,26 +603,44 @@ class DatasetPage(QWidget):
         self.p_status.setText(f'{data["t"]:.1f} s · {data["speed_kmh"]:.0f} km/h · {len(data["lidar"]):,} lidar '
                               f'points · {sum(len(r["points"]) for r in data["radar"])} radar detections · {nb} '
                               f'annotated object{"s" * (nb != 1)} within {DSET.DS.ANNOT_RANGE_M:g} m')
-        if self._pagain or self._pstale:
-            self.timer.start()
+        self._shown_at = time.monotonic()
 
     def _preview_failed(self, gen, msg):
         if gen != self._pgen:
             return
         self._pbusy = False
+        self.stop_play()
         self.p_status.setText('Preview failed: ' + msg.splitlines()[0])
         if self._pagain:
             self.timer.start()
 
     # ------------------------------------------------------------------ generate
+    def working(self) -> str:
+        return workdir.get(self.ctx.settings)
+
+    def _show_where(self):
+        folder = workdir.project_dir(self.ctx.store.project, self.working(), 'datasets')
+        self.where.setText(f'New datasets go to {short_path(folder)}')
+        self.where.setToolTip(self.working())
+
+    def _generate_into(self):
+        folder = QFileDialog.getExistingDirectory(self, 'Write the sample dataset into', self.working())
+        if folder:
+            self.generate(folder)
+
+    def _choose_working(self):
+        folder = QFileDialog.getExistingDirectory(self, 'Working folder', self.working())
+        if folder:
+            workdir.put(self.ctx.settings, folder)
+            self._show_where()
+            self.ctx.msg(f'Working folder: {short_path(folder)}', 4000)
+
     def generate(self, folder=None) -> bool:
-        """Write the dataset into folder (asks for one when None) as a background job."""
+        """Write the dataset into folder (default: a new folder in the working folder) as a background job."""
         if self.busy:
             return False
         if folder is None:
-            folder = QFileDialog.getExistingDirectory(self, 'Write the sample dataset into')
-            if not folder:
-                return False
+            folder = workdir.dataset_dir(self.ctx.store.project, base=self.working())
         p = self.ctx.store.project
         st = self.settings
         try:
@@ -505,6 +653,7 @@ class DatasetPage(QWidget):
         eng = self._engine()
         self._for_project = p
         self._cancel.clear()
+        self.stop_play()
         self.busy = True
         self.result = None
         self.bar.setValue(0)
@@ -569,6 +718,13 @@ class DatasetPage(QWidget):
         self.ctx.msg(f'Sample dataset written to {short_path(res.out_dir)}', 6000)
         self.out.setToolTip(res.out_dir)
         self._update_buttons()
+
+    def show_written(self, res):
+        """A dataset the assistant wrote: shown here as if Generate had written it (and logged in the project)."""
+        if self.busy or res is None:
+            return
+        self._for_project = self.ctx.store.project
+        self._done(res)
 
     def _failed(self, msg):
         self.busy = False

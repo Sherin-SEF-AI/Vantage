@@ -44,7 +44,9 @@ Checks, each with findings ok / warning / fault:
    sampled frames, under a weak prior towards small corrections. The standard error is the larger of a cluster-robust
    sandwich estimate (image regions as clusters) and the spread of each frame's own optimum; an axis whose score
    peak is too flat, or whose error is over twice the tolerance, is not pinned down and stays as planned. A camera is
-   'rotated' when a pinned-down axis exceeds the tolerance with high or medium confidence.
+   'rotated' when a pinned-down axis exceeds the tolerance with high or medium confidence. Images whose pixel (at the
+   image centre) spans more than the tolerance — a sample dataset at a tenth of the sensor's size — give no verdict
+   ('uncertain', saying why): they cannot resolve the rotation they would be judged by.
 5. GNSS and IMU: the IMU's gravity magnitude and gyro bias when at rest (0.5 s windows with little rotation and
    steady acceleration), the gravity direction against the planned mounting, the fix status shares and the reported
    position error of each NavSatFix stream.
@@ -1219,6 +1221,43 @@ def _finding(out, sev, section, message, tags=(), uids=()):
     out.append({'severity': sev, 'section': section, 'message': message, 'tags': list(tags), 'uids': list(uids)})
 
 
+DATASET_SCHEMA = 'vantage.dataset/1'
+
+
+def vantage_dataset(path) -> dict | None:
+    """The dataset.json of a drive written by Vantage's sample-dataset generator (core.dataset), found from the bag
+    folder, its .mcap/.db3 file or the nuScenes folder (they sit in <out>/rosbag/<name>/ and <out>/nuscenes/, the JSON
+    in <out>); None for any other log."""
+    p = os.path.abspath(path)
+    for _ in range(4):
+        f = os.path.join(p, 'dataset.json')
+        if os.path.isfile(f):
+            try:
+                with open(f, encoding='utf-8') as fh:
+                    doc = json.load(fh)
+            except (OSError, ValueError):
+                doc = None
+            if isinstance(doc, dict) and doc.get('schema') == DATASET_SCHEMA:
+                return doc
+        up = os.path.dirname(p)
+        if up == p:
+            break
+        p = up
+    return None
+
+
+def recorded_camera(doc, project, cam, period_ms) -> tuple[float | None, tuple | None]:
+    """(frame rate, image size) a Vantage sample dataset wrote this camera with: one frame per lidar rotation or the
+    module's rate (settings camera_rate), at image_scale of the sensor's size (as core.dataset sizes them)."""
+    st = (doc or {}).get('settings') or {}
+    mod = project.module_for(cam)
+    hz = 1000.0 / period_ms if (st.get('camera_rate', 'lidar') == 'lidar' and period_ms) else (float(mod.fps or 0)
+                                                                                              or None)
+    k = float(st.get('image_scale') or 1.0)
+    size = (max(16, int(round(mod.width_px * k))), max(16, int(round(mod.height_px * k))))
+    return hz, size
+
+
 def _expected_hz(project, kind, obj) -> float | None:
     if kind == 'camera':
         fps = float(project.module_for(obj).fps or 0)
@@ -1282,13 +1321,16 @@ def _points_expected(project, s, engine):
     return per, blocked
 
 
-def _stream(project, var, uid, tag, kind, obj, topic, scan, st, engine) -> dict:
-    """Stream health of one sensor (see the module docstring)."""
+def _stream(project, var, uid, tag, kind, obj, topic, scan, st, engine, recorded=None) -> dict:
+    """Stream health of one sensor (see the module docstring). recorded: (rate, size) a Vantage sample dataset wrote
+    this camera with, which then replaces the module's."""
     e = {'uid': uid, 'tag': tag, 'kind': kind, 'topic': topic, 'type': '', 'messages': 0,
          'expected_hz': _expected_hz(project, kind, obj), 'status': 'ok', 'problems': [], 'notes': []}
     if kind == 'camera':
         mod = project.module_for(obj)
         e['expected_size'] = (int(mod.width_px), int(mod.height_px))
+        if recorded is not None:
+            e['expected_hz'], e['expected_size'] = recorded[0] or e['expected_hz'], recorded[1] or e['expected_size']
     if topic is None:
         return e
     ts = scan.topics[topic]
@@ -2193,6 +2235,7 @@ def _extrinsic(project, var, cam, topic, lid, lid_topic, scan, motion, st, conv_
     tol = st.tolerance_deg
     obs = np.array(observable)
     stderr = se_sw.copy()
+    px_deg = 1.0 / max(ppd, 1e-9)               # one pixel's angle at the image centre
     agree = None
     if len(per) >= 2:
         sig = 1.4826 * np.median(np.abs(per - best), axis=0)
@@ -2205,7 +2248,7 @@ def _extrinsic(project, var, cam, topic, lid, lid_topic, scan, motion, st, conv_
                 'width_deg': [float(v) for v in width], 'observable': [bool(o) for o in observable],
                 'per_frame_deg': per.tolist()})
     se = float(np.max(stderr[obs])) if obs.any() else math.inf
-    if not obs.any():
+    if not obs.any() or px_deg > tol:            # images coarser than the tolerance cannot judge it
         conf = 'low'
     elif F >= 3 and agree is not None and agree >= 0.6 and se <= tol / 3 and s1 > s0 - 1e-9:
         conf = 'high'
@@ -2225,7 +2268,9 @@ def _extrinsic(project, var, cam, topic, lid, lid_topic, scan, motion, st, conv_
             why.append(f'{agree * 100:.0f} % of the frames agree')
         if not obs.any():
             why.append('no axis is pinned down by the edges in view')
-        if se > tol / 1.5 and obs.any():
+        if px_deg > tol:
+            why.append(f'the images resolve {px_deg:.2f}° per pixel, coarser than the {tol:g}° tolerance')
+        elif se > tol / 1.5 and obs.any():
             why.append(f'±{se:.2f}° standard error')
         res['reason'] = ', '.join(why)
     elif big > tol:
@@ -2456,10 +2501,21 @@ def run(project, path=None, settings: DriveLogSettings | None = None, progress=N
     topics = [{'topic': t, 'type': ts.type, 'kind': ts.kind, 'messages': ts.count, 'bytes': ts.bytes,
                'frame_id': ts.frame_id, 'tag': mapping.get(t, '')}
               for t, ts in sorted(scan.topics.items()) if t != 'ego_pose']
-    # ---- 1. streams
+    # ---- 1. streams (a drive Vantage wrote is judged by how it was written: rate and image size)
+    plan = TM.plan(project, var)
+    written = vantage_dataset(path)
+    if written is not None:
+        ws = written.get('settings') or {}
+        _finding(out, 'ok', 'streams',
+                 f'A sample dataset Vantage wrote ({written.get("variant", "")}, {ws.get("scene", "")}, '
+                 f'{ws.get("duration_s", "?")} s): cameras are checked at the rate and size it was written with '
+                 f'({"one frame per lidar rotation" if ws.get("camera_rate", "lidar") == "lidar" else "the module rate"}, '
+                 f'{float(ws.get("image_scale") or 1.0):g} of the sensor\'s size), not the modules\'.')
     streams = []
     for uid, tag, kind, obj in _sensors(var):
-        e = _stream(project, var, uid, tag, kind, obj, rev.get(tag), scan, st, engine)
+        rec = recorded_camera(written, project, obj, plan.period_ms) if (written is not None and kind == 'camera') \
+            else None
+        e = _stream(project, var, uid, tag, kind, obj, rev.get(tag), scan, st, engine, rec)
         _judge_stream(e, st, scan, out)
         streams.append(e)
     for t in topics:
@@ -2479,7 +2535,6 @@ def run(project, path=None, settings: DriveLogSettings | None = None, progress=N
     # ---- 2. data rate
     data = _data(project, var, streams, scan, out)
     # ---- 3. sync
-    plan = TM.plan(project, var)
     sync = _sync(project, var, plan, rev, scan, st, out)
     # ---- 4. extrinsics
     motion = Motion.from_scan(project, var, scan, mapping)

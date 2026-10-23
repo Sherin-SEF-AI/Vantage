@@ -13,7 +13,8 @@ from PyQt6.QtWidgets import QToolTip, QWidget
 
 from ..core import volume as vol
 from .charts import ChartBase
-from .theme import THEME, STATUS, REDUNDANCY, mono, sans
+from .colormaps import redundancy
+from .theme import THEME, STATUS, mono, sans
 from .viewport3d import LIGHT, TriDraw
 
 AUTO_MAX_S = 2.0            # re-run by itself after an edit when the last run took less than this
@@ -401,9 +402,10 @@ class VolumeMap(QWidget):
         if self.mode == 'slice':
             cnt = vr.count[self.level]
             roi = vr.roi
-            put(roi & (cnt == 1), REDUNDANCY[0], 110)
-            put(roi & (cnt == 2), REDUNDANCY[1], 110)
-            put(roi & (cnt >= 3), REDUNDANCY[2], 110)
+            r1, r2, r3 = redundancy()               # the plan view's scale, per theme
+            put(roi & (cnt == 1), r1, 110)
+            put(roi & (cnt == 2), r2, 110)
+            put(roi & (cnt >= 3), r3, 110)
             put(roi & (cnt == 0), STATUS['critical'], 235)
         else:
             h = vr.detect_h
@@ -458,7 +460,8 @@ class VolumeMap(QWidget):
         y = self.height() - 16
         x = 6
         if self.mode == 'slice':
-            items = [(STATUS['critical'], 'blind'), (REDUNDANCY[0], '1 camera'), (REDUNDANCY[1], '2'), (REDUNDANCY[2], '3+')]
+            r1, r2, r3 = redundancy()
+            items = [(STATUS['critical'], 'blind'), (r1, '1 camera'), (r2, '2'), (r3, '3+')]
         else:
             items = [(THEME.tok['ground'], f'≤ {vr.dz * 100:.0f} cm')]
             lo = vr.dz

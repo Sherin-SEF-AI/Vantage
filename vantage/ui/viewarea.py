@@ -98,7 +98,7 @@ class Pane(QWidget):
             n = len(res.cams) if res else 0
             self.plan.label = f'Bird’s-eye · stitched from {n} cameras · drag a handle to move a seam'
         elif self.kind == 'targets':
-            self.plan.label = 'Top · floor plan · redundancy (dark blue = 2 cameras)'
+            self.plan.label = 'Top · floor plan · redundancy'
         elif self.kind == 'through':
             c = self.ctx.store.selected
             if c:

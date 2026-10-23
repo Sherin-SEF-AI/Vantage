@@ -107,7 +107,15 @@ class ExportDialog(VDialog):
                 ll.addWidget(r)
                 self.rows[f.id] = r
         ll.addStretch(1)
-        main.addWidget(left)
+        # the list scrolls: with every format it is taller than a laptop screen, and the dialog must still fit
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
+        sc.setFrameShape(QFrame.Shape.NoFrame)
+        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        sc.setWidget(left)
+        sc.setFixedWidth(left.width() + sc.verticalScrollBar().sizeHint().width())
+        self.format_scroll = sc
+        main.addWidget(sc)
         main.addWidget(vline())
         # right: preview
         right = QWidget()
@@ -161,7 +169,8 @@ class ExportDialog(VDialog):
         try:
             out = ex.default_out_dir(p)
         except ValueError:
-            out = os.path.join(os.path.expanduser('~'), 'Documents', 'vantage-exports', ex._slug(p.name), ex._slug(p.variant.name))
+            from ... import workdir                       # not saved yet: the working folder's project folder
+            out = workdir.project_dir(p, workdir.get(self.ctx.settings), 'exports', ex._slug(p.variant.name))
         self.out = QLineEdit(self._initial_dir(p, out))
         self.out.setProperty('mono', True)
         self.out.textChanged.connect(lambda _: self.changed(fast=True))

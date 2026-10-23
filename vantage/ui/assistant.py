@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QF
                              QLabel, QLayout, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QScrollArea,
                              QSizePolicy, QTextBrowser, QToolButton, QVBoxLayout, QWidget)
 
+from .. import workdir
 from ..assistant import agent as A
 from ..assistant import client as C
 from ..assistant import secrets as K
@@ -271,6 +272,11 @@ class AssistantController(QObject):
             elif a == 'open_page':
                 if req.get('page') in w.PAGE_DOCKS:
                     w.set_page(req['page'])
+            elif a == 'dataset_written':
+                res = req.get('result')
+                w.page('dataset').show_written(res)            # the page shows it (and the project's log has it)
+                if res is not None:
+                    self.ctx.msg(f'The assistant wrote a sample dataset to {res.out_dir}', 8000)
             elif a == 'propose_requirements':
                 w.set_page('requirements')
                 w.page('requirements').show_proposals(req.get('items', []))
@@ -336,7 +342,7 @@ class AssistantController(QObject):
                              an.worst, getattr(so, 'result', None), getattr(so, 'advice', None),
                              getattr(vol, 'result', None), self._guidelines(), [c.tag for c in st.selected_cams()],
                              PAGES.get(page, page), st.revision, brief=self.brief(), rig_health=self._rig_health(),
-                             drive_log=self._drive_log())
+                             drive_log=self._drive_log(), working_dir=workdir.get(self.ctx.settings))
 
     def _rig_health(self):
         w = self.ctx.window

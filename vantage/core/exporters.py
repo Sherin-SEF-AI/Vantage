@@ -1683,15 +1683,15 @@ def _report_html(ctx: _Ctx, qt: bool = False, img_src: Callable | None = None) -
         w(tbl_end)
     sens = _sensors(ctx)
     if sens:
-        head = 'Lidars and radars' if all(m.has_field for _, _, m in sens) else 'Lidars, radars, GNSS and IMU'
+        head = 'Lidars and radars' if all(sm.has_field for _, _, sm in sens) else 'Lidars, radars, GNSS and IMU'
         w(f'<h3>{head}</h3>\n' if not qt else
           f'<p style="margin-top:10px; font-weight:600">{head}</p>\n')
         w(table([('Tag', False), ('Kind', False), ('Model', False), (f'X ({u})', True), (f'Y ({u})', True),
                  (f'Z ({u})', True), ('Yaw', True), ('Pitch', True), ('Field', False)]))
-        for _, s, m in sens:
-            w(f'<tr><td>{E(s.tag)}</td><td>{E(s.kind)}</td><td>{E((m.vendor + " " + m.name).strip())}</td>'
+        for _, s, sm in sens:                     # not m: the report's metrics are m
+            w(f'<tr><td>{E(s.tag)}</td><td>{E(s.kind)}</td><td>{E((sm.vendor + " " + sm.name).strip())}</td>'
               + ''.join(num(_fs(ctx.L(v - o), ctx.pdp)) for v, o in zip((s.x, s.y, s.z), ctx.origin))
-              + num(f'{s.yaw:.1f}°') + num(f'{s.pitch:.1f}°') + f'<td>{E(m.summary())}</td></tr>\n')
+              + num(f'{s.yaw:.1f}°') + num(f'{s.pitch:.1f}°') + f'<td>{E(sm.summary())}</td></tr>\n')
         w(tbl_end)
 
     # ---------------------------------------------------------------- per-camera coverage

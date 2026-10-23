@@ -1,12 +1,19 @@
-"""Coverage maps as RGBA images on the ROI grid (shared by the 3D ground texture and the plan views)."""
+"""Coverage maps as RGBA images on the ROI grid (shared by the 3D ground texture and the plan views), and the vector
+outlines the plan view draws over them (density iso-lines, blind and below-minimum regions).
+
+Continuous fields (pixel density) are interpolated bilinearly between cell centres; values never leak across the ROI
+edge or into blind cells because the field is first extended outwards from the valid cells (nearest valid value) and
+then masked. Categorical fields (best camera, redundancy) keep crisp cell boundaries."""
 from __future__ import annotations
 
 import math
+import weakref
 
 import numpy as np
 from PyQt6.QtGui import QImage, QColor
 
-from .theme import THEME, SEQ, REDUNDANCY, DIVERGING, STATUS, CAMERA
+from . import colormaps
+from .theme import THEME, STATUS
 
 
 def _rgb(hexs):
@@ -25,6 +32,26 @@ def _up(a, k):
     return np.repeat(np.repeat(a, k, axis=0), k, axis=1)
 
 
+def _smooth_up(a, k):
+    """Bilinear upsampling by k that keeps cell centres in place (texel centre (t + 0.5) / k - 0.5 in cells)."""
+    if k == 1:
+        return np.asarray(a, np.float32)
+    import cv2
+    a = np.ascontiguousarray(a, np.float32)
+    h, w = a.shape
+    return cv2.resize(a, (w * k, h * k), interpolation=cv2.INTER_LINEAR)
+
+
+def _filled(field, valid):
+    """field with every invalid cell replaced by its nearest valid cell's value, so that interpolation near the ROI
+    edge, the body and blind cells never mixes in values from outside the data."""
+    if valid.all() or not valid.any():
+        return field
+    from scipy import ndimage
+    idx = ndimage.distance_transform_edt(~valid, return_distances=False, return_indices=True)
+    return field[tuple(idx)]
+
+
 def _flip(a):
     return a[::-1]
 
@@ -35,29 +62,42 @@ def blank(result, k):
 
 
 def _over(dst, rgb, alpha):
-    """Alpha-composite rgb (3,) or (H,W,3) with alpha (H,W) over dst (H,W,4 float 0..255 / alpha 0..1)."""
-    a = alpha[..., None]
-    da = dst[..., 3:4]
+    """Alpha-composite rgb (3,) or (H,W,3) with alpha (H,W) over dst (H,W,4 float 0..255 / alpha 0..1), in place.
+    Only the texels with alpha > 0 are touched (hatches and tints cover a small part of the image)."""
+    sel = np.asarray(alpha) > 0
+    if not sel.any():
+        return dst
+    a = np.asarray(alpha, np.float32)[sel][:, None]
+    d = dst[sel]
+    da = d[:, 3:4]
     out_a = a + da * (1 - a)
-    rgb = np.broadcast_to(rgb, dst[..., :3].shape)
-    dst[..., :3] = np.where(out_a > 0, (rgb * a + dst[..., :3] * da * (1 - a)) / np.maximum(out_a, 1e-6), 0)
-    dst[..., 3:4] = out_a
+    src = np.asarray(rgb, np.float32)
+    src = src if src.ndim == 1 else src[sel]
+    d[:, :3] = (src * a + d[:, :3] * da * (1 - a)) / np.maximum(out_a, 1e-6)
+    d[:, 3:4] = out_a
+    dst[sel] = d
     return dst
 
 
-def hatch(mask_img, k, period=6, width=2):
+def hatch(mask_img, k, period=6, width=2, mirror=False):
+    """Diagonal stripes (45°, or 135° with mirror) inside a texel mask."""
     H, W = mask_img.shape
     jj, ii = np.mgrid[0:H, 0:W]
-    stripes = ((ii + jj) % period) < width
+    stripes = (((ii - jj) if mirror else (ii + jj)) % period) < width
     return stripes & mask_img
 
 
-def add_blind(img, result, k, alpha_fill=0.35):
+def _mask_up(mask, k, smooth):
+    """Upsampled cell mask: crisp cells, or (smooth) cut along the half-way line between cell centres."""
+    return _smooth_up(mask.astype(np.float32), k) >= 0.5 if smooth and k > 1 else _up(mask, k)
+
+
+def add_blind(img, result, k, alpha_fill=0.35, smooth=False):
     g = result.grid
     blind = _flip(g.roi & (result.count == 0))
-    m = _up(blind, k)
-    if not m.any():
+    if not blind.any():
         return img
+    m = _mask_up(blind, k, smooth)
     red = _rgb(STATUS['critical'])
     _over(img, red, m * alpha_fill)
     _over(img, red, hatch(m, k).astype(np.float32) * 0.85)
@@ -65,58 +105,101 @@ def add_blind(img, result, k, alpha_fill=0.35):
 
 
 def add_shadow(img, result, k, strength=0.35):
+    """Soft contact shadow of the body (for the 3D ground)."""
     g = result.grid
     from scipy import ndimage
     body = _flip(g.body).astype(np.float32)
     soft = ndimage.gaussian_filter(body, sigma=max(1.0, 0.12 / g.cell))
     soft = np.clip(soft * 1.4, 0, 1) * strength
-    _over(img, np.zeros(3, np.float32), _up(soft, k))
+    _over(img, np.zeros(3, np.float32), np.clip(_smooth_up(soft, k), 0, 1))
     return img
 
 
 def footprints(result, k=4, alpha=0.12, isolate=None):
-    img = blank(result, k)
+    """Each camera's ground footprint as a light tint of its colour (built per cell, then upsampled)."""
     g = result.grid
+    img = blank(result, 1)
     roi = _flip(g.roi)
     for c in result.cams:
         if isolate and c.uid not in isolate:
             continue
-        m = _up(_flip(c.vis) & roi, k).astype(np.float32)
-        _over(img, _rgb(THEME.cam_hex(c.slot)), m * alpha)
-    return img
-
-
-def coverage(result, k=4, alpha=0.42):
-    img = blank(result, k)
-    g = result.grid
-    roi = _flip(g.roi)
-    best = _flip(result.best)
-    for i, c in enumerate(result.cams):
-        m = _up((best == i) & roi, k).astype(np.float32)
-        _over(img, _rgb(THEME.cam_hex(c.slot)), m * alpha)
-    return img
-
-
-def density(result, k=4, lo=3.0, hi=16.0, alpha=1.0):
-    g = result.grid
-    v = _flip(result.best_dens)
-    roi = _flip(g.roi) & (v > 0)
-    t = (np.log(np.maximum(v, lo)) - math.log(lo)) / (math.log(hi) - math.log(lo))
-    idx = np.clip(np.round(t * (len(SEQ) - 1)), 0, len(SEQ) - 1).astype(int)
-    pal = np.array([_rgb(s) for s in SEQ])
-    rgb = pal[idx]
-    img = np.zeros((g.ny, g.nx, 4), np.float32)
-    img[..., :3] = rgb
-    img[..., 3] = roi * alpha
+        _over(img, _rgb(THEME.cam_hex(c.slot)), (_flip(c.vis) & roi).astype(np.float32) * alpha)
     return _up(img, k)
 
 
+def coverage(result, k=4, alpha=0.42):
+    """ROI cells tinted by their best camera (crisp cells)."""
+    g = result.grid
+    img = blank(result, 1)
+    best = _flip(result.best).astype(int)
+    m = _flip(g.roi) & (best >= 0)
+    if len(result.cams):
+        pal = np.array([_rgb(THEME.cam_hex(c.slot)) for c in result.cams], np.float32)
+        img[m, :3] = pal[best[m]]
+        img[m, 3] = alpha
+    return _up(img, k)
+
+
+_field_cache = [lambda: None, None]
+
+
+def density_field(result):
+    """(natural log of the best-camera density, extended outwards from the valid cells; valid mask) on the grid
+    (row 0 = lowest y). Valid = in the ROI and seen by a camera. The last result's field is kept (the map, its
+    iso-lines and its below-minimum outline all start from it), by weak reference."""
+    if _field_cache[0]() is result:
+        return _field_cache[1]
+    g = result.grid
+    valid = g.roi & (result.count > 0) & (result.best_dens > 0)
+    f = np.log(np.maximum(result.best_dens, 1e-6)).astype(np.float32)
+    try:
+        ref = weakref.ref(result)
+    except TypeError:
+        ref = lambda: None                                  # noqa: E731 (not weak-referenceable: no caching)
+    _field_cache[:] = [ref, (_filled(f, valid), valid)]
+    return _field_cache[1]
+
+
+def density(result, k=4, scale=None, alpha=1.0, smooth=True, flag_below=True, hatch_below=False):
+    """Best-camera pixel density on the colormaps density scale (log, from the minimum density). Smooth: bilinear in
+    log density between cell centres, edges cut half-way between cells. flag_below: ground below the minimum in the
+    neutral grey (hatched too with hatch_below, for views that cannot draw the plan view's vector hatch)."""
+    sc = scale or colormaps.density_scale()
+    f, valid = density_field(result)
+    f, valid = _flip(f), _flip(valid)
+    lf = _smooth_up(f, k) if smooth and k > 1 else _up(f, k)
+    if smooth and k > 1:
+        # the ROI's outer edge and the body edge follow the smooth boundary the cell staircase approximates (a light
+        # blur of the mask before cutting at one half); blind cells stay cut exactly half-way between cell centres,
+        # where the blind hatch outline runs
+        from scipy import ndimage
+        g = result.grid
+        roi_s = ndimage.gaussian_filter(_flip(g.roi).astype(np.float32), 0.7)
+        m = (_smooth_up(roi_s, k) >= 0.5) & ~_mask_up(_flip(g.roi & (result.count == 0)), k, True)
+    else:
+        m = _up(valid, k)
+    l0, l1 = math.log(sc.lo), math.log(sc.hi)
+    idx = np.clip(np.rint((lf - l0) / (l1 - l0) * (len(sc.lut) - 1)), 0, len(sc.lut) - 1).astype(np.intp)
+    img = np.zeros(lf.shape + (4,), np.float32)
+    img[..., :3] = sc.lut[idx]
+    img[..., 3] = m * alpha
+    if flag_below:
+        below = lf < l0 - 1e-5
+        img[below, :3] = colormaps.hex_rgb(sc.below_hex) * 255
+        if hatch_below:             # coarse and quiet: it is seen at grazing angles in the 3D view
+            hb = hatch(below & m, k, period=max(6, 4 * k), width=max(2, k), mirror=True)
+            _over(img, colormaps.hex_rgb(sc.hatch_hex) * 255, hb.astype(np.float32) * 0.35)
+    return img
+
+
 def redundancy(result, k=4, alpha=1.0):
+    """Cameras seeing each ROI cell, 1 / 2 / 3+ on the ordered blue steps (crisp cells; 0 = blind, added by
+    add_blind or drawn by the plan view)."""
     g = result.grid
     cnt = _flip(result.count)
     roi = _flip(g.roi)
-    pal = np.array([_rgb(s) for s in REDUNDANCY])
-    idx = np.clip(cnt - 1, 0, 2)
+    pal = np.array([colormaps.hex_rgb(h) * 255 for h in colormaps.redundancy()], np.float32)
+    idx = np.clip(cnt.astype(int) - 1, 0, 2)
     img = np.zeros((g.ny, g.nx, 4), np.float32)
     img[..., :3] = pal[idx]
     img[..., 3] = (roi & (cnt > 0)) * alpha
@@ -124,17 +207,15 @@ def redundancy(result, k=4, alpha=1.0):
 
 
 def delta(res_a, res_b, k=4, span=4.0):
-    """Δ best-camera density (b - a) on a's grid, diverging palette."""
+    """Δ best-camera density (b - a, px/cm) on a's grid, diverging scale clipped at ±span (float RGBA, alpha 0..1)."""
     g = res_a.grid
     d = _flip(res_b.best_dens - res_a.best_dens)
     roi = _flip(g.roi)
-    pal = np.array([_rgb(s) for s in DIVERGING])
-    if THEME.name == 'light':
-        pal[3] = _rgb('#e1e0d9')
+    lut = colormaps.diverging().astype(np.float32)
     t = np.clip(d / span, -1, 1)
-    idx = np.clip(np.round((t + 1) / 2 * (len(pal) - 1)), 0, len(pal) - 1).astype(int)
+    idx = np.clip(np.rint((t + 1) / 2 * (len(lut) - 1)), 0, len(lut) - 1).astype(np.intp)
     img = np.zeros((g.ny, g.nx, 4), np.float32)
-    img[..., :3] = pal[idx]
+    img[..., :3] = lut[idx]
     img[..., 3] = roi * 1.0
     return _up(img, k)
 
@@ -171,11 +252,16 @@ def bev(result, k=4, alpha=0.30, grid_m=0.5):
 
 def stitched(sres, k=4) -> np.ndarray:
     """Objects standing in the stitched bird's-eye view (core.stitched_objects): how much of the object the view
-    shows, pale (none) to dark blue (all of it); vanishing at a seam orange, cut off at the view's edge dotted,
-    blind red."""
+    shows on the theme's blue ramp (none: nearest the background, all of it: farthest from it); vanishing at a seam
+    orange, cut off at the view's edge dotted, blind red."""
     from ..core.stitched_objects import map_rgba
     rgb = lambda h: tuple(int(v) for v in _rgb(h))
-    return map_rgba(sres, k, SEQ, vanish_rgb=rgb(STATUS['serious']), blind_rgb=rgb(STATUS['critical']))
+    return map_rgba(sres, k, stitched_palette(), vanish_rgb=rgb(STATUS['serious']), blind_rgb=rgb(STATUS['critical']))
+
+
+def stitched_palette():
+    """Steps for 'share of the object shown', none … all: the theme's density ramp (more = more contrast)."""
+    return colormaps.DENSITY['light' if THEME.name == 'light' else 'dark']
 
 
 def stitched_zones(sres, k=4) -> np.ndarray:
@@ -202,11 +288,17 @@ def targets_redundancy(result, k=4):
     return redundancy(result, k)
 
 
-def make(result, mode, k=4, isolate=None, shadow=True, blind=True):
+def make(result, mode, k=4, isolate=None, shadow=True, blind=True, thresholds=None, smooth=True):
+    """RGBA uint8 image (row 0 = max y) of a heatmap mode on the result's grid, k texels per cell.
+    thresholds: (minimum, target) density in px/cm; with them the density map starts at the minimum and marks ground
+    below it (grey, hatched when blind=True); without them it keeps a fixed 3–16 px/cm scale and flags nothing.
+    blind: hatch blind ROI cells into the image (the plan view draws its own vector hatch instead)."""
     if result is None:
         return None
+    sm = smooth and mode == 'density'
     if mode == 'density':
-        img = density(result, k)
+        sc = colormaps.density_scale(*thresholds) if thresholds else colormaps.density_scale()
+        img = density(result, k, sc, smooth=sm, flag_below=thresholds is not None, hatch_below=blind)
     elif mode == 'redundancy':
         img = redundancy(result, k)
     elif mode == 'coverage':
@@ -218,12 +310,80 @@ def make(result, mode, k=4, isolate=None, shadow=True, blind=True):
     else:
         img = blank(result, k)
     if blind:
-        add_blind(img, result, k)
+        add_blind(img, result, k, smooth=sm)
     if shadow:
         add_shadow(img, result, k)
     out = np.clip(img, 0, 255)
     out[..., 3] = np.clip(img[..., 3] * 255, 0, 255)
     return out.astype(np.uint8)
+
+
+# ------------------------------------------------------------------ vector outlines for the plan view
+def mask_outline(mask, grid):
+    """Closed outlines (list of (n, 2) world polylines) of a cell mask, running half-way between cell centres (corners
+    cut), for filling with a pattern (odd-even rule)."""
+    from ..core.contour import iso_segments, chain
+    if not mask.any():
+        return []
+    m = np.pad(mask.astype(np.float32), 1)
+    c = grid.cell
+    return chain(iso_segments(m, 0.5, grid.x0 - c, grid.y0 - c, c), tol=c * 1e-3)
+
+
+def blind_outline(result):
+    """Outlines of the blind ROI cells (no camera sees them)."""
+    return mask_outline(result.grid.roi & (result.count == 0), result.grid)
+
+
+def unique_outline(result, uid):
+    """Outlines of the ROI ground that only camera uid sees (what the 'seen only by this camera' bars measure)."""
+    i = result.cam_index(uid)
+    if i < 0:
+        return []
+    return mask_outline(result.grid.roi & result.cams[i].vis & (result.count == 1), result.grid)
+
+
+def valid_outline(result):
+    """Outlines of the seen ROI ground (in the ROI, seen by a camera): the clip for below_min_outline."""
+    return mask_outline(density_field(result)[1], result.grid)
+
+
+def below_min_outline(result, minv):
+    """Closed outlines of the ground whose interpolated best-camera density is below minv (the grey of the density
+    map). They follow the density's own iso-line and run past the data at the grid's edge: clip them with
+    valid_outline (blind cells and the ROI edge cut them half-way between cell centres, like the map)."""
+    from ..core.contour import iso_segments, chain
+    if not minv or minv <= 0:
+        return []
+    f, valid = density_field(result)
+    ind = f - math.log(minv)
+    if not (ind[valid] < 0).any():
+        return []
+    g = result.grid
+    # a ring of edge values, then a ring above the level: loops close one cell outside the grid
+    ind = np.pad(np.pad(ind, 1, mode='edge'), 1, constant_values=max(1.0, float(ind.max()) + 1.0))
+    c = g.cell
+    return chain(iso_segments(-ind, 0.0, g.x0 - 2 * c, g.y0 - 2 * c, c), tol=c * 1e-3)
+
+
+def density_contours(result, levels):
+    """Iso-lines of the best-camera density at each level (px/cm) -> {level: [(n, 2) world polylines]}, only where
+    the ground is in the ROI and seen (not along the ROI edge or around blind cells)."""
+    from ..core.contour import iso_segments, chain
+    g = result.grid
+    f, valid = density_field(result)
+    out = {}
+    for lv in levels:
+        if not lv or lv <= 0:
+            continue
+        segs = iso_segments(f, math.log(lv), g.x0, g.y0, g.cell)
+        if len(segs):
+            mid = segs.mean(axis=1)
+            ii = np.clip(((mid[:, 0] - g.x0) / g.cell).astype(int), 0, g.nx - 1)
+            jj = np.clip(((mid[:, 1] - g.y0) / g.cell).astype(int), 0, g.ny - 1)
+            segs = segs[valid[jj, ii]]
+        out[lv] = chain(segs, tol=g.cell * 1e-3) if len(segs) else []
+    return out
 
 
 def extent(result):

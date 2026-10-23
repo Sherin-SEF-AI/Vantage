@@ -13,7 +13,7 @@ class TargetsPage(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         self.plan = PlanView(ctx, 'targets')
-        self.plan.label = 'Top · floor plan · redundancy (dark blue = 2 cameras)'
+        self.plan.label = 'Top · floor plan · redundancy'
         lay.addWidget(self.plan)
 
     def activate(self):

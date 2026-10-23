@@ -2,12 +2,12 @@
 Type=Application
 Name=Vantage
 GenericName=Sensor rig planner
-Comment=Plan, analyse and check surround-view camera installations on vehicles
+Comment=Design, simulate and check the sensor rigs of autonomous-driving data-collection vehicles
 Exec=@EXEC@ %f
 Icon=vantage
 Terminal=false
 Categories=Science;Engineering;
 MimeType=application/x-vantage-project;
-Keywords=camera;surround view;bird's-eye;calibration;vehicle;
+Keywords=sensor rig;camera;lidar;radar;GNSS;calibration;data collection;autonomous driving;
 StartupWMClass=Vantage
 StartupNotify=true

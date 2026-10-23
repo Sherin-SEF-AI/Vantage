@@ -97,6 +97,7 @@ ICONS: dict[str, str] = {
     'redo': '<path d="M10.5 3.5L13.5 6.5L10.5 9.5M13.5 6.5H6.25A3.5 3.5 0 0 0 6.25 13.5H9.5"/>',
     'keyboard': '<rect x="2.5" y="4.5" width="11" height="7"/><circle cx="5" cy="7" r="0.75" fill="currentColor" stroke="none"/><circle cx="8" cy="7" r="0.75" fill="currentColor" stroke="none"/><circle cx="11" cy="7" r="0.75" fill="currentColor" stroke="none"/><path d="M5.5 9.25H10.5"/>',
     'help': '<circle cx="8" cy="8" r="5.5"/><path d="M6.25 6.5A1.75 1.75 0 1 1 8.9 8L8 8.75V9.25"/><circle cx="8" cy="11.1" r="0.75" fill="currentColor" stroke="none"/>',
+    'hand': '<path d="M5.5 9V4.25A1 1 0 0 1 7.5 4.25V7.5M7.5 7.5V3A1 1 0 0 1 9.5 3V7.5M9.5 7.5V4A1 1 0 0 1 11.5 4V8M11.5 8V6A1 1 0 0 1 13.5 6V9.5C13.5 12 11.75 13.5 9.5 13.5H8.5C7 13.5 6 12.75 5 11.5L2.75 8.75A1 1 0 0 1 4.25 7.5L5.5 9"/>',
     'drag': '<circle cx="6" cy="4" r="1" fill="currentColor" stroke="none"/><circle cx="10" cy="4" r="1" fill="currentColor" stroke="none"/><circle cx="6" cy="8" r="1" fill="currentColor" stroke="none"/><circle cx="10" cy="8" r="1" fill="currentColor" stroke="none"/><circle cx="6" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="10" cy="12" r="1" fill="currentColor" stroke="none"/>',
     'target': '<circle cx="8" cy="8" r="4"/><path d="M8 2.5V5.5M8 10.5V13.5M2.5 8H5.5M10.5 8H13.5"/>',
     'sedan': '<path d="M2.5 10.5V8H4.75L6.5 5.5H9.75L11.75 8L13.5 8.5V10.5ZM3.5 10.5A1.5 1.5 0 0 0 6.5 10.5M9.5 10.5A1.5 1.5 0 0 0 12.5 10.5"/>',

@@ -173,7 +173,7 @@ class Stage:
         w.ctx.set_overlay('frustums', True)
         self.settle(5)
         hv = V.SoftViewport(self.vp.provider)
-        hv.paint_overlay = lambda p: None
+        hv.paint_overlay = lambda p, ui=True: None
         hv.resize(W, H)
         hv.show()
         hv.cam.az, hv.cam.el = -30.0, 24.0
@@ -273,7 +273,7 @@ class Stage:
             time.sleep(0.05)
         self.settle(3)
         bv = V.SoftViewport(pg.bowl_scene)
-        bv.paint_overlay = lambda p: None
+        bv.paint_overlay = lambda p, ui=True: None
         bv.resize(W, H)
         bv.show()
         src = pg.bowl.cam

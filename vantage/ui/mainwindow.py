@@ -303,6 +303,9 @@ class MainWindow(QMainWindow):
                      ('view_rear', 'rear'), ('view_through', 'through')):
             self.actions_by_id[k].triggered.connect(lambda _=False, v=v: self.set_view(v))
         A('look_through', 'Look through', lambda: self.set_view('through'), 'Ctrl+0', 'through', category='Camera')
+        A('parking', 'Parking guidelines…', self.open_parking, None, 'axle', category='Camera',
+          tip='Turn the parking guidelines on and open the camera views at the steering bar: width lines, the bumper '
+              'corners\' trajectories and the swept path while parking, through every camera\'s lens')
         A('camviews', 'Camera views, bird’s-eye, bowl', lambda: self.set_page('camviews'), 'Ctrl+Shift+B', 'bev', category='View')
         A('render_image', 'Render image…', self.render_image, 'Ctrl+Shift+R', 'photo-spin', category='View',
           tip='Save the active 3D view at up to 4× its size')
@@ -607,6 +610,7 @@ class MainWindow(QMainWindow):
         self.mod_menu.aboutToShow.connect(lambda: self._fill_lens_menu(self.mod_menu, True))
         self.lens_menu.aboutToShow.connect(lambda: self._fill_lens_menu(self.lens_menu, False))
         sub(ca, 'Aim', ['aim_ground', 'aim_normal', 'aim_level'])
+        ca.addAction(a['parking'])
         ca.addSeparator()
         ca.addActions([a['lock'], a['hide'], a['unhide'], a['isolate'], a['snap_surface'], a['assign_port']])
         ca.addSeparator()
@@ -840,6 +844,16 @@ class MainWindow(QMainWindow):
         self._msg_timer = QTimer(self)
         self._msg_timer.setSingleShot(True)
         self._msg_timer.timeout.connect(lambda: self.msg_label.hide())
+
+    def open_parking(self):
+        """Camera ▸ Parking guidelines…: the overlay on (View ▸ Overlays, Alt+G) and the camera views open with the
+        steering slider focused."""
+        if not self.ctx.overlays.get('guidelines'):
+            self.ctx.set_overlay('guidelines', True)
+        self.set_page('camviews')
+        bar = getattr(self.page('camviews'), 'guide_bar', None)
+        if bar is not None:
+            bar.slider.setFocus()
 
     def _on_undo_index(self, *_):
         a = self.ctx.analysis

@@ -102,7 +102,7 @@ class PreferencesDialog(VDialog):
         self.nav.addItem('Blender (middle-drag orbits, Shift pans)', 'blender')
         self.nav.addItem('CAD (right-drag orbits, middle pans)', 'cad')
         self.nav.setCurrentIndex(max(0, self.nav.findData(s.value('nav/style', 'blender'))))
-        row('3D navigation', self.nav, 'left-drag on empty space always orbits')
+        row('3D navigation', self.nav, 'left-drag on empty space orbits; or the control top right')
         self.units = SegmentedControl([('m', 'm'), ('mm', 'mm')], s.value('units/default', 'm'))
         row('Default units', self.units, 'new projects')
         self.live = QCheckBox('Recompute while editing')
@@ -114,6 +114,20 @@ class PreferencesDialog(VDialog):
         row('Ground resolution', self.cell, 'finer is slower')
         if ctx is not None:
             self.cell.setCurrentIndex(max(0, self.cell.findData(ctx.store.project.analysis.cell_m)))
+        from ... import workdir
+        wrow = QWidget()
+        wl = QHBoxLayout(wrow)
+        wl.setContentsMargins(0, 0, 0, 0)
+        wl.setSpacing(6)
+        self.working = QLineEdit(workdir.get(s))
+        self.working.setPlaceholderText(workdir.default())
+        self.working.setToolTip('Sample datasets, the assistant\'s outputs and exports of unsaved projects go here, '
+                                'in a folder per project')
+        wl.addWidget(self.working, 1)
+        wb = button('Browse…', 'ghost')
+        wb.clicked.connect(self._browse_working)
+        wl.addWidget(wb)
+        row('Working folder', wrow)
         self.soft = QCheckBox('Draw the 3D view with QPainter (no OpenGL)')
         self.soft.setChecked(s.value('render/software', False, type=bool))
         row('Renderer', self.soft, 'applies on restart')
@@ -126,6 +140,12 @@ class PreferencesDialog(VDialog):
         self.buttons.addWidget(c)
         self.buttons.addWidget(o)
 
+    def _browse_working(self):
+        from PyQt6.QtWidgets import QFileDialog
+        d = QFileDialog.getExistingDirectory(self, 'Working folder', self.working.text())
+        if d:
+            self.working.setText(d)
+
     def apply(self):
         from ..theme import THEME
         s = self.settings
@@ -135,6 +155,8 @@ class PreferencesDialog(VDialog):
         s.setValue('units/default', self.units.value())
         s.setValue('analysis/live', self.live.isChecked())
         s.setValue('render/software', self.soft.isChecked())
+        from ... import workdir
+        workdir.put(s, self.working.text())
         THEME.apply(QApplication.instance(), self.theme.value(), float(self.scale.value()))
         if self.ctx is not None:
             self.ctx.nav_style = self.nav.currentData()
@@ -178,9 +200,16 @@ class ShortcutsDialog(VDialog):
             sc = a.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
             if sc:
                 rows.append((a.text().replace('&', ''), (a.data() or {}).get('category', ''), sc))
-        rows += [('Orbit', 'Viewport', 'Middle-drag or left-drag on empty space'), ('Pan', 'Viewport', 'Shift + middle-drag, right-drag'),
-                 ('Zoom', 'Viewport', 'Wheel'), ('Top / front / side view', 'Viewport', 'Numpad 7 / 1 / 3'),
-                 ('Toggle ortho', 'Viewport', 'Numpad 5'), ('Look through camera', 'Viewport', 'Numpad 0'),
+        rows += [('Orbit (about the point under the cursor)', 'Viewport',
+                  'Middle-drag or left-drag on empty space · touchpad: two fingers · ← → ↑ ↓'),
+                 ('Pan', 'Viewport', 'Shift + middle-drag, right-drag · touchpad: Shift + two fingers · Shift + arrows'),
+                 ('Zoom (towards the cursor)', 'Viewport', 'Wheel · pinch or Ctrl + two fingers · + / −'),
+                 ('Navigation control', 'Viewport', 'Top right: drag the ball, click an axis, drag the hand or magnifier'),
+                 ('Top / front / rear / side view', 'Viewport', '7 / 1 / Ctrl+1 / 3 (number row or numpad)'),
+                 ('Default view', 'Viewport', '0'),
+                 ('Toggle ortho', 'Viewport', '5'), ('Look through camera', 'Viewport', 'Numpad 0'),
+                 ('Move or turn the selection', 'Viewport',
+                  'Drag an arrow, the square or a ring · Ctrl snaps 1 cm / 5° · Shift fine · Esc cancels'),
                  ('Scrub a number', 'Inspector', 'Drag the axis letter · Shift fine · Ctrl coarse'),
                  ('Step a number', 'Inspector', '↑ / ↓'), ('Rename', 'Outliner', 'F2'), ('Back to viewports', 'Workspaces', 'Esc'),
                  ('Previous / next photo', 'Reference photos', '← / →'), ('Play the spin', 'Reference photos', 'Space')]

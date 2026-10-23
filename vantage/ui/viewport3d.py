@@ -10,11 +10,12 @@ import os
 from dataclasses import dataclass, field
 
 import numpy as np
-from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, QTimer, QSize
+from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, QTimer, QSize, QEvent
 from PyQt6.QtGui import (QPainter, QColor, QPen, QPolygonF, QTransform, QImage, QSurfaceFormat, QFont,
                          QPainterPath, QBrush, QGuiApplication)
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QWidget, QToolTip
 
+from .navigation import NavControl, orbit_about, is_touchpad, AXIS_VIEWS, ORBIT_DEG_PER_PX
 from .theme import THEME, mono, sans
 
 # ---------------------------------------------------------------------------- GL availability
@@ -143,6 +144,9 @@ VIEW_PRESETS = {
 
 
 # ---------------------------------------------------------------------------- draw items
+MAT_PAINT, MAT_GLASS, MAT_TYRE, MAT_TRIM, MAT_LENS, MAT_METAL = range(6)
+
+
 @dataclass
 class MeshDraw:
     tri: np.ndarray            # (M,3,3) float32
@@ -151,6 +155,29 @@ class MeshDraw:
     alpha: np.ndarray          # (M,)
     version: int = 0
     wire: bool = False
+    materials: np.ndarray | None = None  # (M,) int8 per triangle: MAT_PAINT .. MAT_METAL; None = all paint
+
+
+def mesh_materials(mesh) -> np.ndarray:
+    """(n_tris,) int8 material ids guessed from a vehicle mesh's part roles and names: glass parts are glass, wheels and
+    parts named like tyres are rubber, lights are lenses, trim/plastic/grille parts are black trim, rig parts metal,
+    the rest (mirrors too: usually body-coloured) paint. Index it with the same face mask as the MeshDraw's triangles."""
+    from ..core.mesh import ROLE_GLASS, ROLE_WHEELS
+    out = np.zeros(mesh.n_tris, np.int8)
+    for i, part in enumerate(mesh.parts):
+        name = part.name.lower()
+        m = mesh.face_part == i
+        if part.role == ROLE_GLASS or any(k in name for k in ('glass', 'window', 'windscreen', 'windshield')):
+            out[m] = MAT_GLASS
+        elif part.role == ROLE_WHEELS or any(k in name for k in ('tyre', 'tire', 'wheel', 'rubber')):
+            out[m] = MAT_TYRE
+        elif any(k in name for k in ('light', 'lamp', 'lens', 'indicator')):
+            out[m] = MAT_LENS
+        elif any(k in name for k in ('trim', 'plastic', 'grille', 'grill', 'bumper strip', 'black')):
+            out[m] = MAT_TRIM
+        elif any(k in name for k in ('rig', 'rack', 'rail', 'bracket', 'mount', 'metal')):
+            out[m] = MAT_METAL
+    return out
 
 
 @dataclass
@@ -179,6 +206,32 @@ class TriDraw:
     colors: np.ndarray         # (K,4) 0..1
     depth: bool = True
     normals: np.ndarray | None = None   # (K,3,3) per-vertex normals: smooth shading in the shader renderer
+    outline: tuple | None = None        # RGBA 0..1: a crisp screen-space outline around these triangles (selection)
+
+
+@dataclass
+class PointDraw:
+    """Point sprites, e.g. one simulated lidar sweep: round, anti-aliased discs of a fixed size on screen."""
+    points: np.ndarray         # (N,3) float32, vehicle frame
+    colors: np.ndarray         # (N,4) float32 0..1
+    size: float = 3.0          # pixels (screen-space disc), scaled by the device pixel ratio
+    depth: bool = True         # depth-tested against the body and the rig
+
+
+def scene_points(provider, vp) -> list:
+    """The provider's point sprites (its optional points(vp)); a failing provider costs its points, not the view."""
+    fn = getattr(provider, 'points', None)
+    if fn is None:
+        return []
+    try:
+        out = fn(vp) or []
+    except Exception as ex:
+        print('3D points failed:', ex)
+        return []
+    return [pd for pd in out if pd is not None and len(pd.points)]
+
+
+SOFT_POINT_CAP = 12000         # the software renderer draws at most this many points per frame (~10 ms)
 
 
 LIGHT = np.array([0.35, 0.55, 0.76])
@@ -222,6 +275,47 @@ def dash_segments(pts, dash=0.07, gap=None):
     return np.stack([at(starts), at(ends)], axis=1)
 
 
+def backdrop_colors(base_rgb, ground_rgb):
+    """(zenith, haze, floor) sRGB 0..1 for the studio backdrop from the viewport colour and the ground plane colour:
+    the floor is the ground plane's colour, the haze at the horizon a little lighter, the sky above slightly cool and
+    towards the plain viewport colour."""
+    base = np.asarray(base_rgb, float)
+    floor = np.asarray(ground_rgb, float)
+    dark = float(base.mean()) < 0.5
+    cool = np.array([0.80, 0.86, 0.95])
+    if dark:
+        haze = np.clip(floor * 1.22 + 0.025, 0, 1)
+        zenith = np.clip(base * 0.95 + cool * 0.035, 0, 1)
+    else:
+        haze = np.clip(floor + (1 - floor) * 0.55, 0, 1)
+        zenith = np.clip(base * 0.82 + cool * 0.16, 0, 1)
+    return zenith, haze, floor
+
+
+_BAYER8 = (np.array([[0, 32, 8, 40, 2, 34, 10, 42], [48, 16, 56, 24, 50, 18, 58, 26], [12, 44, 4, 36, 14, 46, 6, 38],
+                     [60, 28, 52, 20, 62, 30, 54, 22], [3, 35, 11, 43, 1, 33, 9, 41], [51, 19, 59, 27, 49, 17, 57, 25],
+                     [15, 47, 7, 39, 13, 45, 5, 37], [63, 31, 55, 23, 61, 29, 53, 21]]) + 0.5) / 64.0
+
+
+def backdrop_image(H, horizon, zenith, haze, floor) -> QImage:
+    """An 8 px wide, H px tall (device pixels) ordered-dithered strip of the backdrop, tiled across by a brush.
+    horizon: its row (may lie outside the strip); None = all floor (a view straight down)."""
+    y = np.arange(H, dtype=float)
+    if horizon is None:
+        col = np.tile(np.asarray(floor, float), (H, 1))
+    else:
+        up = np.clip((horizon - y) / max(0.6 * H, 1.0), 0, 1)
+        down = np.clip((y - horizon) / max(0.12 * H, 1.0), 0, 1)
+        su, sd = up * up * (3 - 2 * up), down * down * (3 - 2 * down)
+        z, hz, fl = (np.asarray(c, float) for c in (zenith, haze, floor))
+        col = np.where((y < horizon)[:, None], hz + (z - hz) * su[:, None], hz + (fl - hz) * sd[:, None])
+    v = col[:, None, :] * 255.0 + _BAYER8[np.arange(H) % 8][:, :, None] - 0.5
+    rgba = np.empty((H, 8, 4), np.uint8)
+    rgba[..., :3] = np.clip(np.round(v), 0, 255).astype(np.uint8)
+    rgba[..., 3] = 255
+    return QImage(rgba.tobytes(), 8, H, 32, QImage.Format.Format_RGBA8888).copy()
+
+
 # ---------------------------------------------------------------------------- base behaviour
 class ViewportBase:
     """Shared navigation, projection and overlay logic (mixed into the GL and software widgets)."""
@@ -235,6 +329,10 @@ class ViewportBase:
         self._last = None
         self._press_pos = None
         self.nav_style = 'blender'
+        self.nav = NavControl(self)          # the on-screen navigation control (top right)
+        self._pivot = None                   # what an orbit turns about: the point under the cursor at its start
+        self._nav_click = None
+        self._home = None                    # (lo, hi, margin) the frame button shows, unless the provider has home_box
         self.hover_pos = None
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
@@ -319,6 +417,8 @@ class ViewportBase:
 
     def frame_box(self, lo, hi, margin=1.25, animate=False):
         lo, hi = np.asarray(lo, float), np.asarray(hi, float)
+        if self._home is None:              # the view's first framing is what its frame button goes back to
+            self._home = (lo.copy(), hi.copy(), margin)
         c = (lo + hi) / 2
         r = float(np.linalg.norm(hi - lo)) / 2 * margin
         self._leave_custom()
@@ -408,6 +508,14 @@ class ViewportBase:
         self._btn = e.button()
         self._press_pos = e.position()
         self._last = e.position()
+        self._pivot = None
+        w = self.nav.hit(e.position()) if e.button() == Qt.MouseButton.LeftButton else None
+        if w is not None:                    # the navigation control comes first
+            self._drag = {'ball': 'nav-orbit', 'pan': 'nav-pan', 'zoom': 'nav-zoom'}.get(w, 'nav-click')
+            self._nav_click = w
+            if self._drag != 'nav-click':
+                self.setCursor(Qt.CursorShape.ClosedHandCursor if w != 'zoom' else Qt.CursorShape.SizeVerCursor)
+            return
         if self.provider.mouse_press(self, e):
             self._drag = 'provider'
             return
@@ -419,6 +527,7 @@ class ViewportBase:
             self._drag = 'pan'
         elif b == orbit_btn:
             self._drag = 'orbit'
+            self._pivot = self._pick_pivot(e.position())
         elif pan_btn is not None and b == pan_btn:
             self._drag = 'pan'
         elif b == Qt.MouseButton.LeftButton:
@@ -434,15 +543,19 @@ class ViewportBase:
         if self._drag in ('maybe-orbit', 'maybe-pan') and self._press_pos is not None:
             if (pos - self._press_pos).manhattanLength() > 4:
                 self._drag = self._drag[6:]
-        if self._drag == 'orbit' and self.cam.custom is None:
+                if self._drag == 'orbit':
+                    self._pivot = self._pick_pivot(self._press_pos)
+        if self._drag in ('orbit', 'nav-orbit') and self.cam.custom is None:
             d = pos - self._last
-            self.cam.az -= d.x() * 0.4
-            self.cam.el = max(-5.0, min(89.99, self.cam.el + d.y() * 0.35))
-            if self.cam.ortho and self.cam.el < 89:
-                self.cam.ortho = self.cam.ortho  # keep
+            pivot = self._pivot if (self._drag == 'orbit' and self._pivot is not None) else self.cam.target
+            orbit_about(self.cam, pivot, -d.x() * ORBIT_DEG_PER_PX, d.y() * 0.35)
             self.update()
             self._emit_view()
-        elif self._drag == 'pan' and self.cam.custom is None:
+        elif self._drag == 'nav-zoom' and self.cam.custom is None:
+            self._zoom_by(1.012 ** (pos - self._last).y())
+        elif self._drag == 'nav-click':
+            pass
+        elif self._drag in ('pan', 'nav-pan') and self.cam.custom is None:
             d = pos - self._last
             V = self.cam.view()
             s = self.cam.ortho_h / max(self.height(), 1) if self.cam.ortho else \
@@ -453,7 +566,23 @@ class ViewportBase:
             self._emit_view()
         else:
             self.hover_pos = pos
-            self.provider.hover(self, pos)
+            w = self.nav.hit(pos) if self._drag is None else None
+            if w != self.nav.hot:
+                if self.nav.hot is None:
+                    self.provider.hover(self, None)      # over the control: no ground read-out, no handle lit
+                self.nav.hot = w
+                cur = self.nav.cursor(w)
+                if cur is None:
+                    self.unsetCursor()
+                else:
+                    self.setCursor(cur)
+                if w is not None:
+                    QToolTip.showText(e.globalPosition().toPoint(), self.nav.tooltip(w), self)
+                else:
+                    QToolTip.hideText()
+                self.update()
+            if w is None:
+                self.provider.hover(self, pos)
         self._last = pos
 
     def focusOutEvent(self, e):
@@ -467,8 +596,16 @@ class ViewportBase:
             return                      # the release of a button pressed during the drag
         d = self._drag
         self._drag = None
+        self._pivot = None
         if d == 'provider':
             self.provider.mouse_release(self, e)
+            return
+        if isinstance(d, str) and d.startswith('nav-'):
+            self.unsetCursor()
+            self.nav.hot = None
+            if d == 'nav-click' and self.nav.hit(e.position()) == self._nav_click:
+                self.nav_action(self._nav_click)
+            self.update()
             return
         moved = self._press_pos is not None and (e.position() - self._press_pos).manhattanLength() > 4
         if not moved:
@@ -478,32 +615,62 @@ class ViewportBase:
                 self.provider.click(self, e)
 
     def mouseDoubleClickEvent(self, e):
+        if self.nav.hit(e.position()) is not None:
+            return
         self.provider.double_click(self, e)
 
     def wheelEvent(self, e):
         if self.cam.custom is not None:
             return
-        dy = e.angleDelta().y()
+        self._stop_anim()
+        mods = e.modifiers()
+        if is_touchpad(e) and not (mods & Qt.KeyboardModifier.ControlModifier):
+            # two fingers orbit (about the point under the cursor when the gesture starts), with Shift they pan
+            px = e.pixelDelta()
+            dx, dy = (px.x(), px.y()) if not px.isNull() else (e.angleDelta().x() / 4, e.angleDelta().y() / 4)
+            if not e.inverted():         # the fingers' own motion, so the scene moves as if dragged with them
+                dx, dy = -dx, -dy
+            if e.phase() == Qt.ScrollPhase.ScrollBegin or self._pivot is None:
+                self._pivot = self._pick_pivot(e.position())
+            if mods & Qt.KeyboardModifier.ShiftModifier:
+                self._pan_by(dx, dy)
+            else:
+                orbit_about(self.cam, self._pivot if self._pivot is not None else self.cam.target,
+                            -dx * ORBIT_DEG_PER_PX * 0.6, dy * 0.35 * 0.6)
+                self.update()
+                self._emit_view()
+            if e.phase() == Qt.ScrollPhase.ScrollEnd:
+                self._pivot = None
+            return
+        dy = e.angleDelta().y() or e.pixelDelta().y()
         if dy == 0:                     # horizontal scrolling is not a zoom
             return
-        self._stop_anim()
         k = 0.88 ** (dy / 120.0)        # touchpads send many small steps
-        sx, sy = e.position().x(), e.position().y()
+        self._zoom_by(k, e.position())
+
+    def _zoom_by(self, k, at=None):
+        """Zoom by k (< 1 closer) towards the point under screen position at (the surface there, else the plane through
+        the target), or about the target."""
         tgt = self.cam.target
-        if self.cam.ortho:
-            # the point under the cursor on the plane through the target, square to the view
-            o, d = self.ray(sx, sy)
-            g = o + d * float((tgt - o) @ d)
-        else:
-            g = self.ground_at(sx, sy, tgt[2])
-            if g is not None and np.linalg.norm(g - tgt) > 3 * self.cam.dist:
-                g = None                # a grazing ray: zoom about the target instead of flinging it away
+        g = None
+        if at is not None:
+            sx, sy = at.x(), at.y()
+            if self.cam.ortho:
+                # the point under the cursor on the plane through the target, square to the view
+                o, d = self.ray(sx, sy)
+                g = o + d * float((tgt - o) @ d)
+            else:
+                g = self._pick_pivot(at, fallback=False)
+                if g is None:
+                    g = self.ground_at(sx, sy, tgt[2])
+                if g is not None and np.linalg.norm(g - tgt) > 3 * self.cam.dist:
+                    g = None            # a grazing ray: zoom about the target instead of flinging it away
         if self.cam.ortho:
             new_h = max(0.3, min(200, self.cam.ortho_h * k))
             k = new_h / self.cam.ortho_h
             self.cam.ortho_h = new_h
         else:
-            new_d = max(0.4, min(200, self.cam.dist * k))
+            new_d = max(0.15, min(200, self.cam.dist * k))
             k = new_d / self.cam.dist
             self.cam.dist = new_d
         if g is not None:
@@ -511,25 +678,103 @@ class ViewportBase:
         self.update()
         self._emit_view()
 
+    def _pan_by(self, dx, dy):
+        V = self.cam.view()
+        s = self.cam.ortho_h / max(self.height(), 1) if self.cam.ortho else \
+            self.cam.dist * 2 * math.tan(math.radians(self.cam.fov) / 2) / max(self.height(), 1)
+        self.cam.target = self.cam.target - V[0, :3] * dx * s + V[1, :3] * dy * s
+        self.update()
+        self._emit_view()
+
+    def _pick_pivot(self, pos, fallback=True):
+        """The point under screen position pos to orbit about or zoom towards: the body, a rig part or a sensor (the
+        provider's pick_point), else the ground within reach; None (fallback=False) or the target."""
+        pick = getattr(self.provider, 'pick_point', None)
+        q = pick(self, pos) if pick is not None else None
+        if q is None and fallback:
+            g = self.ground_at(pos.x(), pos.y(), 0.0)
+            if g is not None and np.linalg.norm(g - self.cam.target) <= 3 * max(self.cam.dist, 1.0):
+                q = g
+        if q is None:
+            return np.asarray(self.cam.target, float).copy() if fallback else None
+        return np.asarray(q, float)
+
+    def cancel_provider_drag(self):
+        """The provider ended its drag itself (Esc): the button's release is no longer its."""
+        if self._drag == 'provider':
+            self._drag = None
+
+    def nav_action(self, what):
+        """A click on the navigation control: look along an axis, frame everything, or switch the projection."""
+        if isinstance(what, tuple) and what[0] == 'axis':
+            az, el = AXIS_VIEWS[(what[1], what[2])]
+            self._leave_custom()
+            self.animate_to(az=az, el=el)
+        elif what == 'frame':
+            home = getattr(self.provider, 'home_box', None)
+            box = home(self) if home is not None else None
+            box = box or self._home
+            if box is not None:
+                self.frame_box(*box, animate=True)
+        elif what == 'ortho':
+            self._leave_custom()
+            self.cam.ortho = not self.cam.ortho
+            self.update()
+            self._emit_view()
+
+    def event(self, e):
+        if e.type() == QEvent.Type.NativeGesture and self.cam.custom is None:
+            g = e.gestureType()
+            if g == Qt.NativeGestureType.ZoomNativeGesture:       # pinch
+                self._stop_anim()
+                self._zoom_by(1.0 / max(1.0 + float(e.value()), 0.2), e.position())
+                return True
+            if g == Qt.NativeGestureType.RotateNativeGesture:     # two-finger turn
+                orbit_about(self.cam, self.cam.target, -float(e.value()), 0.0)
+                self.update()
+                self._emit_view()
+                return True
+        return type(self).__mro__[1].event(self, e)   # the Qt class's own (QWidget or QOpenGLWidget)
+
     def leaveEvent(self, e):
         self.hover_pos = None
+        if self.nav.hot is not None:
+            self.nav.hot = None
+            self.unsetCursor()
+            self.update()
         self.provider.hover(self, None)
 
     def keyPressEvent(self, e):
         if self.provider.key_press(self, e):
             return
         k = e.key()
-        num = bool(e.modifiers() & Qt.KeyboardModifier.KeypadModifier)
-        if k == Qt.Key.Key_7 and num:
-            self.set_view('top')
-        elif k == Qt.Key.Key_1 and num:
-            self.set_view('front')
-        elif k == Qt.Key.Key_3 and num:
-            self.set_view('side')
-        elif k == Qt.Key.Key_5 and num:
-            self._leave_custom()
-            self.cam.ortho = not self.cam.ortho
-            self.update()
+        mods = e.modifiers()
+        ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
+        shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+        step = 15.0 if not (mods & Qt.KeyboardModifier.AltModifier) else 3.0
+        arrows = {Qt.Key.Key_Left: (1, 0), Qt.Key.Key_Right: (-1, 0), Qt.Key.Key_Up: (0, 1), Qt.Key.Key_Down: (0, -1)}
+        if k == Qt.Key.Key_7:                            # the number row too: a laptop has no numpad
+            self.set_view('top', animate=True)
+        elif k == Qt.Key.Key_1:
+            self.set_view('rear' if ctrl else 'front', animate=True)
+        elif k == Qt.Key.Key_3:
+            self.set_view('side', animate=True)
+        elif k == Qt.Key.Key_0 and not (mods & Qt.KeyboardModifier.KeypadModifier):   # numpad 0: the window's
+            self.set_view('persp', animate=True)
+        elif k == Qt.Key.Key_5:
+            self.nav_action('ortho')
+        elif k in arrows and self.cam.custom is None:
+            ax, ay = arrows[k]
+            if shift:
+                px = 0.08 * max(self.height(), 1)
+                self._pan_by(-ax * px, ay * px)
+            else:
+                orbit_about(self.cam, self.cam.target, ax * step, -ay * step)
+                self.update()
+                self._emit_view()
+        elif k in (Qt.Key.Key_Plus, Qt.Key.Key_Equal, Qt.Key.Key_Minus, Qt.Key.Key_Underscore) and \
+                self.cam.custom is None:
+            self._zoom_by(0.8 if k in (Qt.Key.Key_Plus, Qt.Key.Key_Equal) else 1.25)
         else:
             QWidget.keyPressEvent(self, e)
 
@@ -546,17 +791,70 @@ class ViewportBase:
 
     # ---- painting helpers shared by both renderers
     def paint_background(self, p: QPainter):
-        p.fillRect(self.rect(), self.provider.background_color())
         bg = self.provider.background_image(self)
+        brush = self._backdrop_brush() if bg is None else None
+        p.fillRect(self.rect(), brush if brush is not None else QBrush(self.provider.background_color()))
         if bg is not None:
             img, rect = bg
             p.drawImage(rect, img)
 
-    def paint_overlay(self, p: QPainter):
+    def horizon_y(self):
+        """Screen y (logical pixels) of the horizon, or None when the view looks (nearly) straight down or up."""
+        V, P, M = self.matrices()
+        f = -V[2, :3]
+        hf = np.array([f[0], f[1], 0.0])
+        if np.linalg.norm(hf) < 0.02:
+            return None
+        hf /= np.linalg.norm(hf)
+        if self.cam.ortho and self.cam.custom is None:
+            q = M @ np.r_[self.cam.target[0] + hf[0] * 1e3, self.cam.target[1] + hf[1] * 1e3, 0.0, 1.0]
+        else:
+            q = M @ np.r_[hf, 0.0]
+        if q[3] <= 1e-9:
+            return None
+        return float((1 - q[1] / q[3]) * 0.5 * self.height())
+
+    def _backdrop_brush(self):
+        """A studio backdrop in the theme's colours, tied to the real horizon: a soft sky gradient above it, a bright
+        haze at it, and below it the floor in the ground plane's colour (so the plane fades into it seamlessly).
+        Dithered (no banding) and cached; None (a flat fill) for views without a ground plane (photo match, bowl,
+        lighting off) and straight-down views."""
+        st = self._render_style()
+        if st is None or not getattr(st, 'ground_plane', False) or not getattr(st, 'backdrop', True):
+            return None
+        yh = self.horizon_y()
+        dpr = self.devicePixelRatioF() if hasattr(self, 'devicePixelRatioF') else 1.0
+        H = max(1, int(round(self.height() * dpr)))
+        base = self.provider.background_color()
+        cols = backdrop_colors(base.getRgbF()[:3], st.ground_rgb)
+        yd = None if yh is None else int(round(min(max(yh, -4.0 * self.height()), 5.0 * self.height()) * dpr))
+        key = (H, yd, tuple(np.round(np.concatenate(cols), 4)), round(dpr, 3))
+        cache = getattr(self, '_backdrop_cache', None)
+        if cache is None or cache[0] != key:
+            img = backdrop_image(H, yd, *cols)
+            img.setDevicePixelRatio(dpr)
+            cache = (key, QBrush(img))
+            self._backdrop_cache = cache
+        return cache[1]
+
+    def paint_overlay(self, p: QPainter, ui: bool = True):
+        """The provider's overlay, the axes and the scale; with ui, also the navigation control and the orbit's
+        pivot (not in a saved image)."""
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         self.provider.overlay(p, self)
         self._paint_axes(p)
         self._paint_scale(p)
+        if ui:
+            if self._drag == 'orbit' and self._pivot is not None:
+                q, _, ok = self.project([self._pivot])
+                if ok[0]:
+                    c = QPointF(*q[0])
+                    p.setPen(QPen(THEME.color('ink'), 1.4))
+                    p.setBrush(THEME.color('panel', 0.6))
+                    p.drawEllipse(c, 4.5, 4.5)
+                    p.setPen(QPen(THEME.color('ink', 0.5), 1.0))
+                    p.drawEllipse(c, 9.0, 9.0)
+            self.nav.paint(p)
         label = self.provider.hud_label(self)
         if label:
             p.setFont(sans(11))
@@ -625,7 +923,7 @@ class ViewportBase:
             p.restore()
         else:
             self._paint_scene(p)
-        self.paint_overlay(p)
+        self.paint_overlay(p, ui=False)
         p.end()
         return img
 
@@ -729,8 +1027,11 @@ class SoftViewport(QWidget, ViewportBase):
             facing = np.einsum('ij,ij->i', md.normals, (eye - cen) if not self.cam.ortho else np.tile(view_dir, (len(cen), 1)))
             keep = (facing > 0) | (md.alpha < 0.99)
             items.append((tri[keep], np.c_[cols[keep], md.alpha[keep]], md.wire))
-        for td in prov.tris_extra(self):
+        extra = prov.tris_extra(self)
+        for td in extra:
             items.append((td.tri, td.colors, False))
+        points = scene_points(prov, self)
+        slabs = self._point_slabs([pd for pd in points if pd.depth])
         if items:
             T = np.concatenate([i[0] for i in items])
             C = np.concatenate([i[1] for i in items])
@@ -742,8 +1043,14 @@ class SoftViewport(QWidget, ViewportBase):
             ok = ok.reshape(-1, 3).all(axis=1)
             order = np.argsort(-dep)
             order = order[ok[order]]
+            # point slabs join the painter's order: each is drawn before the first triangle nearer than it
+            at = np.searchsorted(-dep[order], [-s[0] for s in slabs], side='right') if slabs else []
+            nxt = 0
             p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-            for i in order:
+            for k, i in enumerate(order):
+                while nxt < len(slabs) and at[nxt] <= k:
+                    self._paint_point_slab(p, slabs[nxt][1])
+                    nxt += 1
                 c = C[i]
                 col = QColor.fromRgbF(float(c[0]), float(c[1]), float(c[2]), float(c[3]))
                 if W[i]:
@@ -754,8 +1061,102 @@ class SoftViewport(QWidget, ViewportBase):
                     p.setPen(QPen(col, 0.8) if c[3] > 0.99 else Qt.PenStyle.NoPen)
                 a = sc[i]
                 p.drawPolygon(QPolygonF([QPointF(a[0, 0], a[0, 1]), QPointF(a[1, 0], a[1, 1]), QPointF(a[2, 0], a[2, 1])]))
+            for _, slab in slabs[nxt:]:
+                self._paint_point_slab(p, slab)
             p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        else:
+            for _, slab in slabs:
+                self._paint_point_slab(p, slab)
+        for td in extra:
+            if getattr(td, 'outline', None) is not None:
+                self._paint_outline(p, td)
         self._paint_lines(p, [l for l in lines if not (l.depth and self._on_ground(l))])
+        for _, slab in self._point_slabs([pd for pd in points if not pd.depth]):
+            self._paint_point_slab(p, slab)
+
+    def _point_slabs(self, draws, n_slabs=12):
+        """Projected point sprites (capped at SOFT_POINT_CAP in all) cut into depth slabs, far to near:
+        [(depth, [(QColor, size, [QPointF]) ...])], so the painter's algorithm can hide them behind the body."""
+        if not draws:
+            return []
+        total = sum(len(pd.points) for pd in draws)
+        step = max(1, int(math.ceil(total / SOFT_POINT_CAP)))
+        sc_all, dep_all, col_all, size_all = [], [], [], []
+        for pd in draws:
+            P = np.asarray(pd.points, float).reshape(-1, 3)[::step]
+            C = np.asarray(pd.colors, float).reshape(-1, 4)[::step]
+            if not len(P):
+                continue
+            sc, dep, ok = self.project(P)
+            ok &= (sc[:, 0] > -8) & (sc[:, 0] < self.width() + 8) & (sc[:, 1] > -8) & (sc[:, 1] < self.height() + 8)
+            sc_all.append(sc[ok]), dep_all.append(dep[ok]), col_all.append(C[ok])
+            size_all.append(np.full(int(ok.sum()), float(pd.size)))
+        if not sc_all or not sum(len(d) for d in dep_all):
+            return []
+        sc, dep, col, size = (np.concatenate(a) for a in (sc_all, dep_all, col_all, size_all))
+        edges = np.quantile(dep, np.linspace(0, 1, n_slabs + 1))
+        slab = np.clip(np.searchsorted(edges, dep, side='right') - 1, 0, n_slabs - 1)
+        q = np.clip(np.round(col * 15), 0, 15).astype(np.int64)          # colours to 4 bits: few pens per slab
+        ckey = ((q[:, 0] * 16 + q[:, 1]) * 16 + q[:, 2]) * 16 + q[:, 3]
+        out = []
+        for s in range(n_slabs - 1, -1, -1):
+            m = slab == s
+            if not m.any():
+                continue
+            groups = []
+            keys = ckey[m] * 64 + np.clip(np.round(size[m] * 2), 0, 63).astype(np.int64)
+            pts, cc, ss = sc[m], col[m], size[m]
+            for k in np.unique(keys):
+                g = keys == k
+                c = cc[g][0]
+                groups.append((QColor.fromRgbF(*(float(x) for x in np.clip(c, 0, 1))), float(ss[g][0]),
+                               [QPointF(float(x), float(y)) for x, y in pts[g]]))
+            out.append((float(np.median(dep[m])), groups))
+        return out
+
+    def _paint_point_slab(self, p: QPainter, groups):
+        p.save()
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        for col, size, pts in groups:
+            pen = QPen(col, max(1.0, size))
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)          # round discs
+            p.setPen(pen)
+            p.drawPoints(QPolygonF(pts))
+        p.restore()
+
+    def _paint_outline(self, p: QPainter, td):
+        """The projected silhouette of the triangles, stroked (the shader renderer draws a screen-space outline)."""
+        import cv2
+        T = np.asarray(td.tri, float).reshape(-1, 3)
+        sc, dep, ok = self.project(T)
+        ok = ok.reshape(-1, 3).all(axis=1)
+        if not ok.any():
+            return
+        tri = sc.reshape(-1, 3, 2)[ok]
+        lo = np.floor(tri.reshape(-1, 2).min(axis=0)) - 4
+        hi = np.ceil(tri.reshape(-1, 2).max(axis=0)) + 4
+        lo = np.maximum(lo, [-4, -4])
+        hi = np.minimum(hi, [self.width() + 4, self.height() + 4])
+        w, h = int(hi[0] - lo[0]), int(hi[1] - lo[1])
+        if w <= 0 or h <= 0 or w * h > 16e6:
+            return
+        mask = np.zeros((h, w), np.uint8)
+        cv2.fillPoly(mask, np.round((tri - lo) * 4).astype(np.int32), 255, lineType=cv2.LINE_8, shift=2)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        c = td.outline
+        col = QColor.fromRgbF(*(float(x) for x in c[:3]), float(c[3]) if len(c) > 3 else 1.0)
+        st = self._render_style()
+        pen = QPen(col, float(getattr(st, 'outline_px', 2.0)) if st is not None else 2.0)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        p.save()
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for cnt in contours:
+            pts = cnt.reshape(-1, 2).astype(float) + lo + 0.5
+            if len(pts) >= 2:
+                p.drawPolygon(QPolygonF([QPointF(float(x), float(y)) for x, y in pts]))
+        p.restore()
 
     def _on_ground(self, l):
         pts = l.pts.reshape(-1, 3)
@@ -850,6 +1251,7 @@ if QOpenGLWidget is not None:
                       lines=prov.lines(self), tris=prov.tris_extra(self), clear=clear, ortho=self.cam.ortho)
             f.bowl = getattr(prov, 'bowl_draw', lambda vp: None)(self)
             f.cams = getattr(prov, 'camera_lights', lambda vp: [])(self)
+            f.points = scene_points(prov, self)
             f.style = self._render_style() or Style()
             self.renderer.dpr = scale
             return f
@@ -873,6 +1275,8 @@ if QOpenGLWidget is not None:
             p.endNativePainting()
             self.paint_overlay(p)
             p.end()
+            if self.renderer is not None and self.renderer.pending:
+                QTimer.singleShot(0, self.update)   # cached sky maps still being refreshed over a few frames
 
         def _scene_image(self, w, h, scale):
             if self.renderer is None:
@@ -885,8 +1289,12 @@ if QOpenGLWidget is not None:
             return QImage(rgba.tobytes(), w, h, w * 4, QImage.Format.Format_RGBA8888_Premultiplied).copy()
 
         def render_image(self, scale=2.0, transparent=False) -> QImage:
-            if self.renderer is None:       # fixed-function path: the framebuffer, scaled
-                img = self.grabFramebuffer()
+            if self.renderer is None:       # fixed-function path: the framebuffer, scaled (without the controls)
+                vis, self.nav.visible = self.nav.visible, False
+                try:
+                    img = self.grabFramebuffer()
+                finally:
+                    self.nav.visible = vis
                 return img.scaled(int(img.width() * scale), int(img.height() * scale), Qt.AspectRatioMode.IgnoreAspectRatio,
                                   Qt.TransformationMode.SmoothTransformation)
             return ViewportBase.render_image(self, scale, transparent)
@@ -925,10 +1333,19 @@ if QOpenGLWidget is not None:
                 cols = shade_faces(md, view_dir)
                 self._draw_tris(md.tri, np.c_[cols, md.alpha], wire=md.wire, offset=True)
             for td in prov.tris_extra(self):
+                if getattr(td, 'outline', None) is not None:
+                    self._draw_outline(td)
                 self._draw_tris(td.tri, td.colors, depth=td.depth)
+            points = scene_points(prov, self)
+            for pd in points:
+                if pd.depth:
+                    self._draw_points(pd)
             for l in lines:
                 if not (l.depth and self._is_ground(l)):
                     self._draw_line(l)
+            for pd in points:
+                if not pd.depth:
+                    self._draw_points(pd)
             GL.glDisable(GL.GL_DEPTH_TEST)
             GL.glMatrixMode(GL.GL_PROJECTION)
             GL.glLoadIdentity()
@@ -977,6 +1394,44 @@ if QOpenGLWidget is not None:
             GL.glDisableClientState(GL.GL_VERTEX_ARRAY)
             if offset:
                 GL.glDisable(GL.GL_POLYGON_OFFSET_FILL)
+            GL.glEnable(GL.GL_DEPTH_TEST)
+
+        def _draw_outline(self, td):
+            """Fixed-function outline: the triangles as thick lines in the outline colour, the filled triangles
+            drawn over them afterwards leave only the rim outside the silhouette."""
+            GL = self.GL
+            c = td.outline
+            v = np.ascontiguousarray(np.asarray(td.tri).reshape(-1, 3), np.float32)
+            GL.glDepthMask(GL.GL_FALSE)
+            GL.glPolygonMode(GL.GL_FRONT_AND_BACK, GL.GL_LINE)
+            GL.glLineWidth(4.0 * self.devicePixelRatioF())
+            GL.glColor4f(float(c[0]), float(c[1]), float(c[2]), float(c[3]) if len(c) > 3 else 1.0)
+            GL.glEnableClientState(GL.GL_VERTEX_ARRAY)
+            GL.glVertexPointer(3, GL.GL_FLOAT, 0, v)
+            GL.glDrawArrays(GL.GL_TRIANGLES, 0, len(v))
+            GL.glDisableClientState(GL.GL_VERTEX_ARRAY)
+            GL.glPolygonMode(GL.GL_FRONT_AND_BACK, GL.GL_FILL)
+            GL.glDepthMask(GL.GL_TRUE)
+
+        def _draw_points(self, pd):
+            GL = self.GL
+            v = np.ascontiguousarray(np.asarray(pd.points, np.float32).reshape(-1, 3))
+            c = np.ascontiguousarray(np.asarray(pd.colors, np.float32).reshape(-1, 4))
+            if pd.depth:
+                GL.glEnable(GL.GL_DEPTH_TEST)
+            else:
+                GL.glDisable(GL.GL_DEPTH_TEST)
+            GL.glEnable(GL.GL_POINT_SMOOTH)
+            GL.glPointSize(max(1.0, float(pd.size) * self.devicePixelRatioF()))
+            GL.glEnableClientState(GL.GL_VERTEX_ARRAY)
+            GL.glEnableClientState(GL.GL_COLOR_ARRAY)
+            GL.glVertexPointer(3, GL.GL_FLOAT, 0, v)
+            GL.glColorPointer(4, GL.GL_FLOAT, 0, c)
+            GL.glDrawArrays(GL.GL_POINTS, 0, len(v))
+            GL.glDisableClientState(GL.GL_COLOR_ARRAY)
+            GL.glDisableClientState(GL.GL_VERTEX_ARRAY)
+            GL.glDisable(GL.GL_POINT_SMOOTH)
+            GL.glPointSize(1.0)
             GL.glEnable(GL.GL_DEPTH_TEST)
 
         def _draw_line(self, l: LineDraw):
