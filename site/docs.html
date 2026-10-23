@@ -33,6 +33,7 @@
     <a href="#install">Install</a>
     <a href="#first-run">First run</a>
     <a href="#interface">The window</a>
+    <a href="#navigation">Moving around in 3D</a>
     <a href="#conventions">Conventions</a>
     <p>Design</p>
     <a href="#import">Importing a vehicle</a>
@@ -99,7 +100,13 @@
 cd Vantage
 python3 -m pip install .            # add [step] for STEP import, [keyring] for the assistant's key,
                                     # [bags] for compressed ROS 2 bags
-vantage                             # the window; vantage-gui on Windows starts it without a console</code></pre>
+vantage                             # the window; vantage-gui on Windows starts it without a console
+vantage --install-desktop           # Linux: add Vantage to the app menu and dock with its icon</code></pre>
+    <p>On Linux, <code>vantage --install-desktop</code> adds the menu entry, the icon and the <code>.vantage</code> file
+      type for your user (in <code>~/.local/share</code>), so the dock and the app grid show Vantage with its icon;
+      <code>vantage --desktop-shortcut</code> also puts a launcher on the desktop (trusted, so it starts on a
+      double-click), and <code>vantage --uninstall-desktop</code> removes exactly what they added. The bundle's <code>install.sh</code> does
+      the same for an installed bundle.</p>
     <p><b>Bundles that need no Python</b> (Linux <code>.tar.gz</code>, a Windows installer, a macOS app) are built by
       the repository's <em>Build installers</em> workflow and attached to a GitHub release whenever a version is
       tagged. Until the first version is tagged, install from source or build a bundle for your machine:</p>
@@ -137,6 +144,20 @@ vantage project.vantage            # open a project</code></pre>
       study, Optimiser, Compare variants, Target planner, Installation check, Live rig, Blind volume and Perception
       range. The command palette
       (<kbd>Ctrl</kbd>+<kbd>K</kbd>) finds any command by name.</p>
+    <h3 id="navigation">Moving around in 3D</h3>
+    <ul>
+      <li><b>Orbit</b>: left-drag on empty space or middle-drag (right-drag with the CAD setting in Preferences). The view
+        turns about the point under the cursor where the drag starts (the body, a rig part, a sensor, a camera or the
+        ground), so what you grab stays put. <b>Pan</b>: right-drag or <kbd>Shift</kbd> + middle-drag. <b>Zoom</b>: the
+        wheel, towards the surface under the cursor.</li>
+      <li><b>The navigation control</b> in the top-right corner of each 3D view, for any mouse or touchpad: drag the
+        axis ball to orbit, click an axis to look along it, drag the hand to pan or the magnifier to zoom; the last two
+        buttons frame everything and switch perspective and orthographic.</li>
+      <li><b>Touchpad</b>: two fingers orbit, <kbd>Shift</kbd> + two fingers pan, a pinch or <kbd>Ctrl</kbd> + two fingers zoom.</li>
+      <li><b>Keyboard</b> (click the 3D view first): arrows orbit (<kbd>Alt</kbd> for small steps), <kbd>Shift</kbd> +
+        arrows pan, <kbd>+</kbd> / <kbd>−</kbd> zoom; <kbd>7</kbd> top, <kbd>1</kbd> front, <kbd>Ctrl</kbd>+<kbd>1</kbd>
+        rear, <kbd>3</kbd> side, <kbd>0</kbd> the default view, <kbd>5</kbd> orthographic, on the number row or the numpad.</li>
+    </ul>
     <figure><div class="frame natural"><img src="media/window.jpg" alt="The main window with the outliner, the 3D view, the inspector and the analysis panels" loading="lazy" width="1600" height="900"></div>
       <figcaption>The main window with the sample project.</figcaption></figure>
 
@@ -164,7 +185,11 @@ vantage project.vantage            # open a project</code></pre>
     <h2 id="placement">Placing cameras</h2>
     <ul>
       <li><b>Place on surface</b> (<kbd>C</kbd>): click the body; <kbd>Alt</kbd>-click places a mirrored left/right pair. Cameras sit on the surface with their housing standoff.</li>
-      <li><b>Move</b> (<kbd>G</kbd>) and <b>Rotate</b> (<kbd>R</kbd>) gizmos; dragging along the body keeps the camera on the surface.</li>
+      <li><b>Move</b> (<kbd>G</kbd>) and <b>Rotate</b> (<kbd>R</kbd>) handles on the selected camera, sensor or rig part:
+        an arrow per axis, a square that moves it in the horizontal plane, a yaw and a pitch ring (a rig part turns about
+        z only). The handle under the pointer lights up and the change is read out beside the cursor; <kbd>Ctrl</kbd>
+        snaps to 1 cm and 5°, <kbd>Shift</kbd> is fine, <kbd>Esc</kbd> puts it back. Dragging a camera along the body keeps
+        it on the surface; dragging a selected sensor or rig part moves it across at its height.</li>
       <li><b>Aim at a ground point</b>: Camera ▸ Aim ▸ At ground point, then click in the 3D or top view.</li>
       <li><b>Linked pairs</b> mirror every change to the partner; a <b>locked</b> camera (<kbd>Ctrl</kbd>+<kbd>L</kbd>) never moves.</li>
       <li>The <b>camera table</b> (Cameras tab) is editable and accepts a paste from a spreadsheet.</li>
@@ -221,7 +246,7 @@ vantage project.vantage            # open a project</code></pre>
       <li><b>Import beam angles…</b> replaces the even spread with the measured channel elevations from an Ouster metadata JSON (<code>beam_altitude_angles</code>), a Hesai angle-correction CSV, a Velodyne ROS calibration YAML (<code>vert_correction</code>) or a list with one angle per line.</li>
       <li>A radar is one or more zones: a range on a car-sized target (10 m²) and the half-angles of its field. A smaller target is detected out to the fourth root of its cross-section ratio (the radar equation): a pedestrian (0.5 m²) at 47 % of the car's range.</li>
       <li>The sync phase (spinning lidars) is the azimuth, in the lidar's own frame, it faces at the top of each sync period. See <a href="#timing">Sync and timing</a>.</li>
-      <li>The 3D view draws each housing, a lidar's ground rings (where its downward beams meet the ground, out to 15 m) and a radar's field edges; the top view draws the rings, the radar fields and every sensor's footprint and tag. View ▸ Overlays ▸ <i>Lidar rings and radar fields</i> turns them off.</li>
+      <li>The 3D view draws each sensor and camera at its real size: a lidar with its window band, a radar with its radome, GNSS antennas as domes, an IMU with its axes, each camera with its lens ring; a lidar's ground rings (where its downward beams meet the ground, out to 15 m) and each radar zone's field as a see-through volume fading out to 15 m. The top view draws the rings, the radar fields and every sensor's footprint and tag. View ▸ Overlays ▸ <i>Lidar rings and radar fields</i> turns them off; <i>Lidar points</i> traces one sweep per lidar (returns coloured by range, beams the vehicle blocks in red), <i>GNSS sky</i> puts the sky each antenna sees over it, and <i>Mount brackets</i> shows the generated brackets on the vehicle.</li>
       <li>A GNSS antenna's position is its phase centre; an IMU's is the centre of its measurement axes and its frame is its own axes. An INS's heading error scales with the baseline: the datasheet figure × its rated baseline ÷ the baseline between the first two antennas (by tag). The inspector shows each antenna's baseline and the INS's heading error for it; the 3D and top views draw the baseline (dashed) and the IMU's axes. <a href="#gnss">GNSS and IMU</a> checks the sky, the baseline and the lever arms.</li>
       <li>The Issues list flags a GNSS antenna inside the body or a rig part (it has no sky; an IMU belongs inside), a lidar inside the body or a rig part (its beams would start inside the vehicle), a radar more than 15 cm behind the body's surface (a radar sees through a plastic bumper fascia, not through the body), a sensor below the ground, and a tag used by a camera too.</li>
       <li>Exports: each sensor is a frame with x forward, y left and z up at its optical centre (ROS REP 103). It goes into the extrinsics (pose, field, spin direction and phase), the ROS 2 URDF and static TF launch file, the nuScenes tables (<code>LIDAR_&lt;TAG&gt;</code>, <code>RADAR_&lt;TAG&gt;</code>), KITTI (<code>Tr_&lt;tag&gt;_to_vehicle</code>, and <code>calib_velo_to_cam.txt</code> for the first lidar into camera 00; with an IMU, <code>calib_imu_to_velo.txt</code> from the first IMU into the first lidar) and the report. nuScenes has no GNSS or IMU channels: they make its <code>ego_pose</code>. Drivers use their own frames (an Ouster's lidar frame has x towards the connector): add the driver's fixed rotation if your point clouds are in it.</li>
@@ -249,7 +274,14 @@ vantage project.vantage            # open a project</code></pre>
 
     <h2 id="overlays">Heatmaps and overlays</h2>
     <p><b>View ▸ Overlays ▸ Heatmap</b> colours the ground by <b>Coverage</b> (which camera is best), <b>Density</b>,
-      <b>Redundancy</b> or <b>Objects</b> (how much of a standing object the stitched view shows). The overlays:</p>
+      <b>Redundancy</b> or <b>Objects</b> (how much of a standing object the stitched view shows). Density is drawn
+      smooth on one blue scale that starts at the project's minimum (more pixels, more contrast, in both themes), with
+      the ground below the minimum grey and hatched and iso-lines at the minimum and target; redundancy has three
+      ordered steps (1, 2, 3+ cameras); blind ground is red and hatched. Every mode has a legend in the corner of the top
+      view that hides the least, and hovering the top view reads out the value under the cursor, its state against
+      the thresholds and every camera that sees the point (px/cm, range, off-axis angle). Hovering a camera's bar in
+      the Coverage panel lights up the ground only that camera sees. The scales are checked for steady lightness and
+      for colour-blind viewers. The overlays:</p>
     <table>
       <tr><th>Overlay</th><th>Shortcut</th><th>Shows</th></tr>
       <tr><td>Frustums</td><td><kbd>Alt</kbd>+<kbd>1</kbd></td><td>Each camera's viewing volume.</td></tr>
@@ -261,9 +293,13 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td>Calibration targets</td><td><kbd>Alt</kbd>+<kbd>7</kbd></td><td>The floor boards for calibration.</td></tr>
       <tr><td>Dimensions</td><td><kbd>Alt</kbd>+<kbd>8</kbd></td><td>Vehicle and camera dimensions.</td></tr>
       <tr><td>Grid</td><td><kbd>Alt</kbd>+<kbd>9</kbd></td><td>The ground grid.</td></tr>
-      <tr><td>Shadows and lighting</td><td><kbd>Alt</kbd>+<kbd>0</kbd></td><td>The shader renderer's shadows and lighting.</td></tr>
+      <tr><td>Shadows and lighting</td><td><kbd>Alt</kbd>+<kbd>0</kbd></td><td>The shader renderer's materials, soft shadows, sky occlusion and studio backdrop. Lighting is in linear space; heatmap and camera-light colours keep their exact legend colours.</td></tr>
       <tr><td>Parking guidelines</td><td><kbd>Alt</kbd>+<kbd>G</kbd></td><td>Trajectory lines and the swept path on the ground.</td></tr>
       <tr><td>Blind volume</td><td></td><td>The 3D blind space, cut away at the blind-volume page's height.</td></tr>
+      <tr><td>Lidar rings and radar fields</td><td></td><td>Where each lidar's downward beams meet the ground; each radar zone as a see-through volume.</td></tr>
+      <tr><td>Lidar points</td><td></td><td>One simulated sweep per lidar, computed in the background: returns coloured by range, beams that the body, the rig or another housing stops in red.</td></tr>
+      <tr><td>GNSS sky</td><td></td><td>A dome over each GNSS antenna, coloured where the sky is blocked, with its open share.</td></tr>
+      <tr><td>Mount brackets</td><td></td><td>The brackets generated on the Mount brackets page, on the vehicle.</td></tr>
     </table>
     <p><b>View ▸ Render image</b> (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>) saves the 3D view at up to four
       times its size; <b>Turntable video</b> records an orbit (MP4 with ffmpeg, otherwise PNG frames).</p>
@@ -579,7 +615,8 @@ vantage project.vantage            # open a project</code></pre>
       <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button></div>
 
     <h2 id="guidelines">Parking guidelines</h2>
-    <p>The steering bar on the Camera views page (and View ▸ Overlays ▸ Parking guidelines) draws what a surround-view
+    <p><b>Camera ▸ Parking guidelines…</b> turns them on and opens the camera views at the steering bar. The steering
+      bar on the Camera views page (and View ▸ Overlays ▸ Parking guidelines, <kbd>Alt</kbd>+<kbd>G</kbd>) draws what a surround-view
       display shows while parking, from a kinematic bicycle model of the vehicle: wheelbase and track from the wheel
       centres, width without the mirrors from the mesh.</p>
     <ul>
@@ -795,6 +832,14 @@ vantage project.vantage            # open a project</code></pre>
       The ROS 2 bag uses the URDF export's frame ids. Ground truth comes as markers and as JSON.</p>
     <p>The scene is synthetic (simple shapes and materials, one sun, no weather): use it to test a pipeline, not to train
       a model. Batch: <code>--dataset OUT_DIR</code>.</p>
+    <p><b>Generate</b> writes into a new folder of the <b>working folder</b>, which Vantage remembers (Preferences ▸
+      General, or <i>Working folder…</i> on the page; <code>~/Documents/Vantage</code> until you change it):
+      <code>&lt;working folder&gt;/&lt;project&gt;/datasets/&lt;variant&gt;-&lt;date-time&gt;/</code>, a new folder for every run.
+      <i>Generate into…</i> writes one drive anywhere else. The assistant can write one as well: ask it for a sample
+      dataset and it calls <code>generate_sample_dataset</code> with the page's settings or the ones you name
+      (duration, speed, scene, image size), shows its progress (Esc cancels) and puts the result on this page; the model
+      is told only the folder's name inside the working folder, never your home path. Exports of a project that has
+      not been saved yet also go to the working folder (<code>&lt;project&gt;/exports/&lt;variant&gt;</code>).</p>
 
     <h2 id="rosbags">ROS 2 bags</h2>
     <p>Vantage writes and reads ROS 2 bags itself, without a ROS installation. A bag is a folder holding an MCAP file and a
@@ -935,6 +980,8 @@ vantage project.vantage --import-calib camchain.yaml F.yaml --save calibrated.va
       <tr><td><kbd>Ctrl</kbd>+<kbd>M</kbd></td><td>Mirror to the other side</td><td><kbd>F5</kbd></td><td>Run the analysis now</td></tr>
       <tr><td><kbd>Ctrl</kbd>+<kbd>L</kbd></td><td>Lock transform</td><td><kbd>Ctrl</kbd>+<kbd>Space</kbd></td><td>Maximise the view</td></tr>
       <tr><td><kbd>Ctrl</kbd>+<kbd>D</kbd></td><td>Duplicate</td><td><kbd>?</kbd></td><td>All shortcuts</td></tr>
+      <tr><td><kbd>7</kbd> / <kbd>1</kbd> / <kbd>3</kbd></td><td>Top / front / side view</td><td><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></td><td>Orbit (<kbd>Shift</kbd>: pan)</td></tr>
+      <tr><td><kbd>5</kbd> / <kbd>0</kbd></td><td>Orthographic / default view</td><td><kbd>+</kbd> / <kbd>−</kbd></td><td>Zoom</td></tr>
     </table>
 
     <h2 id="troubleshooting">Troubleshooting</h2>
