@@ -37,6 +37,7 @@ CAMERA_FORMATS = ('raw', 'jpeg', 'h265')
 LIDAR_FORMATS = ('packets', 'points')
 FORMAT_LABEL = {'raw': 'Raw', 'jpeg': 'JPEG', 'h265': 'H.265', 'packets': 'Packets', 'points': 'Point cloud'}
 SEVERITIES = ('critical', 'serious', 'warning', 'good')
+KINDS = ('camera', 'lidar', 'radar', 'imu')            # rows of the budget (a GNSS antenna records nothing itself)
 # findings that go to the Issues list; a camera's GMSL link is rules.link_budget's, an unknown interface only a note
 ISSUE_KINDS = ('write', 'disk', 'uplink', 'link')
 ASSUMPTIONS = ('JPEG and H.265 bits per pixel are typical averages for driving scenes, not measurements: replace them '
@@ -177,9 +178,9 @@ def budget(project, variant=None, settings: RecordingSettings | None = None) -> 
         rows.append(_row(c.uid, c.tag, 'camera', m.name, c.slot, fmt, True, mbps, m.interface or 'GMSL2',
                          f'{c.port}' if c.port else '', wire, gmsl if gmsl > 0 else None, load,
                          _link_severity(load, st.link_warn, 'serious')))
-    count = {'lidar': 0, 'radar': 0}
+    count = {'lidar': 0, 'radar': 0, 'imu': 0}
     for s in v.sensors:
-        if not s.visible:
+        if not s.visible or s.kind == 'gnss':          # an antenna's signal is recorded by its receiver (the INS)
             continue
         m = project.sensor_model_for(s)
         wire = _safe(m.data_bps) / 1e6
@@ -192,13 +193,17 @@ def budget(project, variant=None, settings: RecordingSettings | None = None) -> 
             else:
                 mbps = wire
                 fmt = f'Packets · {_num(m.bytes_per_point):g} B/pt · {pps / 1e6:.2f} Mpts/s'
+        elif m.kind == 'imu':
+            recorded = True
+            mbps = wire
+            fmt = f'Stated output · {_num(m.data_mbps):g} Mbit/s · {_num(m.rate_hz):g} Hz'
         else:
             recorded = st.include_radars
             mbps = wire if recorded else 0.0
             fmt = f'Stated output · {_num(m.data_mbps):g} Mbit/s' if recorded else 'Not recorded'
         cap = link_capacity_mbps(m.interface)
         load = wire / cap if cap else None
-        kind = 'lidar' if m.is_lidar else 'radar'
+        kind = m.kind if m.kind in count else 'radar'
         rows.append(_row(s.uid, s.tag, kind, f'{m.vendor} {m.name}'.strip(), count[kind], fmt, recorded, mbps,
                          m.interface or '—', s.port or '', wire, cap, load, _link_severity(load, st.link_warn)))
         count[kind] += 1
@@ -224,7 +229,7 @@ def _row(uid, tag, kind, model, slot, fmt, recorded, mbps, link, port, link_mbps
 
 
 def _totals(st: RecordingSettings, rows) -> dict:
-    by_kind = {k: sum(r['mbps'] for r in rows if r['kind'] == k) for k in ('camera', 'lidar', 'radar')}
+    by_kind = {k: sum(r['mbps'] for r in rows if r['kind'] == k) for k in KINDS}
     sensors = sum(by_kind.values())
     payload = sensors + st.extra_mbps
     overhead = payload * st.container_overhead
@@ -243,7 +248,7 @@ def _totals(st: RecordingSettings, rows) -> dict:
             'write_needed_mb_s': need, 'write_mb_s': st.write_mb_s, 'write_load': need / st.write_mb_s,
             'uplink_mbps': uplink, 'uplink_capacity_mbps': up_cap, 'uplink_load': uplink / up_cap,
             'networked': len(net),
-            'counts': {k: sum(1 for r in rows if r['kind'] == k) for k in ('camera', 'lidar', 'radar')}}
+            'counts': {k: sum(1 for r in rows if r['kind'] == k) for k in KINDS}}
 
 
 def _finding(out, sev, kind, message, rows=()):

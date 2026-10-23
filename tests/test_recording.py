@@ -53,7 +53,7 @@ def test_a_raw_camera_records_its_pixels(p):
     assert f['load'] == pytest.approx(RAW_MBPS * 1.10 / 6000) and f['link_severity'] == 'good'
     # totals: six cameras, GNSS/IMU/CAN, then the container overhead on all of it
     t = res.totals
-    assert t['by_kind_mbps'] == {'camera': pytest.approx(6 * RAW_MBPS), 'lidar': 0, 'radar': 0}
+    assert t['by_kind_mbps'] == {'camera': pytest.approx(6 * RAW_MBPS), 'lidar': 0, 'radar': 0, 'imu': 0}
     assert t['mbps'] == pytest.approx((6 * RAW_MBPS + 2.0) * 1.03)
     assert t['mb_s'] == pytest.approx(t['mbps'] / 8) and t['gb_h'] == pytest.approx(t['mb_s'] * 3.6)
     assert t['tb_shift'] == pytest.approx(t['gb_h'] * 8 / 1000)
@@ -123,8 +123,8 @@ def test_link_capacity_from_the_interface():
     assert cap('CAN-FD') == 5 and cap('CAN FD') == 5 and cap('CAN') == 1
     assert cap('CAN-FD / 100BASE-T1') == 100 and cap('CAN / CAN-FD') == 5 and cap('1000BASE-T1 / 10GBASE-T') == 10000
     assert cap('') is None and cap('USB 3') is None and cap(None) is None
-    # every built-in sensor's interface is known
-    assert all(cap(m.interface) for m in sensors.builtin_sensor_models())
+    # every built-in sensor's data interface is known (a GNSS antenna's coax carries RF to its receiver)
+    assert all(cap(m.interface) for m in sensors.builtin_sensor_models() if m.kind != 'gnss')
 
 
 # ----------------------------------------------------------------------------- findings and the Issues list

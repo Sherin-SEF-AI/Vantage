@@ -168,8 +168,13 @@ def collect_issues(project: Project, result, vg, mounts: dict | None = None) -> 
             out.append(Issue('warning', f'Camera sits {worst:.0f} mm from the body edge; the clearance rule is {EDGE_RULE_MM:.0f} mm.',
                              ', '.join(c.tag for c, _ in edge_cams), [c.uid for c, _ in edge_cams]))
     out += sensor_issues(project, vg)
-    from . import recording                     # imports this module
+    from . import exposure, fleet, gnss, power, recording, requirements     # import this module
     out += recording.issues(project)
+    out += power.issues(project)
+    out += gnss.issues(project, vg)
+    out += exposure.issues(project, vg)
+    out += fleet.issues(project)
+    out += requirements.issues(project)
     out.sort(key=lambda i: SEVERITY_ORDER.get(i.severity, 9))
     return out
 
@@ -188,17 +193,23 @@ def _inside(mesh, p) -> bool:
 RADAR_FASCIA_M = 0.15             # a radar may sit this far behind the bumper fascia (it sees through the plastic)
 
 
+def _noun(kind):
+    from .sensors import KIND_NOUN
+    return KIND_NOUN.get(kind, kind)
+
+
 def sensor_issues(project: Project, vg) -> list[Issue]:
-    """Lidars and radars: a tag a camera uses too, a sensor below the ground, a lidar inside the body or a rig part, a
-    radar deeper inside the body than behind a bumper fascia."""
+    """Lidars, radars, GNSS antennas and IMUs: a tag a camera uses too, a sensor below the ground, a lidar or a GNSS
+    antenna inside the body or a rig part, a radar deeper inside the body than behind a bumper fascia (an IMU belongs
+    inside)."""
     out = []
     v = project.variant
     cam_tags = {c.tag.lower(): c for c in v.cameras}
     for s in v.sensors:
         c = cam_tags.get(s.tag.lower())
         if c is not None:
-            out.append(Issue('warning', f'Tag {s.tag} is used by camera {c.name} and by a {s.kind}: exported frames '
-                                        f'get a suffix. Rename one.', s.tag, [s.uid, c.uid]))
+            out.append(Issue('warning', f'Tag {s.tag} is used by camera {c.name} and by a {_noun(s.kind)}: exported '
+                                        f'frames get a suffix. Rename one.', s.tag, [s.uid, c.uid]))
     occ = vg.occ_mesh if vg is not None else None
     for s in v.sensors:
         if not s.visible:
@@ -208,9 +219,13 @@ def sensor_issues(project: Project, vg) -> list[Issue]:
         if base < -0.005:
             out.append(Issue('critical', f'{s.tag} ({m.name}) is {-base * 1000:.0f} mm below the ground.', s.tag, [s.uid]))
             continue
-        if occ is None or not _inside(occ, s.pos()):
-            continue
-        if s.kind == 'lidar':
+        if s.kind == 'imu' or occ is None or not _inside(occ, s.pos()):
+            continue                            # an IMU belongs inside the cabin or an enclosure
+        if s.kind == 'gnss':
+            out.append(Issue('critical', f'GNSS antenna {s.tag} sits inside the body or a rig part: it has no sky. '
+                                         f'Put it on the roof or the rack (Inspector ▸ Optical centre Z).',
+                             s.tag, [s.uid], where=(s.x, s.y)))
+        elif s.kind == 'lidar':
             out.append(Issue('critical', f'Lidar {s.tag} sits inside the body or a rig part: its beams start inside '
                                          f'the vehicle. Raise it onto the surface (Inspector ▸ Optical centre Z).',
                              s.tag, [s.uid], where=(s.x, s.y)))

@@ -1,4 +1,5 @@
-"""Lidars and radars of the rig: the library, the geometry of beams and fields, persistence, and the sensor UI."""
+"""Lidars, radars, GNSS antennas and IMUs of the rig: the library, the geometry of beams and fields, persistence, the
+exports and the sensor UI."""
 import json
 import math
 import os
@@ -243,6 +244,93 @@ def test_sensors_in_nuscenes_and_kitti(rigged, tmp_path):
     assert 'kitti/calib_velo_to_cam.txt' not in names
 
 
+# ------------------------------------------------------------------ GNSS antennas and IMUs
+def _nav(p):
+    """Two GNSS antennas and a dual-antenna INS where Vehicle ▸ Add GNSS antenna / Add IMU put them."""
+    v = p.variant
+    for kind in ('gnss', 'gnss', 'imu'):
+        m = p.sensor_models[S.default_model_id(kind)]
+        v.sensors.append(Sensor(kind=kind, model_id=m.id, tag=S.next_tag(kind, v.tags()), name=m.name,
+                                **S.default_pose(kind, m, p.vehicle.mesh, p.rig, v.sensors)))
+    return v.sensors[-3:]
+
+
+def test_gnss_and_imu_models_and_placement(tmp_path):
+    from vantage.core import rig as rigm
+    from vantage.core.samples import tigor_sample_project
+    ms = {m.id: m for m in S.builtin_sensor_models()}
+    assert {m.kind for m in ms.values()} == set(S.KINDS)
+    ins = ms['ins_dual']
+    assert ins.kind == 'imu' and ins.antennas == 2 and not ins.has_field and ins.data_bps() == pytest.approx(0.5e6)
+    assert ins.heading_sigma(2.0) == pytest.approx(0.1) and ins.heading_sigma(1.0) == pytest.approx(0.2)
+    assert math.isnan(ms['imu_mems'].heading_sigma(2.0)) and math.isnan(ins.heading_sigma(0.0))
+    ant = ms['gnss_survey']
+    assert ant.kind == 'gnss' and ant.data_bps() == 0 and ant.v_fov() == (10.0, 90.0)
+    s = Sensor(kind='gnss', model_id='gnss_survey', tag='GN1', z=1.5)
+    assert not S.in_field(s, ant, np.array([[0.0, 0.0, 5.0], [10.0, 0.0, 1.5]])).any()   # no field to be in
+    assert S.body_box(s, ant)[3]                                                           # drawn as a puck
+    assert S.next_tag('gnss', {'GN1', 'F'}) == 'GN2' and S.next_tag('imu', set()) == 'IMU1'
+    # a junk file keeps sane values
+    j = S.SensorModel.from_dict({'id': 'x', 'kind': 'imu', 'antennas': 7, 'heading_baseline_m': -1})
+    assert j.antennas == 2 and j.heading_baseline_m == 2.0
+    p = tigor_sample_project()
+    g1, g2, imu = _nav(p)
+    xf, xr, _, _ = rigm.roof(p.vehicle.mesh)
+    assert xr < g1.x < g2.x < xf and g2.x - g1.x > 0.9 and g1.y == g2.y == 0.0
+    for g in (g1, g2):            # the base stands on the roof: the phase centre is optical_z above it
+        top = S.surface_top(g.x, g.y, p.vehicle.mesh, p.rig)
+        assert g.z == pytest.approx(top + ant.optical_z_mm / 1000, abs=2e-3) and top > 1.3
+    assert (imu.x, imu.y, imu.z) == (0.0, 0.0, 0.45)
+    # on a rack, the antenna stands on the rack, not on the roof under it
+    p.rig = rigm.preset('roof_rack', p.vehicle.mesh)
+    pose = S.default_pose('gnss', ant, p.vehicle.mesh, p.rig, [])
+    plat = next(q for q in p.rig if q.kind == 'box')
+    if abs(pose['x'] - plat.x) <= plat.length / 2:
+        assert pose['z'] == pytest.approx(plat.z + plat.height / 2 + ant.optical_z_mm / 1000, abs=2e-3)
+    path = str(tmp_path / 'nav.vantage')
+    p.save(path)
+    q = Project.load(path)
+    assert [(x.tag, x.kind, x.model_id) for x in q.variant.sensors] == [(x.tag, x.kind, x.model_id)
+                                                                        for x in p.variant.sensors]
+
+
+def test_gnss_and_imu_in_rules_recording_and_exports(tmp_path):
+    from vantage.core import exporters as ex
+    from vantage.core import recording as RB
+    from vantage.core.analysis import Engine
+    from vantage.core.rules import sensor_issues
+    from vantage.core.samples import tigor_sample_project
+    p = tigor_sample_project()
+    v = next(x for x in p.variants if x.sensors)
+    p.active_uid = v.uid
+    g1, g2, imu = _nav(p)
+    vg = Engine().vehicle_geom(p)
+    assert sensor_issues(p, vg) == []                    # an IMU in the cabin is where it belongs
+    g1.z = 1.0                                           # an antenna in the cabin has no sky
+    assert [(i.severity, i.objects) for i in sensor_issues(p, vg)] == [('critical', 'GN1')]
+    g1.z = 1.55
+    # the INS records its stated output; an antenna records nothing itself
+    rb = RB.budget(p)
+    assert rb.row('IMU1')['mbps'] == pytest.approx(0.5) and rb.row('GN1') is None
+    assert rb.totals['counts']['imu'] == 1 and rb.totals['by_kind_mbps']['imu'] == pytest.approx(0.5)
+    out = tmp_path / 'x'
+    ex.export(['extrinsics_json', 'nuscenes_calib', 'kitti_calib', 'ros2'], p, None, ex.ExportOptions(out_dir=str(out)))
+    doc = json.loads((out / 'extrinsics.json').read_text())
+    rows = {d['tag']: d for d in doc['sensors']}
+    assert rows['GN1']['field']['position'] == 'phase centre' and rows['IMU1']['field']['antenna_inputs'] == 2
+    assert 'IMU' in doc['frame']['sensor_frame']
+    chans = [r['channel'] for r in json.loads((out / 'nuscenes' / 'sensor.json').read_text())]
+    assert not any(c.startswith(('GNSS', 'IMU')) for c in chans) and 'LIDAR_L1' in chans
+    lid = next(x for x in v.sensors if x.kind == 'lidar')
+    txt = (out / 'kitti' / 'calib_imu_to_velo.txt').read_text().splitlines()
+    T = np.array([float(x) for x in txt[2].split()[1:]])
+    assert T == pytest.approx([imu.x - lid.x, imu.y - lid.y, imu.z - lid.z], abs=1e-6)   # both frames unrotated
+    urdf = (out / 'vantage_cameras.urdf').read_text()
+    assert '<link name="GN1_link">' in urdf and '<link name="IMU1_link">' in urdf
+    names = ex._names(ex.format_by_id('kitti_calib'), p, v)
+    assert 'kitti/calib_imu_to_velo.txt' in names
+
+
 # ------------------------------------------------------------------ the UI
 from test_gui import app, win, pump, settle, _wait     # noqa: E402,F401  (fixtures)
 
@@ -321,6 +409,44 @@ def test_add_edit_pick_drag_and_delete_sensors(app, win, tmp_path):
     assert [x.tag for x in st.variant.sensors] == ['L1']
     st.undo.undo()
     assert [x.tag for x in st.variant.sensors] == ['L1', 'RD1']
+    while st.undo.index() > n0:
+        st.undo.undo()
+    assert st.variant.sensors == []
+    settle(app, win)
+
+
+def test_add_gnss_antennas_and_an_imu(app, win):
+    from PyQt6.QtCore import Qt
+    from vantage.ui import sensorview as SV
+    st = win.store
+    n0 = st.undo.index()
+    for a in ('add_gnss', 'add_gnss', 'add_imu'):
+        win.actions_by_id[a].trigger()
+    settle(app, win)
+    g1, g2, imu = st.variant.sensors
+    assert [(x.kind, x.tag) for x in (g1, g2, imu)] == [('gnss', 'GN1'), ('gnss', 'GN2'), ('imu', 'IMU1')]
+    assert g1.x < g2.x and st.undo.index() == n0 + 3 and st.sel_obj == ('sensor', imu.uid)
+    page = win.inspector.pages['sensor']
+    assert win.inspector.current == 'sensor' and page.s_one.header.title.text() == 'IMU IMU1'
+    vis = {k for k, (_, row) in page.fields.items() if row.isVisibleTo(page)}
+    assert {'antennas', 'heading_sigma_deg', 'power_w'} <= vis and 'channels' not in vis and 'mask_deg' not in vis
+    assert 'Heading baseline GN1–GN2' in page.info.text() and not page.zones.isVisibleTo(page)
+    # editing an INS figure makes an edited copy, as for a lidar
+    page.fields['antennas'][0].committed.emit(1.0)
+    assert st.project.sensor_model_for(st.variant.sensor(imu.uid)).antennas == 1
+    st.undo.undo()
+    st.select_obj(('sensor', g2.uid))
+    settle(app, win)
+    vis = {k for k, (_, row) in page.fields.items() if row.isVisibleTo(page)}
+    assert vis == {'mask_deg', 'power_w'} and 'Secondary antenna' in page.info.text()
+    # the baseline and the IMU axes are drawn; the outliner names the group for what it holds
+    lines = SV.scene_lines(win.ctx)
+    assert any(ld.color.name() == SV.color('gnss').name() for ld in lines)
+    assert any(ld.color.name() == SV.color('imu').name() for ld in lines)
+    assert win.outliner.findItems('Sensors (3)', Qt.MatchFlag.MatchContains | Qt.MatchFlag.MatchRecursive)
+    menus = {a.text().replace('&', ''): a.menu() for a in win.menuBar().actions()}
+    subs = [a.text() for a in menus['Vehicle'].actions() if a.menu()]
+    assert 'Add GNSS antenna' in subs and 'Add IMU' in subs
     while st.undo.index() > n0:
         st.undo.undo()
     assert st.variant.sensors == []

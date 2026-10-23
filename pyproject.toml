@@ -21,6 +21,7 @@ dependencies = [
 [project.optional-dependencies]
 step = ["gmsh"]
 keyring = ["keyring"]
+bags = ["zstandard", "lz4"]       # read and write compressed ROS 2 bags (MCAP chunks); uncompressed bags need nothing
 test = ["pytest"]
 
 [project.urls]

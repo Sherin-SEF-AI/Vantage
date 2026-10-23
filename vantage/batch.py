@@ -12,12 +12,24 @@
     vantage project.vantage --sensor-coverage coverage.json
     vantage project.vantage --sync-plan sync.json --units mm
     vantage project.vantage --recording-budget budget.json
+    vantage project.vantage --power-budget power.json
+    vantage project.vantage --gnss gnss.json
+    vantage project.vantage --exposure exposure.json
+    vantage project.vantage --brackets out/
+    vantage project.vantage --dataset out/
+    vantage project.vantage --drive-log drive.mcap report/
+    vantage project.vantage --check review/
+    vantage project.vantage --lidar-calib out/ --lidar-calib-pair F L1 --lidar-calib-folder boards/
+    vantage project.vantage --fleet-import V3 install_report.json --fleet fleet/ --save project.vantage
 
 The exit code is 0 when everything is fine, 2 when an analysis or export finds critical issues in the plan (or the
-recording budget finds the recorder or a sensor link cannot keep up),
-3 when an installation check finds a camera that has to be re-mounted (or could not be solved) or the rig health check
-finds a camera faulty (or without a stream), and 4 when a lens calibration fails or an imported calibration matches no
-camera.
+recording budget finds the recorder or a sensor link cannot keep up, or the power budget finds the DC-DC converter or a
+fuse over its rating, the GNSS study finds an antenna with no sky, or a camera cannot take a printed bracket as planned),
+3 when an installation check finds a camera that has to be re-mounted (or could not be solved), the rig health check
+finds a camera faulty (or without a stream), the fleet has a sensor to re-mount in its latest record or a drive log
+shows a fault or a lidar has to be re-mounted (or its pose is not determined by the board poses), and 4 when a lens
+calibration fails, an imported calibration matches no camera, a fleet record, a drive log or a lidar calibration's captures cannot be read or the
+sample dataset cannot be written, and 5 when, with --check, a must requirement fails or cannot be evaluated.
 """
 from __future__ import annotations
 
@@ -371,6 +383,36 @@ def run(args) -> int:
             print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
         if any(f['severity'] == 'critical' for f in rb.findings):
             code = max(code, 2)
+    if args.power_budget is not None:
+        from .core import power as PW
+        pb = PW.run(project)
+        _out(PW.to_doc(pb, project), args.power_budget)
+        for f in pb.findings:
+            if f['severity'] != 'good':
+                print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
+        if any(f['severity'] == 'critical' for f in pb.findings):
+            code = max(code, 2)
+    if args.exposure is not None:
+        from .core import exposure as XP
+        xres = XP.run(project, eng)
+        _out(XP.to_doc(xres, project), args.exposure)
+        if args.exposure not in ('', '-'):
+            png_path = os.path.splitext(args.exposure)[0] + '.png'
+            with open(png_path, 'wb') as fh:
+                fh.write(XP.png(xres))
+            print(f'wrote {png_path}', file=sys.stderr)
+        for f in xres.findings:
+            if f['severity'] != 'good':
+                print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
+    if args.gnss is not None:
+        from .core import gnss as GN
+        gr = GN.run(project, eng)
+        _out(GN.to_doc(gr, project), args.gnss)
+        for f in gr.findings:
+            if f['severity'] not in ('good', 'note'):
+                print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
+        if any(f['severity'] == 'critical' for f in gr.findings):
+            code = max(code, 2)
     if args.export:
         if args.formats:
             ids = [f.strip() for f in args.formats.split(',') if f.strip()]
@@ -404,6 +446,106 @@ def run(args) -> int:
         hdoc = rig_health_doc(project, eng, args.rig_health)
         _out(hdoc, args.rig_health[1] if len(args.rig_health) > 1 else '-')
         if any(c['status'] in ('fault', 'off') for c in hdoc['cameras'].values()):
+            code = max(code, 3)
+    if args.brackets:
+        from .core import brackets as BR
+        bres = BR.run(project, eng)
+        paths = BR.export(bres, project, args.brackets)
+        print(f'wrote {len(paths)} files to {os.path.join(args.brackets, "brackets")}', file=sys.stderr)
+        for b in bres.brackets:
+            print(f'  {b.tag:<4} {b.status:<9} {b.message}', file=sys.stderr)
+        if any(b.status in ('standoff', 'floating', 'inside', 'face') or b.worst() in ('critical', 'serious')
+               for b in bres.brackets):
+            code = max(code, 2)
+    if args.dataset is not None:
+        from .core import dataset as DSET
+        try:
+            dres = DSET.generate(project, eng, None, args.dataset,
+                                 lambda f, text='': print(f'\r  dataset {f * 100:5.1f} % {text:<28}', end='',
+                                                          file=sys.stderr))
+            print(file=sys.stderr)
+            s = DSET.summary(dres)
+            print(f'  dataset: {s["samples"]} samples, {s["annotations"]} annotations, {s["size_mb"]["total"]} MB '
+                  f'in {s["seconds"]} s → {dres.out_dir}', file=sys.stderr)
+            for n in dres.notes:
+                print(f'  note: {n}', file=sys.stderr)
+        except ValueError as e:
+            print(f'  dataset: {e}', file=sys.stderr)
+            code = max(code, 4)
+    if args.drive_log is not None:
+        from .core import drivelog as DLG
+        dest = args.drive_log[1] if len(args.drive_log) > 1 else '-'
+        try:
+            lres = DLG.run(project, args.drive_log[0], engine=eng, variant=project.variant)
+        except (OSError, ValueError) as e:
+            print(f'drive log: {e}', file=sys.stderr)
+            code = max(code, 4)
+        else:
+            if dest not in ('', '-') and not dest.lower().endswith('.json'):
+                for pth in DLG.export(lres, project, dest):
+                    print(f'wrote {pth}', file=sys.stderr)
+            else:
+                _out(DLG.to_doc(lres, project), dest)
+            for f in lres.findings:
+                if f['severity'] != 'ok':
+                    print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
+            if any(f['severity'] == 'fault' for f in lres.findings):
+                code = max(code, 3)
+    if args.check is not None:
+        from .core import requirements as RQ
+        dest = None if args.check == '-' else args.check
+        cdoc, ccode = RQ.check(project, eng, dest, variant=project.variant if args.variant else None)
+        if dest is None:
+            _out(cdoc, '-')
+        elif not dest.lower().endswith('.json'):
+            print(f'wrote {dest}/requirements.json, requirements.csv, review_pack.pdf', file=sys.stderr)
+        for r in cdoc['requirements']:
+            print(f'  {r["status"]:<13} {r["priority"]:<6} {r["id"]:<4} {r["text"]}'
+                  + (f' ({r["reason"]})' if r['reason'] else ''), file=sys.stderr)
+        c = cdoc['counts']
+        print(f'requirements: {cdoc["verdict_text"]} · must {c["must"]["pass"]}/{c["must"]["total"]} · should '
+              f'{c["should"]["pass"]}/{c["should"]["total"]}', file=sys.stderr)
+        code = max(code, ccode)
+    if args.lidar_calib:
+        from .core import lidar_calib as LC
+        st = LC.LidarCalibSettings.from_dict(project.analysis.lidar_calib)
+        cam, lid = args.lidar_calib_pair or (st.camera, st.lidar)
+        try:
+            lres = (LC.calibrate_folder(project, cam, lid, args.lidar_calib_folder, st) if args.lidar_calib_folder
+                    else LC.run(project, eng, LC.LidarCalibSettings.from_dict(dict(st.to_dict(), camera=cam,
+                                                                                    lidar=lid))))
+        except (ValueError, OSError) as e:
+            print(f'lidar calibration: {e}', file=sys.stderr)
+            code = max(code, 4)
+        else:
+            for pth in LC.export(lres, project, args.lidar_calib):
+                print(pth)
+            s = LC.summary(lres)
+            print(f'  {s.get("camera")} – {s.get("lidar")}: {lres.verdict}', file=sys.stderr)
+            if lres.verdict in ('serious', 'unobservable', 'failed'):
+                code = max(code, 3)
+    if args.fleet_import:
+        from .core import fleet as FL
+        if len(args.fleet_import) < 2:
+            raise SystemExit('--fleet-import needs a vehicle name and at least one file.')
+        fdoc = FL.import_files(project, args.fleet_import[0], args.fleet_import[1:])
+        _out(fdoc, '-')
+        for e in fdoc['errors']:
+            print(f'  could not read {e["file"]}: {e["error"]}', file=sys.stderr)
+        if fdoc['errors'] or not fdoc['imported']:
+            code = max(code, 4)
+    if args.fleet is not None:
+        from .core import fleet as FL
+        fr = FL.run(project)
+        if args.fleet == '-' or args.fleet.lower().endswith('.json'):
+            _out(FL.to_doc(fr, project), args.fleet)
+        else:
+            for path in FL.export(fr, project, args.fleet):
+                print(path)
+        for f in fr.findings:
+            if f['severity'] != 'good':
+                print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
+        if fr.flagged('re-mount'):
             code = max(code, 3)
     if args.save:
         project.save(args.save)
@@ -444,6 +586,38 @@ def add_arguments(ap):
                    help='camera trigger offsets against the lidar sweep, trigger lines, motion blur and rolling shutter')
     g.add_argument('--recording-budget', nargs='?', const='-', metavar='OUT.json',
                    help='data rate of every camera, lidar and radar, links, write speed and hours per disk set')
+    g.add_argument('--power-budget', nargs='?', const='-', metavar='OUT.json',
+                   help='power of every device, the DC-DC converter, fuses and power cables, the alternator margin '
+                        'and the engine-off runtime')
+    g.add_argument('--gnss', nargs='?', const='-', metavar='OUT.json',
+                   help='GNSS antennas\' sky view, the heading baseline, the INS lever arms and the pose error budget')
+    g.add_argument('--exposure', nargs='?', const='-', metavar='OUT.json',
+                   help='sun glare and dirt exposure of the active variant (JSON; with a file, OUT.png next to it)')
+    g.add_argument('--fleet', nargs='?', const='-', metavar='OUT.json|DIR',
+                   help='the fleet against the plan: latest offsets, drift and vehicles that differ from the rest '
+                        '(a folder gets fleet.json, fleet.csv and fleet.png)')
+    g.add_argument('--fleet-import', nargs='+', metavar=('VEHICLE', 'FILE'),
+                   help='add records to the fleet vehicle VEHICLE (added if new) from installation check reports, '
+                        'extrinsics JSON/YAML/CSV, nuScenes tables or Kalibr camchains; keep them with --save')
+    g.add_argument('--brackets', metavar='DIR', help='generate a 3D-printable mount bracket per camera into '
+                   'DIR/brackets (STL per camera, brackets.json, brackets_sheet.png)')
+    g.add_argument('--dataset', metavar='OUT_DIR',
+                   help='write a synthetic drive recorded by the rig as a nuScenes version folder and a ROS 2 bag '
+                        '(the project\'s sample-dataset settings; about 1.5 min at the defaults)')
+    g.add_argument('--drive-log', nargs='+', metavar=('LOG', 'OUT'),
+                   help='check a recorded drive (ROS 2 bag folder/.mcap/.db3 or nuScenes folder) against the plan: '
+                        'OUT.json, or a folder for the JSON, the CSV, the timeline and overlay PNGs (default: stdout)')
+    g.add_argument('--check', nargs='?', const='-', metavar='OUT',
+                   help='evaluate the project\'s requirements (Analysis ▸ Requirements scorecard); OUT.json gets the '
+                        'scorecard, a folder the JSON, CSV and the design-review pack (PDF); exit 5 when a must '
+                        'requirement fails or cannot be evaluated')
+    g.add_argument('--lidar-calib', metavar='OUT_DIR',
+                   help='calibrate a lidar to a camera from board captures (synthetic from the plan, or real pairs '
+                        'with --lidar-calib-folder); writes the JSON and an overlay per pose')
+    g.add_argument('--lidar-calib-pair', nargs=2, metavar=('CAMERA', 'LIDAR'),
+                   help='the camera and lidar tags (default: the Lidar-camera calibration page\'s, else the best pair)')
+    g.add_argument('--lidar-calib-folder', metavar='DIR',
+                   help='image + point-cloud pairs matched by name (pose01.png + pose01.pcd / .bin / .ply / .npy / .csv)')
     g.add_argument('--export', metavar='DIR', help='export into DIR')
     g.add_argument('--formats', help='comma-separated export format ids (default: every non-image format)')
     g.add_argument('--variant', help='variant name or 1-based index (default: the active one)')
@@ -479,4 +653,7 @@ def wanted(args) -> bool:
     return any(getattr(args, k) not in (None, False) for k in ('analyse', 'load_cases', 'export', 'install_check',
                                                                'calibrate_lens', 'import_calib', 'blind_volume',
                                                                'perception_range', 'rig_health',
-                                                               'recording_budget', 'sync_plan', 'sensor_coverage'))
+                                                               'recording_budget', 'sync_plan', 'sensor_coverage',
+                                                               'power_budget', 'gnss', 'exposure', 'fleet',
+                                                               'fleet_import', 'brackets', 'dataset',
+                                                               'drive_log', 'check', 'lidar_calib'))

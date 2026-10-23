@@ -1,6 +1,7 @@
 """Main window: menus, toolbar, docks, status bar, workspaces and background jobs."""
 from __future__ import annotations
 
+import importlib
 import json
 import math
 import os
@@ -9,6 +10,7 @@ import time
 import traceback
 
 import numpy as np
+from PyQt6 import sip
 from PyQt6.QtCore import Qt, QSize, QTimer, pyqtSignal, QObject, QByteArray, QBuffer, QIODevice, QPoint
 from PyQt6.QtGui import QAction, QActionGroup, QKeySequence, QIcon, QImage, QGuiApplication, QPixmap, QShortcut
 from PyQt6.QtWidgets import (QMainWindow, QDockWidget, QToolBar, QWidget, QHBoxLayout, QVBoxLayout, QLabel, QComboBox,
@@ -33,6 +35,21 @@ class JobSignals(QObject):
     progress = pyqtSignal(str, float, str)
     done = pyqtSignal(str, object)
     failed = pyqtSignal(str, str)
+
+
+# page name -> (module in ui/workspaces, class): built on first use
+PAGE_CLASSES = {
+    'camviews': ('camviews', 'CamViewsPage'), 'tolerance': ('tolerance_ws', 'TolerancePage'),
+    'optimiser': ('optimiser_ws', 'OptimiserPage'), 'compare': ('compare_ws', 'ComparePage'),
+    'photo': ('photo_ws', 'PhotoPage'), 'targets': ('targets_ws', 'TargetsPage'), 'install': ('install_ws', 'InstallPage'),
+    'volume': ('volume_ws', 'VolumePage'), 'perception': ('perception_ws', 'PerceptionPage'), 'rig': ('rig_ws', 'RigPage'),
+    'coverage': ('coverage_ws', 'SensorCoveragePage'), 'timing': ('timing_ws', 'TimingPage'),
+    'recording': ('recording_ws', 'RecordingPage'), 'power': ('power_ws', 'PowerPage'), 'gnss': ('gnss_ws', 'GnssPage'),
+    'exposure': ('exposure_ws', 'ExposurePage'), 'fleet': ('fleet_ws', 'FleetPage'),
+    'brackets': ('brackets_ws', 'BracketsPage'), 'dataset': ('dataset_ws', 'DatasetPage'),
+    'drivelog': ('drivelog_ws', 'DriveLogPage'), 'requirements': ('requirements_ws', 'RequirementsPage'),
+    'lidar_calib': ('lidarcalib_ws', 'LidarCalibPage'),
+}
 
 
 class MainWindow(QMainWindow):
@@ -84,46 +101,8 @@ class MainWindow(QMainWindow):
     def page(self, name):
         if name in self._page_widgets:
             return self._page_widgets[name]
-        w = None
-        if name == 'camviews':
-            from .workspaces.camviews import CamViewsPage
-            w = CamViewsPage(self.ctx)
-        elif name == 'tolerance':
-            from .workspaces.tolerance_ws import TolerancePage
-            w = TolerancePage(self.ctx)
-        elif name == 'optimiser':
-            from .workspaces.optimiser_ws import OptimiserPage
-            w = OptimiserPage(self.ctx)
-        elif name == 'compare':
-            from .workspaces.compare_ws import ComparePage
-            w = ComparePage(self.ctx)
-        elif name == 'photo':
-            from .workspaces.photo_ws import PhotoPage
-            w = PhotoPage(self.ctx)
-        elif name == 'targets':
-            from .workspaces.targets_ws import TargetsPage
-            w = TargetsPage(self.ctx)
-        elif name == 'install':
-            from .workspaces.install_ws import InstallPage
-            w = InstallPage(self.ctx)
-        elif name == 'volume':
-            from .workspaces.volume_ws import VolumePage
-            w = VolumePage(self.ctx)
-        elif name == 'perception':
-            from .workspaces.perception_ws import PerceptionPage
-            w = PerceptionPage(self.ctx)
-        elif name == 'rig':
-            from .workspaces.rig_ws import RigPage
-            w = RigPage(self.ctx)
-        elif name == 'coverage':
-            from .workspaces.coverage_ws import SensorCoveragePage
-            w = SensorCoveragePage(self.ctx)
-        elif name == 'timing':
-            from .workspaces.timing_ws import TimingPage
-            w = TimingPage(self.ctx)
-        elif name == 'recording':
-            from .workspaces.recording_ws import RecordingPage
-            w = RecordingPage(self.ctx)
+        mod, cls = PAGE_CLASSES[name]
+        w = getattr(importlib.import_module(f'.workspaces.{mod}', __package__), cls)(self.ctx)
         self.pages.addWidget(w)
         self._page_widgets[name] = w
         return w
@@ -150,6 +129,15 @@ class MainWindow(QMainWindow):
         'coverage': (),
         'timing': (),
         'recording': (),
+        'power': (),
+        'gnss': (),
+        'exposure': (),
+        'fleet': (),
+        'brackets': (),
+        'dataset': (),
+        'drivelog': (),
+        'requirements': (),
+        'lidar_calib': (),
     }
 
     def set_page(self, name):
@@ -405,6 +393,11 @@ class MainWindow(QMainWindow):
           tip='A lidar on the highest rig part or the roof (Ouster OS1-128 by default; pick another in the Inspector)')
         A('add_radar', 'Add radar', lambda: add_sensor(self.ctx, 'radar'), None, 'sensor', category='Vehicle',
           tip='A radar in the middle of the front bumper, facing forward')
+        A('add_gnss', 'Add GNSS antenna', lambda: add_sensor(self.ctx, 'gnss'), None, 'sensor', category='Vehicle',
+          tip='A GNSS antenna on the roof: the first near its rear edge, the second near its front edge for the longest '
+              'heading baseline')
+        A('add_imu', 'Add IMU', lambda: add_sensor(self.ctx, 'imu'), None, 'sensor', category='Vehicle',
+          tip='An IMU or GNSS/INS unit on the cabin floor above the rear axle (a dual-antenna GNSS/INS by default)')
         # camera
         A('add_cam', 'Add from library…', self.add_from_library, 'Shift+A', 'plus', category='Camera')
         A('place', 'Place on surface', lambda: self.set_tool('place'), None, 'place', category='Camera')
@@ -464,6 +457,24 @@ class MainWindow(QMainWindow):
           tip='Camera trigger offsets against the lidar sweep, trigger groups, motion blur and rolling shutter at speed')
         A('recording_budget', 'Recording budget…', lambda: self.set_page('recording'), None, 'ecu', category='Analysis',
           tip='Data rate of every sensor, the network and storage it needs, and hours of driving per disk set')
+        A('power_budget', 'Power budget…', lambda: self.set_page('power'), None, 'bolt', category='Analysis',
+          tip='What every device draws, the DC-DC converter, fuses and power cables, the alternator margin and the '
+              'engine-off runtime on the auxiliary battery')
+        A('gnss_imu', 'GNSS and IMU…', lambda: self.set_page('gnss'), None, 'axes', category='Analysis',
+          tip='The sky each GNSS antenna sees, the dual-antenna heading baseline, the INS lever arms and how well each '
+              'sensor\'s pose will be known')
+        A('sun_dirt', 'Sun glare and dirt…', lambda: self.set_page('exposure'), None, 'sun', category='Analysis',
+          tip='When the sun shines into each camera over a campaign (by month, hour and heading), flare risk, and how '
+              'exposed each lens, lidar window and radar is to dirt and spray')
+        A('mount_brackets', 'Mount brackets…', lambda: self.set_page('brackets'), None, 'bracket', category='Analysis',
+          tip='A 3D-printable bracket per camera that holds it at its planned position and angles on the surface: '
+              'STL, checks for the image, the walls and the lever arm')
+        A('sample_dataset', 'Sample dataset…', lambda: self.set_page('dataset'), None, 'dataset', category='Export',
+          tip='A short synthetic drive recorded by exactly this rig (cameras, lidars, radars, GNSS, IMU), written as a '
+              'nuScenes version folder and a ROS 2 bag to test ingestion, labelling tools and loaders')
+        A('requirements', 'Requirements scorecard…', lambda: self.set_page('requirements'), None, 'checklist',
+          category='Analysis', tip='The programme\'s requirements as pass/fail checks on the studies: one verdict, '
+                                   'the evidence behind each value, and the design-review pack (PDF)')
         A('an_settings', 'Settings…', self.preferences, None, 'gear', category='Analysis')
         # calibrate
         A('targets', 'Target planner…', lambda: self.set_page('targets'), None, 'checker', category='Calibrate')
@@ -475,6 +486,15 @@ class MainWindow(QMainWindow):
         A('install', 'Installation check…', lambda: self.set_page('install'), 'Ctrl+Shift+I', 'target', category='Calibrate')
         A('live_rig', 'Live rig…', lambda: self.set_page('rig'), None, 'camera-wide', category='Calibrate',
           tip='Every camera\'s stream at once: frame rate, drops, exposure, sharpness, sync and drift from the plan')
+        A('lidar_calib', 'Lidar–camera calibration…', lambda: self.set_page('lidar_calib'), None, 'sensor',
+          category='Calibrate', tip='Where a lidar sits relative to a camera, measured from a checkerboard both see at '
+                                    'several poses; against the plan')
+        A('drive_log', 'Drive-log check…', lambda: self.set_page('drivelog'), None, 'timeline', category='Calibrate',
+          tip='Check a recorded drive (ROS 2 bag or nuScenes folder) against the plan: streams and drops, data rate, '
+              'sync against the lidar sweep, and each camera\'s rotation from lidar-image edge alignment')
+        A('fleet', 'Fleet…', lambda: self.set_page('fleet'), None, 'fleet', category='Calibrate',
+          tip='The same rig on every vehicle: measured poses against the plan, drift over months, and the vehicles '
+              'that differ from the rest of the fleet')
         A('lens_calib', 'Lens calibration…', self.lens_calibration, 'Ctrl+Shift+L', 'lens', category='Calibrate')
         A('calib_import', 'Import unit calibrations…', self.import_calibrations, None, 'file', category='Calibrate')
         A('calib_export', 'Export unit calibrations…', self.export_calibrations, None, 'export', category='Calibrate')
@@ -573,8 +593,9 @@ class MainWindow(QMainWindow):
         sub(ve, 'Occluder', ['occ_full', 'occ_hull', 'occ_level'])
         sub(ve, 'Reference photos', ['photo_load', 'photo_cal', 'photo_pane'])
         sub(ve, 'Add rig part', ['rig_roof_rack', 'rig_sensor_mast', 'rig_enclosure', 'rig_bar'])
-        for kind in ('lidar', 'radar'):
-            sm = ve.addMenu(f'Add {kind}')
+        from ..core.sensors import KINDS as SENSOR_KINDS, KIND_NOUN
+        for kind in SENSOR_KINDS:
+            sm = ve.addMenu(f'Add {KIND_NOUN[kind]}')
             sm.setIcon(icons.icon('sensor'))
             sm.aboutToShow.connect(lambda sm=sm, kind=kind: self._fill_sensor_menu(sm, kind))
         ve.addSeparator()
@@ -607,7 +628,10 @@ class MainWindow(QMainWindow):
         an.addActions([a['thresholds'], a['tolerance'], a['sensitivity'], a['load_cases'], a['blind_volume'],
                        a['perception_range']])
         an.addSeparator()
-        an.addActions([a['sensor_coverage'], a['sync_plan'], a['recording_budget']])
+        an.addActions([a['sensor_coverage'], a['sync_plan'], a['recording_budget'], a['power_budget'],
+                       a['gnss_imu'], a['sun_dirt'], a['mount_brackets']])
+        an.addSeparator()
+        an.addAction(a['requirements'])
         an.addSeparator()
         an.addAction(a['an_settings'])
         cb = menu('Calibrate')
@@ -617,7 +641,7 @@ class MainWindow(QMainWindow):
         cb.addSeparator()
         cb.addActions([a['lens_calib'], a['calib_import'], a['calib_export'], a['calib_clear']])
         cb.addSeparator()
-        cb.addActions([a['install'], a['live_rig']])
+        cb.addActions([a['install'], a['lidar_calib'], a['live_rig'], a['drive_log'], a['fleet']])
         ex = menu('Export')
         ex.addAction(a['export'])
         ex.addSeparator()
@@ -626,6 +650,8 @@ class MainWindow(QMainWindow):
         ex.addActions([a['exp_opencv_yaml'], a['exp_ros2'], a['exp_jetson']])
         sub(ex, 'Images', ['exp_img_viewport', 'exp_img_bev', 'exp_img_cams'])
         sub(ex, 'Mount points', ['exp_dxf', 'exp_step'])
+        ex.addSeparator()
+        ex.addAction(a['sample_dataset'])
         w = menu('Window')
         self.win_menu = w
         w.aboutToShow.connect(self._fill_window_menu)
@@ -815,6 +841,11 @@ class MainWindow(QMainWindow):
         self._msg_timer.setSingleShot(True)
         self._msg_timer.timeout.connect(lambda: self.msg_label.hide())
 
+    def _on_undo_index(self, *_):
+        a = self.ctx.analysis
+        if not sip.isdeleted(a.timer):          # at exit the stack can outlive the analysis' timer
+            a.request()
+
     def _wire(self):
         st = self.store
         c = self.ctx
@@ -822,7 +853,7 @@ class MainWindow(QMainWindow):
         st.project_replaced.connect(self._on_project_replaced)
         st.selection_changed.connect(self._on_selection)
         st.dirty_changed.connect(lambda d: self.set_project_meta())
-        st.undo.indexChanged.connect(lambda *_: self.ctx.analysis.request())
+        st.undo.indexChanged.connect(self._on_undo_index)  # a bound slot: disconnected when the window is deleted
         c.analysis.started.connect(self._on_analysis_started)
         c.analysis.finished.connect(self._on_analysis_done)
         c.analysis.stale_changed.connect(lambda s: self._update_state())
@@ -979,7 +1010,9 @@ class MainWindow(QMainWindow):
         live = self.store.project.analysis.live
         a = self.ctx.analysis
         if self._jobs:
-            name, frac, text = next(iter(self._jobs.values()))['state']
+            job = next(iter(self._jobs.values()))
+            kind, frac, text = job['state']
+            name = job.get('title') or kind.capitalize()
             dot, txt, rest = STATUS['good'], 'Running', f'{name} {frac * 100:.0f} %'
         elif running:
             dot, txt, rest = STATUS['warning'], 'Analysing', ''
@@ -1390,7 +1423,7 @@ class MainWindow(QMainWindow):
         elif kind == 'ecu':
             m.addAction(a['assign_port'])
         elif kind == 'sensor' or (kind == 'group' and ident == 'sensors'):
-            m.addActions([a['add_lidar'], a['add_radar']])
+            m.addActions([a['add_lidar'], a['add_radar'], a['add_gnss'], a['add_imu']])
             if kind == 'sensor':
                 from .sensorview import delete_sensors
                 m.addSeparator()
@@ -1406,7 +1439,7 @@ class MainWindow(QMainWindow):
         m.exec(gpos)
 
     def _fill_sensor_menu(self, menu, kind):
-        """Vehicle ▸ Add lidar / Add radar: every model of that kind in the project's library."""
+        """Vehicle ▸ Add lidar / radar / GNSS antenna / IMU: every model of that kind in the project's library."""
         from .sensorview import add_sensor
         menu.clear()
         for mid, m in self.store.project.sensor_models.items():

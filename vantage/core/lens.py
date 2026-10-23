@@ -34,6 +34,7 @@ class Module:
     size_mm: tuple = (25.0, 25.0, 43.8)
     weight_g: float = 45.0
     cables_m: tuple = (3.0, 15.0)
+    power_w: float = 0.0               # 0 = not given (the power budget then uses its typical camera figure)
     builtin: bool = False
 
     @property

@@ -98,7 +98,11 @@ PAGES = {'viewports': '3D and top views', 'camviews': 'Camera views', 'tolerance
          'optimiser': 'Optimiser', 'compare': 'Compare variants', 'photo': 'Photo matching', 'targets': 'Targets',
          'install': 'Installation check', 'volume': 'Blind volume', 'perception': 'Perception range',
          'rig': 'Live rig', 'coverage': 'Lidar and radar coverage', 'timing': 'Sync and timing',
-         'recording': 'Recording budget'}
+         'recording': 'Recording budget', 'power': 'Power budget',
+         'gnss': 'GNSS and IMU', 'exposure': 'Sun glare and dirt',
+         'fleet': 'Fleet', 'brackets': 'Mount brackets',
+         'dataset': 'Sample dataset', 'drivelog': 'Drive-log check',
+         'requirements': 'Requirements scorecard', 'lidar_calib': 'Lidar–camera calibration'}
 
 
 # ============================================================================================ controller
@@ -267,6 +271,9 @@ class AssistantController(QObject):
             elif a == 'open_page':
                 if req.get('page') in w.PAGE_DOCKS:
                     w.set_page(req['page'])
+            elif a == 'propose_requirements':
+                w.set_page('requirements')
+                w.page('requirements').show_proposals(req.get('items', []))
         except Exception as e:          # showing something must never break the conversation
             print('assistant show_in_app failed:', e)
 
@@ -328,12 +335,18 @@ class AssistantController(QObject):
         return T.ToolContext(st.project.snapshot(), an.result, an.engine.share(), list(an.issues), dict(an.mounts),
                              an.worst, getattr(so, 'result', None), getattr(so, 'advice', None),
                              getattr(vol, 'result', None), self._guidelines(), [c.tag for c in st.selected_cams()],
-                             PAGES.get(page, page), st.revision, brief=self.brief(), rig_health=self._rig_health())
+                             PAGES.get(page, page), st.revision, brief=self.brief(), rig_health=self._rig_health(),
+                             drive_log=self._drive_log())
 
     def _rig_health(self):
         w = self.ctx.window
         rig = getattr(w, '_page_widgets', {}).get('rig') if w is not None else None
         return rig.health() if rig is not None else None
+
+    def _drive_log(self):
+        w = self.ctx.window
+        pg = getattr(w, '_page_widgets', {}).get('drivelog') if w is not None else None
+        return pg.summary() if pg is not None else None
 
     def _guidelines(self):
         try:
@@ -1902,8 +1915,9 @@ class AssistantPanel(QWidget):
             v.addWidget(label('Ask questions about this design in plain language: why ground is blind, which camera '
                               'matters most, what a change would do. The assistant runs on a model hosted by Groq '
                               'with your own API key.', ink2=True, wrap=True))
-            v.addWidget(label('When you ask a question, camera poses, lens and module names and analysis figures '
-                              'are sent to Groq. The vehicle model, images and files are never sent.',
+            v.addWidget(label('When you ask a question, sensor poses, lens, module and sensor model names, analysis '
+                              'figures, the fleet\'s vehicle names and offsets (no VINs) and your requirements are '
+                              'sent to Groq. The vehicle model, images, point clouds and files are never sent.',
                               muted=True, small=True, wrap=True))
             b = button('Set up…', 'primary', 'key')
             b.clicked.connect(lambda: open_settings(self.ctx))

@@ -54,6 +54,7 @@ class ToolContext:
     cancel: object = None                # threading.Event
     cache: dict = field(default_factory=dict)
     rig_health: dict | None = None       # the Live rig page's snapshot while it streams (core.rig_health)
+    drive_log: dict | None = None        # the Drive-log check page's last result (core.drivelog.summary)
     _proposals: int = 0
 
     def status(self, text):
@@ -210,7 +211,7 @@ def get_overview(tc, **_):
 
 
 def _sensor_row(p, s) -> dict:
-    """A lidar or radar for the model: pose, product and field (no network addresses)."""
+    """A lidar, radar, GNSS antenna or IMU for the model: pose, product and field (no network addresses)."""
     m = p.sensor_model_for(s)
     d = {'tag': s.tag, 'kind': s.kind, 'model': f'{m.vendor} {m.name}'.strip(), 'visible': s.visible,
          'x': _r(s.x), 'y': _r(s.y), 'z': _r(s.z), 'yaw': _r(s.yaw, 1), 'pitch': _r(s.pitch, 1), 'roll': _r(s.roll, 1)}
@@ -221,6 +222,16 @@ def _sensor_row(p, s) -> dict:
                  points_per_s=int(m.pps()), scan=m.scan)
         if m.spinning:
             d.update(rotation=m.rotation, sync_phase_deg=_r(s.phase_deg, 1))
+    elif m.kind == 'gnss':
+        d.update(elevation_mask_deg=_r(m.mask_deg, 1), position='phase centre')
+    elif m.kind == 'imu':
+        d.update(rate_hz=_r(m.rate_hz, 1), antenna_inputs=m.antennas, position='centre of the IMU axes')
+        if m.heading_sigma_deg > 0:
+            d.update(heading_sigma_deg=_r(m.heading_sigma_deg, 3), heading_baseline_m=_r(m.heading_baseline_m, 2))
+        if m.pos_sigma_cm > 0:
+            d['rtk_position_sigma_cm'] = _r(m.pos_sigma_cm, 2)
+        if m.attitude_sigma_deg > 0:
+            d['roll_pitch_sigma_deg'] = _r(m.attitude_sigma_deg, 4)
     else:
         d['zones'] = [{'range_car_m': _r(r, 1), 'azimuth_half_deg': _r(a, 1), 'elevation_half_deg': _r(e, 1)}
                       for r, a, e in m.zones]
@@ -516,6 +527,175 @@ def get_sync_plan(tc, **_):
                        'travel in that time; suggested_groups is the best split over the available trigger lines. '
                        'Blur and skew are px for a static object at object_m while driving straight at speed_kmh. '
                        'The user applies groups and phases on the Sync and timing page.'}
+
+
+def get_gnss_imu(tc, antenna=None, **_):
+    from ..core import gnss as GN
+    res = GN.run(tc.project, tc.engine)
+    out = {**GN.summary(res),
+           'meaning': 'per GNSS antenna the open share of the sky above its elevation mask (the body, the rig and the '
+                      'other sensors traced; buildings not modelled), expected satellites (an even sky assumed), what '
+                      'blocks it and near-field multipath; the dual-antenna heading baseline and its heading error; '
+                      'the lever arms from the IMU to every antenna and sensor in mm (IMU frame); the 1-sigma position '
+                      'error of every sensor\'s world pose; the user edits the settings on Analysis ▸ GNSS and IMU'}
+    if antenna:
+        a = res.antenna(str(antenna).strip())
+        if a is None:
+            out['error'] = f'no visible GNSS antenna {antenna}'
+        else:
+            out['antenna_detail'] = GN.to_doc(res)['antennas'][res.antennas.index(a)]
+    return out
+
+
+def get_sun_and_dirt(tc, lat=None, lon=None, start=None, end=None, hour_from=None, hour_to=None, **_):
+    from ..core import exposure as XP
+    over = {k: v for k, v in dict(lat=lat, lon=lon, start=start, end=end, hour_from=hour_from,
+                                  hour_to=hour_to).items() if v is not None}
+    st = XP.ExposureSettings.from_dict({**(tc.project.analysis.exposure or {}), **over})
+    tc.status('Sun glare and dirt…')
+    res = XP.run(tc.project, tc.engine, st, cancel=tc.cancelled)
+    if res is None:
+        return {'error': 'cancelled'}
+    return {**XP.summary(res), 'meaning': (
+        'sun_in_image_pct: share of all driving time in the window with the sun inside the camera image (lens model, '
+        'not hidden by the body); near_image_pct: within the flare margin outside it; low_sun_ahead_pct: in the image '
+        'and low. Lidars: share with the sun inside the field (an indicator of solar background). dirt_score 0-1 is a '
+        'heuristic (wheel spray, rear wake, frontal impact, lens attitude, height); radars matter less. Clear sky, '
+        'flat horizon.')}
+
+
+def get_fleet(tc, **_):
+    from ..core import fleet as FL
+    return {**FL.summary(FL.run(tc.project)),
+            'meaning': 'the same rig on many vehicles: each vehicle\'s latest measured sensor poses against the plan '
+                       '(verdict ok / adjust / re-mount), sensors drifting over time or that jumped, vehicles that '
+                       'differ from the fleet median, and sensors the whole fleet has built off the plan'}
+
+
+def get_brackets(tc, **_):
+    from ..core import brackets as BR
+    return {**BR.summary(BR.plan(tc.project, tc.engine)),
+            'meaning': 'per camera whether a 3D-printed bracket can hold it at its planned pose: the mount (flat base '
+                       'or tube clamp on a rig tube), the housing face the plate holds, the standoff and the standoff a '
+                       'bracket needs where the housing would go into the surface, cameras too far from any surface; '
+                       'base size, height and plate angle where it can. Meshes and the image, wall and stiffness checks '
+                       'come from Analysis ▸ Mount brackets (Generate)'}
+
+
+def get_sample_dataset(tc, **_):
+    from ..core import dataset as DSET
+    st = DSET.DatasetSettings.from_dict(tc.project.analysis.dataset)
+    est = DSET.estimate(tc.project, st)
+    return {'settings': st.to_dict(), 'estimate': {k: est.get(k) for k in (
+                'ok', 'reason', 'frames', 'samples', 'keyframe_hz', 'images', 'sweeps', 'scans', 'bytes', 'seconds',
+                'notes')},
+            'meaning': 'what a synthetic sample drive with these settings would record: frames per nuScenes channel '
+                       'and bag topic, keyframes, approximate size and time; the user writes it on Export ▸ Sample '
+                       'dataset (a nuScenes version folder and a ROS 2 bag). The scene is synthetic, for testing '
+                       'pipelines, not for training'}
+
+
+def get_drive_log_check(tc, **_):
+    if not tc.drive_log:
+        return {'checked': False, 'note': 'no drive log checked yet: Calibrate ▸ Drive-log check… (open a ROS 2 bag or '
+                                         'a nuScenes folder, Run)'}
+    return {'checked': True, **tc.drive_log,
+            'meaning': 'a recorded drive against the plan: stream rates and drops, data rate against the recording '
+                       'budget, camera trigger offsets against the lidar sweep (own error vs the lidar\'s phase), each '
+                       'camera\'s rotation relative to the lidar from edge alignment (confidence, pinned-down axes), '
+                       'IMU at rest and GNSS fix shares; stale = the plan changed since'}
+
+
+def get_requirements(tc, run=False, **_):
+    from ..core import requirements as RQ
+    if run:
+        tc.status('Evaluating the requirements…')
+        res = RQ.run(tc.project, tc.engine, cancel=tc.cancelled)
+        if res is None:
+            return {'error': 'cancelled'}
+    else:
+        res = RQ.run(tc.project, None, cheap_only=True, issues_list=False)
+    return {**RQ.summary(res), 'meaning': (
+        'the project\'s requirements evaluated on the app\'s studies: value against target, status pass / fail / '
+        'not_evaluated (with the reason) / not_run (a study metric: call again with run=true, takes seconds); the '
+        'verdict passes when every must requirement passes; the user edits them on Analysis ▸ Requirements scorecard')}
+
+
+def get_requirement_metrics(tc, **_):
+    from ..core import requirements as RQ
+    return RQ.catalogue(tc.project)
+
+
+def propose_requirements(tc, items=None, text=None, **_):
+    from ..core import requirements as RQ
+    p = tc.project
+    if items is None:                      # parse the brief (or the given text)
+        items = [o['item'] for o in RQ.parse_brief(text if text is not None else tc.brief, p)]
+    ok, bad = [], []
+    for it in items or []:
+        c = RQ.clean_item(it, p)
+        good, why = RQ.validate_item(c, p) if c is not None else (False, 'not a mapping')
+        if good:
+            ok.append(c)
+        else:
+            bad.append({'item': it, 'error': why})
+    if ok and tc.on_ui is not None:
+        tc.on_ui({'action': 'propose_requirements', 'items': ok})
+    return {'proposed': ok, 'rejected': bad, 'note': 'shown on Analysis ▸ Requirements scorecard for the user to tick '
+                                                     'and add; nothing is added until they do'}
+
+
+def _lidar_pair(tc, camera, lidar):
+    from ..core import lidar_calib as LC
+    st = LC.LidarCalibSettings.from_dict(tc.project.analysis.lidar_calib)
+    return LC, LC.LidarCalibSettings.from_dict(dict(st.to_dict(), **{k: v for k, v in
+                                                                      (('camera', camera), ('lidar', lidar)) if v}))
+
+
+def plan_lidar_calibration(tc, camera=None, lidar=None, **_):
+    LC, st = _lidar_pair(tc, camera, lidar)
+    p = tc.project
+    pairs = LC.pairs(p, engine=tc.engine)
+    if not pairs:
+        return {'error': 'no camera and lidar whose fields overlap in this variant'}
+    try:
+        cam, lid, share = LC.pick_pair(p, p.variant, st, tc.engine)
+    except ValueError as e:
+        return {'error': str(e), 'pairs': pairs[:8]}
+    poses, notes = LC.plan_poses(p, cam, lid, st, engine=tc.engine)
+    return {'pairs': [{k: v for k, v in q.items() if not k.endswith('uid')} for q in pairs[:8]],
+            'camera': cam.tag, 'lidar': lid.tag, 'overlap_share': share, 'board': st.board_size(),
+            'poses': [b.to_dict() for b in poses], 'notes': notes,
+            'predicted_sigma': LC.predicted_sigma(p, cam, lid, poses, st) if poses else None,
+            'meaning': 'the camera-lidar pairs ranked by how much of the camera image the lidar covers, and for the '
+                       'chosen pair the planned checkerboard poses (in both fields, enough rings across each board) '
+                       'with the 1-sigma uncertainty the calibration would reach; Calibrate ▸ Lidar–camera '
+                       'calibration runs it'}
+
+
+def calibrate_lidar_camera(tc, camera=None, lidar=None, **_):
+    LC, st = _lidar_pair(tc, camera, lidar)
+    tc.status('Lidar–camera calibration (synthetic captures)…')
+    try:
+        res = LC.run(tc.project, tc.engine, st, cancel=tc.cancelled)
+    except ValueError as e:
+        return {'error': str(e)}
+    if res is None:
+        return {'error': 'cancelled'}
+    return {**LC.summary(res), 'meaning': (
+        'a calibration of the lidar to the camera from simulated board captures of the plan (the settings\' injected '
+        'mounting error, if any, is what it should find): verdict against the tolerance, the offset from the plan in '
+        'the vehicle frame, the 1-sigma uncertainty and the directions the poses did not determine. Real captures are '
+        'calibrated on the page or with batch --lidar-calib-folder')}
+
+
+def get_power_budget(tc, **_):
+    from ..core import power as PW
+    return {**PW.summary(PW.run(tc.project)),
+            'meaning': 'steady and peak power per device (library figures nominal, peak factors typical), the DC-DC '
+                       'converter\'s load and input, the alternator margin while driving, the engine-off runtime on '
+                       'the auxiliary battery, the worst circuit against its fuse, power-cable drops and the heat the '
+                       'enclosure must shed; the user edits the settings on Analysis ▸ Power budget'}
 
 
 def get_recording_budget(tc, **_):
@@ -1161,6 +1341,62 @@ TOOLS = [
          'How much data the rig records: per camera, lidar and radar the data rate and its link load; the totals '
          '(Mbit/s, GB per hour, TB per shift), the write speed the recorder needs against what it has, the network '
          'uplink, hours of driving per disk set, and findings with severities. Cheap.', {}, get_recording_budget),
+    Tool('get_power_budget', 'Read the power budget',
+         'What the rig draws: per device the steady and peak power, circuit, current and power-cable drop; the totals '
+         '(steady and peak W, DC-DC output and input), the alternator margin, the engine-off runtime on the auxiliary '
+         'battery, the worst circuit against its fuse, the enclosure heat, and findings with severities. Cheap.',
+         {}, get_power_budget),
+    Tool('get_gnss_imu', 'Read the GNSS and IMU study',
+         'Per GNSS antenna the open sky above its mask, expected satellites, blockers and multipath; the dual-antenna '
+         'heading baseline (length, direction, heading error); the IMU lever arms to every antenna and sensor; each '
+         'sensor\'s pose error (mm, 1 sigma). Give an antenna tag for its blocked sectors and horizon profile. Cheap.',
+         {'antenna': {'type': 'string', 'description': 'optional GNSS antenna tag for the full sky detail'}},
+         get_gnss_imu),
+    Tool('get_sun_and_dirt', 'Sun glare and dirt',
+         'Per camera how often over the campaign the sun is in its image, near it (flare) and low ahead, with the '
+         'worst months, hours and headings; per lidar the share with the sun in its field; per camera, lidar window '
+         'and radar fascia a dirt and spray score with cleaning advice (a heuristic). The campaign is the project\'s '
+         '(location, dates, driving hours, headings); lat, lon, start, end (YYYY-MM-DD), hour_from, hour_to override '
+         'it for this answer only. Under a second.',
+         {'lat': {'type': 'number'}, 'lon': {'type': 'number'}, 'start': {'type': 'string'},
+          'end': {'type': 'string'}, 'hour_from': {'type': 'number'}, 'hour_to': {'type': 'number'}},
+         get_sun_and_dirt, 'compute'),
+    Tool('get_fleet', 'Read the fleet',
+         'The vehicles built to this design and their calibrations: per vehicle and sensor the latest offset from the '
+         'plan and its verdict, drifting sensors (trend per 30 days, days until out of tolerance), jumps, outlier '
+         'vehicles against the fleet median, systematic offsets, unknown tags, and findings. Cheap.', {}, get_fleet),
+    Tool('get_brackets', 'Read the mount brackets',
+         'Per camera whether a 3D-printable bracket can hold it at its planned position and angles: mount surface, '
+         'flat base or tube clamp, face, standoff and the standoff needed, base size, height and plate angle. About a '
+         'second.', {}, get_brackets),
+    Tool('get_sample_dataset', 'Read the sample dataset plan',
+         'The synthetic drive the rig would record for pipeline tests: settings, frames per channel, keyframes, '
+         'approximate size and generation time. Cheap; writes nothing.', {}, get_sample_dataset),
+    Tool('get_drive_log_check', 'Read the drive-log check',
+         'The last recorded drive checked against the plan (Calibrate ▸ Drive-log check): streams OK/missing, dropped '
+         'frames, data rate against the budget, lidar phase lock, worst camera trigger offset, camera rotations with '
+         'their confidence, and the findings. Reads the page\'s result; does not read the log. Cheap.', {},
+         get_drive_log_check),
+    Tool('plan_lidar_calibration', 'Plan a lidar–camera calibration',
+         'The camera–lidar pairs ranked by shared field; for one pair (camera, lidar tags; default the best) the '
+         'checkerboard poses to capture and the uncertainty they would give. About half a second.',
+         {'camera': {'type': 'string'}, 'lidar': {'type': 'string'}}, plan_lidar_calibration),
+    Tool('calibrate_lidar_camera', 'Run a lidar–camera calibration',
+         'Calibrates the lidar to the camera from simulated captures of the planned board poses: verdict, offset from '
+         'the plan, 1-sigma uncertainty, undetermined directions. About 8 seconds.',
+         {'camera': {'type': 'string'}, 'lidar': {'type': 'string'}}, calibrate_lidar_camera, 'compute'),
+    Tool('get_requirements', 'Read the requirements scorecard',
+         'The project\'s requirements with value, target, margin and pass/fail, and the verdict. Cheap metrics at once; '
+         'run=true also runs the studies the others need (seconds).',
+         {'run': {'type': 'boolean'}}, get_requirements, 'compute'),
+    Tool('get_requirement_metrics', 'List the requirement metrics',
+         'The metrics a requirement can use: id, label, unit, study, parameters with the project\'s choices.',
+         {}, get_requirement_metrics),
+    Tool('propose_requirements', 'Propose requirements',
+         'Propose requirements for the user to review on the scorecard page: items [{metric, params, op, target, '
+         'priority, text}] (see get_requirement_metrics), or none to read them from the project brief (or text).',
+         {'items': {'type': 'array', 'items': {'type': 'object'}}, 'text': {'type': 'string'}},
+         propose_requirements, 'propose'),
     Tool('compare_variants', 'Compare variants',
          'Analyse layout variants of this project side by side (blind area, coverage, redundancy, density, issues). '
          'All variants unless named.', {'variants': {'type': 'array', 'items': {'type': 'string'}}},
@@ -1209,7 +1445,7 @@ TOOLS = [
          'frame_point (x, y: frames the views on a ground point and marks it), frame_all, heatmap '
          '(none | coverage | density | redundancy | stitched), overlay (overlay key such as camlight, volume, '
          'guidelines, frustums, sensors; on), open_page (viewports | camviews | volume | perception | tolerance | '
-         'compare | rig | coverage | timing | recording).',
+         'compare | rig | coverage | timing | recording | power | gnss | exposure | fleet | brackets | dataset | drivelog | requirements | lidar_calib).',
          {'action': {'type': 'string', 'enum': list(UI_ACTIONS)}, 'cameras': {'type': 'array', 'items': {'type': 'string'}},
           'x': {'type': 'number'}, 'y': {'type': 'number'}, 'heatmap': {'type': 'string'}, 'overlay': {'type': 'string'},
           'on': {'type': 'boolean'}, 'page': {'type': 'string'}}, show_in_app, 'ui', ('action',)),

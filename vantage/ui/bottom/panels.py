@@ -5,6 +5,7 @@ import math
 import time
 
 import numpy as np
+from PyQt6 import sip
 from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QTimer, pyqtSignal, QRectF, QPointF, QSize
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QKeySequence, QGuiApplication
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QTabBar, QStackedWidget,
@@ -680,10 +681,14 @@ class HistoryTab(QListWidget):
         super().__init__()
         self.ctx = ctx
         self.stack = ctx.store.undo
-        self.stack.indexChanged.connect(lambda *_: self.refresh())
+        self.stack.indexChanged.connect(self._on_index)     # a bound slot: disconnected when this list is deleted
         self.itemClicked.connect(self._jump)
         self.setUniformItemSizes(True)
         self.refresh()
+
+    def _on_index(self, *_):
+        if not sip.isdeleted(self.stack):       # the stack announces its last change while it is being destroyed
+            self.refresh()
 
     def refresh(self):
         self.clear()

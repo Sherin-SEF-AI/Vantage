@@ -1,4 +1,4 @@
-"""Lidars and radars of the rig: the sensor library and their geometry.
+"""Lidars, radars, GNSS antennas and IMUs of the rig: the sensor library and their geometry.
 
 A sensor (core.project.Sensor) sits in the vehicle frame like a camera: x forward, y left, z up, origin at the
 rear-axle centre on the ground; its orientation is intrinsic Z-Y-X yaw/pitch/roll in degrees with pitch positive
@@ -14,8 +14,14 @@ Radar: one or more zones (a long-range beam and a wide near beam, say), each a r
 half-angles of its field in azimuth and elevation. Ranges for smaller targets scale with the fourth root of the radar
 cross-section (the radar equation).
 
-The library figures are nominal values from public datasheets and product pages (radars: typical classes, not a
-product); every model says where its figures come from in `note`. Check them against your unit's datasheet.
+GNSS antenna: its position is the antenna's phase centre; it needs open sky above its elevation mask. IMU (or a
+GNSS/INS unit): its position is the centre of its measurement axes, its frame its x/y/z axes; an INS with two antenna
+inputs (antennas = 2) gets its heading from the baseline between two GNSS antennas, heading_sigma_deg at
+heading_baseline_m (the error shrinks with a longer baseline).
+
+The library figures are nominal values from public datasheets and product pages (radars, GNSS antennas and IMUs:
+typical classes, not a product); every model says where its figures come from in `note`. Check them against your
+unit's datasheet.
 """
 from __future__ import annotations
 
@@ -29,7 +35,9 @@ import numpy as np
 
 from .mathutil import rot_zyx
 
-KINDS = ('lidar', 'radar')
+KINDS = ('lidar', 'radar', 'gnss', 'imu')
+KIND_LABEL = {'lidar': 'Lidar', 'radar': 'Radar', 'gnss': 'GNSS antenna', 'imu': 'IMU'}
+KIND_NOUN = {'lidar': 'lidar', 'radar': 'radar', 'gnss': 'GNSS antenna', 'imu': 'IMU'}     # in running text
 SCANS = ('spinning', 'solid', 'nonrepetitive')
 SCAN_LABEL = {'spinning': 'Spinning', 'solid': 'Fixed field', 'nonrepetitive': 'Non-repetitive', 'fixed': 'Fixed field'}
 REF_RCS = 10.0                       # m², the car-sized target a radar datasheet range is given for
@@ -38,10 +46,10 @@ MIN_FOOT_M = 0.002                   # a sensor's footprint never shrinks below 
 
 @dataclass
 class SensorModel:
-    """One lidar or radar product (or a typical class of radar). Angles in degrees, ranges in metres."""
+    """One lidar, radar, GNSS antenna or IMU product (or a typical class). Angles in degrees, ranges in metres."""
     id: str
     name: str = 'Lidar'
-    kind: str = 'lidar'              # lidar | radar
+    kind: str = 'lidar'              # lidar | radar | gnss | imu
     vendor: str = ''
     scan: str = 'spinning'           # lidar: spinning | solid | nonrepetitive; radar: fixed
     channels: int = 32               # lidar beams (rings); a non-repetitive scanner: rows of its equivalent grid
@@ -58,12 +66,18 @@ class SensorModel:
     bytes_per_point: float = 12.0    # recorded bytes per point as the driver delivers them (packet payload)
     rotation: str = 'cw'             # spinning lidar seen from above: cw | ccw
     zones: list = field(default_factory=list)    # radar: [[range_m, az_half_deg, el_half_deg], ...]
-    data_mbps: float = 0.0           # radar: output data rate, Mbit/s
+    data_mbps: float = 0.0           # radar, IMU: output data rate, Mbit/s
     interface: str = '1000BASE-T1'
     time_sync: str = 'PTP'           # PTP (IEEE 1588 / gPTP) | PPS + NMEA | none
     size_mm: tuple = (87.0, 87.0, 74.0)    # spinning: diameter, diameter, height; others: depth (x), width (y), height
     optical_z_mm: float = 37.0       # optical centre above the base
     power_w: float = 0.0
+    mask_deg: float = 10.0           # GNSS antenna: elevation mask, degrees above its horizon
+    antennas: int = 0                # IMU / INS: GNSS antenna inputs (0 none, 1 position, 2 position + heading)
+    heading_sigma_deg: float = 0.0   # INS with two antennas: heading error (1 sigma) at heading_baseline_m
+    heading_baseline_m: float = 2.0
+    pos_sigma_cm: float = 0.0        # INS: horizontal position error (1 sigma) with RTK corrections
+    attitude_sigma_deg: float = 0.0  # INS: roll and pitch error (1 sigma)
     note: str = ''                   # where the figures come from
     builtin: bool = False
 
@@ -89,6 +103,8 @@ class SensorModel:
                     v = float('nan')
                 setattr(m, k, (int(v) if f.type == 'int' else v) if math.isfinite(v) else getattr(SensorModel(m.id), k))
         m.kind = m.kind if m.kind in KINDS else 'lidar'
+        m.antennas = min(max(int(m.antennas), 0), 2)
+        m.heading_baseline_m = m.heading_baseline_m if m.heading_baseline_m > 0 else 2.0
         m.rotation = m.rotation if m.rotation in ('cw', 'ccw') else 'cw'
         for k in ('rate_hz', 'h_res', 'h_fov', 'range_m'):           # these divide or bound everything downstream
             if getattr(m, k) <= 0:
@@ -105,8 +121,24 @@ class SensorModel:
         return self.kind == 'lidar'
 
     @property
+    def is_radar(self):
+        return self.kind == 'radar'
+
+    @property
+    def has_field(self):
+        """Lidars and radars see a field; GNSS antennas and IMUs do not."""
+        return self.kind in ('lidar', 'radar')
+
+    @property
     def spinning(self):
         return self.is_lidar and self.scan == 'spinning'
+
+    def heading_sigma(self, baseline_m: float) -> float:
+        """INS heading error (1 sigma, degrees) with two antennas baseline_m apart: the datasheet figure scaled by
+        heading_baseline_m / baseline (the relative carrier-phase position error does not depend on the baseline)."""
+        if self.heading_sigma_deg <= 0 or baseline_m <= 1e-6:
+            return float('nan')
+        return float(self.heading_sigma_deg * self.heading_baseline_m / baseline_m)
 
     def elevations(self) -> np.ndarray:
         """Beam elevations, degrees, lowest first."""
@@ -133,9 +165,12 @@ class SensorModel:
         return float(self.n_channels() * self.columns() * max(self.rate_hz, 0.0))
 
     def data_bps(self) -> float:
-        """Recorded data rate, bit/s: lidar points × bytes per point; a radar's stated output."""
+        """Recorded data rate, bit/s: lidar points × bytes per point; a radar's or IMU's stated output; nothing for a
+        GNSS antenna (its receiver's output is the INS's)."""
         if self.is_lidar:
             return self.pps() * max(self.bytes_per_point, 0.0) * 8.0
+        if self.kind == 'gnss':
+            return 0.0
         return max(self.data_mbps, 0.0) * 1e6
 
     def v_fov(self) -> tuple[float, float]:
@@ -143,6 +178,8 @@ class SensorModel:
         if self.is_lidar:
             e = self.elevations()
             return float(e[0]), float(e[-1])
+        if self.kind == 'gnss':
+            return float(self.mask_deg), 90.0
         el = max((z[2] for z in self.zones), default=0.0)
         return -el, el
 
@@ -150,6 +187,8 @@ class SensorModel:
         """Half the horizontal field, degrees (180 for a spinning lidar)."""
         if self.is_lidar:
             return 180.0 if self.h_fov >= 359.999 else self.h_fov / 2
+        if self.kind == 'gnss':
+            return 180.0
         return max((z[1] for z in self.zones), default=0.0)
 
     def max_range(self) -> float:
@@ -163,6 +202,17 @@ class SensorModel:
         return float(np.mean(np.diff(e))) if len(e) > 1 else 0.0
 
     def summary(self) -> str:
+        if self.kind == 'gnss':
+            return f'mask {self.mask_deg:g}° · {self.power_w:g} W'
+        if self.kind == 'imu':
+            parts = [f'{self.rate_hz:g} Hz']
+            if self.antennas:
+                parts.append(f'{self.antennas} antenna' + ('s' if self.antennas > 1 else ''))
+            if self.heading_sigma_deg > 0:
+                parts.append(f'heading {self.heading_sigma_deg:g}° @ {self.heading_baseline_m:g} m')
+            if self.pos_sigma_cm > 0:
+                parts.append(f'RTK {self.pos_sigma_cm:g} cm')
+            return ' · '.join(parts)
         if self.is_lidar:
             lo, hi = self.v_fov()
             return (f'{self.n_channels()} ch · {self.h_fov:.0f}° × {hi - lo:.1f}° · {self.range_m:.0f} m @10% · '
@@ -234,11 +284,43 @@ def builtin_sensor_models() -> list[SensorModel]:
                     interface='CAN-FD / 100BASE-T1', time_sync='PTP', size_mm=(30.0, 80.0, 70.0), optical_z_mm=35.0,
                     power_w=4.0, note='A typical 77 GHz corner radar (±75°, 100 m on a car), not a product: enter '
                                       'your radar\'s datasheet figures.', builtin=True),
+        SensorModel('gnss_survey', 'Survey GNSS antenna · typical', 'gnss', '', 'fixed', rate_hz=10.0,
+                    mask_deg=10.0, interface='TNC (coax)', time_sync='none', size_mm=(150.0, 150.0, 65.0),
+                    optical_z_mm=50.0, power_w=0.2,
+                    note='A typical multi-band (L1/L2/L5) survey antenna for a vehicle roof, not a product: the '
+                         'position is its phase centre (optical_z_mm above the base); enter your antenna\'s figures.',
+                    builtin=True),
+        SensorModel('gnss_patch', 'Compact patch antenna · typical', 'gnss', '', 'fixed', rate_hz=10.0,
+                    mask_deg=10.0, interface='SMA (coax)', time_sync='none', size_mm=(70.0, 70.0, 22.0),
+                    optical_z_mm=12.0, power_w=0.1,
+                    note='A typical compact dual-band patch antenna on a magnetic base, not a product; a small ground '
+                         'plane makes it more sensitive to multipath than a survey antenna.', builtin=True),
+        SensorModel('ins_dual', 'Dual-antenna GNSS/INS · typical', 'imu', '', 'fixed', rate_hz=100.0,
+                    data_mbps=0.5, interface='100BASE-TX', time_sync='PTP', size_mm=(120.0, 100.0, 60.0),
+                    optical_z_mm=30.0, power_w=12.0, antennas=2, heading_sigma_deg=0.1, heading_baseline_m=2.0,
+                    pos_sigma_cm=2.0, attitude_sigma_deg=0.03,
+                    note='A typical MEMS GNSS/INS with two antenna inputs (RTK position, dual-antenna heading), not a '
+                         'product: heading 0.1° (1σ) at a 2 m baseline, 2 cm RTK, 0.03° roll and pitch; the position '
+                         'is the centre of the IMU axes printed on the unit. Enter your unit\'s figures.',
+                    builtin=True),
+        SensorModel('ins_fog', 'FOG GNSS/INS · typical', 'imu', '', 'fixed', rate_hz=200.0,
+                    data_mbps=1.0, interface='100BASE-TX', time_sync='PTP', size_mm=(180.0, 150.0, 120.0),
+                    optical_z_mm=60.0, power_w=20.0, antennas=2, heading_sigma_deg=0.02, heading_baseline_m=2.0,
+                    pos_sigma_cm=1.0, attitude_sigma_deg=0.005,
+                    note='A typical fibre-optic-gyro GNSS/INS for survey-grade trajectories, not a product: heading '
+                         '0.02° (1σ) at 2 m, 1 cm RTK, 0.005° roll and pitch. Enter your unit\'s figures.',
+                    builtin=True),
+        SensorModel('imu_mems', 'MEMS IMU · typical', 'imu', '', 'fixed', rate_hz=200.0, data_mbps=0.2,
+                    interface='CAN-FD / RS-422', time_sync='PPS + NMEA', size_mm=(50.0, 40.0, 20.0), optical_z_mm=10.0,
+                    power_w=1.0, antennas=0,
+                    note='A typical automotive MEMS IMU without GNSS (angular rates and accelerations only), not a '
+                         'product.', builtin=True),
     ]
 
 
 def default_model_id(kind: str) -> str:
-    return 'ouster_os1_128' if kind == 'lidar' else 'radar_long'
+    return {'lidar': 'ouster_os1_128', 'radar': 'radar_long', 'gnss': 'gnss_survey', 'imu': 'ins_dual'}.get(
+        kind, 'ouster_os1_128')
 
 
 # ======================================================================= frames and beams
@@ -287,6 +369,8 @@ def in_field(s, model: SensorModel, P, rcs: float | None = None) -> np.ndarray:
     """Whether each vehicle-frame point (K, 3) lies in the sensor's field and range (no occlusion test). A radar takes
     the target's cross-section (m², default the car the datasheet range is given for)."""
     r, az, el = angles(s, P)
+    if not model.has_field:
+        return np.zeros(len(r), bool)
     if model.is_lidar:
         lo, hi = model.v_fov()
         half = model.az_half()
@@ -363,14 +447,14 @@ def heading(s) -> float:
 
 # ======================================================================= body
 def body_box(s, model: SensorModel):
-    """(centre (3,), half sizes (3,), rotation (3, 3), round) of the sensor housing: a cylinder for a spinning lidar
-    (round = True, half sizes radius, radius, half height), a box otherwise; the optical centre sits optical_z_mm above
-    the base."""
+    """(centre (3,), half sizes (3,), rotation (3, 3), round) of the sensor housing: a cylinder for a spinning lidar or
+    a GNSS antenna (round = True, half sizes radius, radius, half height), a box otherwise; the optical centre (an
+    antenna's phase centre, an IMU's axis origin) sits optical_z_mm above the base."""
     dx, dy, h = (max(float(v), 1.0) / 1000.0 for v in model.size_mm)
     R = rotation(s)
     base_to_centre = h / 2 - model.optical_z_mm / 1000.0
     c = np.array([s.x, s.y, s.z]) + R @ np.array([0.0, 0.0, base_to_centre])
-    return c, np.array([dx / 2, dy / 2, h / 2]), R, model.spinning or model.scan == 'nonrepetitive'
+    return c, np.array([dx / 2, dy / 2, h / 2]), R, model.spinning or model.scan == 'nonrepetitive' or model.kind == 'gnss'
 
 
 def footprint(s, model: SensorModel) -> np.ndarray:
@@ -387,21 +471,88 @@ def footprint(s, model: SensorModel) -> np.ndarray:
 
 
 # ======================================================================= placement
+TAG_STEM = {'lidar': 'L', 'radar': 'RD', 'gnss': 'GN', 'imu': 'IMU'}
+
+
 def next_tag(kind: str, taken) -> str:
-    """'L1', 'L2' … for lidars, 'RD1' … for radars, skipping every tag already used by a camera or sensor."""
+    """'L1', 'L2' … for lidars, 'RD1' … for radars, 'GN1' … for GNSS antennas, 'IMU1' … for IMUs, skipping every tag
+    already used by a camera or sensor."""
     taken = {t.upper() for t in taken}
-    stem = 'L' if kind == 'lidar' else 'RD'
+    stem = TAG_STEM.get(kind, 'S')
     i = 1
     while f'{stem}{i}' in taken:
         i += 1
     return f'{stem}{i}'
 
 
-def default_pose(kind: str, model: SensorModel, mesh=None, rig=()) -> dict:
+def surface_top(x: float, y: float, mesh=None, rig=()) -> float:
+    """Height of the highest surface at (x, y) seen from above: the body (a ray straight down) or the top of a visible
+    rig part over that point."""
+    from . import rig as rigm
+    top = 0.0
+    if mesh is not None and mesh.n_tris:
+        t, f = mesh.raycast(np.array([[x, y, float(mesh.bbox[1][2]) + 1.0]]), np.array([[0.0, 0.0, -1.0]]))
+        if f[0] >= 0:
+            top = float(mesh.bbox[1][2]) + 1.0 - float(t[0])
+    for p in rig:
+        if not p.visible:
+            continue
+        poly = rigm.footprint(p)
+        if _in_poly(x, y, poly):
+            top = max(top, p.z + (p.radius if p.kind == 'bar' else p.height / 2))
+    return top
+
+
+def _in_poly(x, y, poly) -> bool:
+    inside = False
+    n = len(poly)
+    for i in range(n):
+        (x1, y1), (x2, y2) = poly[i], poly[(i + 1) % n]
+        if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+            inside = not inside
+    return inside
+
+
+ANTENNA_CLEAR_M = 0.55          # a new GNSS antenna keeps this far from a lidar or mast (near-field multipath)
+
+
+def _antenna_spot(roof, antennas, lidars, rig) -> tuple[float, float]:
+    """Where the next GNSS antenna goes on the roof: the first on the centreline near the rear edge, the second near
+    the front edge (the longest heading baseline), a third in between; each spot keeps ANTENNA_CLEAR_M from every
+    lidar and upright rig part (moving sideways when the centreline is taken) and from the antennas already placed."""
+    xf, xr, hw, _ = roof
+    inset = min(0.05, max(xf - xr, 0.0) / 4)
+    xs = np.linspace(xr + inset, xf - inset, 41)
+    ys = [0.0] + [k * f * hw for f in (0.3, 0.55, 0.8) for k in (1, -1)]
+    posts = [(s.x, s.y, 0.05) for s in lidars] + [(p.x, p.y, p.radius) for p in rig
+                                                    if p.visible and p.kind == 'cylinder']
+    near = [(a.x, a.y, 0.0) for a in antennas]
+
+    def clear(x, y):
+        return all(math.hypot(x - px, y - py) - r >= ANTENNA_CLEAR_M for px, py, r in posts + near)
+    n = len(antennas)
+    order = (lambda c: (abs(c[1]), c[0])) if n == 0 else (lambda c: (abs(c[1]), -c[0])) if n == 1 else \
+        (lambda c: (abs(c[1]), abs(c[0] - (xf + xr) / 2)))
+    cands = sorted(((float(x), float(y)) for x in xs for y in ys), key=order)
+    return next((c for c in cands if clear(*c)), cands[0])
+
+
+def default_pose(kind: str, model: SensorModel, mesh=None, rig=(), others=()) -> dict:
     """A sensible first pose: a lidar on top of the highest mountable rig part (a mast head, an enclosure) or on the
-    roof; a radar in the middle of the front bumper, facing forward at 0.5 m."""
+    roof; a radar in the middle of the front bumper, facing forward at 0.5 m; a GNSS antenna on the roof (or the rack
+    over it) near its rear edge, the second one near its front edge for the longest heading baseline, both clear of
+    the lidars and masts (_antenna_spot); an IMU on the
+    cabin floor above the rear axle (the vehicle origin), so its lever arm to the vehicle frame is vertical only.
+    `others` are the variant's sensors already placed."""
     from . import rig as rigm
     oz = model.optical_z_mm / 1000.0
+    if kind == 'gnss':
+        x, y = _antenna_spot(rigm.roof(mesh), [s for s in others if s.kind == 'gnss'],
+                             [s for s in others if s.kind == 'lidar'], rig)
+        return {'x': round(x, 3), 'y': y, 'z': round(surface_top(x, y, mesh, rig) + oz, 3), 'yaw': 0.0, 'pitch': 0.0,
+                'roll': 0.0}
+    if kind == 'imu':
+        return {'x': 0.0, 'y': 0.0, 'z': 0.45, 'yaw': 0.0, 'pitch': 0.0, 'roll': 0.0}
     if kind == 'lidar':
         tops = [p for p in rig if p.visible and p.mountable and p.kind in ('box', 'cylinder')]
         if tops:

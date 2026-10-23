@@ -1,5 +1,5 @@
-"""Lidars and radars in the UI: adding them, the inspector page of a sensor, drawing them in the 3D and plan views and
-picking them with the mouse. The library and the geometry live in core.sensors."""
+"""Lidars, radars, GNSS antennas and IMUs in the UI: adding them, the inspector page of a sensor, drawing them in the
+3D and plan views and picking them with the mouse. The library and the geometry live in core.sensors."""
 from __future__ import annotations
 
 import copy
@@ -17,7 +17,7 @@ from .theme import THEME, STATUS
 from .viewport3d import LIGHT, LineDraw, TriDraw
 from .widgets import Section, ScrubSpinBox, StatusLine, ToggleSwitch, button, label
 
-COLORS = {'lidar': '#0aa5b8', 'radar': '#a0743c'}       # apart from the eight camera colours in both themes
+COLORS = {'lidar': '#0aa5b8', 'radar': '#a0743c', 'gnss': '#7f9a1c', 'imu': '#6e7f96'}   # apart from the cameras' eight
 SEL_RGB = np.array(QColor(STATUS['warning']).getRgbF()[:3])
 RING_FAR = 15.0                  # ground rings and radar edges are drawn this far out in 3D
 MAX_RINGS = 16                   # at most this many of a lidar's channels are drawn as ground rings
@@ -40,18 +40,20 @@ def visible(project):
 
 # ------------------------------------------------------------------ edits
 def add_sensor(ctx, kind: str, model_id: str | None = None) -> Sensor:
-    """Add a lidar or radar at its default place (lidar on the highest rig part or the roof, radar on the front bumper)
-    as one undo step and select it."""
+    """Add a sensor at its default place (a lidar on the highest rig part or the roof, a radar on the front bumper, a
+    GNSS antenna at the rear and then the front of the roof, an IMU above the rear axle) as one undo step and select
+    it."""
     st = ctx.store
     p = st.project
     mid = model_id if model_id in p.sensor_models else S.default_model_id(kind)
     if mid not in p.sensor_models:
         mid = next(k for k, m in p.sensor_models.items() if m.kind == kind)
     model = p.sensor_models[mid]
-    pose = S.default_pose(kind, model, p.vehicle.mesh, p.rig)
+    pose = S.default_pose(kind, model, p.vehicle.mesh, p.rig, p.variant.sensors)
     s = Sensor(kind=kind, model_id=mid, tag=S.next_tag(kind, p.variant.tags()),
                name=f'{model.vendor} {model.name}'.strip(), **pose)
-    st.edit('variant', lambda pj: pj.variant.sensors.append(s), f'Added {kind} {s.tag} ({model.name})')
+    st.edit('variant', lambda pj: pj.variant.sensors.append(s),
+            f'Added {S.KIND_NOUN.get(kind, kind)} {s.tag} ({model.name})')
     st.select_obj(('sensor', s.uid))
     return s
 
@@ -163,15 +165,33 @@ def _ring_channels(model, n=MAX_RINGS):
     return set(down[np.round(np.linspace(0, len(down) - 1, n)).astype(int)].tolist())
 
 
+def baseline(project):
+    """The first two visible GNSS antennas by tag (primary, secondary), or None: an INS's heading baseline."""
+    ants = sorted((s for s in visible(project) if s.kind == 'gnss'), key=lambda s: s.tag)
+    return (ants[0], ants[1]) if len(ants) >= 2 else None
+
+
 def scene_lines(ctx, far: float = RING_FAR) -> list:
-    """Each lidar's ground rings (where its downward beams meet the ground, out to `far`) and each radar's field edges
-    and arc at its own height, out to `far` or its range."""
+    """Each lidar's ground rings (where its downward beams meet the ground, out to `far`), each radar's field edges
+    and arc at its own height, out to `far` or its range, each IMU's x axis and the GNSS heading baseline."""
     p = ctx.store.project
     sel = selected_uid(ctx)
     out = []
+    pair = baseline(p)
+    if pair:
+        a, b = pair
+        out.append(LineDraw(np.array([a.pos(), b.pos()]), color('gnss', 0.9), 1.4, dash=True, dash_len=0.06))
     for s in visible(p):
         m = p.sensor_model_for(s)
         w = 1.6 if s.uid == sel else 1.0
+        if m.kind == 'imu':
+            R = S.rotation(s)
+            for k, ln in ((0, 0.30), (1, 0.15), (2, 0.15)):
+                out.append(LineDraw(np.array([s.pos(), s.pos() + R[:, k] * ln]), color('imu', 0.95 if k == 0 else 0.6),
+                                    w + (0.6 if k == 0 else 0.0)))
+            continue
+        if not m.has_field:
+            continue
         if m.is_lidar:
             keep = _ring_channels(m)
             for ch, P in S.ground_rings(s, m, 1.0, far=min(far, m.range_m)):
@@ -216,9 +236,15 @@ def paint_plan(view, p: QPainter, fields: bool = True):
     sel = selected_uid(view.ctx)
     p.save()
     p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    pair = baseline(project)
+    if pair:
+        p.setPen(QPen(color('gnss', 0.85), 1.2, Qt.PenStyle.DashLine))
+        p.drawLine(view.w2s(pair[0].x, pair[0].y), view.w2s(pair[1].x, pair[1].y))
     for s in sensors if fields else ():
         m = project.sensor_model_for(s)
         on = s.uid == sel
+        if not m.has_field:
+            continue
         if m.is_lidar:
             pen = QPen(color('lidar', 0.6 if on else 0.32), 1.2 if on else 0.8)
             p.setPen(pen)
@@ -276,10 +302,20 @@ _LIDAR_FIELDS = [('channels', 'Channels', 'number', 0, 1), ('v_min', 'Lowest bea
                  ('points_per_s', 'Points/s', 'number', 0, 1000), ('bytes_per_point', 'Bytes/point', 'number', 2, 0.25)]
 _RADAR_FIELDS = [('rate_hz', 'Cycle rate Hz', 'number', 1, 1), ('range_min_m', 'Nearest range m', 'number', 2, 0.05),
                  ('data_mbps', 'Data Mbit/s', 'number', 2, 0.5)]
+_GNSS_FIELDS = [('mask_deg', 'Elevation mask °', 'angle', 1, 1)]
+_IMU_FIELDS = [('rate_hz', 'Output rate Hz', 'number', 0, 10), ('antennas', 'GNSS antenna inputs', 'number', 0, 1),
+               ('heading_sigma_deg', 'Heading σ °', 'angle', 3, 0.01), ('heading_baseline_m', 'at baseline m',
+                                                                         'number', 2, 0.1),
+               ('pos_sigma_cm', 'RTK position σ cm', 'number', 1, 0.5),
+               ('attitude_sigma_deg', 'Roll, pitch σ °', 'angle', 3, 0.005), ('data_mbps', 'Data Mbit/s', 'number', 2,
+                                                                                 0.1)]
+_POWER_FIELD = [('power_w', 'Power W', 'number', 1, 0.5)]
+FIELDS = {'lidar': _LIDAR_FIELDS + _POWER_FIELD, 'radar': _RADAR_FIELDS + _POWER_FIELD,
+          'gnss': _GNSS_FIELDS + _POWER_FIELD, 'imu': _IMU_FIELDS + _POWER_FIELD}
 
 
 class SensorPage(Page):
-    """A lidar or radar, or with the Sensors group selected, the variant's sensors."""
+    """A lidar, radar, GNSS antenna or IMU, or with the Sensors group selected, the variant's sensors."""
     title = 'Sensor'
 
     def __init__(self, ctx):
@@ -336,7 +372,7 @@ class SensorPage(Page):
         # the model's own figures (editing a built-in model makes an edited copy for this sensor)
         f = self.s_fig = Section('Model figures')
         self.fields = {}
-        for k, text, kind, dec, step in _LIDAR_FIELDS + _RADAR_FIELDS:
+        for k, text, kind, dec, step in sum(FIELDS.values(), []):
             if k in self.fields:
                 continue
             w = ScrubSpinBox('', kind, dec, step=step)
@@ -353,12 +389,14 @@ class SensorPage(Page):
         self.t = _table(['Tag', 'Model', 'Kind', 'Height'], 1)
         self.t.cellClicked.connect(lambda r, c: ctx.store.select_obj(('sensor', self.project.variant.sensors[r].uid)))
         g.add(self.t)
-        self.empty = StatusLine('good', 'No lidar or radar in this variant. A lidar goes on the highest rig part or the '
-                                        'roof, a radar on the front bumper; then move them here or in the top view.')
+        self.empty = StatusLine('good', 'No lidar, radar, GNSS antenna or IMU in this variant. A lidar goes on the '
+                                        'highest rig part or the roof, a radar on the front bumper, GNSS antennas at '
+                                        'the ends of the roof, an IMU above the rear axle; then move them here or in '
+                                        'the top view.')
         g.add(self.empty)
         r = QHBoxLayout()
-        for kind in ('lidar', 'radar'):
-            b = button(f'Add {kind}', None, 'plus')
+        for kind in S.KINDS:
+            b = button(f'Add {S.KIND_NOUN[kind]}', None, 'plus')
             b.clicked.connect(lambda _=False, k=kind: add_sensor(ctx, k))
             r.addWidget(b)
         r.addStretch(1)
@@ -413,12 +451,17 @@ class SensorPage(Page):
             return
         if k == 'channels':
             v = int(max(1, min(512, round(v))))
+        elif k == 'antennas':
+            v = int(max(0, min(2, round(v))))
+        elif k == 'mask_deg':
+            v = max(0.0, min(60.0, v))
         elif k in ('v_min', 'v_max'):
             v = max(-90.0, min(90.0, v))
         elif k == 'h_fov':
             v = max(1.0, min(360.0, v))
         else:
-            v = max(v, 0.0) if k in ('points_per_s', 'range_min_m', 'data_mbps', 'bytes_per_point') else max(v, 1e-3)
+            v = max(v, 0.0) if k in ('points_per_s', 'range_min_m', 'data_mbps', 'bytes_per_point', 'power_w',
+                                     'heading_sigma_deg', 'pos_sigma_cm', 'attitude_sigma_deg') else max(v, 1e-3)
         if getattr(m, k) == v:
             return
         uid = s.uid
@@ -512,7 +555,7 @@ class SensorPage(Page):
     def _refresh_one(self, s: Sensor):
         p = self.project
         m = p.sensor_model_for(s)
-        self.title = 'Lidar' if s.kind == 'lidar' else 'Radar'
+        self.title = S.KIND_LABEL.get(s.kind, 'Sensor')
         self.s_one.header.title.setText(f'{self.title} {s.tag}')
         if not self.name.hasFocus():
             self.name.setText(s.name)
@@ -548,19 +591,41 @@ class SensorPage(Page):
             if rings:
                 near = min(float(np.hypot(P[:, 0] - s.x, P[:, 1] - s.y).min()) for _, P in rings)
                 lines.append(f'Nearest ground ring {near:.1f} m from the lidar (before the body blocks any beam).')
+        elif m.kind == 'gnss':
+            lines.append(f'{m.interface} · phase centre {m.optical_z_mm:g} mm above the base')
+            pair = baseline(p)
+            if pair and s in pair:
+                o = pair[1] if s is pair[0] else pair[0]
+                L = float(np.linalg.norm(o.pos() - s.pos()))
+                lines.append(f'{"Primary" if s is pair[0] else "Secondary"} antenna: {L:.2f} m to {o.tag}. '
+                             f'Analysis ▸ GNSS and IMU… checks its sky view and the heading baseline.')
+        elif m.kind == 'imu':
+            lines.append(f'{m.interface} · {m.time_sync} · {m.data_bps() / 1e6:g} Mbit/s')
+            lines.append(f'Lever arm to the vehicle origin (rear axle on the ground): '
+                         f'{s.x * 1000:.0f}, {s.y * 1000:.0f}, {s.z * 1000:.0f} mm.')
+            pair = baseline(p)
+            if m.antennas == 2:
+                if pair:
+                    L = float(np.linalg.norm(pair[1].pos() - pair[0].pos()))
+                    hs = m.heading_sigma(L)
+                    lines.append(f'Heading baseline {pair[0].tag}–{pair[1].tag} {L:.2f} m'
+                                 + (f': heading σ {hs:.2f}°.' if math.isfinite(hs) else '.'))
+                else:
+                    lines.append('Two antenna inputs but fewer than two GNSS antennas in this variant: no '
+                                 'dual-antenna heading.')
         else:
             lines.append(f'{m.interface} · {m.time_sync}')
         if m.note:
             lines.append(m.note)
         self.info.setText('\n'.join(lines))
         for k, (w, row) in self.fields.items():
-            show = any(k == f[0] for f in (_LIDAR_FIELDS if m.is_lidar else _RADAR_FIELDS))
+            show = any(k == f[0] for f in FIELDS.get(m.kind, ()))
             row.setVisible(show)
             if show:
                 w.set_value(float(getattr(m, k)))
         self.fields['channels'][0].setEnabled(not m.beams)
-        self.zones.setVisible(not m.is_lidar)
-        if not m.is_lidar:
+        self.zones.setVisible(m.is_radar)
+        if m.is_radar:
             self.zones.setRowCount(len(m.zones))
             for i, z in enumerate(m.zones):
                 self.zones.setItem(i, 0, _cell(f'{i + 1}', True))

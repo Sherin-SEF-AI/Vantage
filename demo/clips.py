@@ -582,11 +582,28 @@ class Stage:
         w.set_view('persp')
         r.hold(0.5)
 
-    def _rig_window(self):
-        """The sample with its data-rig variant (six cameras, a roof lidar, five radars) active."""
-        def edit(p):
+    def _rig_window(self, edit=None):
+        """The sample with its data-rig variant (six cameras, a roof lidar, five radars) active; edit(p) runs after."""
+        def setup(p):
             p.active_uid = next(v.uid for v in p.variants if v.sensors)
-        return self.window(edit)
+            if edit is not None:
+                edit(p)
+        return self.window(setup)
+
+    def _nav_window(self, edit=None):
+        """The data rig with two GNSS antennas and a dual-antenna INS where Vehicle ▸ Add puts them; edit(p) runs
+        after."""
+        def setup(p):
+            from vantage.core import sensors
+            from vantage.core.project import Sensor
+            v = p.variant
+            for kind in ('gnss', 'gnss', 'imu'):
+                m = p.sensor_models[sensors.default_model_id(kind)]
+                v.sensors.append(Sensor(kind=kind, model_id=m.id, tag=sensors.next_tag(kind, v.tags()), name=m.name,
+                                        **sensors.default_pose(kind, m, p.vehicle.mesh, p.rig, v.sensors)))
+            if edit is not None:
+                edit(p)
+        return self._rig_window(setup)
 
     def sensorcoverage(self, r):
         """Lidar and radar coverage: what the roof blocks, the sector verdicts, then the lidar raised on a riser."""
@@ -711,8 +728,19 @@ class Stage:
 
 CLIPS = ['hero', 'coverage', 'placement', 'camlight', 'bowl', 'guidelines', 'stitched', 'volume', 'install',
          'tolerance', 'assistant', 'perception', 'rig', 'liverig', 'datasets', 'sensors', 'sensorcoverage', 'timing',
-         'recording']
-POSTER_AT = {'hero': 2.0}
+         'recording', 'power', 'gnss', 'exposure', 'brackets', 'requirements', 'dataset', 'lidarcalib', 'drivelog',
+         'fleet']
+
+
+def clip_fn(stage, name):
+    """A clip: a Stage method, or clip(stage, r) in demo/clip_<name>.py."""
+    fn = getattr(stage, name, None)
+    if fn is not None:
+        return fn
+    import importlib
+    mod = importlib.import_module(f'clip_{name}')
+    return lambda r: mod.clip(stage, r)
+POSTER_AT = {'hero': 2.0, 'requirements': 18.0}
 
 
 def web(out, name, poster_at=None):
@@ -748,7 +776,7 @@ def main():
     failed = []
     for name in [c for c in a.clips.split(',') if c]:
         try:
-            st.record(name, getattr(st, name))
+            st.record(name, clip_fn(st, name))
             size, dur = web(a.out, name, POSTER_AT.get(name))
             print(f'  -> {name}.mp4 {size / 1e6:.1f} MB, {dur:.1f} s', flush=True)
         except Exception:

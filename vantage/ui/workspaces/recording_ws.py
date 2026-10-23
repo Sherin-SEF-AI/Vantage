@@ -16,8 +16,10 @@ from ..widgets import (ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, Toggle
 
 # one hue family per kind, apart from the eight camera colours; the first is the kind's colour in the 3D and plan views
 # (ui.sensorview.COLORS), the others step darker and lighter so neighbouring segments stay apart
-SENSOR_COLORS = {'lidar': ['#0aa5b8', '#0a6f8f', '#3fc4d3'], 'radar': ['#a0743c', '#7a5220', '#d4a05a']}
-KIND_LABEL = {'camera': 'Camera', 'lidar': 'Lidar', 'radar': 'Radar'}
+SENSOR_COLORS = {'lidar': ['#0aa5b8', '#0a6f8f', '#3fc4d3'], 'radar': ['#a0743c', '#7a5220', '#d4a05a'],
+                 'imu': ['#6e7f96', '#4f5d70', '#97a6ba']}
+KIND_LABEL = {'camera': 'Camera', 'lidar': 'Lidar', 'radar': 'Radar', 'imu': 'IMU'}
+KIND_WORD = {'camera': 'camera', 'lidar': 'lidar', 'radar': 'radar', 'imu': 'IMU'}       # in running text
 SEV_WORD = {'good': 'OK', 'warning': 'Warning', 'serious': 'Serious', 'critical': 'Critical'}
 
 # (group, key, label, unit, decimals, step, scale, tip); scale: stored value × scale = shown value
@@ -469,7 +471,7 @@ class RecordingPage(QWidget):
         n = t['counts']
         count = lambda k, word: f'{n[k]} {word}{"" if n[k] == 1 else "s"}'
         self.tiles['rate'].set(f'{t["mbps"]:,.0f}', 'Mbit/s', f'{t["mb_s"]:,.1f} MB/s · ' + ', '.join(
-            count(k, k) for k in ('camera', 'lidar', 'radar') if n[k] or k == 'camera'))
+            count(k, KIND_WORD[k]) for k in RB.KINDS if n[k] or k == 'camera'))
         self.tiles['hour'].set(f'{t["gb_h"]:,.0f}', 'GB/h', f'{t["tb_shift"]:,.1f} TB per {st.shift_hours:g} h shift')
         if t['mb_s'] > 0:
             self.tiles['disk'].set(f'{t["hours_per_set"]:,.1f}', 'h', f'on {st.storage_tb:g} TB · '
@@ -486,7 +488,7 @@ class RecordingPage(QWidget):
             self.tiles['uplink'].set('—', '', 'no lidar or radar recorded')
         # ---- shares
         segs = [(r['tag'], row_color(r), r['mbps'],
-                 f'{r["tag"]} · {KIND_LABEL[r["kind"]].lower()} · {r["model"]}\n{r["format"]}\n'
+                 f'{r["tag"]} · {KIND_WORD.get(r["kind"], r["kind"])} · {r["model"]}\n{r["format"]}\n'
                  f'{r["mbps"]:,.1f} Mbit/s · {r["gb_h"]:,.1f} GB/h · {100 * r["mbps"] / t["mbps"]:.1f} % of all')
                 for r in res.rows if r['mbps'] > 0] if t['mbps'] > 0 else []
         if t['mbps'] > 0:
@@ -523,7 +525,7 @@ class RecordingPage(QWidget):
         for i, r in enumerate(res.rows):
             muted = None if r['recorded'] else THEME.color('muted')
             cell(i, 0, r['tag'], swatch=row_color(r), color=muted)
-            cell(i, 1, KIND_LABEL[r['kind']], color=muted)
+            cell(i, 1, KIND_LABEL.get(r['kind'], r['kind']), color=muted)
             cell(i, 2, r['model'], color=muted)
             cell(i, 3, r['format'], color=muted)
             cell(i, 4, f'{r["mbps"]:,.1f}', True, muted)

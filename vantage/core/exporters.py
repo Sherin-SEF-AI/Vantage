@@ -45,7 +45,8 @@ SCHEMA_JETSON = 'vantage.jetson/1'
 ROTATION_TEXT = 'intrinsic Z-Y-X (yaw, pitch, roll); pitch positive down'
 AXES_TEXT = 'x forward, y left, z up'
 OPTICAL_TEXT = 'OpenCV optical: x right, y down, z forward'
-SENSOR_FRAME_TEXT = ('lidars and radars: x forward, y left, z up (REP 103) at the optical centre; T_world_sensor maps '
+SENSOR_FRAME_TEXT = ('lidars and radars: x forward, y left, z up (REP 103) at the optical centre; GNSS antennas: the '
+                     'same axes at the phase centre; IMUs: the IMU\'s own axes at their centre; T_world_sensor maps '
                      'sensor-frame points into this frame')
 PLATFORM = 'Jetson AGX Orin'
 AIM_LENGTH_M = 0.3
@@ -128,6 +129,14 @@ def sensor_tags(variant: Variant) -> dict:
     return out
 
 
+def _bracket_names(p, v):
+    """An STL per visible camera that takes a bracket, then the JSON and the sheet. A camera the generator turns down
+    (it needs a larger standoff, no surface is near) writes no STL."""
+    from .brackets import safe_tag
+    return [f'brackets/{safe_tag(c.tag)}.stl' for c in v.cameras if c.visible and c.bracket != 'None'] + \
+        ['brackets/brackets.json', 'brackets/brackets_sheet.png']
+
+
 def _view_cams(variant: Variant) -> list:
     return [c for c in variant.cameras if c.visible]
 
@@ -151,6 +160,20 @@ FORMATS: list[ExportFormat] = [
     ExportFormat('recording_budget', 'Documents', 'Recording budget', 'JSON, CSV',
                  lambda p, v: ['recording_budget/recording_budget.json', 'recording_budget/recording_budget.csv'],
                  'text', multi=True),
+    ExportFormat('power_budget', 'Documents', 'Power budget', 'JSON, CSV',
+                 lambda p, v: ['power_budget/power_budget.json', 'power_budget/power_budget.csv',
+                               'power_budget/power_circuits.csv'], 'text', multi=True),
+    ExportFormat('gnss_imu', 'Documents', 'GNSS and IMU', 'JSON, TXT, PNG',
+                 lambda p, v: ['gnss_imu/gnss_imu.json', 'gnss_imu/ins_lever_arms.txt', 'gnss_imu/gnss_sky.png'],
+                 'binary', multi=True),
+    ExportFormat('exposure', 'Documents', 'Sun glare and dirt', 'JSON, PNG',
+                 lambda p, v: ['exposure/exposure.json', 'exposure/exposure.png'], 'binary', multi=True),
+    ExportFormat('brackets', 'Mount points', 'Mount brackets', 'STL, JSON, PNG', _bracket_names, 'binary', multi=True),
+    ExportFormat('requirements', 'Documents', 'Requirements scorecard and review pack', 'JSON, CSV, PDF',
+                 lambda p, v: ['requirements/requirements.json', 'requirements/requirements.csv',
+                               'requirements/review_pack.pdf'], 'binary', multi=True),
+    ExportFormat('fleet', 'Documents', 'Fleet', 'JSON, CSV, PNG',
+                 lambda p, v: ['fleet/fleet.json', 'fleet/fleet.csv', 'fleet/fleet.png'], 'binary', multi=True),
     ExportFormat('extrinsics_json', 'Extrinsics', 'Extrinsics', 'JSON', lambda p, v: 'extrinsics.json', 'text'),
     ExportFormat('extrinsics_yaml', 'Extrinsics', 'Extrinsics', 'YAML', lambda p, v: 'extrinsics.yaml', 'text'),
     ExportFormat('extrinsics_csv', 'Extrinsics', 'Extrinsics', 'CSV', lambda p, v: 'extrinsics.csv', 'text'),
@@ -165,7 +188,9 @@ FORMATS: list[ExportFormat] = [
                  multi=True),
     ExportFormat('kitti_calib', 'Datasets', 'KITTI calibration', 'TXT',
                  lambda p, v: ['kitti/calib_cam_to_cam.txt', 'kitti/calib_cams_to_vehicle.txt', 'kitti/README.txt']
-                 + (['kitti/calib_velo_to_cam.txt'] if v.cameras and any(s.kind == 'lidar' for s in v.sensors) else []),
+                 + (['kitti/calib_velo_to_cam.txt'] if v.cameras and any(s.kind == 'lidar' for s in v.sensors) else [])
+                 + (['kitti/calib_imu_to_velo.txt'] if any(s.kind == 'lidar' for s in v.sensors)
+                    and any(s.kind == 'imu' for s in v.sensors) else []),
                  'text', multi=True),
     ExportFormat('ros_camera_info', 'Datasets', 'ROS camera_info, per camera', 'YAML ×N',
                  lambda p, v: [f'camera_info/{t}.yaml' for t in safe_tags(v).values()], 'text', multi=True),
@@ -518,7 +543,7 @@ def _rig_doc(ctx: _Ctx) -> list:
 
 
 def _sensors(ctx: _Ctx) -> list:
-    """(safe tag, sensor, model) for the variant's lidars and radars."""
+    """(safe tag, sensor, model) for the variant's lidars, radars, GNSS antennas and IMUs."""
     tags = sensor_tags(ctx.variant)
     return [(tags[s.uid], s, ctx.project.sensor_model_for(s)) for s in ctx.variant.sensors]
 
@@ -542,6 +567,13 @@ def _sensor_field(ctx: _Ctx, m) -> dict:
             d['rotation'] = 'clockwise' if m.rotation == 'cw' else 'counter-clockwise'
         if m.beams:
             d['beam_elevations'] = [ctx.Ap(b) for b in m.elevations()]
+        return d
+    if m.kind == 'gnss':
+        return {'position': 'phase centre', 'elevation_mask': ctx.Ap(m.mask_deg)}
+    if m.kind == 'imu':
+        d = {'position': 'centre of the IMU axes', 'rate_hz': _fn(m.rate_hz, 3), 'antenna_inputs': m.antennas}
+        if m.heading_sigma_deg > 0:
+            d.update(heading_sigma=ctx.Ap(m.heading_sigma_deg), heading_baseline=ctx.L(m.heading_baseline_m))
         return d
     return {'zones': [{'range_car': ctx.L(r), 'azimuth_half': ctx.Ap(a), 'elevation_half': ctx.Ap(e)}
                       for r, a, e in m.zones], 'rate_hz': _fn(m.rate_hz, 3), 'range_min': ctx.L(m.range_min_m)}
@@ -917,6 +949,8 @@ def _nuscenes(ctx: _Ctx) -> list:
             },
         })
     for t, s, m in _sensors(ctx):                 # lidars and radars: no intrinsics, as in nuScenes
+        if not m.has_field:
+            continue                              # GNSS antennas and IMUs are not nuScenes sensors (ego_pose is theirs)
         st = _token('vantage', 'sensor', p.name, v.name, t)
         sensors.append({'token': st, 'channel': f'{s.kind.upper()}_{t.upper()}', 'modality': s.kind})
         T = _T_vehicle_sensor(ctx, s)
@@ -995,6 +1029,14 @@ def _kitti(ctx: _Ctx) -> list:
     for t, s, _ in sens:
         b.append(f'Tr_{t}_to_vehicle: {_ke(_T_vehicle_sensor(ctx, s)[:3, :4])}')
     lidars = [(t, s) for t, s, _ in sens if s.kind == 'lidar']
+    imus = [(t, s) for t, s, _ in sens if s.kind == 'imu']
+    imu_velo = None
+    if lidars and imus:
+        (lt, ls), (it, is_) = lidars[0], imus[0]
+        rel = _T_inv(_T_vehicle_sensor(ctx, ls)) @ _T_vehicle_sensor(ctx, is_)     # IMU coordinates -> lidar
+        imu_velo = [f'calib_time: {when}', f'R: {_ke(rel[:3, :3])}', f'T: {_ke(rel[:3, 3])}',
+                    f'note: IMU {is_.tag} ({it}_link: its own axes) into lidar {ls.tag} ({lt}_link: x forward, y left, '
+                    f'z up): X_lidar = R X_imu + T, metres']
     velo = None
     if lidars and cams:
         t, s = lidars[0]
@@ -1023,6 +1065,9 @@ Cameras:
 - Lidars and radars: Tr_<tag>_to_vehicle in calib_cams_to_vehicle.txt maps the sensor's frame (x forward, y left,
   z up at its optical centre) into the vehicle frame. With a lidar, calib_velo_to_cam.txt gives the first lidar's
   frame in camera 00 (R, T as KITTI's velodyne-to-camera file).
+- GNSS antennas and IMUs: Tr_<tag>_to_vehicle as well (an antenna's frame at its phase centre, an IMU's at the centre
+  of its axes). With an IMU and a lidar, calib_imu_to_velo.txt gives the first IMU's frame in the first lidar's
+  (R, T as KITTI's imu-to-velodyne file; KITTI's OXTS IMU frame is x forward, y left, z up).
 - The extra lines (camera_names, note, DISTORTION_MODEL) are not numbers, so KITTI readers such as pykitti skip them.
 """
     out = [('kitti/calib_cam_to_cam.txt', ('\n'.join(a) + '\n').encode('utf-8')),
@@ -1030,6 +1075,8 @@ Cameras:
            ('kitti/README.txt', readme.encode('utf-8'))]
     if velo:
         out.append(('kitti/calib_velo_to_cam.txt', ('\n'.join(velo) + '\n').encode('utf-8')))
+    if imu_velo:
+        out.append(('kitti/calib_imu_to_velo.txt', ('\n'.join(imu_velo) + '\n').encode('utf-8')))
     return out
 
 
@@ -1636,8 +1683,9 @@ def _report_html(ctx: _Ctx, qt: bool = False, img_src: Callable | None = None) -
         w(tbl_end)
     sens = _sensors(ctx)
     if sens:
-        w('<h3>Lidars and radars</h3>\n' if not qt else
-          '<p style="margin-top:10px; font-weight:600">Lidars and radars</p>\n')
+        head = 'Lidars and radars' if all(m.has_field for _, _, m in sens) else 'Lidars, radars, GNSS and IMU'
+        w(f'<h3>{head}</h3>\n' if not qt else
+          f'<p style="margin-top:10px; font-weight:600">{head}</p>\n')
         w(table([('Tag', False), ('Kind', False), ('Model', False), (f'X ({u})', True), (f'Y ({u})', True),
                  (f'Z ({u})', True), ('Yaw', True), ('Pitch', True), ('Field', False)]))
         for _, s, m in sens:
@@ -2411,6 +2459,30 @@ def _render(fmt_id: str, ctx: _Ctx) -> list:
     if fmt_id == 'recording_budget':
         from . import recording as RB
         return [(f'recording_budget/{n}', d) for n, d in RB.files(RB.budget(ctx.project, ctx.variant), ctx.project)]
+    if fmt_id == 'power_budget':
+        from . import power as PW
+        return [(f'power_budget/{n}', d) for n, d in PW.files(PW.run(ctx.project, variant=ctx.variant), ctx.project)]
+    if fmt_id == 'requirements':
+        from . import requirements as RQ
+        res = RQ.run(ctx.project, ctx.opts.engine, variant=ctx.variant)
+        return [(f'requirements/{n}', d) for n, d in RQ.files(res, ctx.project)]
+    if fmt_id == 'brackets':
+        from . import brackets as BR
+        from .analysis import Engine
+        res = BR.run(ctx.project, ctx.opts.engine or Engine(), variant=ctx.variant)
+        return BR.files(res, ctx.project)            # names already 'brackets/…'
+    if fmt_id == 'fleet':
+        from . import fleet as FL
+        return [(f'fleet/{n}', d) for n, d in FL.files(FL.run(ctx.project), ctx.project)]
+    if fmt_id == 'exposure':
+        from . import exposure as XP
+        from .analysis import Engine
+        res = XP.run(ctx.project, ctx.opts.engine or Engine(), variant=ctx.variant)
+        return [(f'exposure/{n}', d) for n, d in XP.files(res, ctx.project)]
+    if fmt_id == 'gnss_imu':
+        from . import gnss as GN
+        return [(f'gnss_imu/{n}', d) for n, d in GN.files(GN.run(ctx.project, ctx.opts.engine, variant=ctx.variant),
+                                                          ctx.project)]
     if fmt_id == 'dxf':
         return [(name(), _dxf(ctx).encode('cp1252', errors='replace'))]
     if fmt_id == 'step':

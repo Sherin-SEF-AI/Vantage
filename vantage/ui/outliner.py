@@ -191,7 +191,9 @@ class Outliner(QTreeWidget):
                 self._item(rg, q.name, 'rig', q.uid, 'cylinder' if q.kind == 'cylinder' else 'cube',
                            q.kind if q.occludes else f'{q.kind} · see-through', flags={'hidden': not q.visible})
         if v.sensors:
-            sg = self._item(self, f'Lidars and radars ({len(v.sensors)})', 'group', 'sensors', 'sensor', v.name)
+            kinds = {q.kind for q in v.sensors}
+            title = 'Lidars and radars' if kinds <= {'lidar', 'radar'} else 'Sensors'
+            sg = self._item(self, f'{title} ({len(v.sensors)})', 'group', 'sensors', 'sensor', v.name)
             for q in v.sensors:
                 m = p.sensor_model_for(q)
                 it = self._item(sg, f'{q.tag} · {q.name}', 'sensor', q.uid, 'sensor', m.name,

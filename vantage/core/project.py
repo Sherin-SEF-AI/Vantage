@@ -14,7 +14,7 @@ import numpy as np
 
 from .lens import Module, Lens, builtin_modules, builtin_lenses
 from .mesh import Mesh, Part, Zone
-from .sensors import SensorModel, builtin_sensor_models
+from .sensors import SensorModel, builtin_sensor_models, KINDS as SENSOR_KINDS
 from . import credentials as _credentials
 
 FORMAT_VERSION = 1
@@ -75,12 +75,13 @@ class Camera:
 
 @dataclass
 class Sensor:
-    """A lidar or radar of the rig, in the vehicle frame (core.sensors has the conventions). The position is its optical
-    centre; yaw/pitch/roll as a camera's, pitch positive down."""
+    """A lidar, radar, GNSS antenna or IMU of the rig, in the vehicle frame (core.sensors has the conventions). The
+    position is its optical centre (a GNSS antenna's phase centre, an IMU's axis origin); yaw/pitch/roll as a camera's,
+    pitch positive down."""
     uid: str = field(default_factory=new_uid)
     tag: str = 'L1'
     name: str = 'Lidar'
-    kind: str = 'lidar'                # lidar | radar
+    kind: str = 'lidar'                # lidar | radar | gnss | imu
     model_id: str = 'ouster_os1_128'
     x: float = 1.5
     y: float = 0.0
@@ -103,7 +104,7 @@ class Sensor:
     def from_dict(d):
         known = Sensor.__dataclass_fields__.keys()
         s = Sensor(**{k: v for k, v in d.items() if k in known})
-        s.kind = s.kind if s.kind in ('lidar', 'radar') else 'lidar'
+        s.kind = s.kind if s.kind in SENSOR_KINDS else 'lidar'
         for k in ('x', 'y', 'z', 'yaw', 'pitch', 'roll', 'phase_deg'):
             try:
                 v = float(getattr(s, k))
@@ -133,7 +134,7 @@ class Variant:
     name: str = 'Variant'
     note: str = ''
     cameras: list = field(default_factory=list)
-    sensors: list = field(default_factory=list)     # lidars and radars (Sensor)
+    sensors: list = field(default_factory=list)     # lidars, radars, GNSS antennas and IMUs (Sensor)
     seams: dict = field(default_factory=dict)       # 'uidA|uidB' -> angle deg (manual)
     blend_m: float = 0.20
     created: float = field(default_factory=time.time)
@@ -318,6 +319,14 @@ class AnalysisSettings:
     sensor_coverage: dict = field(default_factory=dict)   # lidar and radar coverage (core.sensor_coverage)
     timing: dict = field(default_factory=dict)        # sync and timing plan (core.timing)
     recording: dict = field(default_factory=dict)     # recording budget (core.recording)
+    gnss: dict = field(default_factory=dict)          # GNSS and IMU study (core.gnss)
+    power: dict = field(default_factory=dict)         # power budget (core.power)
+    exposure: dict = field(default_factory=dict)      # sun glare and dirt exposure (core.exposure)
+    brackets: dict = field(default_factory=dict)      # mount bracket generator (core.brackets)
+    dataset: dict = field(default_factory=dict)       # synthetic sample dataset (core.dataset)
+    lidar_calib: dict = field(default_factory=dict)   # lidar-camera calibration (core.lidar_calib)
+    drivelog: dict = field(default_factory=dict)      # drive-log check (core.drivelog)
+    requirements: dict = field(default_factory=dict)  # requirements scorecard (core.requirements)
 
     def to_dict(self):
         return asdict(self)
@@ -464,6 +473,7 @@ class Project:
         self.ecu = ECU()
         self.photos = PhotoSet()
         self.streams: dict[str, str] = {}               # camera tag -> stream source (URL, device, file, 'synthetic')
+        self.fleet: dict = {}                           # vehicles built to this design and their calibrations (core.fleet)
         self.frame = 'rear_axle'
         self.custom_origin = [0.0, 0.0, 0.0]
         self.units = 'm'
@@ -481,7 +491,7 @@ class Project:
             setattr(q.vehicle, k, copy.deepcopy(getattr(self.vehicle, k)))
         q.variants = [Variant.from_dict(v.to_dict()) for v in self.variants]
         for k in ('roi', 'analysis', 'targets', 'target_settings', 'obstacles', 'rig', 'ecu', 'lenses', 'modules',
-                  'sensor_models', 'custom_origin', 'streams'):
+                  'sensor_models', 'custom_origin', 'streams', 'fleet'):
             setattr(q, k, copy.deepcopy(getattr(self, k)))
         q.photos = self.photos
         q.log = []
@@ -522,7 +532,7 @@ class Project:
 
     def sensor_model_for(self, s: Sensor) -> SensorModel:
         """The sensor's library model; a missing one falls back to the first of the same kind."""
-        kind = s.kind if s.kind in ('lidar', 'radar') else 'lidar'
+        kind = s.kind if s.kind in SENSOR_KINDS else 'lidar'
         m = self.sensor_models.get(s.model_id)
         if m is not None and m.kind == kind:
             return m
@@ -590,6 +600,8 @@ class Project:
             return self.photos.to_dict()
         if key == 'streams':
             return dict(self.streams)
+        if key == 'fleet':
+            return copy.deepcopy(self.fleet)
         if key == 'vehicle':
             # mesh is shared by reference (immutable once built); meta is deep-copied
             return {'meta': copy.deepcopy(self.vehicle.meta()), 'vehicle': self.vehicle}
@@ -633,6 +645,8 @@ class Project:
             self.photos = PhotoSet.from_dict(state)
         elif key == 'streams':
             self.streams = dict(state)
+        elif key == 'fleet':
+            self.fleet = copy.deepcopy(state)
         elif key == 'vehicle':
             veh = state['vehicle']
             meta = state['meta']
@@ -667,6 +681,7 @@ class Project:
             'units': self.units,
             # passwords in stream URLs go to the user's private store, never into the file (core/credentials.py)
             'streams': {k: _credentials.remember(v) for k, v in self.streams.items()},
+            'fleet': self.fleet,
             'log': [[e.t, e.kind, e.text] for e in self.log[-400:]],
         }
 
@@ -740,6 +755,7 @@ class Project:
         p.ecu = ECU.from_dict(data.get('ecu', {}))
         p.photos = PhotoSet.from_dict(data.get('photos', {}))
         p.streams = {str(k): str(v) for k, v in (data.get('streams') or {}).items() if str(v).strip()}
+        p.fleet = data.get('fleet') if isinstance(data.get('fleet'), dict) else {}
         p.frame = data.get('frame', 'rear_axle')
         p.custom_origin = data.get('custom_origin', [0, 0, 0])
         p.units = data.get('units', 'm')
