@@ -38,7 +38,7 @@
     <a href="#import">Importing a vehicle</a>
     <a href="#placement">Placing cameras</a>
     <a href="#rig">Rig parts</a>
-    <a href="#sensors">Lidars and radars</a>
+    <a href="#sensors">Lidars, radars, GNSS, IMU</a>
     <a href="#analysis">Coverage analysis</a>
     <a href="#overlays">Heatmaps and overlays</a>
     <a href="#issues">Issues and rules</a>
@@ -51,6 +51,11 @@
     <a href="#sensor-coverage">Lidar and radar coverage</a>
     <a href="#timing">Sync and timing</a>
     <a href="#recording">Recording budget</a>
+    <a href="#power">Power budget</a>
+    <a href="#gnss">GNSS and IMU</a>
+    <a href="#exposure">Sun glare and dirt</a>
+    <a href="#brackets">Mount brackets</a>
+    <a href="#requirements">Requirements scorecard</a>
     <a href="#stitched">Objects in the stitched view</a>
     <p>Surround view</p>
     <a href="#birdseye">Bird's-eye view and remap tables</a>
@@ -59,12 +64,18 @@
     <p>Calibration</p>
     <a href="#lens">Unit lens calibration</a>
     <a href="#install-check">Installation check</a>
+    <a href="#lidar-calib">Lidar–camera calibration</a>
     <a href="#live-rig">Live rig health</a>
+    <a href="#drive-log">Drive-log check</a>
+    <a href="#fleet">Fleet</a>
     <p>Assistant</p>
     <a href="#assistant">Setting up</a>
     <a href="#assistant-use">Asking and proposals</a>
     <a href="#agent">Agent mode</a>
     <a href="#privacy">What is sent</a>
+    <p>Data</p>
+    <a href="#sample-dataset">Sample dataset</a>
+    <a href="#rosbags">ROS 2 bags</a>
     <p>Reference</p>
     <a href="#formats">Export formats</a>
     <a href="#datasets">Dataset calibration</a>
@@ -86,7 +97,8 @@
     <p><b>From source</b>, with Python 3.10 or later:</p>
 <pre><code>git clone https://github.com/Sherin-SEF-AI/Vantage
 cd Vantage
-python3 -m pip install .            # add [step] for STEP import, [keyring] for the assistant's key
+python3 -m pip install .            # add [step] for STEP import, [keyring] for the assistant's key,
+                                    # [bags] for compressed ROS 2 bags
 vantage                             # the window; vantage-gui on Windows starts it without a console</code></pre>
     <p><b>Bundles that need no Python</b> (Linux <code>.tar.gz</code>, a Windows installer, a macOS app) are built by
       the repository's <em>Build installers</em> workflow and attached to a GitHub release whenever a version is
@@ -172,10 +184,12 @@ vantage project.vantage            # open a project</code></pre>
       <li>The rig parts are exported as links of the ROS 2 URDF, a <code>rig</code> list in the extrinsics and a table in the report.</li>
     </ul>
 
-    <h2 id="sensors">Lidars and radars</h2>
-    <p><b>Vehicle ▸ Add lidar</b> and <b>Add radar</b> put a sensor from the library on the rig: a lidar on top of the
-      highest rig part that may carry sensors (a mast head), otherwise on the roof; a radar in the middle of the front
-      bumper. Sensors belong to the variant, like cameras. Select one in the outliner, the 3D view or the top view
+    <h2 id="sensors">Lidars, radars, GNSS and IMU</h2>
+    <p><b>Vehicle ▸ Add lidar</b>, <b>Add radar</b>, <b>Add GNSS antenna</b> and <b>Add IMU</b> put a sensor from the
+      library on the rig: a lidar on top of the highest rig part that may carry sensors (a mast head), otherwise on the
+      roof; a radar in the middle of the front bumper; the first GNSS antenna near the rear edge of the roof (or the rack
+      over it) and the second near its front edge, for the longest heading baseline, both kept 0.55 m from any lidar or
+      mast; an IMU on the cabin floor above the rear axle. Sensors belong to the variant, like cameras. Select one in the outliner, the 3D view or the top view
       (drag it there to move it) and edit it in the inspector: its tag, model, optical centre and yaw, pitch and roll
       (as a camera's: yaw 0 faces forward, pitch positive down).</p>
     <table>
@@ -190,8 +204,16 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td>4D imaging radar · typical</td><td>77 GHz</td><td>±50° × ±15°</td><td>300 m on a car</td><td>30 Mbit/s</td></tr>
       <tr><td>Corner radar · typical</td><td>77 GHz</td><td>±75° × ±10°</td><td>100 m on a car</td><td>2 Mbit/s</td></tr>
     </table>
+    <table>
+      <tr><th>Model</th><th>Kind</th><th>Figures</th></tr>
+      <tr><td>Survey GNSS antenna · typical</td><td>multi-band antenna</td><td>phase centre 50 mm above the base, mask 10°</td></tr>
+      <tr><td>Compact patch antenna · typical</td><td>dual-band antenna</td><td>phase centre 12 mm above the base, mask 10°</td></tr>
+      <tr><td>Dual-antenna GNSS/INS · typical</td><td>MEMS INS, 2 antenna inputs</td><td>100 Hz; heading 0.1° at a 2 m baseline, RTK 2 cm, roll and pitch 0.03°</td></tr>
+      <tr><td>FOG GNSS/INS · typical</td><td>fibre-optic gyro INS, 2 inputs</td><td>200 Hz; heading 0.02° at 2 m, RTK 1 cm, roll and pitch 0.005°</td></tr>
+      <tr><td>MEMS IMU · typical</td><td>IMU only</td><td>200 Hz, no GNSS</td></tr>
+    </table>
     <p>The lidar figures are nominal values from the public datasheets; each model notes where they come from. The
-      radars are typical classes, not products. Check every figure against your unit's datasheet. The inspector edits
+      radars, GNSS antennas and IMUs are typical classes, not products. Check every figure against your unit's datasheet. The inspector edits
       a model's figures; editing a built-in model makes an edited copy for that sensor, so the library and the other
       sensors keep theirs.</p>
     <ul>
@@ -200,8 +222,9 @@ vantage project.vantage            # open a project</code></pre>
       <li>A radar is one or more zones: a range on a car-sized target (10 m²) and the half-angles of its field. A smaller target is detected out to the fourth root of its cross-section ratio (the radar equation): a pedestrian (0.5 m²) at 47 % of the car's range.</li>
       <li>The sync phase (spinning lidars) is the azimuth, in the lidar's own frame, it faces at the top of each sync period. See <a href="#timing">Sync and timing</a>.</li>
       <li>The 3D view draws each housing, a lidar's ground rings (where its downward beams meet the ground, out to 15 m) and a radar's field edges; the top view draws the rings, the radar fields and every sensor's footprint and tag. View ▸ Overlays ▸ <i>Lidar rings and radar fields</i> turns them off.</li>
-      <li>The Issues list flags a lidar inside the body or a rig part (its beams would start inside the vehicle), a radar more than 15 cm behind the body's surface (a radar sees through a plastic bumper fascia, not through the body), a sensor below the ground, and a tag used by a camera too.</li>
-      <li>Exports: each sensor is a frame with x forward, y left and z up at its optical centre (ROS REP 103). It goes into the extrinsics (pose, field, spin direction and phase), the ROS 2 URDF and static TF launch file, the nuScenes tables (<code>LIDAR_&lt;TAG&gt;</code>, <code>RADAR_&lt;TAG&gt;</code>), KITTI (<code>Tr_&lt;tag&gt;_to_vehicle</code>, and <code>calib_velo_to_cam.txt</code> for the first lidar into camera 00) and the report. Drivers use their own frames (an Ouster's lidar frame has x towards the connector): add the driver's fixed rotation if your point clouds are in it.</li>
+      <li>A GNSS antenna's position is its phase centre; an IMU's is the centre of its measurement axes and its frame is its own axes. An INS's heading error scales with the baseline: the datasheet figure × its rated baseline ÷ the baseline between the first two antennas (by tag). The inspector shows each antenna's baseline and the INS's heading error for it; the 3D and top views draw the baseline (dashed) and the IMU's axes. <a href="#gnss">GNSS and IMU</a> checks the sky, the baseline and the lever arms.</li>
+      <li>The Issues list flags a GNSS antenna inside the body or a rig part (it has no sky; an IMU belongs inside), a lidar inside the body or a rig part (its beams would start inside the vehicle), a radar more than 15 cm behind the body's surface (a radar sees through a plastic bumper fascia, not through the body), a sensor below the ground, and a tag used by a camera too.</li>
+      <li>Exports: each sensor is a frame with x forward, y left and z up at its optical centre (ROS REP 103). It goes into the extrinsics (pose, field, spin direction and phase), the ROS 2 URDF and static TF launch file, the nuScenes tables (<code>LIDAR_&lt;TAG&gt;</code>, <code>RADAR_&lt;TAG&gt;</code>), KITTI (<code>Tr_&lt;tag&gt;_to_vehicle</code>, and <code>calib_velo_to_cam.txt</code> for the first lidar into camera 00; with an IMU, <code>calib_imu_to_velo.txt</code> from the first IMU into the first lidar) and the report. nuScenes has no GNSS or IMU channels: they make its <code>ego_pose</code>. Drivers use their own frames (an Ouster's lidar frame has x towards the connector): add the driver's fixed rotation if your point clouds are in it.</li>
     </ul>
     <p>The sample's fifth variant, <i>Data rig</i>, has the six cameras, an OS1-128 on the roof, a long-range radar in
       the front bumper and a corner radar at each bumper corner.</p>
@@ -376,6 +399,153 @@ vantage project.vantage            # open a project</code></pre>
       reports as a warning. Export: <code>vantage.recording_budget/1</code> JSON and CSV; batch
       <code>--recording-budget</code>, which exits with 2 when the recorder or a link cannot keep up.</p>
 
+    <h2 id="power">Power budget</h2>
+    <p><b>Analysis ▸ Power budget</b> adds up what every device of the rig draws and checks the supply: the vehicle's
+      12 V system (the alternator while driving, an auxiliary battery with the engine off) feeds one DC-DC converter
+      whose output, the rig's bus (12, 24 or 48 V), is split into fused circuits.</p>
+    <table>
+      <tr><th>Load</th><th>Steady</th><th>Peak</th></tr>
+      <tr><td>Camera</td><td>the module's figure, or 1.5 W typical (a GMSL camera powered over its coax by the deserializer, on the compute circuit)</td><td>× 1.2</td></tr>
+      <tr><td>Lidar</td><td>the library figure (nominal)</td><td>× 2.0 while it spins up, plus a cold-start heater if set</td></tr>
+      <tr><td>Radar, GNSS antenna, IMU</td><td>the library figure (an antenna is powered over its coax by the receiver)</td><td>× 1.2</td></tr>
+      <tr><td>Compute, recorder, switch, time server</td><td>60, 40, 15 and 5 W</td><td>× 1.2</td></tr>
+      <tr><td>Other loads</td><td>yours (fans, displays, a laptop)</td><td>yours</td></tr>
+    </table>
+    <p>The peak assumes everything switches on at once. The converter supplies the loads and the power cables' losses;
+      the vehicle supplies that divided by the converter's efficiency (92 %). While driving the alternator's spare
+      current (your figure, 50 A at 13.8 V) must cover it, or the auxiliary battery drains; with the engine off the
+      battery (1000 Wh, 80 % usable) runs the rig for so many minutes against a target (30 min, a parked calibration
+      session). On an EV the "alternator" is the vehicle's own HV-to-12 V converter.</p>
+    <p>Circuits: a circuit's steady current should stay within 80 % of its fuse and its peak within the fuse; blade
+      fuses carry short inrush, so a peak over the fuse is a warning and over twice the fuse critical. A circuit
+      without a fitted rating gets the smallest standard fuse (1–40 A blade, up to 120 A MAXI) that holds it.
+      Cables: each lidar, radar and IMU has its own power cable, routed from the ECU like a camera's unless you set
+      its length, 18 AWG copper at 20 °C unless you set its gauge. A device draws constant power, so the voltage at
+      it is (Vbus + √(Vbus² − 4·P·R))/2 with R the resistance there and back; the drop at the steady current must
+      stay under 5 % and the voltage at the peak above the device's minimum input (9 V).</p>
+    <table>
+      <tr><th>Finding</th><th>Severity</th></tr>
+      <tr><td>The DC-DC converter over its rating / its peak over the rating</td><td>critical / warning</td></tr>
+      <tr><td>A circuit over its fuse, or its peak over twice the fuse / over 80 % steady or the peak over the fuse</td><td>critical / warning</td></tr>
+      <tr><td>The alternator cannot carry the rig / uses over 80 % of its spare</td><td>serious / warning</td></tr>
+      <tr><td>A power cable's drop over the limit, or under the minimum input at the peak / its peak drop over the limit</td><td>serious / warning</td></tr>
+      <tr><td>Engine-off runtime under the target</td><td>warning</td></tr>
+    </table>
+    <p>The sample's data rig draws 172 W (187 W from the vehicle); with an INS and two GNSS antennas added, 184 W and
+      200 W: 31 % of a 600 W converter, 490 W spare on the alternator and 4 hours on the battery. Library power figures are nominal and the
+      peak factors typical: replace them with your units' datasheets. Export: <code>vantage.power_budget/1</code>
+      JSON and device and circuit CSVs; batch <code>--power-budget</code>, which exits with 2 when the converter or a
+      fuse is over its rating.</p>
+
+    <h2 id="gnss">GNSS and IMU</h2>
+    <p><b>Analysis ▸ GNSS and IMU</b> checks the GNSS antennas and the IMU or GNSS/INS: what sky each antenna sees, the
+      dual-antenna heading baseline, the lever arms the INS needs, and how well each sensor's world pose (and so every label
+      across sensors) will be known.</p>
+    <p><b>Sky view.</b> From each antenna's phase centre, rays over the sky in 2° × 1° cells (settings) are traced against the
+      body, the rig parts and the housings of the other sensors and cameras; each blocked ray is named after what it meets.
+      The sky is the vehicle's (azimuth counter-clockwise from forward) unless the antenna is tilted more than 5°, then its
+      own. The open share counts the sky above the antenna's elevation mask (its model's, or one mask for every antenna),
+      each cell weighted by its solid angle. Expected satellites are the satellites above the mask in open sky (32, a
+      typical multi-constellation receiver above 10°: an assumption) times the open share, as if they spread evenly over the
+      sky. Only the vehicle blocks: buildings, trees and bridges are not modelled. A structure within 0.5 m that rises more than 3°
+      above the antenna's horizon is flagged for multipath (the gentle crown of the roof under it does not count); an antenna whose base does not reach 10 cm of surface round it (on a
+      bar, a lidar, a small bracket) gets a ground-plane note.</p>
+    <p><b>Heading.</b> An INS with two antenna inputs takes its heading from the baseline between the primary and secondary
+      antenna (the first two by tag, or chosen). The page gives its length, its azimuth and vertical angle in the vehicle
+      frame and in the IMU's frame (what to enter in the INS), and the heading error: the datasheet figure × its rated
+      baseline / the baseline's horizontal length.</p>
+    <p><b>Lever arms and the pose error budget.</b> The lever arm from the IMU's axis centre to every antenna, camera, lidar,
+      radar and the vehicle origin (the nuScenes ego frame), in the IMU frame and the vehicle frame. Each sensor's position
+      error (1σ, per vehicle axis) is the INS position error ⊕ the attitude error acting on its lever arm (δθ × L, roll, pitch
+      and heading independent) ⊕ the lever-arm measurement error (5 mm per axis for the antenna's lever arm in the INS and
+      for the sensor's own); the page also gives the horizontal error of a point 50 m from each sensor. The sensors' own
+      calibration errors are not included.</p>
+    <table>
+      <tr><th>Finding</th><th>Severity</th></tr>
+      <tr><td>An antenna with no sky (inside or under the body, the rig or a sensor)</td><td>critical</td></tr>
+      <tr><td>Sky above the mask blocked over 25 % / over 10 %</td><td>serious / warning</td></tr>
+      <tr><td>A structure within 0.5 m rising more than 3° above an antenna's horizon (multipath)</td><td>warning</td></tr>
+      <tr><td>Heading baseline under 0.5 m / under 1 m</td><td>serious / warning</td></tr>
+      <tr><td>Antennas without a GNSS receiver; an INS with two inputs but one antenna; an INS without antennas</td><td>warning</td></tr>
+    </table>
+    <p>Export: <code>vantage.gnss_imu/1</code> JSON, <code>ins_lever_arms.txt</code> (the antenna lever arms in the IMU
+      frame, FLU and FRD, and the IMU-to-vehicle rotation, as neutral numbers for the INS's own tool) and the sky plots as
+      PNG; batch <code>--gnss</code>, which exits with 2 when an antenna has no sky.</p>
+
+    <h2 id="exposure">Sun glare and dirt</h2>
+    <p><b>Analysis ▸ Sun glare and dirt</b> tells which cameras will have the sun in their image during a data-collection
+      campaign, when and on which headings, and how exposed each lens and sensor window is to dirt, spray and rain.</p>
+    <p>The sun's position comes from the NOAA solar position algorithm (Meeus' solar coordinates with standard atmospheric
+      refraction). Set the location (or pick a city), the dates, the daily driving window in local time (a fixed UTC offset,
+      or a time zone such as <code>Europe/Berlin</code> to follow daylight saving time), the time and day steps, and the
+      route's headings: every heading equally likely, a typed list such as <code>0:3, 180:3, 90:1, 270:1</code>, or a GPX or
+      CSV track (<code>lat,lon[,time]</code>), whose segments are weighted by the time spent on them.</p>
+    <p>For every sampled time and heading with the sun above the horizon, the sun is turned into the vehicle frame and
+      through each camera's real lens model and the body's occlusion. The table gives the share of all driving time with
+      the sun <i>in the image</i>, <i>near</i> it (within the flare margin outside the image) and <i>low ahead</i> (in the
+      image below 15°), the worst months, hours and headings. For the selected camera: a month × hour heatmap, a sky chart
+      (forward up: where the sun is, the camera's field, the directions the body hides) and the sun's path through the image
+      on the equinox and both solstices at a chosen heading. A lidar's share is the time the sun is inside its field: an
+      indicator of solar background, which shortens its range on dark targets towards the sun.</p>
+    <p>The dirt score is a heuristic, not a flow simulation: 0.8 × wheel spray + 0.5 × rear wake + 0.4 × frontal impact
+      + 0.15 × lens attitude + 0.15 × low mounting, capped at 1, × 0.6 for a recessed or hooded lens; low below 0.3,
+      high from 0.5. High gets cleaning advice (a washer jet or an air knife). Radar fascias are scored too, but thin dirt
+      and water films matter little at 77 GHz. The dirt map colours every face of the body in four views.</p>
+    <p>Assumptions: clear sky, a flat horizon (no buildings, trees or terrain), the sun as a point, the vehicle level and
+      driving straight. Export: <code>exposure.json</code> (<code>vantage.exposure/1</code>) and <code>exposure.png</code>.</p>
+
+    <h2 id="brackets">Mount brackets</h2>
+    <p><b>Analysis ▸ Mount brackets</b> makes a 3D-printable bracket for each visible camera that holds it at exactly its
+      planned optical centre and angles on the surface under it: the body, a box rig part, or a rig bar or mast. The list
+      shows at once which cameras can take one; <b>Generate</b> meshes them (a job you can cancel), and the preview shows the
+      selected bracket with the camera housing see-through and, in the corner, how much of the camera's image it blocks.</p>
+    <p>A plate lies flat against one face of the housing and carries the module's mounting holes. Auto picks the bottom or
+      top face when one faces the surface, so the connector on the back stays free; otherwise the back. A solid support,
+      filleted at both ends, joins the plate to a flat base or, on a tube, to a split clamp. The base sits on the body
+      under it: Vantage casts rays onto the body, fits the base to the highest points and reports the gaps a curved panel
+      leaves. It is screwed (countersunk screws, each placed where a screwdriver reaches it past the camera) or taped (VHB,
+      sized by 3M's rule of 4 in² per lb, times 5 g). The clamp's bolts go in from below into nuts pressed into the saddle,
+      so nothing above it needs a tool.</p>
+    <p>The housing is a box of the module's size (width × height × length along the optical axis, lens included) with the
+      optical centre on its axis at the lens front; the <i>Optical centre</i> setting moves it back for a lens whose
+      entrance pupil sits inside the barrel. Check your module's drawing. A camera placed close to the body (the default
+      12 mm standoff is a lens poking through a hole in the panel) would push its housing into the surface: the page says
+      how much standoff a printed bracket needs, and <b>Move out</b> moves the camera that far along the surface normal (one
+      undo step; the coverage changes a little). A camera farther than 120 mm from every surface needs a custom mount or a
+      rig part.</p>
+    <p>Checks: the share of the image the bracket blocks (the camera's own pixel rays traced against it), the optical
+      centre and plate angle measured back from the generated mesh, the thinnest wall and hole edge, the lever arm (warned
+      over 60 mm), gaps under the base, the bracket or housing running into the body, the connector's way out, a beam
+      estimate of the first vibration mode, and the print orientation with the least overhang. The material (PETG, ASA,
+      PA-CF) changes only the notes, the mass and the stiffness estimate.</p>
+    <p>Export: one binary STL per camera (millimetres, origin at the base's contact point, z along the surface normal, so
+      it prints base down), <code>brackets.json</code> (<code>vantage.brackets/1</code>: each bracket's
+      <code>T_vehicle_bracket</code>, optical centre, parameters, checks) and <code>brackets_sheet.png</code> with a top,
+      side and three-quarter view of each bracket, dimensioned. Batch: <code>--brackets DIR</code>, exit code 2 when a
+      camera cannot take a printed bracket as planned.</p>
+
+    <h2 id="requirements">Requirements scorecard</h2>
+    <p><b>Analysis ▸ Requirements scorecard</b> signs a rig off against the programme's written requirements. Each
+      requirement is a metric with an operator and a target ("perception range, pedestrians, every sector ≥ 40 m"), must or
+      should, the text as written and a note. The metric is read off one of the app's studies — the scorecard computes
+      nothing of its own — so "resolved", "detected" or "blind" mean exactly what that study means by them.</p>
+    <p>Start with <b>Add from the plan</b> (requirements implied by what the plan already sets: the perception range's
+      required ranges, the minimum density, the recording shift, the blur limit, the power runtime target, the GNSS sky
+      threshold), the <b>templates</b>, or <b>Suggest from the brief</b>, which reads the project brief for simple phrasings
+      with a number and a unit and lists them for you to tick; nothing is added until you do.</p>
+    <p>Cheap metrics (the sync plan, the recording and power budgets) are evaluated on every edit; <b>Run</b> computes each
+      study the other requirements need, once, in the background. A value's <i>margin</i> is how far it is from the target,
+      positive when the requirement is met (value − target for ≥, target − value for ≤). A requirement that cannot be
+      evaluated says why (no lidar to ask, a tag that is not in the variant, no vehicle body). After a design change, study
+      values stay on show marked stale until the next run. The verdict <b>passes</b> when every must requirement passes,
+      <b>fails</b> when one fails, and is <b>not evaluated</b> while one cannot be evaluated; should requirements are
+      counted, never decisive. Select a row to see the study's figures behind its value and open the study.</p>
+    <p><b>Export</b> writes <code>requirements.json</code> (<code>vantage.requirements/1</code>), <code>requirements.csv</code>
+      and <code>review_pack.pdf</code>: a title page with the project, variant, date and verdict, the scorecard, one page per
+      study used with its key figures and its plot, the Issues list, and every study's assumptions and limits. In CI,
+      <code>vantage project.vantage --check review/</code> writes the same files and exits with 5 when a must requirement
+      fails or cannot be evaluated.</p>
+
     <h2 id="stitched">Objects in the stitched view</h2>
     <p>The bird's-eye view projects every pixel onto the ground, so each camera draws a standing object as a smear away
       from itself. Vantage stands a pole (0.5 m pole, 0.9 m child, 1.8 m adult or any height, 0.3 m across) on every
@@ -440,6 +610,25 @@ vantage project.vantage            # open a project</code></pre>
       <li>Save the report, the stitched PNG and remap tables for the measured poses, or apply them as an <b>as-built</b> variant.</li>
     </ul>
 
+    <h2 id="lidar-calib">Lidar–camera calibration</h2>
+    <p><b>Calibrate ▸ Lidar–camera calibration</b> measures where a lidar sits relative to a camera from a printed checkerboard
+    with a white margin, held up at several poses that both sensors see. The camera finds the board's corners through its
+    exact lens model; the lidar sees the board's plane, its edge and, with a dark print, its squares in the reflectivity.
+    One robust least-squares solve finds the lidar's pose relative to the camera together with every board's pose, so
+    the camera's own uncertainty enters the answer. The lidar's pose in the vehicle follows from the camera's pose in the
+    variant: the plan, or the measured pose of an as-built variant from the installation check.</p>
+    <p>The pose plan places each board where both see all of it, with at least four of the lidar's channels across it, and
+    turns it so the boards together pin all six degrees of freedom. A board turned about its vertical fixes the sideways
+    position, one tilted back the height, and the tilted boards at the sides the roll. The plan shows the uncertainty it
+    can reach from the board planes alone. Capture the plan synthetically, optionally with a mounting error to see what
+    the solve recovers, or load a folder of real image + point-cloud pairs named alike (pose01.png + pose01.pcd).</p>
+    <p>The result gives the transform both ways (matrix, quaternion, translation), its 1σ, the lidar's offset from the
+    plan in millimetres and degrees, and a verdict against the tolerances (10 mm and 0.3° by default). Poses where the
+    board was not found, or that disagree with the rest because the board moved between the two captures, are listed. When
+    the boards were all tilted alike, the page says which direction is not determined, rather than reporting a number. The
+    overlay draws the lidar's points on the camera image through the plan and through the solve: on the board when the
+    calibration is right. Apply moves the lidar to its measured pose; As a new variant keeps the plan alongside.</p>
+
     <h2 id="live-rig">Live rig health</h2>
     <p><b>Calibrate ▸ Live rig</b> watches every camera's stream at once, for checking a rig before and during a
       recording. Set a source per camera: <b>Stream</b> (an RTSP or HTTP URL, a V4L2 device such as
@@ -468,6 +657,52 @@ vantage project.vantage            # open a project</code></pre>
       (<code>vantage.rig_health/1</code>); it exits with 3 if a camera is faulty or has no stream.</p>
 
     <!-- ======================================================== assistant -->
+    <h2 id="drive-log">Drive-log check</h2>
+    <p><b>Calibrate ▸ Drive-log check</b> closes the loop from plan to build: open a recorded drive (a ROS 2 bag folder, an
+    <code>.mcap</code> or <code>.db3</code> file, or a nuScenes folder) and Vantage checks it against the variant's plan. Topics
+    are matched to the rig's sensors by the tag in their name or frame (<code>/F/image_raw/compressed</code> is camera F,
+    <code>/L1/points</code> lidar L1); correct the matching in the table if your topics are named otherwise. The log is read
+    once, in the background, and never loaded whole, so long drives are fine.</p>
+    <p><b>Streams</b>: each sensor's measured rate against the plan, dropped frames and the longest gap, jitter, latency (a
+    negative one means the sensor's clock runs ahead of the recorder's), the image size against the camera module, and the
+    points per cloud. <b>Data rate</b>: what each topic really recorded against the recording budget, with the real
+    compression of compressed images. <b>Sync</b>: the lidar's measured phase lock against its planned phase, and for every
+    camera frame how far its exposure is from the moment the sweep crossed its view, against the sync plan; a camera's own
+    trigger error is separated from the lidar's. Set <i>Camera stamps</i> to what your driver stamps (exposure middle,
+    trigger or end of readout).</p>
+    <p><b>Rotations</b>: at frames spread over the drive, the lidar's depth edges (where the range jumps) are projected
+    into each camera and lined up with the image's edges; the rotation that lines them up best is the camera's rotation
+    relative to the lidar, with a confidence from how well the frames agree. An axis the edges in view do not pin down is
+    left as planned and shown in brackets. Translation cannot be measured this way. <i>Apply rotation corrections</i> adds a
+    variant "… · drive-log corrected" with the confident rotations (one undo step).</p>
+    <p>Limits: sync pulses are taken at multiples of the lidar period on the log's clock (PTP); clouds in the lidar's own
+    frame; rolling shutter is not modelled; a view without depth edges (open road) gives no rotation; with only an IMU the
+    vehicle's turning between the lidar points and the image is compensated, not its travel.</p>
+
+    <h2 id="fleet">Fleet</h2>
+    <p><b>Calibrate ▸ Fleet</b> tracks the rig on every vehicle built to the design. Add each vehicle (name, VIN, note) and
+      give it records: the measured poses of its sensors on a date. <b>Import…</b> reads an installation check report,
+      Vantage's extrinsics (JSON, YAML or CSV, in any export frame, m or mm, degrees or radians), nuScenes
+      <code>calibrated_sensor.json</code> with <code>sensor.json</code>, or a Kalibr camchain. <b>Variant…</b> takes the
+      poses of a variant (an as-built variant, a survey), and <b>+</b> starts a record to type poses into. Sensors are
+      matched to the plan by tag, ignoring case; tags the plan does not have are kept and reported.</p>
+    <table>
+      <tr><th>Check</th><th>How</th></tr>
+      <tr><td>Against the plan</td><td>The latest record of each sensor: Δx Δy Δz (mm) and Δyaw Δpitch Δroll (°). <i>OK</i> when every axis is within the position tolerance (10 mm) and the rotation within the angle tolerance (1°); <i>adjust</i> within three times; <i>re-mount</i> beyond.</td></tr>
+      <tr><td>Drift</td><td>A straight line through the dated records (least squares), per 30 days. A component counts when its slope is significant (t-test, 5 %), so three records are needed. Flagged when the line takes the sensor out of tolerance within the drift window (30 days).</td></tr>
+      <tr><td>Jump</td><td>The latest step is off the earlier course by half the tolerance or more: a knock or a loose mount.</td></tr>
+      <tr><td>Outlier vehicle</td><td>Robust z-score against the fleet median (median absolute deviation, never less than a quarter of the tolerance) over 3.5, with three or more vehicles.</td></tr>
+      <tr><td>Systematic offset</td><td>The fleet median is beyond the tolerance and most vehicles sit near it: the rig is built that way. <b>Variant from the fleet median</b> copies the plan with every sensor measured on two or more vehicles moved to its median, in one undo step.</td></tr>
+    </table>
+    <p>The matrix shows vehicles down and sensors across, each cell coloured by its share of the tolerance; click a cell
+      for its drift chart (the offsets over time, the tolerance band and the trend carried over the drift window).
+      Kalibr camchains hold camera-to-camera transforms only, so they are placed on the plan by the best rigid fit: they
+      show a camera moved against the others, not the whole rig moved. A nuScenes table without Vantage's README is taken
+      to have its ego origin at the rear axle on the ground. Sensors out of tolerance go to the Issues list. Export:
+      <code>vantage.fleet/1</code> JSON (every record and the analysis), a CSV of the matrix and a PNG. Batch:
+      <code>--fleet-import VEHICLE FILE…</code> adds records (keep them with <code>--save</code>), and
+      <code>--fleet [OUT.json|DIR]</code> writes the report, exiting with 3 when a sensor needs re-mounting.</p>
+
     <h2 id="assistant">Assistant: setting up</h2>
     <p>The assistant is a chat about the open design with a model hosted on <a href="https://groq.com">Groq</a>, using
       your own API key. It is off until you set it up:</p>
@@ -524,9 +759,55 @@ vantage project.vantage            # open a project</code></pre>
     <h3 id="privacy">What is sent</h3>
     <div class="callout"><p>With each question, Vantage sends Groq the question, a short context line (project and
       variant names, the open page, the selected cameras), your project brief, and the results of the lookups the
-      model asks for: camera, lidar and radar poses, lens, module and sensor model names and analysis figures. The vehicle model, images, captures
-      and files are never sent. Groq processes them under its own terms. Answers can be wrong: check a proposal's
+      model asks for: camera, lidar, radar, GNSS antenna and IMU poses, lens, module and sensor model names, analysis
+      figures, the fleet's vehicle names and measured offsets (never VINs), a checked drive log's file name and findings,
+      and the requirements. The vehicle model, images, point clouds, captures and files are never sent. Groq processes them under its own terms. Answers can be wrong: check a proposal's
       predicted effect before applying it.</p></div>
+
+    <!-- ======================================================== data -->
+    <h2 id="sample-dataset">Sample dataset</h2>
+    <p><b>Export ▸ Sample dataset</b> writes a short synthetic drive recorded by exactly the planned rig, so the
+      ingestion pipeline, labelling tools and training loaders can be tested against the real sensor set, frames, timing
+      and calibration before any hardware exists. The scene is a seeded street with a bend (or a highway): lanes and
+      markings, kerbs, buildings, trees, street lights, signs, parked cars, traffic, cyclists and pedestrians, one of them
+      crossing ahead. The ego starts at 80 % of the set speed, reaches it within 3 s and eases into the bend.</p>
+    <table>
+      <tr><th>Sensor</th><th>What it records</th></tr>
+      <tr><td>Camera</td><td>The scene through the real lens model and the camera's unit calibration. The body and rig
+    hide what lies behind them. A frame is stamped at the middle row's exposure centre and fires at the sync plan's
+    trigger time. With a rolling shutter, each band of rows is drawn at its own time.</td></tr>
+      <tr><td>Lidar</td><td>Every channel, column by column, at the azimuth the phase lock sets, fired from where the
+    vehicle is at that instant: the sweep is not motion compensated, as a driver delivers it. A return needs
+    R ≤ range·√(ρ cos i / 0.10). There is range noise, intensity 255·ρ·cos i, the ring and the time from the sweep
+    start. Returns from the own roof are flagged, or dropped.</td></tr>
+      <tr><td>Radar</td><td>One detection per car, pedestrian, cyclist, pole or sign in a zone at the range its
+    cross-section allows, unless the body (beyond the fascia) or a nearer object is in the way. Range, angle, Doppler
+    and RCS carry noise, and a few clutter points come from building faces.</td></tr>
+      <tr><td>IMU, GNSS</td><td>Specific force with the lever arm's centripetal and Euler terms, angular rate, typical
+    noise and bias. WGS84 fixes of each antenna's phase centre with RTK-like noise.</td></tr>
+    </table>
+    <p>The nuScenes folder <code>v1.0-vantage</code> loads with
+      <code>NuScenes(version='v1.0-vantage', dataroot='…/nuscenes')</code>. Its calibration is the nuScenes calibration
+      export's, with camera_intrinsic scaled to the image size. Keyframes come from the first lidar at the chosen rate.
+      Boxes carry visibility from rays to the cameras and lidar and radar point counts. With <b>Rectified images</b> the
+      devkit's projections land on the right pixels; otherwise undistort with the Kannala–Brandt coefficients first.
+      <b>nuScenes names</b> renames the channels CAM_FRONT…, LIDAR_TOP and RADAR_FRONT… for loaders that expect them.
+      The ROS 2 bag uses the URDF export's frame ids. Ground truth comes as markers and as JSON.</p>
+    <p>The scene is synthetic (simple shapes and materials, one sun, no weather): use it to test a pipeline, not to train
+      a model. Batch: <code>--dataset OUT_DIR</code>.</p>
+
+    <h2 id="rosbags">ROS 2 bags</h2>
+    <p>Vantage writes and reads ROS 2 bags itself, without a ROS installation. A bag is a folder holding an MCAP file and a
+    <code>metadata.yaml</code>, as <code>ros2 bag record</code> makes them; <code>ros2 bag play</code> (Humble and later),
+    <code>ros2 bag info</code>, Foxglove and rosbags open the bags Vantage writes. Chunks are compressed with zstd when the
+    optional <code>zstandard</code> package is installed, and left uncompressed otherwise.</p>
+    <p>Reading accepts a bag folder, a single <code>.mcap</code> file or a rosbag2 SQLite <code>.db3</code> file, including bags
+    split over several files. Messages come back in time order, read one chunk at a time, so very large bags are fine. Each
+    bag's own message definitions are used, so types from other ROS distributions and from sensor vendors' packages decode as
+    recorded. A recording that was cut off (power loss, a full disk) is read up to its last complete chunk and the bag is
+    flagged as truncated. A chunk whose checksum is wrong is reported, never read as if it were good.</p>
+    <p>Limits: bags compressed as whole files (<code>compression_mode: file</code>) must be decompressed first with
+    <code>ros2 bag decompress</code>; XCDR2 data and <code>wstring</code> fields are not read.</p>
 
     <!-- ======================================================== reference -->
     <h2 id="formats">Export formats</h2>
@@ -542,7 +823,12 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td></td><td>Lidar and radar coverage</td><td>JSON, PNG</td><td><code>sensor_coverage</code></td></tr>
       <tr><td></td><td>Sync and timing plan</td><td>JSON, PNG</td><td><code>sync_plan</code></td></tr>
       <tr><td></td><td>Recording budget</td><td>JSON, CSV</td><td><code>recording_budget</code></td></tr>
-      <tr><td>Extrinsics</td><td>Camera, lidar and radar poses</td><td>JSON</td><td><code>extrinsics_json</code></td></tr>
+      <tr><td></td><td>Power budget</td><td>JSON, CSV</td><td><code>power_budget</code></td></tr>
+      <tr><td></td><td>GNSS and IMU</td><td>JSON, TXT, PNG</td><td><code>gnss_imu</code></td></tr>
+      <tr><td></td><td>Sun glare and dirt</td><td>JSON, PNG</td><td><code>exposure</code></td></tr>
+      <tr><td></td><td>Fleet</td><td>JSON, CSV, PNG</td><td><code>fleet</code></td></tr>
+      <tr><td></td><td>Requirements scorecard and review pack</td><td>JSON, CSV, PDF</td><td><code>requirements</code></td></tr>
+      <tr><td>Extrinsics</td><td>Camera, lidar, radar, GNSS and IMU poses</td><td>JSON</td><td><code>extrinsics_json</code></td></tr>
       <tr><td></td><td>Camera, lidar and radar poses</td><td>YAML</td><td><code>extrinsics_yaml</code></td></tr>
       <tr><td></td><td>Camera, lidar and radar poses</td><td>CSV</td><td><code>extrinsics_csv</code></td></tr>
       <tr><td>Calibration and robotics</td><td>OpenCV calibration, per camera</td><td>YAML ×N</td><td><code>opencv_yaml</code></td></tr>
@@ -562,6 +848,7 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td></td><td>All camera views</td><td>PNG ×N</td><td><code>camera_views_png</code></td></tr>
       <tr><td>Mount points</td><td>For CAD</td><td>DXF</td><td><code>dxf</code></td></tr>
       <tr><td></td><td>For CAD</td><td>STEP</td><td><code>step</code></td></tr>
+      <tr><td></td><td>Mount brackets</td><td>STL ×N, JSON, PNG</td><td><code>brackets</code></td></tr>
     </table>
 
     <h2 id="datasets">Dataset calibration</h2>
@@ -573,12 +860,14 @@ vantage project.vantage            # open a project</code></pre>
     <table>
       <tr><th>Format</th><th>Files</th><th>Notes</th></tr>
       <tr><td>nuScenes</td><td><code>nuscenes/sensor.json</code>, <code>calibrated_sensor.json</code>, README</td><td>Camera to ego: <code>p_ego = R(rotation) · p_camera + translation</code>, quaternion <code>[w, x, y, z]</code>. nuScenes puts the ego frame at the rear axle, which is the default export frame. The fisheye coefficients are in an extra <code>vantage_distortion</code> field the nuScenes tools ignore. Lidars and radars follow the cameras as <code>LIDAR_&lt;TAG&gt;</code> and <code>RADAR_&lt;TAG&gt;</code> with an empty <code>camera_intrinsic</code>. Tokens are stable across re-exports.</td></tr>
-      <tr><td>KITTI</td><td><code>kitti/calib_cam_to_cam.txt</code>, <code>calib_cams_to_vehicle.txt</code>, <code>calib_velo_to_cam.txt</code> (with a lidar), README</td><td>Per camera S, K, D, and R, T from camera 00; the images are not rectified, so S_rect = S, R_rect = I and P_rect = [K | 0]. For a fisheye, D_xx holds k1–k4 and a <code>DISTORTION_MODEL_xx: equidistant</code> line says so; tools that assume radtan will misread it, so undistort with cv2.fisheye first. Lidars and radars get <code>Tr_&lt;tag&gt;_to_vehicle</code> lines; <code>calib_velo_to_cam.txt</code> maps the first lidar into camera 00 (R, T as KITTI's velodyne file).</td></tr>
+      <tr><td>KITTI</td><td><code>kitti/calib_cam_to_cam.txt</code>, <code>calib_cams_to_vehicle.txt</code>, <code>calib_velo_to_cam.txt</code> (with a lidar), <code>calib_imu_to_velo.txt</code> (with an IMU and a lidar), README</td><td>Per camera S, K, D, and R, T from camera 00; the images are not rectified, so S_rect = S, R_rect = I and P_rect = [K | 0]. For a fisheye, D_xx holds k1–k4 and a <code>DISTORTION_MODEL_xx: equidistant</code> line says so; tools that assume radtan will misread it, so undistort with cv2.fisheye first. Lidars and radars get <code>Tr_&lt;tag&gt;_to_vehicle</code> lines; <code>calib_velo_to_cam.txt</code> maps the first lidar into camera 00 (R, T as KITTI's velodyne file), <code>calib_imu_to_velo.txt</code> the first IMU into the first lidar (as KITTI's IMU-to-velodyne file).</td></tr>
       <tr><td>ROS camera_info</td><td>one YAML per camera</td><td>As <code>camera_calibration_parsers</code> writes it: <code>equidistant</code> for a fisheye, <code>plumb_bob</code> for a pinhole.</td></tr>
       <tr><td>Kalibr</td><td><code>kalibr/camchain.yaml</code></td><td><code>T_cn_cnm1</code> maps the previous camera into this one; <code>equidistant</code> or <code>radtan</code>. Vantage imports the file back.</td></tr>
     </table>
     <p>The tests reproject points through every written file and compare them with Vantage's own projection (within
-      0.05 px). The files have not yet been checked against each dataset's own devkit: check one frame before a large
+      0.05 px). The nuScenes calibration has also been loaded through the nuScenes devkit by way of the
+      <a href="#sample-dataset">sample dataset</a>, whose lidar points the devkit projects onto the same pixels as Vantage.
+      KITTI, camera_info and Kalibr have not been checked against their own tools: check one frame before a large
       conversion.</p>
 
     <h2 id="batch">Batch mode</h2>
@@ -592,6 +881,15 @@ vantage project.vantage --perception-range ranges.json   # range per object clas
 vantage project.vantage --sensor-coverage coverage.json  # lidar/radar reach, blocked beams, sector verdicts
 vantage project.vantage --sync-plan sync.json       # camera triggers against the lidar sweep, blur at speed
 vantage project.vantage --recording-budget budget.json   # data rate, links, write speed, hours per disk set
+vantage project.vantage --power-budget power.json   # loads, DC-DC, fuses, power cables, alternator, runtime
+vantage project.vantage --gnss gnss.json            # antennas' sky view, heading baseline, lever arms, pose errors
+vantage project.vantage --exposure exposure.json    # sun in each camera over the campaign, dirt and spray
+vantage project.vantage --brackets out/             # a printable STL bracket per camera, checks, sheet
+vantage project.vantage --dataset out/              # a synthetic drive as a nuScenes folder and a ROS 2 bag
+vantage project.vantage --drive-log drive/ report/  # a recorded drive against the plan
+vantage project.vantage --fleet-import V3 check.json --fleet fleet/ --save project.vantage
+vantage project.vantage --check review/            # the requirements scorecard and the design-review pack (CI gate)
+vantage project.vantage --lidar-calib out/ --lidar-calib-pair F L1 --lidar-calib-folder boards/
 vantage project.vantage --rig-health 10 health.json  # read every camera's stream for 10 s
 vantage project.vantage --export out/ --formats nuscenes_calib,kitti_calib,ros_camera_info
 vantage project.vantage --install-check captures/ --report check.json \
@@ -616,9 +914,10 @@ vantage project.vantage --import-calib camchain.yaml F.yaml --save calibrated.va
     <table>
       <tr><th>Exit code</th><th>Meaning</th></tr>
       <tr><td><code>0</code></td><td>Fine.</td></tr>
-      <tr><td><code>2</code></td><td>The plan has critical issues (with <code>--analyse</code> or <code>--export</code>); or, with <code>--recording-budget</code>, the recorder or a sensor's link cannot keep up.</td></tr>
-      <tr><td><code>3</code></td><td>A camera has to be re-mounted or could not be checked; or, with <code>--rig-health</code>, a camera is faulty or has no stream.</td></tr>
-      <tr><td><code>4</code></td><td>A lens calibration failed, or an imported calibration matched no camera or did not fit it.</td></tr>
+      <tr><td><code>2</code></td><td>The plan has critical issues (with <code>--analyse</code> or <code>--export</code>); or, with <code>--recording-budget</code>, the recorder or a sensor's link cannot keep up; with <code>--power-budget</code>, the DC-DC converter or a fuse is over its rating; with <code>--gnss</code>, an antenna has no sky; with <code>--brackets</code>, a camera cannot take a printed bracket as planned.</td></tr>
+      <tr><td><code>3</code></td><td>A camera has to be re-mounted or could not be checked; or, with <code>--rig-health</code>, a camera is faulty or has no stream; with <code>--drive-log</code>, the recording shows a fault; with <code>--fleet</code>, a sensor needs re-mounting in its vehicle's latest record; with <code>--lidar-calib</code>, the lidar has to be re-mounted or the board poses did not determine its pose.</td></tr>
+      <tr><td><code>4</code></td><td>A lens calibration failed, or an imported calibration matched no camera or did not fit it; or a <code>--fleet-import</code> file, the <code>--drive-log</code> recording or the <code>--lidar-calib-folder</code> captures could not be read, or the <code>--dataset</code> could not be written.</td></tr>
+      <tr><td><code>5</code></td><td>With <code>--check</code>, a must requirement fails or cannot be evaluated.</td></tr>
     </table>
     <p>When several apply, the highest is returned.</p>
 

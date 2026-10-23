@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Vantage · Sensor rig planner for autonomous-driving data collection</title>
-<meta name="description" content="Vantage is a desktop app for designing the sensor rigs of autonomous-driving data-collection vehicles: place the cameras, lidars and radars on the vehicle, prove in simulation what they will record before any hardware is fitted, then calibrate the real cameras from their live streams and hand the calibration to the data pipeline.">
+<meta name="description" content="Vantage is a desktop app for designing the sensor rigs of autonomous-driving data-collection vehicles: place the cameras, lidars, radars, GNSS antennas and IMUs on the vehicle, prove in simulation what they will record before any hardware is fitted, then calibrate and verify the real rig and hand the calibration to the data pipeline.">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Vantage · Sensor rig planner for autonomous-driving data collection">
-<meta property="og:description" content="Design data-collection rigs of cameras, lidars and radars with exact lens models and occlusion, simulate what they will record before fitting the hardware, and calibrate the real cameras from their live streams.">
+<meta property="og:description" content="Design data-collection rigs of cameras, lidars, radars, GNSS and IMU with exact lens models and occlusion, simulate what they will record and what they need before fitting the hardware, then calibrate the real rig and check its recordings against the plan.">
 <meta property="og:image" content="https://sherin-sef-ai.github.io/Vantage/media/hero.jpg">
 <meta property="og:url" content="https://sherin-sef-ai.github.io/Vantage/">
 <meta name="twitter:card" content="summary_large_image">
@@ -26,6 +26,7 @@
     <div class="nav-links" id="nav-links">
       <a href="#features">Features</a>
       <a href="#multisensor">Lidar &amp; radar</a>
+      <a href="#build">Build</a>
       <a href="#studies">Studies</a>
       <a href="#calibration">Calibrate</a>
       <a href="#assistant">Assistant</a>
@@ -44,10 +45,11 @@
     <div class="eyebrow">Sensor rig planner · autonomous-driving data collection</div>
     <h1>Design <span class="nowrap">data-collection</span> rigs that record what your models need.</h1>
     <p class="lede">Vantage designs the sensor rigs of the vehicles that record training data for self-driving models.
-      Place the cameras, lidars and radars on the vehicle and prove in simulation what the rig will record, before any
-      hardware is fitted: what every lens sees, where the body blocks it, how many pixels land on the road, what each
-      lidar and radar reaches, and whether the recorder keeps up. Then calibrate the real cameras from their live
-      streams and hand the calibration to your data pipeline.</p>
+      Place the cameras, lidars, radars, GNSS antennas and IMU on the vehicle and prove in simulation what the rig will
+      record, before any hardware is fitted: what every lens sees, where the body blocks it, how many pixels land on the
+      road, what each lidar and radar reaches, whether the recorder and the power supply keep up, and what a drive with
+      it looks like to your pipeline. Then calibrate the real rig, check its recordings against the plan and hand the
+      calibration to your data pipeline.</p>
     <div class="cta">
       <a class="btn primary" href="#download"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>Download</a>
       <a class="btn" href="docs.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5"/></svg>Read the docs</a>
@@ -87,13 +89,13 @@
       <div class="step"><h3>Import the vehicle</h3><p>glTF, OBJ, STL, PLY, FBX or STEP. A wizard sorts out units, axes,
         wheels, glass and the zones where cameras may go.</p></div>
       <div class="step"><h3>Place the sensors</h3><p>Snap camera modules from the library onto the body, mirror them in
-        pairs and aim them; add lidars and radars; watch what the rig sees update as you go.</p></div>
+        pairs and aim them; add lidars, radars, GNSS antennas and an IMU; watch what the rig sees update as you go.</p></div>
       <div class="step"><h3>Simulate the recording</h3><p>Simulated camera images, coverage, pixel density, overlaps,
-        the 3D blind volume, lidar and radar reach, trigger timing and the data budget, before anything is bought or
-        drilled.</p></div>
-      <div class="step"><h3>Fit, calibrate, verify</h3><p>Calibrate each camera from its live stream, check every
-        installed camera against the plan, watch the streams' health, and export the calibration in your dataset's
-        format.</p></div>
+        the 3D blind volume, lidar and radar reach, trigger timing, the data and power budgets, the GNSS sky, sun glare
+        and a whole synthetic drive, checked against your requirements before anything is bought or drilled.</p></div>
+      <div class="step"><h3>Fit, calibrate, verify</h3><p>Print the brackets, calibrate each camera from its live
+        stream and each lidar to a camera, check the installed rig and its first recordings against the plan, follow
+        every vehicle of the fleet, and export the calibration in your dataset's format.</p></div>
     </div>
   </div>
 </section>
@@ -352,6 +354,156 @@
       </div>
     </article>
 
+    <div class="head" style="margin:72px 0 8px" id="build">
+      <div class="eyebrow">Before the rig is built</div>
+      <h2>Power, sky, sun and brackets, checked on the model.</h2>
+      <p>The rest of what decides whether a rig works on the road: whether the vehicle can power it, whether its GNSS
+        antennas see the sky and its INS knows its lever arms, which cameras will stare into the sun and which lenses
+        will be dirty, and the brackets that put each camera where the plan says.</p>
+    </div>
+
+    <article class="feature" id="power">
+      <div class="text">
+        <div class="eyebrow">Power budget</div>
+        <h3>What the rig draws, and whether the supply carries it</h3>
+        <p>Every camera, lidar, radar, GNSS antenna and INS on the rig, with the computer, recorder and switch, added
+          up steady and at switch-on. Vantage checks the DC-DC converter, each fused circuit and each power cable's
+          voltage drop, the alternator's margin while driving and how long an auxiliary battery runs the rig with the
+          engine off.</p>
+        <ul>
+          <li>On the sample's data rig with an INS and two antennas: 184 W steady and 237 W at switch-on, 200 W from the vehicle. That is 31 % of a 600 W converter, 490 W spare on the alternator and 4 hours on a 1 kWh battery.</li>
+          <li>Fuses sized for you (steady current within 80 %, the switch-on peak within the rating) or typed in: the compute circuit draws 5.75 A, so a 5 A fuse blows; on a 24 V bus the same circuit draws 2.9 A.</li>
+          <li>Power cables routed from the ECU, with the voltage drop at constant power against a 5 % limit and the device's minimum input, and the wire gauge that would fix it.</li>
+          <li>Library power figures are nominal and the peak factors typical: replace them with your units' datasheets. Exported as JSON and CSV; in batch mode with <code class="nowrap">--power-budget</code>.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/power.jpg" aria-label="The power budget page on the data rig: a 5 A fuse typed on the compute circuit turns it critical, then a 24 V bus halves the current and every check passes">
+            <source src="media/power.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature flip" id="gnss">
+      <div class="text">
+        <div class="eyebrow">GNSS and IMU</div>
+        <h3>Open sky for the antennas, lever arms for the INS</h3>
+        <p>Every GNSS antenna's sky is traced past the body, the rig and the other sensors, so you see what each mast and
+          lidar takes before the antenna is bolted on. The same page gives the dual-antenna heading baseline, the lever arms
+          your INS needs and how well each sensor's world pose will be known.</p>
+        <ul>
+          <li>A sky plot per antenna with every blocker named. With the sample's lidar raised on a mast, an antenna on the roof
+            keeps 98 % of the sky above 10°; clamped beside the mast it loses 10 % and is flagged for multipath.</li>
+          <li>Expected satellites assume satellites spread evenly over the sky (32 above the mask is a typical
+            multi-constellation figure), so read them as an indicator; multipath is a geometric rule, not a signal
+            simulation.</li>
+          <li>Heading baseline, direction and heading error from the INS's rated figure: 1.15 m gives 0.17° with a typical
+            0.1°-at-2 m unit. Lever arms come in the IMU and vehicle frames, plus a plain text file for the INS tool.</li>
+          <li>A pose error budget per camera, lidar and radar (about 32 mm with a typical 2 cm RTK INS). Exported as JSON,
+            text and PNG; in batch mode with <code class="nowrap">--gnss</code>.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/gnss.jpg" aria-label="Adding two GNSS antennas and a dual-antenna INS to the data rig, the GNSS and IMU page with their open sky and the heading baseline, then one antenna moved beside the lidar's mast losing a tenth of its sky with multipath flagged">
+            <source src="media/gnss.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature" id="exposure">
+      <div class="text">
+        <div class="eyebrow">Sun glare and dirt</div>
+        <h3>Which cameras look into the sun, and when</h3>
+        <p>Give the place, the dates, the driving hours and the route's headings. Vantage puts the sun at every sampled
+          time and heading through each camera's real lens and the body, and shows how much of the driving time it is in
+          the image, by month, hour and heading. A heuristic score says which lenses and sensor windows wheel spray, the
+          rear wake and insects will dirty.</p>
+        <ul>
+          <li>Sun position from the NOAA algorithm, checked against published examples to 0.003°. Clear sky and a flat horizon are assumed.</li>
+          <li>On the sample in Munich, the front and rear cameras have the sun in the image 7.2 % of a year's driving (264 h), mostly November to February in the morning and afternoon; pitched 10° further down, 3.0 %. On an east–west route, 9.7 %.</li>
+          <li>A month × hour heatmap, the sky seen from each camera (its field, the body, where the sun goes), the sun's path through the image on the equinox and the solstices, and the flare risk just outside the image.</li>
+          <li>A dirt and spray score for each lens, lidar window and radar fascia (a heuristic with stated weights), with cleaning advice and a map of the body. Exported as JSON and PNG; in batch mode with <code class="nowrap">--exposure</code>.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/exposure.jpg" aria-label="The sun glare and dirt page on the sample's data rig: the table of sun-in-image shares, an east–west route typed as headings raising the front and rear cameras' glare, a quarter camera's month-by-hour heatmap and sky chart, then the dirt map of the body">
+            <source src="media/exposure.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature flip" id="brackets">
+      <div class="text">
+        <div class="eyebrow">Mount brackets</div>
+        <h3>A printed bracket that holds each camera where you planned it</h3>
+        <p>For every camera Vantage designs a 3D-printable bracket: a plate on the housing, a solid support and a base
+          fitted to the panel under it, or a clamp on a rig tube. It sizes them so the optical centre and the angles land
+          on the plan, which it then measures back from the finished mesh.</p>
+        <ul>
+          <li>Most of the sample's cameras sit 15–22 mm off the body: a 44 mm housing would go into the panel. The page
+            says a printed bracket needs 41–47 mm, and Move out puts the camera there; a mirrored partner follows.</li>
+          <li>Measured back from the mesh, the optical centre lands within 0.01 mm of the plan and the plate within
+            0.01°. Every STL is checked closed and consistently wound: about 160,000 triangles at the 0.35 mm grid.</li>
+          <li>Checks for the share of the image the bracket blocks (the camera's own pixel rays traced against it), the
+            thinnest wall, the lever arm and gaps under the base on a curved panel. Stiffness is a beam estimate and the
+            VHB pad follows 3M's rule of thumb.</li>
+          <li>Exported as an STL per camera, JSON with each bracket's frame and checks, and a dimensioned PNG sheet; in
+            batch mode with <code class="nowrap">--brackets</code>.</li>
+        </ul>
+        <p class="note">The housing is modelled as a box of the module's size, with the optical centre at the lens front.
+          Check your module's drawing and hole pattern before printing.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/brackets.jpg" aria-label="The mount brackets page on the sample: four cameras need more standoff, the left mirror camera is moved out to 45 mm, the brackets are generated, one is orbited in the preview, and its checks pass">
+            <source src="media/brackets.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature" id="requirements">
+      <div class="text">
+        <div class="eyebrow">Requirements scorecard</div>
+        <h3>Signed off against what the programme asked for</h3>
+        <p>Write the programme's requirements as checks on Vantage's own studies, such as "pedestrians resolved to
+          40 m in every sector", "8 h of driving per disk set" or "camera–lidar misalignment at most 1 ms", and get
+          one verdict for the rig. Every value comes from the study that computes it, with its figures one click away.
+          A must requirement that fails fails the rig.</p>
+        <ul>
+          <li>Add from the plan turns what is already set into requirements. On the sample's data rig with an INS that
+            is 24 of them, from the perception range's required ranges to the recording shift, the power runtime and
+            the GNSS sky. Templates add more, and the project brief's phrasings with a number and a unit are proposed
+            for review, never added by themselves.</li>
+          <li>Run computes each study once, in the background: 25 requirements over 10 studies in under 2 s. On the
+            sample, one trigger line leaves a camera 12.4 ms off the lidar sweep; the sync plan's suggested lines bring
+            that to 0.94 ms, and the requirement passes.</li>
+          <li>A design-review pack as PDF: the verdict, the scorecard, a page per study with its figures and plot, the
+            Issues list, and every study's assumptions. JSON and CSV come with it.</li>
+          <li>In CI, <code class="nowrap">--check</code> writes the same files and exits with 5 when a must
+            requirement fails or cannot be evaluated.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/requirements.jpg" aria-label="The requirements scorecard: requirements added from the plan and a template, a run with its progress, the verdict tiles and pass/fail chips, the evidence of a failing camera–lidar sync requirement, then the suggested trigger lines applied and the requirement passing">
+            <source src="media/requirements.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
     <div class="head" style="margin:72px 0 8px">
       <div class="eyebrow">Also for production surround-view systems</div>
       <h2>The same engine, for the in-car display.</h2>
@@ -526,6 +678,78 @@
         </div>
       </div>
     </article>
+
+    <article class="feature flip" id="lidarcalib">
+      <div class="text">
+        <div class="eyebrow">Lidar–camera calibration</div>
+        <h3>Where the lidar really sits, from a board both sensors see</h3>
+        <p>Hold a printed checkerboard up at the poses Vantage plans. The camera finds its corners through its real lens
+          model; the lidar sees the board's plane, its edge and its squares. One solve gives the lidar's pose relative to
+          the camera, and so in the vehicle, against the plan and with its uncertainty.</p>
+        <ul>
+          <li>A pose plan that places and turns each board so that together they pin all six degrees of freedom: on the sample, the board planes alone would put the roof lidar within about ±0.9 / ±1.7 / ±3.4 mm (a prediction from the points expected on each board at 15 mm range noise).</li>
+          <li>Try it on synthetic captures through the real lens and the lidar's beams: a lidar mounted 15 mm forward, 8 mm up and 0.6° turned measures 15.0 mm, 10.4 mm and 0.61° off the plan, 2.4 mm and 0.023° from the true mounting, with a 1σ of ±2.1 mm.</li>
+          <li>Real image and point-cloud pairs from a folder: PCD, KITTI and nuScenes .bin, PLY, NumPy, CSV.</li>
+          <li>The lidar's points on the image through the plan and through the solve. Boards that all lean the same way are reported as leaving a direction undetermined, not given a number. Apply the measured pose or keep it as a new variant; in batch mode with <code class="nowrap">--lidar-calib</code>.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/lidarcalib.jpg" aria-label="The lidar–camera calibration page: the planned board poses from above, a mounting error typed in, the synthetic capture solved, the lidar's points on the camera image through the plan and through the solve, then the measured offset and its uncertainty">
+            <source src="media/lidarcalib.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature" id="drivelog">
+      <div class="text">
+        <div class="eyebrow">Drive-log check</div>
+        <h3>The recorded drive, checked against the plan</h3>
+        <p>Open a recorded drive, a ROS 2 bag or a nuScenes folder, and Vantage checks it against the rig you planned: every
+          stream there at its rate, the cameras triggered in step with the lidar sweep, and the lidar points landing on the
+          right pixels. The log is read once and never loaded whole, so long drives are fine.</p>
+        <ul>
+          <li>Streams: rate, drops, gaps, jitter, latency and image size per sensor, with a timeline of the gaps. On a synthetic drive of the sample's data rig with faults put in, it finds one camera's 4 dropped frames (9.1 %) and another camera's missing topic.</li>
+          <li>Sync: the lidar's measured phase lock from its points' own times, and each camera's own trigger error, apart from the lidar's. In the same drive, the camera triggered 7 ms late reads 7.0 ms, the others 0.0 ms.</li>
+          <li>Rotations: lidar depth edges are matched to image edges to find each camera's rotation relative to the lidar, with a confidence. The front camera, mounted 0.6° off in yaw, comes out at +0.53°, the others within 0.1°. This is an estimate from edge alignment; translation is not measured this way.</li>
+          <li>Apply the confident rotations as a corrected variant in one step. Exported as JSON, CSV and PNG overlays; in batch mode with <code class="nowrap">--drive-log</code>.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/drivelog.jpg" aria-label="The drive-log check on a recorded drive of the sample's data rig: a camera's dropped frames on the timeline, a camera triggered 7 ms late in the sync table, and the front camera's lidar points moving onto the street with the rotation correction">
+            <source src="media/drivelog.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature flip" id="fleet">
+      <div class="text">
+        <div class="eyebrow">Fleet</div>
+        <h3>The same rig on every vehicle, month after month</h3>
+        <p>A collection programme builds one rig on several vehicles and calibrates them again and again. Import each
+          vehicle's installation checks and calibrations, and Vantage compares every sensor with the plan, follows it over
+          time, and names the vehicle that differs from the rest, before a loose bracket spoils a dataset.</p>
+        <ul>
+          <li>Reads installation check reports, Vantage's extrinsics in any export frame and unit, nuScenes calibration tables and Kalibr camchains (camera-to-camera only, so a Kalibr chain is placed on the plan by a rigid fit). Tags are matched to the plan; unknown ones are reported.</li>
+          <li>A matrix of vehicles × sensors: each sensor's latest offset against the tolerance (10 mm / 1° by default), as OK, adjust or re-mount.</li>
+          <li>Drift: a straight line through the dated records, counted only when it is statistically significant, with the days until it leaves the tolerance. In the clip's simulated fleet, a front camera pitching down 0.2° a month is found and crosses the band. A trend is a warning, not a forecast.</li>
+          <li>A vehicle that stands out from the fleet median is named (a robust z-score: here a mirror camera mounted 2° yawed on one of five). When the whole fleet is built off the plan, one click makes an as-built variant from the fleet median. Exported as JSON, CSV and PNG; in batch mode with <code class="nowrap">--fleet</code>.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/fleet.jpg" aria-label="The fleet page: five vehicles by twelve sensors coloured against the tolerance, a click on the vehicle whose mirror camera is yawed 2° off the fleet, the findings, then a camera pitching down 0.2° a month and its drift chart crossing the tolerance band">
+            <source src="media/fleet.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
   </div>
 </section>
 
@@ -569,7 +793,7 @@
     <div class="head">
       <div class="eyebrow">Export</div>
       <h2>Hand the design to the people and machines that need it.</h2>
-      <p>Twenty-eight formats, each with a live preview. Units, angles and the coordinate frame are chosen per export, and
+      <p>Thirty-four formats, each with a live preview. Units, angles and the coordinate frame are chosen per export, and
         every file says which convention it uses.</p>
     </div>
     <article class="feature flip" id="datasets" style="padding-top:0;border-top:0">
@@ -579,8 +803,8 @@
         <p>The calibration your data pipeline reads, written straight from the design or from the measured as-built
           poses, in the vehicle frame and origin you choose.</p>
         <ul>
-          <li><b>nuScenes</b> <code>sensor.json</code> and <code>calibrated_sensor.json</code>: cameras, lidars and radars to ego, quaternions w first.</li>
-          <li><b>KITTI</b> <code>calib_cam_to_cam.txt</code>, every sensor's pose in the vehicle frame, and <code>calib_velo_to_cam.txt</code> with a lidar.</li>
+          <li><b>nuScenes</b> <code>sensor.json</code> and <code>calibrated_sensor.json</code>: cameras, lidars and radars to ego, quaternions w first; loaded and projected by the nuScenes devkit through the sample dataset.</li>
+          <li><b>KITTI</b> <code>calib_cam_to_cam.txt</code>, every sensor's pose in the vehicle frame, <code>calib_velo_to_cam.txt</code> with a lidar and <code>calib_imu_to_velo.txt</code> with an IMU.</li>
           <li><b>ROS</b> <code>camera_info</code> per camera, and a <b>Kalibr</b> camchain that Vantage also reads back.</li>
           <li>Fisheye lenses are written as Kannala–Brandt (equidistant), and each file says how its format's tools treat that.</li>
         </ul>
@@ -594,13 +818,44 @@
         </div>
       </div>
     </article>
+
+    <article class="feature" id="dataset">
+      <div class="text">
+        <div class="eyebrow">Sample dataset</div>
+        <h3>A drive your pipeline can ingest before the rig exists</h3>
+        <p>Vantage drives the planned rig down a synthetic street and records what each sensor would: the cameras
+          through their real lenses at the sync plan's trigger times, the lidar column by column as it spins, the radars,
+          GNSS and IMU. The drive is written as a nuScenes version folder and a ROS 2 bag, so ingestion, labelling tools
+          and training loaders can be tested against the real sensor set, frames, timing and calibration.</p>
+        <ul>
+          <li>On the sample's data rig, an 8 s drive at 30 km/h gives 478 images, 80 lidar sweeps and 765 radar scans,
+            with 615 annotated boxes on 16 keyframes: about 1.5 minutes and 270 MB.</li>
+          <li>The nuScenes devkit loads it as it is. On rectified images its lidar-to-image projection lands within
+            0.002 px of Vantage's own. The calibration is the nuScenes export's.</li>
+          <li>Lidar sweeps are not motion compensated, as a driver delivers them. Boxes carry visibility and lidar and
+            radar point counts.</li>
+          <li>The bag has images, camera_info, points, detections, IMU, GNSS fixes, /tf and ground-truth markers, with the
+            URDF's frame ids; in batch mode with <code class="nowrap">--dataset</code>.</li>
+        </ul>
+        <p class="note">The scene is synthetic: simple shapes and typical material reflectivities, one sun, no weather.
+          Use it to test a pipeline, not to train a model.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/dataset.jpg" aria-label="The sample dataset page: the synthetic drive previewed at two instants, six camera images and the lidar top view with ground-truth boxes, then a 2-second drive written as a nuScenes folder and a ROS 2 bag">
+            <source src="media/dataset.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
     <div class="grid3">
       <div class="card"><h4>Datasets</h4><ul><li><span>nuScenes sensor calibration</span><span>JSON</span></li><li><span>KITTI calibration</span><span>TXT</span></li><li><span>ROS camera_info</span><span>YAML ×N</span></li><li><span>Kalibr camchain</span><span>YAML</span></li></ul></div>
       <div class="card"><h4>Calibration and robotics</h4><ul><li><span>OpenCV fisheye calibration</span><span>YAML ×N</span></li><li><span>ROS 2 URDF + static TF</span><span>URDF, PY</span></li><li><span>Jetson camera config</span><span>JSON</span></li></ul></div>
-      <div class="card"><h4>Extrinsics</h4><ul><li><span>Camera, lidar and radar poses</span><span>JSON</span></li><li><span>Camera, lidar and radar poses</span><span>YAML</span></li><li><span>Camera, lidar and radar poses</span><span>CSV</span></li></ul></div>
-      <div class="card"><h4>Documents</h4><ul><li><span>Mount sheet</span><span>PDF</span></li><li><span>Design report</span><span>HTML, PDF</span></li><li><span>Blind volume</span><span>JSON, OBJ</span></li><li><span>Perception range</span><span>JSON, PNG</span></li><li><span>Lidar and radar coverage</span><span>JSON, PNG</span></li><li><span>Sync and timing plan</span><span>JSON, PNG</span></li><li><span>Recording budget</span><span>JSON, CSV</span></li></ul></div>
+      <div class="card"><h4>Extrinsics</h4><ul><li><span>Every sensor's pose</span><span>JSON</span></li><li><span>Every sensor's pose</span><span>YAML</span></li><li><span>Every sensor's pose</span><span>CSV</span></li></ul></div>
+      <div class="card"><h4>Documents</h4><ul><li><span>Mount sheet</span><span>PDF</span></li><li><span>Design report</span><span>HTML, PDF</span></li><li><span>Blind volume</span><span>JSON, OBJ</span></li><li><span>Perception range</span><span>JSON, PNG</span></li><li><span>Lidar and radar coverage</span><span>JSON, PNG</span></li><li><span>Sync and timing plan</span><span>JSON, PNG</span></li><li><span>Recording budget</span><span>JSON, CSV</span></li><li><span>Power budget</span><span>JSON, CSV</span></li><li><span>GNSS and IMU</span><span>JSON, TXT, PNG</span></li><li><span>Sun glare and dirt</span><span>JSON, PNG</span></li><li><span>Requirements and review pack</span><span>JSON, CSV, PDF</span></li><li><span>Fleet</span><span>JSON, CSV, PNG</span></li></ul></div>
       <div class="card"><h4>Surround view</h4><ul><li><span>Bird's-eye remap tables</span><span>NPZ, BIN</span></li><li><span>3D surround-view bowl</span><span>OBJ, NPZ, PNG</span></li><li><span>Parking guidelines</span><span>JSON, PNG ×N</span></li><li><span>Objects in the stitched view</span><span>JSON, PNG</span></li><li><span>Reference stitcher</span><span>C++, PY</span></li></ul></div>
-      <div class="card"><h4>Images and CAD</h4><ul><li><span>Viewport</span><span>PNG</span></li><li><span>Bird's-eye view</span><span>PNG</span></li><li><span>All camera views</span><span>PNG ×N</span></li><li><span>Mount points</span><span>DXF</span></li><li><span>Mount points</span><span>STEP</span></li></ul></div>
+      <div class="card"><h4>Images and CAD</h4><ul><li><span>Viewport</span><span>PNG</span></li><li><span>Bird's-eye view</span><span>PNG</span></li><li><span>All camera views</span><span>PNG ×N</span></li><li><span>Mount points</span><span>DXF</span></li><li><span>Mount points</span><span>STEP</span></li><li><span>Mount brackets</span><span>STL ×N</span></li></ul></div>
     </div>
     <div class="tiles">
       <figure>
