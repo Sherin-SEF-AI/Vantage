@@ -7,6 +7,12 @@ name = "vantage"
 dynamic = ["version"]
 description = "Sensor rig planner for autonomous-driving data collection: place cameras on a vehicle, prove what they record, calibrate them from live streams"
 readme = "README.md"
+license = { text = "GPL-3.0-or-later" }
+classifiers = [
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+]
 requires-python = ">=3.10"
 dependencies = [
     "PyQt6>=6.5",
@@ -16,6 +22,7 @@ dependencies = [
     "PyYAML>=6.0",
     "opencv-python>=4.7",
     "certifi",
+    "tzdata; sys_platform == 'win32'",     # named time zones (sun glare studies): Windows has no system database
 ]
 
 [project.optional-dependencies]
@@ -25,7 +32,10 @@ bags = ["zstandard", "lz4"]       # read and write compressed ROS 2 bags (MCAP c
 test = ["pytest"]
 
 [project.urls]
+Homepage = "https://sherin-sef-ai.github.io/Vantage/"
 Source = "https://github.com/Sherin-SEF-AI/Vantage"
+Releases = "https://github.com/Sherin-SEF-AI/Vantage/releases"
+Changelog = "https://github.com/Sherin-SEF-AI/Vantage/blob/main/CHANGELOG.md"
 
 # `vantage` works everywhere (window, batch mode, --self-test); `vantage-gui` starts the window without a console
 # window on Windows, where a console launcher would otherwise open one next to the app.

@@ -12,7 +12,7 @@ from dataclasses import dataclass, field, asdict
 
 import numpy as np
 
-from .lens import Module, Lens, builtin_modules, builtin_lenses
+from .lens import Module, Lens, builtin_modules, builtin_lenses, merge_builtins
 from .mesh import Mesh, Part, Zone
 from .sensors import SensorModel, builtin_sensor_models, KINDS as SENSOR_KINDS
 from . import credentials as _credentials
@@ -327,6 +327,9 @@ class AnalysisSettings:
     lidar_calib: dict = field(default_factory=dict)   # lidar-camera calibration (core.lidar_calib)
     drivelog: dict = field(default_factory=dict)      # drive-log check (core.drivelog)
     requirements: dict = field(default_factory=dict)  # requirements scorecard (core.requirements)
+    housings: dict = field(default_factory=dict)      # sensor housings as camera occluders (core.housings)
+    asbuilt: dict = field(default_factory=dict)       # as-built check against a recording (core.asbuilt)
+    suspension: dict = field(default_factory=dict)    # suspension and loads for the load cases (core.suspension)
 
     def to_dict(self):
         return asdict(self)
@@ -740,8 +743,9 @@ class Project:
                 fp = np.clip(fp, 0, len(parts) - 1)
                 veh.mesh = Mesh(npz['vertices'].astype(np.float64), npz['faces'], fp, parts, npz['face_zone'], zones)
         p.vehicle = veh
-        p.modules = {k: Module.from_dict(m) for k, m in data.get('modules', {}).items()} or p.modules
-        p.lenses = {k: Lens.from_dict(l) for k, l in data.get('lenses', {}).items()} or p.lenses
+        # the built-in modules and lenses stay available in older projects; a saved entry (edited or custom) wins
+        p.modules, p.lenses = merge_builtins({k: Module.from_dict(m) for k, m in (data.get('modules') or {}).items()},
+                                             {k: Lens.from_dict(l) for k, l in (data.get('lenses') or {}).items()})
         # the built-in sensors stay available in older projects; a saved model (edited or custom) wins
         p.sensor_models.update({k: SensorModel.from_dict(m) for k, m in (data.get('sensor_models') or {}).items()})
         p.variants = [Variant.from_dict(v) for v in data.get('variants', [])]

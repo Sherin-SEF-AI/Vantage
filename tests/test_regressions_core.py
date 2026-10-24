@@ -1,4 +1,5 @@
 """Regression tests for bugs found in the core engine, file I/O and exports."""
+import copy
 import json
 import math
 import xml.etree.ElementTree as ET
@@ -444,3 +445,16 @@ def test_snapshot_keeps_its_own_vehicle_fields(sample):
     p.vehicle.wheel_centres['FL'] = [9.0, 9.0, 9.0]
     assert q.vehicle.occluder_target != 1234 and q.vehicle.wheel_centres['FL'] != [9.0, 9.0, 9.0]
     assert q.vehicle.mesh is p.vehicle.mesh
+
+
+def test_frustum_cache_survives_more_poses_than_it_keeps():
+    """A drag through more than 200 camera poses cleared the cache and then read the pose just stored (KeyError in
+    the 3D view's paint)."""
+    from vantage.ui.scene import FrustumCache
+    p = samples.tigor_sample_project()
+    cam = copy.deepcopy(p.variant.cameras[0])
+    fc = FrustumCache()
+    for k in range(450):
+        cam.yaw = -80.0 + 0.1 * k
+        rim, rays, axis = fc.get(p, cam)
+        assert np.allclose(rays[0, 0], cam.pos()) and len(fc.d) <= 200

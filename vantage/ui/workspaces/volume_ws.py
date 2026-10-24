@@ -109,8 +109,9 @@ class VolumePage(QWidget):
         ll.addLayout(top)
         ll.addWidget(hline())
         ll.addWidget(label('The space around the vehicle, from the ground up, that no camera sees: the same test as the '
-                           'ground analysis (lens model, sensor edges, body occlusion) at every height. An object standing '
-                           'on the ground is detected when a camera sees any part of it.', muted=True, small=True, wrap=True))
+                           'ground analysis (lens model, sensor edges, the body, rig and housings) at every height. An '
+                           'object standing on the ground is detected when a camera sees any part of it.', muted=True,
+                           small=True, wrap=True))
         grid = QGridLayout()
         grid.setVerticalSpacing(2)
         self.fields = {}

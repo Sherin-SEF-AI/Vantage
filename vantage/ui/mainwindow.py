@@ -48,7 +48,7 @@ PAGE_CLASSES = {
     'exposure': ('exposure_ws', 'ExposurePage'), 'fleet': ('fleet_ws', 'FleetPage'),
     'brackets': ('brackets_ws', 'BracketsPage'), 'dataset': ('dataset_ws', 'DatasetPage'),
     'drivelog': ('drivelog_ws', 'DriveLogPage'), 'requirements': ('requirements_ws', 'RequirementsPage'),
-    'lidar_calib': ('lidarcalib_ws', 'LidarCalibPage'),
+    'lidar_calib': ('lidarcalib_ws', 'LidarCalibPage'), 'asbuilt': ('asbuilt_ws', 'AsBuiltPage'),
 }
 
 
@@ -138,6 +138,7 @@ class MainWindow(QMainWindow):
         'drivelog': (),
         'requirements': (),
         'lidar_calib': (),
+        'asbuilt': (),
     }
 
     def set_page(self, name):
@@ -430,6 +431,11 @@ class MainWindow(QMainWindow):
         A('run', 'Run now', self.ctx.analysis.run_now, 'F5', 'refresh', category='Analysis')
         A('live', 'Live analysis', self.set_live, None, None, True, 'Analysis', checked=self.store.project.analysis.live)
         A('roi', 'Region of interest…', lambda: self.focus_roi(), None, 'roi', category='Analysis')
+        from ..core import housings as HS
+        A('housings', 'Housings block cameras', self.set_housings, None, 'occlusion', True, 'Analysis',
+          tip='Sensor housings and the other cameras\' modules block each camera (ground coverage, blind area, images, '
+              'camera light). Off: only the body and the rig block.',
+          checked=HS.settings_of(self.store.project).enabled)
         for cm in (5, 2, 1):
             A(f'res_{cm}', f'{cm} cm', None, None, None, True, 'Analysis ▸ Ground resolution', checked=cm == 5)
         g9 = QActionGroup(self)
@@ -448,7 +454,9 @@ class MainWindow(QMainWindow):
         A('thresholds', 'Density thresholds…', lambda: self.focus_roi(), None, 'density', category='Analysis')
         A('tolerance', 'Tolerance study…', lambda: self.set_page('tolerance'), None, 'tolerance', category='Analysis')
         A('sensitivity', 'Sensitivity…', lambda: self.set_page('tolerance'), None, 'tolerance', category='Analysis')
-        A('load_cases', 'Load cases…', self.load_cases, None, 'axle', category='Analysis')
+        A('load_cases', 'Load cases…', self.load_cases, None, 'axle', category='Analysis',
+          tip='Suspension, loads and load cases: corner drops, pitch and roll, every camera\'s move against the '
+              'calibration load, and the ground figures')
         A('blind_volume', 'Blind volume…', lambda: self.set_page('volume'), None, 'blind', category='Analysis',
           tip='Where around the vehicle something can stand unseen by every camera, in 3D')
         A('perception_range', 'Perception range…', lambda: self.set_page('perception'), None, 'target',
@@ -495,6 +503,9 @@ class MainWindow(QMainWindow):
         A('drive_log', 'Drive-log check…', lambda: self.set_page('drivelog'), None, 'timeline', category='Calibrate',
           tip='Check a recorded drive (ROS 2 bag or nuScenes folder) against the plan: streams and drops, data rate, '
               'sync against the lidar sweep, and each camera\'s rotation from lidar-image edge alignment')
+        A('asbuilt', 'As-built check…', lambda: self.set_page('asbuilt'), None, 'compare', category='Calibrate',
+          tip='Check a recording of the real rig against the plan: each camera\'s view of the vehicle against the '
+              'simulated one, the pose correction that lines them up, and whether the plan\'s coverage still holds')
         A('fleet', 'Fleet…', lambda: self.set_page('fleet'), None, 'fleet', category='Calibrate',
           tip='The same rig on every vehicle: measured poses against the plan, drift over months, and the vehicles '
               'that differ from the rest of the fleet')
@@ -623,7 +634,7 @@ class MainWindow(QMainWindow):
         la.addSeparator()
         la.addActions([a['compare'], a['optimise']])
         an = menu('Analysis')
-        an.addActions([a['run'], a['live']])
+        an.addActions([a['run'], a['live'], a['housings']])
         an.addSeparator()
         an.addAction(a['roi'])
         sub(an, 'Ground resolution', ['res_5', 'res_2', 'res_1'])
@@ -645,7 +656,7 @@ class MainWindow(QMainWindow):
         cb.addSeparator()
         cb.addActions([a['lens_calib'], a['calib_import'], a['calib_export'], a['calib_clear']])
         cb.addSeparator()
-        cb.addActions([a['install'], a['lidar_calib'], a['live_rig'], a['drive_log'], a['fleet']])
+        cb.addActions([a['install'], a['lidar_calib'], a['live_rig'], a['drive_log'], a['asbuilt'], a['fleet']])
         ex = menu('Export')
         ex.addAction(a['export'])
         ex.addSeparator()
@@ -979,6 +990,12 @@ class MainWindow(QMainWindow):
                 a.setChecked(True)
         if self.actions_by_id['live'].isChecked() != an.live:
             self.actions_by_id['live'].setChecked(an.live)
+        from ..core import housings as HS
+        on = HS.settings_of(self.store.project).enabled
+        if self.actions_by_id['housings'].isChecked() != on:
+            self.actions_by_id['housings'].blockSignals(True)
+            self.actions_by_id['housings'].setChecked(on)
+            self.actions_by_id['housings'].blockSignals(False)
 
     def _on_project_replaced(self):
         self.ctx.isolate.clear()
@@ -1320,6 +1337,15 @@ class MainWindow(QMainWindow):
         if on:
             self.ctx.analysis.request(force=True)
 
+    def set_housings(self, on):
+        from ..core import housings as HS
+        if HS.settings_of(self.store.project).enabled == bool(on):
+            return
+        d = dict(self.store.project.analysis.housings or {}, enabled=bool(on))
+        self.store.edit('analysis', lambda p: setattr(p.analysis, 'housings', d),
+                        'Housings block cameras' if on else 'Housings do not block cameras')
+        self.ctx.analysis.request(force=True)
+
     def set_cell(self, cell):
         self.store.edit('analysis', lambda p: setattr(p.analysis, 'cell_m', cell), f'Ground resolution {cell * 100:.0f} cm')
         self.ctx.analysis.request(force=True)
@@ -1474,12 +1500,21 @@ class MainWindow(QMainWindow):
                 act.setChecked(bool(c and c.module_id == mid))
                 act.setEnabled(bool(c))
             return
-        for lid, l in p.lenses.items():
-            mid = l.module_id or (c.module_id if c else next(iter(p.modules)))
-            act = menu.addAction(f'{l.name} · {l.label}' if l.label else l.name, lambda mid=mid, lid=lid: ops.set_lens(self.ctx, list(st.sel_cams), mid, lid))
-            act.setCheckable(True)
-            act.setChecked(bool(c and c.lens_id == lid))
-            act.setEnabled(bool(st.sel_cams))
+        # each module's lenses in a submenu (a lens for any module sits under the selected camera's module)
+        here = c.module_id if c else next(iter(p.modules))
+        for mo_id, mo in p.modules.items():
+            mine = [(lid, l) for lid, l in p.lenses.items() if (l.module_id or here) == mo_id]
+            if not mine:
+                continue
+            sub = menu.addMenu(f'{mo.name} · {mo.sensor}'.strip(' ·'))
+            sub.setToolTipsVisible(True)
+            for lid, l in mine:
+                act = sub.addAction(f'{l.name} · {l.label}' if l.label else l.name,
+                                    lambda mid=mo_id, lid=lid: ops.set_lens(self.ctx, list(st.sel_cams), mid, lid))
+                act.setToolTip(l.summary())
+                act.setCheckable(True)
+                act.setChecked(bool(c and c.lens_id == lid and c.module_id == mo_id))
+                act.setEnabled(bool(st.sel_cams))
         menu.addSeparator()
         menu.addAction('Edit module…', lambda: self.edit_module(c.module_id, c.lens_id) if c else None)
 

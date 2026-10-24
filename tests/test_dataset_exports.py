@@ -257,13 +257,15 @@ def test_kitti_layout(rig, exported):
         assert raw[f'DISTORTION_MODEL_{n}'] == _model_of(q, c)
         assert f'DISTORTION_MODEL_{n}' not in data                     # pykitti skips it
         K = data[f'K_{n}'].reshape(3, 3)
-        assert np.allclose(data[f'P_rect_{n}'].reshape(3, 4), np.c_[K, np.zeros(3)])
-        assert np.allclose(data[f'R_rect_{n}'], np.eye(3).ravel()) and np.allclose(data[f'S_rect_{n}'], [1920, 1536])
         R = data[f'R_{n}'].reshape(3, 3)
+        # KITTI's P_rect_xx projects (rectified) camera 00 coordinates into rectified image xx: K_xx [R_xx | T_xx]
+        assert np.allclose(data[f'P_rect_{n}'].reshape(3, 4), K @ np.c_[R, data[f'T_{n}']], rtol=1e-6, atol=1e-3)
+        assert np.allclose(data[f'R_rect_{n}'], np.eye(3).ravel()) and np.allclose(data[f'S_rect_{n}'], [1920, 1536])
         assert np.allclose(R @ R.T, np.eye(3), atol=1e-5) and math.isclose(np.linalg.det(R), 1.0, abs_tol=1e-5)
     assert np.allclose(data['R_00'], np.eye(3).ravel()) and np.allclose(data['T_00'], 0)
+    assert np.allclose(data['P_rect_00'].reshape(3, 4), np.c_[data['K_00'].reshape(3, 3), np.zeros(3)])
     readme = (out / 'kitti/README.txt').read_text('utf-8')
-    assert 'radtan' in readme and 'equidistant' in readme
+    assert 'radtan' in readme and 'equidistant' in readme and 'cv2.fisheye.initUndistortRectifyMap' in readme
 
 
 def test_kitti_reprojects_like_the_app(rig, exported):
@@ -302,6 +304,9 @@ def test_camera_info_reprojects_like_the_app(rig, exported):
         assert len(D) == doc['distortion_coefficients']['cols'] == (5 if _model_of(q, c) == 'plumb_bob' else 4)
         assert np.allclose(np.array(doc['rectification_matrix']['data']).reshape(3, 3), np.eye(3))
         assert np.allclose(np.array(doc['projection_matrix']['data']).reshape(3, 4), np.c_[K, np.zeros(3)])
+        # the keys camera_calibration_parsers writes after P
+        assert doc['binning_x'] == doc['binning_y'] == 0 and doc['roi'] == {
+            'x_offset': 0, 'y_offset': 0, 'height': 0, 'width': 0, 'do_rectify': False}
         _, Pc, uv_app = _app_view(q, c)
         err = np.linalg.norm(_project(Pc, K, D, doc['distortion_model']) - uv_app, axis=1)
         assert err.max() < TOL_PX, (c.tag, err.max())
@@ -322,6 +327,7 @@ def test_kalibr_chain_reprojects_like_the_app(rig, exported):
         assert d['rostopic'] == f'/{c.tag.lower()}/image_raw'
         assert d['distortion_model'] == ('radtan' if _model_of(q, c) == 'plumb_bob' else 'equidistant')
         assert all(0 <= j < len(cams) and j != i for j in d['cam_overlaps'])
+        assert all(i in doc[f'cam{j}']['cam_overlaps'] for j in d['cam_overlaps'])      # overlap is mutual
         P_n, Pc_app, uv_app = _app_view(q, c)
         if i:
             T = np.array(d['T_cn_cnm1'])

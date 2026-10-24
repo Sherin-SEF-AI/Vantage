@@ -1,4 +1,5 @@
-"""Simulated camera images: real lens model, body occlusion from the cube map, ground grid, ROI and seams."""
+"""Simulated camera images: real lens model, occlusion by the body, rig and housings from the cube map, ground grid,
+ROI and seams."""
 from __future__ import annotations
 
 import math

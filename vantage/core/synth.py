@@ -1,7 +1,10 @@
-"""Synthetic camera captures: what a mounted camera would record of the floor, the calibration boards and the body.
+"""Synthetic camera captures: what a mounted camera would record of the floor, the calibration boards, the body and
+the rig's own sensor and camera housings.
 
 Used to test the installation check and the stitching pipeline end to end, and as a stand-in when no real
-captures are loaded. Pure numpy; the lens model, occlusion and target layout are the same as the analysis.
+captures are loaded. Pure numpy; the lens model, occlusion (body, rig and housings: the engine's cube maps) and
+target layout are the same as the analysis. Housings are drawn as dark plastic and metal (core.housings.GREY / RGB)
+lit by the occlusion module's light, so they read as the rig's hardware rather than the body.
 """
 from __future__ import annotations
 
@@ -10,12 +13,14 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from .housings import GREY as HOUSING_GREY, RGB as HOUSING_RGB, tone as housing_tone
 from .lens import resolve, Intrinsics
 from .mathutil import rot_zyx, BODY_TO_OPTICAL
 from .project import Project, Camera, Target
 
 BOARD_MARGIN = 0.05        # white border around a printed board, metres
-NEAR_CLIP = 0.05           # the lens protrudes from its housing: body surface closer than this is not seen
+NEAR_CLIP = 0.05           # the lens protrudes from its module: body surface closer than this is not seen (housings
+                           # of other sensors and cameras are, however close)
 
 _rays = {}
 
@@ -91,10 +96,15 @@ def render_capture(project: Project, engine, cam: Camera, w=None, h=None, pose=N
     ground = valid & np.isfinite(tg) & (tg < 60)
     body_d = np.full(len(dw), np.inf)
     shade = np.zeros(len(dw), np.uint8)
+    hid = np.full(len(dw), -1, np.int16)
+    cube = None
     if engine.vehicle_geom(project) is not None:
-        body_d, shade = engine.cube(pos).lookup(dw)
-    body = valid & np.isfinite(body_d) & (body_d > NEAR_CLIP) & (body_d < np.where(ground, tg, np.inf))
-    gv = ground & ~body
+        cube = engine.cube(pos)
+        body_d, shade, hid = cube.lookup_ids(dw)
+    near = np.isfinite(body_d) & (body_d < np.where(ground, tg, np.inf))
+    house = valid & near & (hid >= 0)
+    body = valid & near & (hid < 0) & (body_d > NEAR_CLIP)
+    gv = ground & ~body & ~house
     img = np.full(len(dw), 40.0)                         # outside the image circle
     img[valid] = 150.0                                   # sky / walls
     tgf = np.where(gv, tg, 0.0)
@@ -114,6 +124,9 @@ def render_capture(project: Project, engine, cam: Camera, w=None, h=None, pose=N
         idx = np.nonzero(gv)[0][sel]
         img[idx] = 25 + 210 * b[sel]
     img[body] = 55 + 0.45 * shade[body]
+    if house.any():
+        grey = np.array([HOUSING_GREY.get(h.what, 0.15) for h in cube.housings])
+        img[house] = 255.0 * grey[hid[house]] * housing_tone(shade[house])
     if exposure != 1.0 or vignette:
         img = img * exposure * (1 - vignette * np.clip(th / intr.max_theta, 0, 1) ** 2)
     if noise:
@@ -264,7 +277,7 @@ def render_world(project: Project, engine, cam: Camera, world: World, w=None, h=
     sun = np.asarray(world.sun, float)
     sun = sun / np.linalg.norm(sun)
     best = np.full(n, np.inf)
-    mat = np.zeros(n, int)          # 0 sky, 1 floor, 2 box, 3 cylinder, 4 wall, 5 body
+    mat = np.zeros(n, int)          # 0 sky, 1 floor, 2 box, 3 cylinder, 4 wall, 5 body, 6 a sensor or camera housing
     nrm = np.zeros((n, 3))
     col = np.zeros((n, 3))
     # floor
@@ -309,12 +322,19 @@ def render_world(project: Project, engine, cam: Camera, world: World, w=None, h=
             stripe = ((zc * 6 + np.arctan2(nc[:, 1], nc[:, 0]) * 1.5) % 2.0) < 1.0
             cc = np.where((band & stripe)[:, None], [0.95, 0.76, 0.08], np.where(band[:, None], [0.08, 0.08, 0.08], cc))
         col[sel] = cc[sel]
-    # the ego body (cube depth map, as the analysis sees it)
+    # the ego body, its rig and the housings (cube depth map, as the analysis sees it)
     if engine.vehicle_geom(project) is not None:
-        bd, shade = engine.cube(pos).lookup(d)
-        sel = np.isfinite(bd) & (bd > NEAR_CLIP) & (bd < best)
-        best[sel], mat[sel] = bd[sel], 5
-        col[sel] = (0.18 + 0.72 * shade[sel, None] / 255.0) * np.array([0.86, 0.87, 0.88])
+        cube = engine.cube(pos)
+        bd, shade, hid = cube.lookup_ids(d)
+        sel = np.isfinite(bd) & (bd < best) & ((bd > NEAR_CLIP) | (hid >= 0))
+        body = sel & (hid < 0)
+        best[body], mat[body] = bd[body], 5
+        col[body] = (0.18 + 0.72 * shade[body, None] / 255.0) * np.array([0.86, 0.87, 0.88])
+        house = sel & (hid >= 0)
+        if house.any():
+            rgb = np.array([HOUSING_RGB.get(h.what, (0.14, 0.14, 0.15)) for h in cube.housings])
+            best[house], mat[house] = bd[house], 6
+            col[house] = rgb[hid[house]] * housing_tone(shade[house])[:, None]
     P = pos + d * np.where(np.isfinite(best), best, 0)[:, None]
     # shading
     lam = np.clip(np.sum(nrm * sun, axis=1), 0, 1)

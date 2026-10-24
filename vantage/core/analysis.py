@@ -1,6 +1,13 @@
-"""Coverage engine: ROI grid, per-camera visibility and pixel density, metrics and seams."""
+"""Coverage engine: ROI grid, per-camera visibility and pixel density, metrics and seams.
+
+What blocks a camera: the vehicle body (simplified to the occluder), the rig parts that occlude, and the housings of
+the variant's sensors and other cameras (core.housings, composited into each camera's cube map by core.occlusion).
+The vehicle geometry the engine hands out for a variant carries that variant's housings; its version is the body and
+rig's, so what depends on the body alone (the ROI, the renderer's shadow and sky maps) is kept while a sensor moves.
+"""
 from __future__ import annotations
 
+import dataclasses
 import math
 import threading
 import time
@@ -12,7 +19,8 @@ from .contour import iso_segments, chain
 from .lens import resolve, Intrinsics
 from .mathutil import rot_zyx, BODY_TO_OPTICAL
 from .mesh import Mesh
-from .occlusion import OccluderGeom, CubeCache
+from . import housings as H
+from .occlusion import OccluderGeom, CubeCache, HousedOccluder
 from .rig import merge, rig_key, rig_mesh
 from .project import Project, Variant, Camera, ROI
 
@@ -30,10 +38,22 @@ class VehicleGeom:
     bbox: tuple                 # the body alone
     max_dev: float
     body_occ_mesh: Mesh | None = None   # the simplified body alone: its footprint (ROI), drawing
+    housings: object = None             # core.housings.HousingSet composited into the cube maps (None: body + rig)
+    base: object = None                 # the same geometry without housings (None: this is it)
 
     @property
     def body(self) -> Mesh:
         return self.body_occ_mesh if self.body_occ_mesh is not None else self.occ_mesh
+
+    @property
+    def static(self) -> 'VehicleGeom':
+        """The body and rig alone (no housings)."""
+        return self.base if self.base is not None else self
+
+    def with_housings(self, hs) -> 'VehicleGeom':
+        """This geometry with a variant's housings blocking the cameras (same version, meshes and occluder triangles)."""
+        st = self.static
+        return dataclasses.replace(st, occ=HousedOccluder(st.occ, hs), housings=hs, base=st)
 
 
 _vg_counter = [0]
@@ -42,7 +62,8 @@ _vg_counter = [0]
 def prepare_vehicle(mesh: Mesh, occluder_target: int = 8000, rig=None, body=None) -> VehicleGeom:
     """The body's occluder (simplified to occluder_target triangles) and, with rig parts, the rig merged in: the rig
     blocks cameras and carries them, but the ROI footprint and the vehicle's size are the body's. body: an already
-    simplified body (mesh, max deviation) to reuse when only the rig changed."""
+    simplified body (mesh, max deviation) to reuse when only the rig changed. The sensor and camera housings are not
+    merged here: Engine.vehicle_geom adds a variant's to the result (VehicleGeom.with_housings)."""
     _vg_counter[0] += 1
     if body is not None:
         body_occ, dev = body
@@ -295,9 +316,12 @@ class Engine:
 
     One engine serves the UI thread and the analysis worker at once: the UI asks about the live project while the
     worker analyses a snapshot, which can hold a different car (just after an import or an undo).  So the geometry in
-    use (``vg``, what ``cube()`` looks into) is per thread, built geometries are shared, and the caches are locked."""
+    use (``vg``, what ``cube()`` looks into) is per thread, built geometries are shared, and the caches are locked.
+    The geometry in use also carries the housings of the variant it was asked for (vehicle_geom(project, variant)),
+    so cube() looks into the body, the rig and that variant's housings."""
 
     GEOMS_KEPT = 3
+    HOUSED_KEPT = 8
 
     def __init__(self):
         self.cubes = CubeCache(96)
@@ -306,6 +330,7 @@ class Engine:
         self._tl = threading.local()
         self._latest = (None, None)         # (key, geometry) set last by any thread, for a thread that never asked
         self._rois = {}
+        self._housed = {}                   # (geometry key, housing key) -> the geometry with those housings
 
     def _current(self):
         """(key, geometry) in use on this thread, read as one pair."""
@@ -321,11 +346,13 @@ class Engine:
     def share(self) -> 'Engine':
         """An engine for another worker: the same cube maps and built geometries, its own ROI and current geometry."""
         e = Engine()
-        e.cubes, e._geoms, e._glock = self.cubes, self._geoms, self._glock
+        e.cubes, e._geoms, e._glock, e._housed = self.cubes, self._geoms, self._glock, self._housed
         e._latest = self._latest
         return e
 
-    def vehicle_geom(self, project: Project) -> VehicleGeom | None:
+    def vehicle_geom(self, project: Project, variant: Variant | None = None) -> VehicleGeom | None:
+        """The vehicle geometry (body, rig) with the housings of variant (default: the active one) blocking the
+        cameras; made the one in use on this thread. Without housings (switched off or none) the plain geometry."""
         m = project.vehicle.mesh
         if m is None or m.n_tris == 0:
             return None
@@ -333,8 +360,11 @@ class Engine:
         key = (id(m), m.n_tris, project.vehicle.occluder_target, tuple(p.role for p in m.parts),
                id(m.face_zone), tuple((z.name, z.kind) for z in m.zones),      # zones are copied into the occluder
                rig_key(rig))
+        st = H.settings_of(project)
+        hk = H.key(project, variant, st)
+        full = (key, hk)
         cur_key, cur = self._current()
-        if key == cur_key:
+        if full == cur_key:
             return cur
         with self._glock:
             vg = self._geoms.pop(key, None)
@@ -345,11 +375,20 @@ class Engine:
             self._geoms[key] = vg                                               # most recent last
             while len(self._geoms) > self.GEOMS_KEPT:
                 self._geoms.pop(next(iter(self._geoms)))
-        self._use(key, vg)
+            if hk is not None:
+                hv = self._housed.pop(full, None)
+                if hv is None or hv.base is not vg:
+                    hs = H.housing_set(project, variant, st, hk)
+                    hv = vg.with_housings(hs) if hs is not None else vg
+                self._housed[full] = hv
+                while len(self._housed) > self.HOUSED_KEPT:
+                    self._housed.pop(next(iter(self._housed)))
+                vg = hv
+        self._use(full, vg)
         return vg
 
-    def roi_grid(self, project: Project, cell=None) -> RoiGrid | None:
-        vg = self.vehicle_geom(project)
+    def roi_grid(self, project: Project, cell=None, variant: Variant | None = None) -> RoiGrid | None:
+        vg = self.vehicle_geom(project, variant)
         if vg is None:
             return None
         cell = cell or project.analysis.cell_m
@@ -366,6 +405,8 @@ class Engine:
         return grid
 
     def cube(self, pos, vg: VehicleGeom | None = None):
+        """The occlusion cube map at pos: the body and rig, with the housings of the geometry in use (vg, else this
+        thread's) composited in, the housing anchored at pos left out."""
         return self.cubes.get((vg or self.vg).occ, pos)
 
     # --------------------------------------------------------------
@@ -374,9 +415,10 @@ class Engine:
         """body_pose = (R, t): the vehicle body (and its cameras) moved rigidly in the world, e.g. a load case."""
         t0 = time.perf_counter()
         variant = variant or project.variant
-        grid = self.roi_grid(project, cell)
+        grid = self.roi_grid(project, cell, variant)
         if grid is None:
             return None
+        vg = self.vehicle_geom(project, variant)        # the variant's housings block its cameras
         if z is None:
             z = {'ground': 0.0, 'pole05': 0.5, 'pole10': 1.0, 'child': 0.9}.get(project.analysis.obstacle_mode, 0.0)
         cams = [c for c in (cameras if cameras is not None else variant.cameras) if c.visible]
@@ -389,7 +431,7 @@ class Engine:
         cubes = {}
         for k, cam in enumerate(cams):
             intr = resolve(project.module_for(cam), project.lens_for(cam))
-            cube = self.cube(cam.pos())
+            cube = self.cube(cam.pos(), vg)
             cubes[cam.uid] = cube
             vis, dens, focus, fld = eval_points(P, cam, intr, cube)
             vis = vis.reshape(shape) & ~grid.body

@@ -78,6 +78,10 @@ class SensorModel:
     heading_baseline_m: float = 2.0
     pos_sigma_cm: float = 0.0        # INS: horizontal position error (1 sigma) with RTK corrections
     attitude_sigma_deg: float = 0.0  # INS: roll and pitch error (1 sigma)
+    accel_noise_density: float = 0.0  # IMU: accelerometer white noise, m/s²/√Hz (Kalibr's accelerometer_noise_density)
+    accel_random_walk: float = 0.0   # IMU: accelerometer bias random walk, m/s³/√Hz
+    gyro_noise_density: float = 0.0  # IMU: gyro white noise, rad/s/√Hz (an ARW in °/√h × π/180 / 60)
+    gyro_random_walk: float = 0.0    # IMU: gyro bias random walk, rad/s²/√Hz (0 in any of the four: not given)
     note: str = ''                   # where the figures come from
     builtin: bool = False
 
@@ -104,6 +108,8 @@ class SensorModel:
                 setattr(m, k, (int(v) if f.type == 'int' else v) if math.isfinite(v) else getattr(SensorModel(m.id), k))
         m.kind = m.kind if m.kind in KINDS else 'lidar'
         m.antennas = min(max(int(m.antennas), 0), 2)
+        for k in ('accel_noise_density', 'accel_random_walk', 'gyro_noise_density', 'gyro_random_walk'):
+            setattr(m, k, max(float(getattr(m, k)), 0.0))
         m.heading_baseline_m = m.heading_baseline_m if m.heading_baseline_m > 0 else 2.0
         m.rotation = m.rotation if m.rotation in ('cw', 'ccw') else 'cw'
         for k in ('rate_hz', 'h_res', 'h_fov', 'range_m'):           # these divide or bound everything downstream

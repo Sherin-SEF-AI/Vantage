@@ -151,6 +151,10 @@ class CameraPage(Page):
         self.s_mount.row('Height', self.height_v)
         self.edge_v = ValueLabel()
         self.s_mount.row('Body edge', self.edge_v)
+        self.house_v = ValueLabel()
+        self.s_mount.row('Housings', self.house_v, tip='Housings in view: the share of this camera\'s image each other '
+                                                       'sensor\'s housing or camera module covers (the body and rig '
+                                                       'in front of one hide it)')
         self.float_box = QWidget()
         fb = QVBoxLayout(self.float_box)
         fb.setContentsMargins(0, 4, 0, 2)
@@ -459,6 +463,21 @@ class CameraPage(Page):
         else:
             self.edge_v.set('…', '')
             self.float_box.setVisible(False)
+        # housings in view (core.housings, the same figures as the Issues list)
+        sev_house = None
+        if multi:
+            self.house_v.set('—')
+            self.house_v.setToolTip('')
+        else:
+            from ..core import housings as HS
+            iv = HS.view_shares(p, c, self.ctx.analysis.engine.vehicle_geom(p))
+            txt, sev_house = HS.in_view_text(iv)
+            self.house_v.set(txt, '', sev_house)
+            self.house_v.setToolTip('\n'.join(f"{x['label'][0].upper()}{x['label'][1:]}: {x['share'] * 100:.1f} % "
+                                              f"of the image, {x['where']}" for x in iv.shares) or
+                                    'No other sensor\'s housing or camera module is in this camera\'s image.')
+        order = ('critical', 'serious', 'warning')
+        sev_mount = min((x for x in (sev_mount, sev_house) if x), key=order.index, default=None)
         self.mount_icon.setPixmap(icons.pixmap(sev_mount, STATUS[sev_mount], 12) if sev_mount else icons.pixmap('good', '#00000000', 12))
         mods = ', '.join(sorted({x.module_id for x in cams}))
         self.s_mount.header.set_summary(f'{mi.surface if mi else "—"} · {c.standoff_mm:.0f} mm · edge {mi.edge_mm:.0f} mm' if mi else '')
@@ -483,9 +502,14 @@ class CameraPage(Page):
         else:
             self.calib_v.set('none', '', None, 'library lens')
         d = derived(mod, lens)
-        self.focal_v.set(f'{lens.focal_mm:.2f}', 'mm', None, f'F{lens.f_number:g}')
-        self.fov_v.set(f'{d["fov"][0]:.1f}  {d["fov"][1]:.1f}  {d["fov"][2]:.1f}', '°')
-        self.focus_v.set(f'{lens.focus_near_m:.2f}', 'm', None, '– ∞' if math.isinf(lens.focus_far_m) else f'– {lens.focus_far_m:.1f} m')
+        seen = model_fov(mod, lens, circle=True)          # what the image shows (a fisheye's image circle)
+        self.focal_v.set(f'{lens.focal_mm:.2f}', 'mm', None, f'F{lens.f_number:g}' if lens.f_number > 0 else 'F not given')
+        self.fov_v.set(f'{seen[0]:.1f}  {seen[1]:.1f}  {seen[2]:.1f}', '°')
+        if lens.focus_near_m > 0:
+            self.focus_v.set(f'{lens.focus_near_m:.2f}', 'm', None,
+                             '– ∞' if math.isinf(lens.focus_far_m) else f'– {lens.focus_far_m:.1f} m')
+        else:
+            self.focus_v.set('—', '', None, 'not given')
         self.circle.set(mod.sensor_w_mm, mod.sensor_h_mm, d['image_circle_r_mm'], d['max_half_deg'])
         self.circle_txt.setText(f'{mod.sensor_w_mm:.3f} × {mod.sensor_h_mm:.3f} mm\n{mod.optical_format} · {mod.sensor.replace("Sony ", "")}')
         self.s_opt.header.set_summary(f'{lens.name} · {PROJECTION_LABEL[lens.projection].lower()} · {lens.focal_mm:.3g} mm'

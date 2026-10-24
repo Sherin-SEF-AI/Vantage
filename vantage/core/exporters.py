@@ -172,6 +172,12 @@ FORMATS: list[ExportFormat] = [
     ExportFormat('requirements', 'Documents', 'Requirements scorecard and review pack', 'JSON, CSV, PDF',
                  lambda p, v: ['requirements/requirements.json', 'requirements/requirements.csv',
                                'requirements/review_pack.pdf'], 'binary', multi=True),
+    ExportFormat('housings', 'Documents', 'Housings in view', 'JSON, CSV',
+                 lambda p, v: ['housings/housings.json', 'housings/housings.csv'], 'text', multi=True),
+    ExportFormat('suspension_load_cases', 'Documents', 'Load cases (suspension)', 'JSON, CSV',
+                 lambda p, v: ['suspension/suspension_load_cases.json', 'suspension/suspension_load_cases.csv',
+                               'suspension/suspension_devices.csv', 'suspension/suspension_data.json'],
+                 'text', multi=True),
     ExportFormat('fleet', 'Documents', 'Fleet', 'JSON, CSV, PNG',
                  lambda p, v: ['fleet/fleet.json', 'fleet/fleet.csv', 'fleet/fleet.png'], 'binary', multi=True),
     ExportFormat('extrinsics_json', 'Extrinsics', 'Extrinsics', 'JSON', lambda p, v: 'extrinsics.json', 'text'),
@@ -186,15 +192,11 @@ FORMATS: list[ExportFormat] = [
     ExportFormat('nuscenes_calib', 'Datasets', 'nuScenes sensor calibration', 'JSON',
                  lambda p, v: ['nuscenes/calibrated_sensor.json', 'nuscenes/sensor.json', 'nuscenes/README.md'], 'text',
                  multi=True),
-    ExportFormat('kitti_calib', 'Datasets', 'KITTI calibration', 'TXT',
-                 lambda p, v: ['kitti/calib_cam_to_cam.txt', 'kitti/calib_cams_to_vehicle.txt', 'kitti/README.txt']
-                 + (['kitti/calib_velo_to_cam.txt'] if v.cameras and any(s.kind == 'lidar' for s in v.sensors) else [])
-                 + (['kitti/calib_imu_to_velo.txt'] if any(s.kind == 'lidar' for s in v.sensors)
-                    and any(s.kind == 'imu' for s in v.sensors) else []),
-                 'text', multi=True),
+    ExportFormat('kitti_calib', 'Datasets', 'KITTI calibration', 'TXT', lambda p, v: _kitti_names(v), 'text',
+                 multi=True),
     ExportFormat('ros_camera_info', 'Datasets', 'ROS camera_info, per camera', 'YAML ×N',
                  lambda p, v: [f'camera_info/{t}.yaml' for t in safe_tags(v).values()], 'text', multi=True),
-    ExportFormat('kalibr_camchain', 'Datasets', 'Kalibr camchain', 'YAML', lambda p, v: 'kalibr/camchain.yaml', 'text'),
+    ExportFormat('kalibr_camchain', 'Datasets', 'Kalibr camchain', 'YAML', lambda p, v: _kalibr_names(v), 'text'),
     ExportFormat('bev_lut', 'Surround view', 'Bird\'s-eye remap tables', 'NPZ, BIN',
                  lambda p, v: ['bev_lut/bev_lut.json', 'bev_lut/bev_lut.npz'] + [f'bev_lut/{t}_{k}.bin' for t in safe_tags(v).values()
                                                                                  for k in ('map', 'weight')] + ['bev_lut/body_mask.bin',
@@ -883,9 +885,24 @@ def _launch(ctx: _Ctx) -> str:
 
 # ====================================================================== datasets
 # The calibration in the layouts training datasets and their tools read. These files are always in metres (the
-# formats' own convention, like URDF/TF); the export frame and origin apply as everywhere else.
+# formats' own convention, like URDF/TF); the export frame and origin apply as everywhere else. Each format is checked
+# against its tool's own readers and projection code in tests/test_devkits.py: the KITTI raw devkit and pykitti, the
+# KITTI object devkit, Kalibr's config reader and camera models, ROS 2 camera_calibration_parsers and image_geometry,
+# and the nuScenes devkit.
 DATASET_NOTE = ('Pixel coordinates follow OpenCV and ROS: pixel centres on integers (the centre of a 1920-wide image '
                 'is cx = 959.5).')
+PINHOLE_LIMIT_DEG = 90.0   # pinhole-based models (OpenCV fisheye, radtan) cannot image a ray 90° or more off axis
+FIT_RMS_PX = 0.25          # a lens model stands in for Vantage's lens when it reproduces it within these over every
+FIT_MAX_PX = 1.0           # pixel the lens images (inside the image and the image circle)
+# Kalibr's documented imu.yaml example (its "YAML formats" wiki page), written only when the IMU model has no figures
+KALIBR_EXAMPLE_IMU = {'accelerometer_noise_density': 1.86e-03, 'accelerometer_random_walk': 4.33e-04,
+                      'gyroscope_noise_density': 1.87e-04, 'gyroscope_random_walk': 2.66e-05}
+# imu.yaml key -> the sensor model field holding the unit's own figure (Kalibr units; 0 or missing = not given)
+IMU_NOISE_FIELDS = {'accelerometer_noise_density': 'accel_noise_density',
+                    'accelerometer_random_walk': 'accel_random_walk',
+                    'gyroscope_noise_density': 'gyro_noise_density', 'gyroscope_random_walk': 'gyro_random_walk'}
+IMU_NOISE_UNITS = {'accelerometer_noise_density': 'm/s^2/sqrt(Hz)', 'accelerometer_random_walk': 'm/s^3/sqrt(Hz)',
+                   'gyroscope_noise_density': 'rad/s/sqrt(Hz)', 'gyroscope_random_walk': 'rad/s^2/sqrt(Hz)'}
 
 
 def _pinhole(cm: CameraModel) -> bool:
@@ -925,6 +942,248 @@ def _token(*parts) -> str:
     return hashlib.md5('|'.join(str(x) for x in parts).encode('utf-8')).hexdigest()
 
 
+def _ros_name(tag: str) -> str:
+    """A ROS name token of a tag: lower case, letters, digits and '_', not starting with a digit (the sample dataset's
+    bag names its topics so: /<name>/image_raw/compressed, /<name>/imu)."""
+    t = ''.join(ch if ch.isalnum() else '_' for ch in tag.lower()).strip('_') or 'sensor'
+    return t if t[0].isalpha() else 's_' + t
+
+
+def _first(ctx: _Ctx, kind: str):
+    """(safe tag, sensor) of the variant's first visible lidar or IMU (else its first, hidden or not), or None: the
+    one KITTI's and Kalibr's single-sensor files describe."""
+    of = [(t, s) for t, s, _ in _sensors(ctx) if s.kind == kind]
+    return next((x for x in of if x[1].visible), of[0] if of else None)
+
+
+# ---------------------------------------------------------------------- lens models the dataset tools use
+def _lens_field(ctx: _Ctx, cm: CameraModel):
+    """A pixel grid over the part of the image the lens images (inside the image circle) as optical-frame rays, their
+    OpenCV pixels and angles off the axis: where every written lens model is checked against Vantage's lens."""
+    cache = ctx.meta.setdefault('_lens_field', {})
+    if cm.tag not in cache:
+        i = cm.intr
+        step = max(4.0, max(i.width, i.height) / 160.0)
+        u, v = (g.ravel() for g in np.meshgrid(np.arange(step / 2, i.width, step), np.arange(step / 2, i.height, step)))
+        d, th = i.unproject(u, v)
+        u2, v2, _, _ = i.project_dirs(d)
+        # inside the image circle, and only where the model is single-valued (the ray maps back to its pixel)
+        keep = np.isfinite(th) & (th <= i.max_theta) & (np.hypot(u2 - u, v2 - v) < 1e-3)
+        cache[cm.tag] = (d[keep], np.stack([u[keep], v[keep]], axis=1) - 0.5, th[keep])
+    return cache[cm.tag]
+
+
+def kalibr_project(model: dict, P) -> tuple[np.ndarray, np.ndarray]:
+    """OpenCV pixels of optical-frame points (N, 3) through a Kalibr camera ({'camera_model', 'intrinsics',
+    'distortion_model', 'distortion_coeffs'} as in a camchain) and which of them project, as aslam_cv's
+    euclideanToKeypoint computes them (its image-bounds check aside). pinhole + equidistant is OpenCV's fisheye model,
+    pinhole + radtan its plumb bob (k1 k2 p1 p2), omni Mei's unified model, ds the double sphere, eucm the extended
+    unified model."""
+    P = np.asarray(P, float).reshape(-1, 3)
+    x, y, z = P[:, 0], P[:, 1], P[:, 2]
+    q = [float(a) for a in model['intrinsics']]
+    k = [float(a) for a in model['distortion_coeffs']]
+    cam, dist = model['camera_model'], model['distortion_model']
+    with np.errstate(divide='ignore', invalid='ignore', over='ignore'):
+        if cam == 'pinhole':
+            fu, fv, cu, cv_ = q
+            ok, den = z > 0, z
+        elif cam == 'omni':
+            xi, fu, fv, cu, cv_ = q
+            d = np.sqrt(x * x + y * y + z * z)
+            ok, den = z > -(xi if xi <= 1.0 else 1.0 / xi) * d, z + xi * d
+        elif cam == 'ds':
+            xi, al, fu, fv, cu, cv_ = q
+            d1 = np.sqrt(x * x + y * y + z * z)
+            w1 = al / (1.0 - al) if al <= 0.5 else (1.0 - al) / al
+            w2 = (w1 + xi) / math.sqrt(2.0 * w1 * xi + xi * xi + 1.0)
+            kk = xi * d1 + z
+            ok, den = z > -w2 * d1, al * np.sqrt(x * x + y * y + kk * kk) + (1.0 - al) * kk
+        elif cam == 'eucm':
+            al, be, fu, fv, cu, cv_ = q
+            d = np.sqrt(be * (x * x + y * y) + z * z)
+            w = al / (1.0 - al) if al <= 0.5 else (1.0 - al) / al
+            ok, den = z > -w * d, al * d + (1.0 - al) * z
+        else:
+            raise ValueError(f'Unknown Kalibr camera model {cam!r}')
+        mx, my = x / den, y / den
+        if dist == 'equidistant':
+            r = np.hypot(mx, my)
+            th = np.arctan(r)
+            t2 = th * th
+            s = np.where(r > 1e-8, th * (1 + t2 * (k[0] + t2 * (k[1] + t2 * (k[2] + t2 * k[3])))) / r, 1.0)
+            mx, my = mx * s, my * s
+        elif dist == 'radtan':
+            k1, k2, p1, p2 = k
+            r2 = mx * mx + my * my
+            rad = k1 * r2 + k2 * r2 * r2
+            mx, my = (mx + mx * rad + 2 * p1 * mx * my + p2 * (r2 + 2 * mx * mx),
+                      my + my * rad + 2 * p2 * mx * my + p1 * (r2 + 2 * my * my))
+        elif dist != 'none':
+            raise ValueError(f'Unknown Kalibr distortion model {dist!r}')
+        uv = np.stack([fu * mx + cu, fv * my + cv_], axis=1)
+    ok = ok & np.all(np.isfinite(uv), axis=1)
+    return uv, ok
+
+
+def _base_model(cm: CameraModel) -> dict:
+    """The lens model every pinhole-based format writes: the camera matrix with Kannala-Brandt k1..k4 (OpenCV fisheye,
+    'equidistant'), or no distortion for a rectilinear lens, rounded as written."""
+    pin = _pinhole(cm)
+    return {'camera_model': 'pinhole', 'intrinsics': [_r(cm.fx, 6), _r(cm.fy, 6), _r(cm.cx, 6), _r(cm.cy, 6)],
+            'distortion_model': 'radtan' if pin else 'equidistant',
+            'distortion_coeffs': [0.0] * 4 if pin else [_sig(k) for k in cm.k]}
+
+
+def _model_error(ctx: _Ctx, cm: CameraModel, model: dict) -> dict:
+    """RMS and largest pixel error of a model against Vantage's lens over the field, and the share it can image."""
+    d, uv, th = _lens_field(ctx, cm)
+    out = {'field_deg': float(np.degrees(th.max())) if len(th) else 0.0}
+    if not len(d):
+        return dict(out, rms_px=0.0, max_px=0.0, covered=1.0)
+    got, ok = kalibr_project(model, d)
+    if not ok.any():
+        return dict(out, rms_px=math.inf, max_px=math.inf, covered=0.0)
+    e = np.linalg.norm(got[ok] - uv[ok], axis=1)
+    return dict(out, rms_px=float(np.sqrt(np.mean(e * e))), max_px=float(e.max()), covered=float(ok.mean()))
+
+
+def _good(m: dict) -> bool:
+    return m['covered'] >= 1.0 and m['rms_px'] <= FIT_RMS_PX and m['max_px'] <= FIT_MAX_PX
+
+
+# normalised image height g(theta) of a unit ray theta off the axis, per wide-angle model, with start points and bounds
+# of (scale, parameters); the model's fu = scale * fx (fv = scale * fy), the principal point is the lens's own
+def _g_omni(th, xi, k1, k2):
+    rho = np.sin(th) / (np.cos(th) + xi)
+    return rho * (1 + k1 * rho ** 2 + k2 * rho ** 4)
+
+
+def _g_ds(th, xi, al):
+    s, c = np.sin(th), np.cos(th)
+    return s / (al * np.sqrt(s * s + (xi + c) ** 2) + (1 - al) * (xi + c))
+
+
+def _g_eucm(th, al, be):
+    s, c = np.sin(th), np.cos(th)
+    return s / (al * np.sqrt(be * s * s + c * c) + (1 - al) * c)
+
+
+_WIDE = {
+    'omni': (_g_omni, [[1.5, 0.5, 0, 0], [2.0, 1.0, 0, 0], [3.0, 2.0, 0, 0]],
+             ([0.05, 0.0, -10, -10], [50, 20, 10, 10])),
+    'ds': (_g_ds, [[0.8, -0.2, 0.6], [1.0, 0.0, 0.5], [1.5, 0.5, 0.6]], ([0.05, -1.0, 0.0], [50, 5.0, 0.999])),
+    'eucm': (_g_eucm, [[1.0, 0.6, 1.0], [1.0, 0.5, 0.5]], ([0.05, 0.0, 1e-3], [50, 0.999, 50])),
+}
+
+
+def _fit_wide(ctx: _Ctx, cm: CameraModel, kind: str) -> dict | None:
+    """A wide-angle Kalibr model fitted to the lens's image height over the field (weighted by pixels), or None."""
+    from scipy.optimize import least_squares
+    _, _, th = _lens_field(ctx, cm)
+    if not len(th):
+        return None
+    ts = np.unique(np.quantile(th, np.linspace(0.0, 1.0, 401)))
+    ts = ts[ts > 1e-6]
+    i = cm.intr
+    target = np.asarray(r_of_theta(ts, i.f_mm, i.projection, i.kb), float) / i.f_mm
+    g, starts, bounds = _WIDE[kind]
+    best = None
+    for x0 in starts:
+        def res(q):
+            return cm.fx * (q[0] * g(ts, *q[1:]) - target)
+        try:
+            r = least_squares(res, x0, bounds=bounds, x_scale='jac')
+        except (ValueError, FloatingPointError):
+            continue
+        if np.all(np.isfinite(r.fun)) and (best is None or r.cost < best.cost):
+            best = r
+    if best is None:
+        return None
+    s, *p = (_sig(v) for v in best.x)
+    f = [_sig(s * cm.fx), _sig(s * cm.fy), _r(cm.cx, 6), _r(cm.cy, 6)]
+    if kind == 'omni':
+        return {'camera_model': 'omni', 'intrinsics': [p[0]] + f, 'distortion_model': 'radtan',
+                'distortion_coeffs': [p[1], p[2], 0.0, 0.0]}
+    return {'camera_model': kind, 'intrinsics': p + f, 'distortion_model': 'none', 'distortion_coeffs': []}
+
+
+def lens_check(ctx: _Ctx, cm: CameraModel) -> dict:
+    """How the pinhole-based model the datasets write (K with Kannala-Brandt k1..k4, or no distortion) reproduces the
+    lens: {'rms_px', 'max_px', 'covered', 'field_deg', 'exact'} over the field. 'covered' < 1 when the lens images rays
+    90° or more off its axis, which no pinhole-based model can."""
+    cache = ctx.meta.setdefault('_lens_check', {})
+    if cm.tag not in cache:
+        m = dict(_base_model(cm), **_model_error(ctx, cm, _base_model(cm)))
+        m['exact'] = cm.intr.projection in ('kannala_brandt', 'rectilinear') and m['covered'] >= 1.0
+        cache[cm.tag] = m
+    return cache[cm.tag]
+
+
+def kalibr_model(ctx: _Ctx, cm: CameraModel) -> dict:
+    """The Kalibr camera for a lens: pinhole-equi (the datasets' model, exact for a Kannala-Brandt lens) or
+    pinhole-radtan for a rectilinear lens when it reproduces the lens within FIT_RMS_PX / FIT_MAX_PX over the whole
+    field, otherwise the best of omni-radtan, double sphere and extended unified, fitted to the lens. Adds 'ok' (within
+    the limits), the errors, 'field_deg' and 'exact'."""
+    cache = ctx.meta.setdefault('_kalibr_model', {})
+    if cm.tag in cache:
+        return cache[cm.tag]
+    base = lens_check(ctx, cm)
+    pick = base
+    if not _good(base):
+        fits = []
+        for kind in _WIDE:
+            m = _fit_wide(ctx, cm, kind)
+            if m is not None:
+                fits.append(dict(m, **_model_error(ctx, cm, m), exact=False))
+        good = [m for m in fits if _good(m)]
+        pick = min(good, key=lambda m: m['rms_px']) if good else \
+            min([base] + fits, key=lambda m: (-m['covered'], m['rms_px']))
+    pick = dict(pick, ok=_good(pick))
+    cache[cm.tag] = pick
+    return pick
+
+
+def _model_name(m: dict) -> str:
+    return f"{m['camera_model']}-{'equi' if m['distortion_model'] == 'equidistant' else m['distortion_model']}"
+
+
+def _fit_text(m: dict) -> str:
+    """'exact …' or '0.012 px RMS, 0.041 px max …' over the field, plus what a pinhole model cannot reach."""
+    if m.get('exact'):
+        s = f"exact (the lens model itself) over the field, {m['field_deg']:.1f}° off axis"
+    else:
+        s = f"{m['rms_px']:.3f} px RMS, {m['max_px']:.3f} px max over the field, {m['field_deg']:.1f}° off axis"
+    if m['covered'] < 1.0:
+        s += (f"; it cannot image the outer {100 * (1 - m['covered']):.1f} % of the pixels "
+              f"(rays {PINHOLE_LIMIT_DEG:.0f}° or more off axis)")
+    return s
+
+
+def _rect_fov(cm: CameraModel) -> tuple:
+    """(H, V) degrees across the image centre lines of the rectified image (a pinhole camera with the raw K and image
+    size) and of the raw image (to the image circle where it is inside the sensor)."""
+    i = cm.intr
+    rh = math.degrees(math.atan((cm.cx + 0.5) / cm.fx) + math.atan((i.width - 0.5 - cm.cx) / cm.fx))
+    rv = math.degrees(math.atan((cm.cy + 0.5) / cm.fy) + math.atan((i.height - 0.5 - cm.cy) / cm.fy))
+    _, th = i.unproject(np.array([0.0, i.width, i.cx, i.cx]), np.array([i.cy, i.cy, 0.0, i.height]))
+    th = np.degrees(np.minimum(np.nan_to_num(th, nan=i.max_theta), i.max_theta))
+    return rh, rv, float(th[0] + th[1]), float(th[2] + th[3])
+
+
+def _lens_lines(ctx: _Ctx, prefix: str = '- ') -> list:
+    """README lines for the cameras whose lens the pinhole-based model only approximates or cannot fully reach."""
+    out = []
+    for cm in ctx.models:
+        m = lens_check(ctx, cm)
+        if not m['exact']:
+            kind = 'Kannala-Brandt' if m['distortion_model'] == 'equidistant' else 'a pinhole'
+            out.append(f'{prefix}{cm.cam.tag}: lens projection {cm.intr.projection}, written as {kind}: '
+                       f'{_fit_text(m)}.')
+    return out
+
+
+# ---------------------------------------------------------------------- nuScenes
 def _nuscenes(ctx: _Ctx) -> list:
     sensors, cal = [], []
     p, v = ctx.project, ctx.variant
@@ -965,6 +1224,8 @@ def _nuscenes(ctx: _Ctx) -> list:
     if 'RL' in wc:
         rah = (f' The rear axle is {float(wc["RL"][2]):.3f} m above the ground here: subtract that from z if your ego '
                f'frame is at axle height.')
+    lens = _lens_lines(ctx, '  - ')
+    lens = ('\n- **Lenses the Kannala-Brandt coefficients only approximate**:\n' + '\n'.join(lens)) if lens else ''
     readme = f"""# nuScenes calibration · {head}
 
 `sensor.json` and `calibrated_sensor.json` follow the nuScenes tables of the same names, one camera per row
@@ -983,7 +1244,7 @@ as nuScenes has it for them).
 - **vantage_distortion** (an extra field the nuScenes tools ignore): these are fisheye cameras, Kannala-Brandt
   (`cv2.fisheye`, k1..k4). nuScenes assumes pinhole images, so undistort the images with these coefficients and
   `camera_intrinsic` (for example `cv2.fisheye.undistortImage(img, K, D, Knew=K)`) before using the 3×3 alone.
-  A rectilinear lens has no distortion and says `none (pinhole)`.
+  A rectilinear lens has no distortion and says `none (pinhole)`.{lens}
 
 Tokens are stable hashes of the project, variant and camera, so a re-export keeps them.
 """
@@ -992,22 +1253,41 @@ Tokens are stable hashes of the project, variant and camera, so a re-export keep
             ('nuscenes/README.md', readme.encode('utf-8'))]
 
 
+# ---------------------------------------------------------------------- KITTI
 def _ke(vals) -> str:
     """KITTI's number style; rotation round-off (1e-16) is written as 0."""
     return ' '.join(f'{(float(v) if abs(v) > 1e-12 else 0.0):.6e}' for v in np.asarray(vals, float).ravel())
 
 
+def _kitti_names(v: Variant) -> list:
+    lidar = any(s.kind == 'lidar' for s in v.sensors)
+    imu = any(s.kind == 'imu' for s in v.sensors)
+    return (['kitti/calib_cam_to_cam.txt', 'kitti/calib_cams_to_vehicle.txt', 'kitti/README.txt']
+            + (['kitti/calib_velo_to_cam.txt'] if v.cameras and lidar else [])
+            + (['kitti/calib_imu_to_velo.txt'] if lidar and imu else [])
+            + ([f'kitti/object/{t}.txt' for t in safe_tags(v).values()] if lidar else []))
+
+
 def _kitti(ctx: _Ctx) -> list:
+    """KITTI raw calibration (calib_cam_to_cam, calib_velo_to_cam, calib_imu_to_velo) for every camera, the cameras'
+    and sensors' poses in the vehicle frame, and with a lidar one KITTI object-benchmark calib file per camera.
+
+    KITTI's images are rectified pinhole images and P_rect_xx projects rectified camera 00 coordinates into image xx
+    (the devkit: Y = P_rect_xx R_rect_00 Tr_velo_to_cam X). Here the rectified image xx is the raw image undistorted
+    to a pinhole camera with the same K_xx and size (R_rect_xx = I), so P_rect_xx = K_xx [R_xx | T_xx]."""
     cams = ctx.models
     when = ctx.now.strftime('%d-%b-%Y %H:%M:%S')
     square = float(getattr(ctx.project.target_settings, 'square_mm', 100.0)) / 1000.0
     names = ' '.join(cm.tag for cm in cams)
-    # KITTI readers parse "key: numbers" lines and skip values that are not numbers, so the notes are such lines
+    # KITTI readers parse "key: numbers" lines and skip values that are not numbers, so the notes are such lines;
+    # the MATLAB devkit scans every word for "<key>:", so no note holds one
     a = [f'calib_time: {when}', f'corner_dist: {_ke([square])}', f'camera_names: {names}',
          'note: cameras are numbered 00.. in camera_names order; R_xx/T_xx map camera 00 coordinates into camera xx '
-         '(X_xx = R_xx X_00 + T_xx), metres; images are not rectified, so S_rect = S, R_rect = I and P_rect = [K|0]; '
-         'D_xx holds Kannala-Brandt k1 k2 k3 k4 (then 0) where DISTORTION_MODEL_xx is equidistant - standard KITTI '
-         'tools assume radtan (k1 k2 p1 p2 k3)']
+         '(X_xx = R_xx X_00 + T_xx), metres; S_xx K_xx D_xx describe the raw image; the rectified image xx is the raw '
+         'image undistorted to a pinhole camera with the same K_xx and size (R_rect_xx = I, S_rect_xx = S_xx) and '
+         'P_rect_xx = K_xx [R_xx | T_xx] projects camera 00 coordinates into it, as the KITTI devkit uses it '
+         '(P_rect_00 = [K_00 | 0]); D_xx holds Kannala-Brandt k1 k2 k3 k4 (then 0) where DISTORTION_MODEL_xx is '
+         'equidistant - standard KITTI tools assume radtan (k1 k2 p1 p2 k3)']
     b = [f'calib_time: {when}', f'camera_names: {names}',
          f'note: Tr_cam_xx_to_vehicle is the 3x4 [R|t] (row-major) mapping camera xx optical coordinates (x right, '
          f'y down, z forward) into the vehicle frame: {_frame_sentence(ctx)}']
@@ -1023,29 +1303,56 @@ def _kitti(ctx: _Ctx) -> list:
               f'DISTORTION_MODEL_{n}: {"plumb_bob" if _pinhole(cm) else "equidistant"}',
               f'R_{n}: {_ke(rel[:3, :3])}', f'T_{n}: {_ke(rel[:3, 3])}',
               f'S_rect_{n}: {_ke(size)}', f'R_rect_{n}: {_ke(np.eye(3))}',
-              f'P_rect_{n}: {_ke(np.c_[K, np.zeros(3)])}']
+              f'P_rect_{n}: {_ke(K @ rel[:3, :4])}']
         b.append(f'Tr_cam_{n}_to_vehicle: {_ke(T[:3, :4])}')
-    sens = _sensors(ctx)
-    for t, s, _ in sens:
+    for t, s, _ in _sensors(ctx):
         b.append(f'Tr_{t}_to_vehicle: {_ke(_T_vehicle_sensor(ctx, s)[:3, :4])}')
-    lidars = [(t, s) for t, s, _ in sens if s.kind == 'lidar']
-    imus = [(t, s) for t, s, _ in sens if s.kind == 'imu']
-    imu_velo = None
-    if lidars and imus:
-        (lt, ls), (it, is_) = lidars[0], imus[0]
+    lid, imu = _first(ctx, 'lidar'), _first(ctx, 'imu')
+    imu_velo = velo = None
+    if lid and imu:
+        (lt, ls), (it, is_) = lid, imu
         rel = _T_inv(_T_vehicle_sensor(ctx, ls)) @ _T_vehicle_sensor(ctx, is_)     # IMU coordinates -> lidar
         imu_velo = [f'calib_time: {when}', f'R: {_ke(rel[:3, :3])}', f'T: {_ke(rel[:3, 3])}',
                     f'note: IMU {is_.tag} ({it}_link: its own axes) into lidar {ls.tag} ({lt}_link: x forward, y left, '
                     f'z up): X_lidar = R X_imu + T, metres']
-    velo = None
-    if lidars and cams:
-        t, s = lidars[0]
+    if lid and cams:
+        t, s = lid
         rel = _T_inv(T0) @ _T_vehicle_sensor(ctx, s)          # lidar coordinates -> camera 00
         velo = [f'calib_time: {when}', f'R: {_ke(rel[:3, :3])}', f'T: {_ke(rel[:3, 3])}',
                 f'delta_f: {_ke([0, 0])}', f'delta_c: {_ke([0, 0])}',
                 f'note: lidar {s.tag} ({t}_link: x forward, y left, z up) into camera 00 {cams[0].cam.tag} '
                 f'(x right, y down, z forward): X_cam = R X_lidar + T, metres']
+    objects = []
+    if lid:
+        # KITTI object benchmark: exactly these seven lines, read by position (mmdetection3d, OpenPCDet) or by key;
+        # this camera is camera 0 and P0..P3 all project into its rectified image (one camera per file)
+        Tl = _T_vehicle_sensor(ctx, lid[1])
+        Ti = _T_vehicle_sensor(ctx, imu[1]) if imu else np.eye(4)     # no IMU: the vehicle frame stands in for it
+        imu_l = (_T_inv(Tl) @ Ti)[:3, :4]
+        for cm in cams:
+            P = np.c_[cm.K, np.zeros(3)]
+            velo_cam = (_T_inv(_T_vehicle_camera(ctx, cm)) @ Tl)[:3, :4]
+            lines = [f'P{j}: {_ke(P)}' for j in range(4)] + [
+                f'R0_rect: {_ke(np.eye(3))}', f'Tr_velo_to_cam: {_ke(velo_cam)}', f'Tr_imu_to_velo: {_ke(imu_l)}']
+            objects.append((f'kitti/object/{cm.tag}.txt', ('\n'.join(lines) + '\n').encode('utf-8')))
     order = '\n'.join(f'  {i:02d}  {cm.cam.tag:<6} {cm.cam.location or cm.cam.name}' for i, cm in enumerate(cams))
+    cover = []
+    for i, cm in enumerate(cams):
+        rh, rv, h, vv = _rect_fov(cm)
+        cover.append(f'  {i:02d}  {cm.cam.tag:<6} raw {h:5.1f}° × {vv:5.1f}°, rectified {rh:5.1f}° × {rv:5.1f}°'
+                     + ('  (pinhole lens: the raw image is already rectified)' if _pinhole(cm) else ''))
+    lens = _lens_lines(ctx)
+    lens = ('\nLenses the Kannala-Brandt coefficients only approximate:\n' + '\n'.join(lens) + '\n') if lens else ''
+    no_imu = '' if imu else ('\n  The rig has no IMU, so Tr_imu_to_velo maps the vehicle frame into the lidar '
+                             '(KITTI\'s OXTS IMU frame\n  is x forward, y left, z up, as the vehicle frame).')
+    imu_name = f'IMU {imu[1].tag}' if imu else 'the vehicle frame'
+    obj = f"""
+- kitti/object/<TAG>.txt (with a lidar): the KITTI object-benchmark calib file for camera <TAG>, the same for every
+  frame (copy it to training/calib/<frame>.txt): P0..P3 = [K | 0] of that camera (it is camera 0 and 2, so the
+  devkit's x = P2 R0_rect Tr_velo_to_cam y projects lidar {lid[1].tag} into its rectified image), R0_rect = I,
+  Tr_velo_to_cam = lidar {lid[1].tag} into the camera, Tr_imu_to_velo = {imu_name} into the lidar.
+  The seven lines are read by position (mmdetection3d, OpenPCDet), so the file holds nothing else.{no_imu}""" \
+        if lid else ''
     readme = f"""KITTI-style calibration · Vantage {ctx.project.name} / {ctx.variant.name}, exported {ctx.stamp}
 
 calib_cam_to_cam.txt follows the KITTI raw-data layout: calib_time, corner_dist, and per camera S, K, D, R, T,
@@ -1057,19 +1364,32 @@ Cameras:
 - R_xx, T_xx map camera 00 coordinates into camera xx: X_xx = R_xx X_00 + T_xx (metres), as in KITTI.
 - Tr_cam_xx_to_vehicle maps camera xx coordinates into the vehicle frame ({_frame_sentence(ctx)}).
 - Camera frames are optical: x right, y down, z forward. {DATASET_NOTE}
-- These are fisheye cameras. KITTI's D is a radtan vector (k1 k2 p1 p2 k3); here D_xx holds the Kannala-Brandt
-  coefficients k1 k2 k3 k4 followed by 0, and DISTORTION_MODEL_xx says equidistant. Tools that assume radtan will
-  misread them: undistort with cv2.fisheye first. A rectilinear lens has D = 0 and plumb_bob.
-- The images are not rectified: S_rect = S, R_rect = I, P_rect = [K | 0] (no stereo baseline term).
+- S_xx, K_xx, D_xx describe the raw images. These are fisheye cameras: KITTI's D is a radtan vector
+  (k1 k2 p1 p2 k3), here D_xx holds the Kannala-Brandt coefficients k1 k2 k3 k4 followed by 0 and
+  DISTORTION_MODEL_xx says equidistant. Tools that assume radtan will misread them. A rectilinear lens has D = 0
+  and plumb_bob.
+- KITTI's images are rectified pinhole images. Rectified image xx here is the raw image undistorted to a pinhole
+  camera with the same K_xx and size: R_rect_xx = I, S_rect_xx = S_xx. Make it with
+      map1, map2 = cv2.fisheye.initUndistortRectifyMap(K_xx, D_xx[:4], R_rect_xx, K_xx, S_rect_xx, cv2.CV_32FC1)
+      rectified = cv2.remap(raw, map1, map2, cv2.INTER_LINEAR)
+  It covers less than the lens (degrees across the image centre lines):
+{chr(10).join(cover) or '  (none)'}
+- P_rect_xx projects camera 00 coordinates into rectified image xx, as the KITTI devkit uses it
+  (Y = P_rect_xx R_rect_00 (R|T)_velo_to_cam X): P_rect_xx = K_xx [R_xx | T_xx], so P_rect_00 = [K_00 | 0]. A
+  surround rig's cameras do not share one orientation, so its left 3×3 is K_xx R_xx, not K_xx: read the camera
+  matrix from K_xx. pykitti.raw and the devkit's loadCalibration.m assume KITTI's stereo layout (rectified cameras
+  parallel to camera 00, P_rect = K [I | t]): their K_cam0, T_cam0_velo and T_cam0_imu are right, their K_cam1..3,
+  T_cam1..3_* and baselines are not (and pykitti needs cameras 00 to 03). Use Tr_cam_xx_to_vehicle or
+  kitti/object/<TAG>.txt for the other cameras.
 - corner_dist is the floor calibration board's square ({square:.3f} m).
 - Lidars and radars: Tr_<tag>_to_vehicle in calib_cams_to_vehicle.txt maps the sensor's frame (x forward, y left,
-  z up at its optical centre) into the vehicle frame. With a lidar, calib_velo_to_cam.txt gives the first lidar's
-  frame in camera 00 (R, T as KITTI's velodyne-to-camera file).
+  z up at its optical centre) into the vehicle frame. With a lidar, calib_velo_to_cam.txt gives the first visible
+  lidar's frame in camera 00 (R, T as KITTI's velodyne-to-camera file).
 - GNSS antennas and IMUs: Tr_<tag>_to_vehicle as well (an antenna's frame at its phase centre, an IMU's at the centre
-  of its axes). With an IMU and a lidar, calib_imu_to_velo.txt gives the first IMU's frame in the first lidar's
-  (R, T as KITTI's imu-to-velodyne file; KITTI's OXTS IMU frame is x forward, y left, z up).
+  of its axes). With an IMU and a lidar, calib_imu_to_velo.txt gives the first visible IMU's frame in that lidar's
+  (R, T as KITTI's imu-to-velodyne file; KITTI's OXTS IMU frame is x forward, y left, z up).{obj}
 - The extra lines (camera_names, note, DISTORTION_MODEL) are not numbers, so KITTI readers such as pykitti skip them.
-"""
+{lens}"""
     out = [('kitti/calib_cam_to_cam.txt', ('\n'.join(a) + '\n').encode('utf-8')),
            ('kitti/calib_cams_to_vehicle.txt', ('\n'.join(b) + '\n').encode('utf-8')),
            ('kitti/README.txt', readme.encode('utf-8'))]
@@ -1077,9 +1397,10 @@ Cameras:
         out.append(('kitti/calib_velo_to_cam.txt', ('\n'.join(velo) + '\n').encode('utf-8')))
     if imu_velo:
         out.append(('kitti/calib_imu_to_velo.txt', ('\n'.join(imu_velo) + '\n').encode('utf-8')))
-    return out
+    return out + objects
 
 
+# ---------------------------------------------------------------------- ROS camera_info
 def _yaml_mat(name: str, M) -> str:
     M = np.atleast_2d(np.asarray(M, float))
     data = ', '.join(repr(_r(v, 10)) for v in M.ravel())
@@ -1087,7 +1408,7 @@ def _yaml_mat(name: str, M) -> str:
 
 
 def _camera_info(ctx: _Ctx, cm: CameraModel) -> str:
-    """ROS sensor_msgs/CameraInfo as camera_calibration_parsers writes it."""
+    """ROS sensor_msgs/CameraInfo as camera_calibration_parsers writes it (the same keys in the same order)."""
     c = cm.cam
     K = cm.K
     pin = _pinhole(cm)
@@ -1098,47 +1419,157 @@ def _camera_info(ctx: _Ctx, cm: CameraModel) -> str:
     out = (f'# ROS camera_info for camera {c.tag} ({c.location or c.name}), Vantage {ctx.project.name} / '
            f'{ctx.variant.name}, exported {ctx.stamp}\n'
            f'# {lens} {DATASET_NOTE}\n'
-           f'# Intrinsics: {src}.\n'
-           f'image_width: {int(cm.intr.width)}\n'
-           f'image_height: {int(cm.intr.height)}\n'
-           f'camera_name: {cm.tag}\n')
+           f'# Intrinsics: {src}.\n')
+    if not pin:
+        rh, rv, h, v = _rect_fov(cm)
+        out += (f'# R = I, P = [K | 0]: the rectified image is the raw image undistorted to a pinhole camera with the '
+                f'same K (the ROS\n# calibrator\'s fisheye default), {rh:.1f}° × {rv:.1f}° of the raw {h:.1f}° × '
+                f'{v:.1f}°. image_proc and the C++ image_geometry\n# rectify equidistant with cv::fisheye; the Python '
+                f'image_geometry PinholeCameraModel ignores distortion_model\n# (plumb_bob maths), so use cv2.fisheye '
+                f'with K and D there.\n')
+        m = lens_check(ctx, cm)
+        if not m['exact']:
+            out += f'# Lens projection {cm.intr.projection}, written as Kannala-Brandt: {_fit_text(m)}.\n'
+    out += (f'image_width: {int(cm.intr.width)}\n'
+            f'image_height: {int(cm.intr.height)}\n'
+            f'camera_name: {re.sub(r"[^A-Za-z0-9_]", "_", cm.tag)}\n')     # camera_info_manager's rule for names
     out += _yaml_mat('camera_matrix', K)
     out += f'distortion_model: {"plumb_bob" if pin else "equidistant"}\n'
     out += _yaml_mat('distortion_coefficients', np.array(D)[None, :])
     out += _yaml_mat('rectification_matrix', np.eye(3))
     out += _yaml_mat('projection_matrix', np.c_[K, np.zeros(3)])
+    out += ('binning_x: 0\nbinning_y: 0\n'
+            'roi:\n  x_offset: 0\n  y_offset: 0\n  height: 0\n  width: 0\n  do_rectify: false\n')
     return out
 
 
-def _kalibr(ctx: _Ctx) -> str:
-    import yaml
+# ---------------------------------------------------------------------- Kalibr
+def _kalibr_names(v: Variant):
+    return ['kalibr/camchain.yaml', 'kalibr/imu.yaml'] if any(s.kind == 'imu' for s in v.sensors) else \
+        'kalibr/camchain.yaml'
+
+
+OVERLAP_M2 = 0.05          # two cameras overlap when they share more ground than this (the analysis's own threshold)
+
+
+def _overlaps(ctx: _Ctx) -> tuple[dict, str]:
+    """{camera index: [indices of the cameras it overlaps]} and where that comes from: ground both cameras see, over
+    OVERLAP_M2. With an analysis result that is the analysis's coverage (the body and rig occlude); without one, a
+    0.1 m ground grid out to the region of interest's distance around the body's footprint, the footprint left out
+    and nothing else occluding."""
     cams = ctx.models
     index = {cm.cam.uid: i for i, cm in enumerate(cams)}
-    doc, prev = {}, None
+    out = {i: set() for i in range(len(cams))}
+    if ctx.result is not None and getattr(ctx.result, 'per_cam', None) is not None:
+        for cm in cams:
+            for u, area in ctx.result.per_cam.get(cm.cam.uid, {}).get('overlaps', {}).items():
+                if u in index and area > OVERLAP_M2 and index[u] != index[cm.cam.uid]:
+                    out[index[cm.cam.uid]].add(index[u])
+                    out[index[u]].add(index[cm.cam.uid])
+        how = f'ground both see in the analysis (over {OVERLAP_M2} m², the vehicle occluding)'
+    elif cams:
+        meas = ctx.measured()
+        pos = np.array([cm.cam.pos() for cm in cams])
+        if 'front_x' in meas and 'Width' in meas:
+            lo = np.array([meas['rear_x'], -meas['Width'] / 2])
+            hi = np.array([meas['front_x'], meas['Width'] / 2])
+        else:
+            lo, hi = pos[:, :2].min(axis=0), pos[:, :2].max(axis=0)
+        m = float(getattr(ctx.project.roi, 'distance', 2.0)) + 0.25
+        cell = 0.1
+        xs = np.arange(lo[0] - m, hi[0] + m, cell) + cell / 2
+        ys = np.arange(lo[1] - m, hi[1] + m, cell) + cell / 2
+        X, Y = (g.ravel() for g in np.meshgrid(xs, ys))
+        keep = ~((X > lo[0]) & (X < hi[0]) & (Y > lo[1]) & (Y < hi[1]))
+        G = np.stack([X[keep], Y[keep], np.zeros(int(keep.sum()))], axis=1)
+        seen = []
+        for cm in cams:
+            Pc = (G - cm.cam.pos()) @ cm.W2O.T
+            seen.append(cm.intr.project_dirs(Pc)[3] & (np.linalg.norm(Pc, axis=1) > 1e-6))
+        for i in range(len(cams)):
+            for j in range(i + 1, len(cams)):
+                if (seen[i] & seen[j]).sum() * cell * cell > OVERLAP_M2:
+                    out[i].add(j)
+                    out[j].add(i)
+        how = (f'ground both see (over {OVERLAP_M2} m²) within the region of interest, from the fields of view: no '
+               f'analysis result, so only the body\'s footprint occludes')
+    else:
+        how = 'no cameras'
+    return {i: sorted(s) for i, s in out.items()}, how
+
+
+def _imu_noise(m) -> tuple[dict, bool]:
+    """The imu.yaml noise figures: the IMU model's own when it gives all four, else Kalibr's documented example."""
+    own = {k: float(getattr(m, f, 0.0) or 0.0) for k, f in IMU_NOISE_FIELDS.items()}
+    if all(math.isfinite(v) and v > 0 for v in own.values()):
+        return own, True
+    return dict(KALIBR_EXAMPLE_IMU), False
+
+
+def _kalibr(ctx: _Ctx) -> list:
+    import yaml
+    cams = ctx.models
+    imu = _first(ctx, 'imu')
+    T_imu = _T_vehicle_sensor(ctx, imu[1]) if imu else None
+    overlaps, how = _overlaps(ctx)
+    doc, prev, lines = {}, None, []
     for i, cm in enumerate(cams):
         T = _T_vehicle_camera(ctx, cm)
-        pin = _pinhole(cm)
-        d = {'camera_model': 'pinhole',
-             'intrinsics': [_r(cm.fx, 6), _r(cm.fy, 6), _r(cm.cx, 6), _r(cm.cy, 6)],
-             'distortion_model': 'radtan' if pin else 'equidistant',
-             'distortion_coeffs': [0.0] * 4 if pin else [_sig(k) for k in cm.k],
+        m = kalibr_model(ctx, cm)
+        d = {'camera_model': m['camera_model'], 'intrinsics': list(m['intrinsics']),
+             'distortion_model': m['distortion_model'], 'distortion_coeffs': list(m['distortion_coeffs']),
              'resolution': [int(cm.intr.width), int(cm.intr.height)],
-             'rostopic': f'/{cm.tag.lower()}/image_raw'}
-        if ctx.result is not None:
-            ov = ctx.result.per_cam.get(cm.cam.uid, {}).get('overlaps', {})
-            d['cam_overlaps'] = sorted(index[u] for u, a in ov.items() if u in index and a > 0.05)
+             'rostopic': f'/{_ros_name(cm.tag)}/image_raw',
+             'cam_overlaps': overlaps[i]}
         if prev is not None:
             rel = _T_inv(T) @ prev                 # previous camera's coordinates -> this camera
             d['T_cn_cnm1'] = [[_r(rel[r, c], 10) for c in range(4)] for r in range(4)]
+        if T_imu is not None:
+            rel = _T_inv(T) @ T_imu                # IMU coordinates -> this camera
+            d['T_cam_imu'] = [[_r(rel[r, c], 10) for c in range(4)] for r in range(4)]
+            d['timeshift_cam_imu'] = 0.0
         doc[f'cam{i}'] = d
         prev = T
+        lines.append(f'#   cam{i} {cm.cam.tag}: {_model_name(m)}, {_fit_text(m)}'
+                     + ('' if m['ok'] else ' -- WARNING: no Kalibr model reproduces this lens within the limits'))
     order = ', '.join(f'cam{i} = {cm.cam.tag}' for i, cm in enumerate(cams)) or 'none'
     head = (f'# Kalibr camera chain · Vantage {ctx.project.name} / {ctx.variant.name}, exported {ctx.stamp}\n'
             f'# {order}. T_cn_cnm1 maps points from the previous camera into this one (p_n = T p_n-1), metres;\n'
-            f'# camera frames are optical (x right, y down, z forward). intrinsics are [fu, fv, pu, pv].\n'
+            f'# camera frames are optical (x right, y down, z forward). Intrinsics as Kalibr orders them (pinhole: '
+            f'[fu, fv, pu, pv]).\n'
             f'# {DATASET_NOTE}\n'
-            f'# Poses in the vehicle frame ({_frame_sentence(ctx)}): see the extrinsics export.\n')
-    return head + (yaml.safe_dump(doc, sort_keys=False, default_flow_style=None, width=200) if doc else '{}\n')
+            f'# Poses in the vehicle frame ({_frame_sentence(ctx)}): see the extrinsics export.\n'
+            f'# rostopic: the raw image topic (the sample dataset bag records <topic>/compressed). cam_overlaps: '
+            f'{how}.\n')
+    if imu:
+        head += (f'# T_cam_imu maps IMU {imu[1].tag} coordinates (its own axes) into the camera, as Kalibr\'s '
+                 f'camchain-imucam has it;\n# timeshift_cam_imu 0 (t_imu = t_cam + shift) holds for both stamped at '
+                 f'their measurement time on one clock:\n# kalibr_calibrate_imu_camera estimates both. IMU noise: '
+                 f'imu.yaml.\n')
+    if lines:
+        head += (f'# Lens models, checked by projecting the ray of every pixel the lens images through Vantage\'s lens '
+                 f'and through the\n# written model; a model is used when within {FIT_RMS_PX} px RMS and {FIT_MAX_PX} '
+                 f'px max (pinhole models cannot image\n# rays {PINHOLE_LIMIT_DEG:.0f}° or more off axis):\n'
+                 + '\n'.join(lines) + '\n')
+    out = [('kalibr/camchain.yaml',
+            (head + (yaml.safe_dump(doc, sort_keys=False, default_flow_style=None, width=200) if doc else '{}\n'))
+            .encode('utf-8'))]
+    if imu:
+        t, s = imu
+        m = ctx.project.sensor_model_for(s)
+        noise, own = _imu_noise(m)
+        src = (f'the IMU model\'s own figures ({(m.vendor + " " + m.name).strip()})' if own else
+               "NOT this IMU's: Kalibr's documented example values (its YAML formats page).\n# Replace them with your "
+               "unit's datasheet or Allan-deviation figures (Kalibr wiki: IMU Noise Model) before calibrating")
+        text = (f'# Kalibr IMU configuration · Vantage {ctx.project.name} / {ctx.variant.name}, exported {ctx.stamp}\n'
+                f'# IMU {s.tag} ({(m.vendor + " " + m.name).strip()}): rostopic as the sample dataset bag names it, '
+                f'update_rate the model\'s output rate.\n'
+                f'# Noise (continuous time): {src}.\n')
+        for k, v in noise.items():
+            text += f'{k}: {_sig(v, 6)!r}   # {IMU_NOISE_UNITS[k]}\n'
+        text += f'rostopic: /{_ros_name(t)}/imu\nupdate_rate: {float(m.rate_hz)!r}   # Hz\n'
+        out.append(('kalibr/imu.yaml', text.encode('utf-8')))
+    return out
 
 
 # ====================================================================== Jetson
@@ -2428,7 +2859,7 @@ def _render(fmt_id: str, ctx: _Ctx) -> list:
     if fmt_id == 'ros_camera_info':
         return [(f'camera_info/{cm.tag}.yaml', t(_camera_info(ctx, cm))) for cm in ctx.models]
     if fmt_id == 'kalibr_camchain':
-        return [(name(), t(_kalibr(ctx)))]
+        return _kalibr(ctx)
     if fmt_id == 'jetson_json':
         return [(name(), t(_jetson_json(ctx)))]
     if fmt_id in _IMAGE_KEYS:
@@ -2462,6 +2893,17 @@ def _render(fmt_id: str, ctx: _Ctx) -> list:
     if fmt_id == 'power_budget':
         from . import power as PW
         return [(f'power_budget/{n}', d) for n, d in PW.files(PW.run(ctx.project, variant=ctx.variant), ctx.project)]
+    if fmt_id == 'housings':
+        from . import housings as HS
+        from .analysis import Engine
+        res = HS.run(ctx.project, ctx.opts.engine or Engine(), variant=ctx.variant)
+        return [(f'housings/{n}', d) for n, d in HS.files(res, ctx.project)]
+    if fmt_id == 'suspension_load_cases':
+        from . import suspension as SU
+        from .analysis import Engine
+        res = SU.run(ctx.project, ctx.opts.engine or Engine(), variant=ctx.variant,
+                     cell=max(ctx.project.analysis.cell_m, 0.05))
+        return [(f'suspension/{n}', d) for n, d in SU.files(res, ctx.project)]
     if fmt_id == 'requirements':
         from . import requirements as RQ
         res = RQ.run(ctx.project, ctx.opts.engine, variant=ctx.variant)

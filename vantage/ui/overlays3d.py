@@ -371,10 +371,7 @@ def camera_model(module, ring_rgb, detail='high') -> Model:
     """A camera module in the camera's body frame (x along the optical axis, origin at the optical centre at the lens
     front): its box (width × height across, the rest of its length behind the lens), a lens barrel and a ring in the
     camera's colour with the lens glass recessed in it."""
-    try:
-        w, hh, L = (max(float(v), 1.0) / 1000.0 for v in module.size_mm)
-    except (TypeError, ValueError):
-        w, hh, L = 0.025, 0.025, 0.0438
+    w, hh, L = (v / 1000.0 for v in module.body_mm)        # a dimension the datasheet leaves out: the typical one
     m = min(w, hh)
     r_b, r_r, r_g = 0.33 * m, 0.38 * m, 0.27 * m
     x_box, x_ring = -0.38 * L, -0.08 * L
@@ -641,7 +638,7 @@ def lidar_sweep(project, engine, s, far=POINTS_FAR, max_rays=LIDAR_RAYS, vg=None
     if vg is None and engine is not None:
         vg = engine.vehicle_geom(project)
     if vg is not None and engine is not None:
-        dv = engine.cube(pos, vg).lookup(D)[0].astype(float)
+        dv = engine.cube(pos, vg.static).lookup(D)[0].astype(float)     # body + rig; housings exactly below
         nearer(np.where(dv > OWN_MOUNT_M, dv, np.inf), HIT_VEHICLE)
     for _, c, hb, Rh, rnd in _housings(project, s):
         th = G._ray_housing(pos, D, c, hb, Rh, rnd)

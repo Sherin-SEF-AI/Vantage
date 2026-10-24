@@ -352,7 +352,11 @@ _IMU_FIELDS = [('rate_hz', 'Output rate Hz', 'number', 0, 10), ('antennas', 'GNS
                                                                          'number', 2, 0.1),
                ('pos_sigma_cm', 'RTK position σ cm', 'number', 1, 0.5),
                ('attitude_sigma_deg', 'Roll, pitch σ °', 'angle', 3, 0.005), ('data_mbps', 'Data Mbit/s', 'number', 2,
-                                                                                 0.1)]
+                                                                                 0.1),
+               ('accel_noise_density', 'Accel noise m/s²/√Hz', 'number', 6, 1e-5),
+               ('accel_random_walk', 'Accel bias walk m/s³/√Hz', 'number', 7, 1e-6),
+               ('gyro_noise_density', 'Gyro noise rad/s/√Hz', 'number', 7, 1e-6),
+               ('gyro_random_walk', 'Gyro bias walk rad/s²/√Hz', 'number', 8, 1e-7)]
 _POWER_FIELD = [('power_w', 'Power W', 'number', 1, 0.5)]
 FIELDS = {'lidar': _LIDAR_FIELDS + _POWER_FIELD, 'radar': _RADAR_FIELDS + _POWER_FIELD,
           'gnss': _GNSS_FIELDS + _POWER_FIELD, 'imu': _IMU_FIELDS + _POWER_FIELD}
@@ -505,7 +509,8 @@ class SensorPage(Page):
             v = max(1.0, min(360.0, v))
         else:
             v = max(v, 0.0) if k in ('points_per_s', 'range_min_m', 'data_mbps', 'bytes_per_point', 'power_w',
-                                     'heading_sigma_deg', 'pos_sigma_cm', 'attitude_sigma_deg') else max(v, 1e-3)
+                                     'heading_sigma_deg', 'pos_sigma_cm', 'attitude_sigma_deg', 'accel_noise_density',
+                                     'accel_random_walk', 'gyro_noise_density', 'gyro_random_walk') else max(v, 1e-3)
         if getattr(m, k) == v:
             return
         uid = s.uid

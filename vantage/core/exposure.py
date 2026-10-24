@@ -853,7 +853,8 @@ def _project_for(project, variant):
 def run(project, engine=None, settings: ExposureSettings | None = None, variant=None, progress=None,
         cancel=None) -> ExposureResult | None:
     """Sun glare and dirt exposure of a variant's visible cameras, lidars and radars (the active variant by default).
-    engine: the analysis engine for body occlusion (None: the body hides nothing). Returns None when cancelled."""
+    engine: the analysis engine for occlusion by the body, rig and housings (None: nothing hides). Returns None when
+    cancelled."""
     t0 = time.perf_counter()
     p = _project_for(project, variant)
     v = p.variant

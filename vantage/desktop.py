@@ -48,10 +48,18 @@ def command() -> str:
 
 
 def _q(s: str) -> str:
-    """Quote an Exec argument as the Desktop Entry spec wants it."""
+    """Quote an Exec argument as the Desktop Entry spec wants it: inside double quotes " ` $ \\ take a backslash, and
+    that backslash is itself escaped because the value is unescaped as a string first (GLib rejects \\$ or \\" as
+    string escapes); % is doubled (field codes)."""
+    s = s.replace('%', '%%')
     if not any(c in s for c in ' \t"\'\\$`<>~|&;*?#()'):
         return s
-    return '"' + s.replace('\\', '\\\\').replace('"', '\\"').replace('$', '\\$').replace('`', '\\`') + '"'
+    return '"' + s.replace('\\', '\\\\\\\\').replace('"', '\\\\"').replace('$', '\\\\$').replace('`', '\\\\`') + '"'
+
+
+def _read(path: str) -> str:
+    with open(path, encoding='utf-8', errors='replace') as fh:
+        return fh.read()
 
 
 def entry(exec_cmd: str) -> str:
@@ -85,7 +93,7 @@ def install(base: str | None = None, icon_png: str | None = None) -> list[str]:
     vantage.desktop alone that this command did not write (the bundle's installer, a package)."""
     from .app import APP_ICON
     p = paths(base)
-    if os.path.exists(p['desktop']) and MARK not in open(p['desktop'], encoding='utf-8', errors='replace').read():
+    if os.path.exists(p['desktop']) and MARK not in _read(p['desktop']):
         raise FileExistsError(f'{p["desktop"]} was not written by vantage --install-desktop (an installed bundle or '
                               f'package): left as it is.')
     written = []
@@ -110,7 +118,7 @@ def uninstall(base: str | None = None, desktop: str | None = None) -> list[str]:
     p = paths(base)
     removed = []
     if os.path.exists(p['desktop']):
-        if MARK not in open(p['desktop'], encoding='utf-8', errors='replace').read():
+        if MARK not in _read(p['desktop']):
             raise FileExistsError(f'{p["desktop"]} was not written by vantage --install-desktop: left as it is.')
         os.remove(p['desktop'])
         removed.append(p['desktop'])
@@ -118,11 +126,11 @@ def uninstall(base: str | None = None, desktop: str | None = None) -> list[str]:
             if os.path.exists(path):
                 os.remove(path)
                 removed.append(path)
-    if os.path.exists(p['mime']) and MIME_MARK in open(p['mime'], encoding='utf-8', errors='replace').read():
+    if os.path.exists(p['mime']) and MIME_MARK in _read(p['mime']):
         os.remove(p['mime'])
         removed.append(p['mime'])
     sc = os.path.join(desktop_dir() if desktop is None else desktop, f'{APP_ID}.desktop')
-    if os.path.exists(sc) and MARK in open(sc, encoding='utf-8', errors='replace').read():
+    if os.path.exists(sc) and MARK in _read(sc):
         os.remove(sc)
         removed.append(sc)
     if removed:
@@ -148,7 +156,7 @@ def shortcut(folder: str | None = None, base: str | None = None) -> list[str]:
     written = install(base)
     folder = folder or desktop_dir()
     path = os.path.join(folder, f'{APP_ID}.desktop')
-    if os.path.exists(path) and MARK not in open(path, encoding='utf-8', errors='replace').read():
+    if os.path.exists(path) and MARK not in _read(path):
         raise FileExistsError(f'{path} was not written by vantage: left as it is.')
     os.makedirs(folder, exist_ok=True)
     with open(path, 'w', encoding='utf-8') as fh:

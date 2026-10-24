@@ -103,7 +103,8 @@ PAGES = {'viewports': '3D and top views', 'camviews': 'Camera views', 'tolerance
          'gnss': 'GNSS and IMU', 'exposure': 'Sun glare and dirt',
          'fleet': 'Fleet', 'brackets': 'Mount brackets',
          'dataset': 'Sample dataset', 'drivelog': 'Drive-log check',
-         'requirements': 'Requirements scorecard', 'lidar_calib': 'Lidar–camera calibration'}
+         'requirements': 'Requirements scorecard', 'lidar_calib': 'Lidar–camera calibration',
+         'asbuilt': 'As-built check'}
 
 
 # ============================================================================================ controller
@@ -342,7 +343,8 @@ class AssistantController(QObject):
                              an.worst, getattr(so, 'result', None), getattr(so, 'advice', None),
                              getattr(vol, 'result', None), self._guidelines(), [c.tag for c in st.selected_cams()],
                              PAGES.get(page, page), st.revision, brief=self.brief(), rig_health=self._rig_health(),
-                             drive_log=self._drive_log(), working_dir=workdir.get(self.ctx.settings))
+                             drive_log=self._drive_log(), asbuilt=self._asbuilt(),
+                             working_dir=workdir.get(self.ctx.settings))
 
     def _rig_health(self):
         w = self.ctx.window
@@ -352,6 +354,11 @@ class AssistantController(QObject):
     def _drive_log(self):
         w = self.ctx.window
         pg = getattr(w, '_page_widgets', {}).get('drivelog') if w is not None else None
+        return pg.summary() if pg is not None else None
+
+    def _asbuilt(self):
+        w = self.ctx.window
+        pg = getattr(w, '_page_widgets', {}).get('asbuilt') if w is not None else None
         return pg.summary() if pg is not None else None
 
     def _guidelines(self):

@@ -89,10 +89,10 @@ class FrustumCache:
         corners = [0, n, 2 * n, 3 * n]
         rays = np.stack([np.repeat(pos[None], 4, 0), rim[corners]], 1)
         axis = np.stack([pos, pos + (O2W @ np.array([0, 0, 1.0])) * length * 1.1])
-        self.d[key] = (rim, rays, axis)
-        if len(self.d) > 200:
+        if len(self.d) >= 200:                  # a long drag passes through many poses: start again, keep this one
             self.d.clear()
-        return self.d[key]
+        out = self.d[key] = (rim, rays, axis)
+        return out
 
 
 SNAP_M, SNAP_DEG = 0.01, 5.0           # Ctrl while dragging a handle: 1 cm steps, 5° steps
@@ -662,10 +662,7 @@ class MainScene(QObject):
 
     def _module_px(self, vp, c):
         """Length of a camera's module on screen, pixels."""
-        try:
-            L = max(float(v) for v in self.project.module_for(c).size_mm) / 1000.0
-        except (TypeError, ValueError):
-            L = 0.044
+        L = max(self.project.module_for(c).body_mm) / 1000.0
         return vp.px_per_m(c.pos()) * L
 
     def _plate(self, p, r):

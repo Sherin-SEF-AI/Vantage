@@ -412,7 +412,7 @@ def test_kalibr_is_placed_by_the_best_rigid_fit(tmp_path):
         c.yaw, c.pitch, c.roll = euler_zyx(Rb)
     out = tmp_path / 'k'
     ex.export(['kalibr_camchain'], q, None, ex.ExportOptions(out_dir=str(out)))
-    path = next(out.rglob('*.yaml'))
+    path = out / 'kalibr' / 'camchain.yaml'
     rec = FL.read_file(str(path), p)
     assert rec['kind'] == 'kalibr' and set(rec['poses']) == {c.tag for c in p.variant.cameras}
     _check(rec, p, {c.tag: np.zeros(6) for c in p.variant.cameras}, mm=0.01, deg=1e-5,

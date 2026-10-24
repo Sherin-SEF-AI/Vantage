@@ -48,7 +48,6 @@ import numpy as np
 
 from . import rules
 from . import sensors as S
-from .mathutil import rot_zyx
 
 SCHEMA = 'vantage.gnss_imu/1'
 FRAME = 'vehicle (ISO 8855, rear axle)'
@@ -430,31 +429,25 @@ def _occluder(project, vg):
 
 
 def _housings(project, v, exclude_uid) -> list:
-    """[(identity, centre, half sizes, rotation, round)] of every visible sensor (but one) and camera."""
+    """[(identity, centre, half sizes, rotation, round)] of every visible sensor (but one) and camera: the solids of
+    core.housings (all kinds, no margin: the sky check does not follow the camera-occlusion settings)."""
+    from . import housings as HS
+    sol = {h.uid: h for h in HS.solids(project, v, HS.HousingSettings())}
     out = []
     order = {}
     for s in v.sensors:
         if not s.visible or not _finite_pose(s):
             continue
         k = order[s.kind] = order.get(s.kind, -1) + 1
-        if s.uid == exclude_uid:
+        h = sol.get(s.uid)
+        if s.uid == exclude_uid or h is None:
             continue
-        m = project.sensor_model_for(s)
-        c, half, R, rnd = S.body_box(s, m)
-        out.append((_ident(f'sensor:{s.uid}', s.tag, s.kind, s.uid, order=k), c, half, R, bool(rnd)))
+        out.append((_ident(f'sensor:{s.uid}', s.tag, s.kind, s.uid, order=k), h.centre, h.half, h.R, h.round))
     for cam in v.cameras:
-        if not cam.visible or not all(math.isfinite(float(getattr(cam, a))) for a in ('x', 'y', 'z', 'yaw', 'pitch',
-                                                                                          'roll')):
-            continue
-        mod = project.module_for(cam)
-        try:
-            w, h, length = (max(float(x), 1.0) / 1000.0 for x in mod.size_mm)
-        except (TypeError, ValueError):
-            w, h, length = 0.025, 0.025, 0.044
-        R = rot_zyx(cam.yaw, cam.pitch, cam.roll)
-        c = cam.pos() - R[:, 0] * length / 2               # the module behind its optical centre
-        out.append((_ident(f'camera:{cam.uid}', cam.tag, 'camera', cam.uid, cam.slot), c,
-                    np.array([length / 2, w / 2, h / 2]), R, False))
+        h = sol.get(cam.uid)
+        if h is not None:
+            out.append((_ident(f'camera:{cam.uid}', cam.tag, 'camera', cam.uid, cam.slot), h.centre, h.half, h.R,
+                        False))
     return out
 
 

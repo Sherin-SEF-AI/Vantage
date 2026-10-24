@@ -449,8 +449,12 @@ class AboutDialog(VDialog):
         l.setContentsMargins(14, 12, 14, 12)
         from ... import __version__
         l.addWidget(label(f'Vantage {__version__} · sensor rig planner for autonomous-driving data collection', bold=True))
-        l.addWidget(label('Plans surround-view camera rigs: placement on the body, ground coverage, pixel density, stitch seams, '
-                          'tolerance studies, optimisation, calibration targets and exports.', wrap=True))
+        l.addWidget(label('Designs the sensor rigs of data-collection vehicles: cameras, lidars, radars, GNSS and IMU placed '
+                          'on the vehicle, what they record, how they are calibrated and checked against recordings.',
+                          wrap=True))
+        l.addWidget(label('Free software under the GNU General Public License, version 3 or (at your option) any later '
+                          'version. It comes with no warranty. Source: github.com/Sherin-SEF-AI/Vantage',
+                          muted=True, small=True, wrap=True))
         l.addWidget(label('Typeface: IBM Plex Sans and Plex Mono, SIL Open Font License 1.1.', muted=True, small=True, wrap=True))
         l.addWidget(label('Built with PyQt6, NumPy, SciPy and OpenCV.', muted=True, small=True))
         l.addStretch(1)

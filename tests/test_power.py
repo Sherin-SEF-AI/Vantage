@@ -12,7 +12,7 @@ import pytest
 from vantage.core import power as PW, rules, samples, sensors
 from vantage.core.project import Sensor
 
-# the data rig: 6 cameras (no module figure: the typical 1.5 W), an OS1-128 (20 W), a long-range radar (6.6 W) and
+# the data rig: 6 cameras (their module's power figure cleared by the fixture, so the typical 1.5 W), an OS1-128 (20 W), a long-range radar (6.6 W) and
 # four corner radars (4 W), plus the INS (12 W) and two survey antennas (0.2 W) the tests add; compute 60 W,
 # recorder 40 W, switch 15 W, time server 5 W
 CAM_W, OS1_W, LONG_W, CORNER_W, INS_W, ANT_W = 1.5, 20.0, 6.6, 4.0, 12.0, 0.2
@@ -41,9 +41,11 @@ def _add(p, kind, model_id, tag, **kw):
 
 @pytest.fixture()
 def p(base):
-    """The data rig, active, with an INS and two antennas."""
+    """The data rig, active, with an INS and two antennas, its cameras without a power figure (the hand calculations
+    use the typical camera figure; the built-in STURDeCAM31 states 1.324 W: test_the_module_power_figure)."""
     q = copy.deepcopy(base)
     q.active_uid = next(v for v in q.variants if v.sensors).uid
+    q.modules['sturdecam31'].power_w = 0.0
     _add(q, 'imu', 'ins_dual', 'IMU1')
     _add(q, 'gnss', 'gnss_survey', 'GN1')
     _add(q, 'gnss', 'gnss_survey', 'GN2')
@@ -67,6 +69,16 @@ def _cv(v_bus, p_w, r):
 
 
 # ----------------------------------------------------------------------------- the budget, by hand
+def test_the_module_power_figure(base):
+    q = copy.deepcopy(base)
+    q.active_uid = next(v for v in q.variants if v.sensors).uid
+    res = PW.run(q, settings=_short(q))
+    f = res.row('F')
+    assert (f['steady_w'], f['peak_w'], f['source']) == (1.324, pytest.approx(1.324 * 1.2), 'module')
+    assert res.totals['by_kind_w']['camera'] == pytest.approx(6 * 1.324)
+    assert not [x for x in res.findings if x['kind'] == 'no_figure']
+
+
 def test_the_data_rig_by_hand(p):
     res = PW.run(p, settings=_short(p))
     assert [r['tag'] for r in res.rows] == ['F', 'R', 'ML', 'MR', 'QL', 'QR', 'L1', 'RD1', 'RD2', 'RD3', 'RD4', 'RD5',

@@ -497,27 +497,28 @@ class LibraryPanel(QWidget):
         kind = self.kind.currentIndex()
         from ..core.lens import model_fov
         if kind in (0, 1):
+            used = {c.module_id for c in p.variant.cameras}
             for mid, m in p.modules.items():
-                grp = QTreeWidgetItem(t, [f'{m.vendor} {m.name} · {m.sensor.replace("Sony ", "")}'.strip()])
+                hay = f'{m.vendor} {m.name} {m.sensor} {m.interface}'
+                shown = [(lid, l) for lid, l in p.lenses.items() if (not l.module_id or l.module_id == mid)
+                         and (not q or q in f'{l.name} {l.label} {hay}'.lower())]
+                if q and not shown:
+                    continue                                    # a search hides the modules it does not match
+                grp = QTreeWidgetItem(t, [f'{m.name} · {m.sensor.replace("Sony ", "")}'.strip(' ·')])
                 grp.setData(0, ROLE_KIND, 'group2')
                 grp.setData(0, ROLE_ICON, None)
                 grp.setFlags(Qt.ItemFlag.ItemIsEnabled)
-                for lid, l in p.lenses.items():
-                    if l.module_id and l.module_id != mid:
-                        continue
-                    text = f'{l.name}'
-                    if q and q not in (text + ' ' + l.label + ' ' + m.name).lower():
-                        continue
+                grp.setToolTip(0, m.summary() + (f'\n\n{m.note}' if m.note else ''))
+                for lid, l in shown:
                     fh, fv, fd = l.sheet_fov if l.sheet_fov[0] else model_fov(m, l)
-                    it = QTreeWidgetItem(grp, [text])
+                    it = QTreeWidgetItem(grp, [l.name])
                     it.setData(0, ROLE_KIND, 'lens')
                     it.setData(0, ROLE_ID, (mid, lid))
                     it.setData(0, ROLE_ICON, 'camera-wide' if fh > 90 else 'camera-narrow')
-                    it.setData(0, ROLE_META, f'{fh:.1f}° × {fv:.1f}° · {l.focal_mm:g}')
-                    it.setToolTip(0, f'{m.name} + {l.name} ({l.label}) · {fh:.1f}° H × {fv:.1f}° V × {fd:.1f}° D · '
-                                     f'{l.focal_mm:g} mm F{l.f_number:g} · focus {l.focus_near_m:g} m – ∞')
+                    it.setData(0, ROLE_META, f'{fh:.1f}° × {fv:.1f}° · {l.focal_mm:.3g}')
+                    it.setToolTip(0, f'{m.name} + {l.summary()}' + (f'\n\n{l.note}' if l.note else ''))
                     it.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDragEnabled)
-                grp.setExpanded(True)
+                grp.setExpanded(bool(q) or mid in used)        # the modules in use open; the rest of the library folds
             custom = [l for l in p.lenses.values() if not l.builtin]
             proj = QTreeWidgetItem(t, [f'Project modules ({len(custom)})'])
             proj.setData(0, ROLE_KIND, 'group2')

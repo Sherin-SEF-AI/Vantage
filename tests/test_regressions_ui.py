@@ -335,19 +335,19 @@ def test_module_import_add_to_library_keeps_the_existing_module(app, win, tmp_pa
                    'lens': {'name': 'Other lens', 'focal_mm': 2.1}}, fh)
     monkeypatch.setattr(QFileDialog, 'getOpenFileName', staticmethod(lambda *a, **k: (path, '')))
     mid, lid = next(iter(p.modules)), next(iter(p.lenses))
-    before = p.modules[mid].to_dict()
+    before, mods0 = p.modules[mid].to_dict(), list(p.modules)
     dlg = ModuleEditor(win.ctx, mid, lid, win, start_import=True)
     assert dlg.ok.text() == 'Add to library'
     dlg.apply()
     settle(app, win)
     p = st.project
-    assert p.modules[mid].to_dict() == before and len(p.modules) == 2
+    assert p.modules[mid].to_dict() == before and len(p.modules) == len(mods0) + 1
     new_lens = next(l for l in p.lenses.values() if l.name == 'Other lens')
     new_mod = p.modules[new_lens.module_id]
     assert new_mod.id != mid and (new_mod.name, new_mod.width_px) == ('Other cam', 1280)
     assert p.module_for(st.variant.by_tag('F')).width_px == before['width_px']
     st.undo.undo()
-    assert list(st.project.modules) == [mid]
+    assert list(st.project.modules) == mods0
 
 
 def test_module_editor_fy_cell_and_image_circle(app, win):

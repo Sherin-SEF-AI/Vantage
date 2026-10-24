@@ -55,6 +55,7 @@ class ToolContext:
     cache: dict = field(default_factory=dict)
     rig_health: dict | None = None       # the Live rig page's snapshot while it streams (core.rig_health)
     drive_log: dict | None = None        # the Drive-log check page's last result (core.drivelog.summary)
+    asbuilt: dict | None = None          # the As-built check page's last result (core.asbuilt.summary)
     working_dir: str = ''                # where outputs go (workdir.get of the settings); never sent to the model
     _proposals: int = 0
 
@@ -343,9 +344,15 @@ def _explain(tc, P):
             if vg is not None:
                 depth = float(eng.cube(c.pos()).lookup(d[None])[0][0])
             if depth < dist - (0.02 + 0.01 * dist):
-                row.update(seen=False, reason='hidden by the body',
-                           detail=f'{_blocker(vg, c.pos(), d / dist)} is {depth:.2f} m along the ray, '
-                                  f'the point {dist:.2f} m')
+                from ..core import housings as HS
+                th, who = HS.nearest(p, c.pos(), (d / dist)[None])
+                if who[0] is not None and th[0] <= depth + 0.05:      # the cube map's nearest is a housing
+                    row.update(seen=False, reason=f'hidden by {who[0].label}',
+                               detail=f'{who[0].label} is {th[0]:.2f} m along the ray, the point {dist:.2f} m')
+                else:
+                    row.update(seen=False, reason='hidden by the body',
+                               detail=f'{_blocker(vg, c.pos(), d / dist)} is {depth:.2f} m along the ray, '
+                                      f'the point {dist:.2f} m')
             else:
                 dens = float(intr.density_px_per_cm(th, dist))
                 row.update(seen=True, density_px_cm=_r(dens, 2), pixel=[_r(u, 0), _r(v, 0)],
@@ -649,6 +656,48 @@ def get_drive_log_check(tc, **_):
                        'IMU at rest and GNSS fix shares; stale = the plan changed since'}
 
 
+def get_asbuilt_check(tc, **_):
+    if not tc.asbuilt:
+        return {'checked': False, 'note': 'no as-built check yet: Calibrate ▸ As-built check… (open a recording of the '
+                                         'real rig, Run)'}
+    return {'checked': True, **tc.asbuilt,
+            'meaning': 'a recording of the real rig against the plan: per camera the vehicle\'s outline in its frames '
+                       '(what stayed the same while driving) against the simulated one (IoU, mean outline distance), '
+                       'the fitted pose correction with standard errors (axes the outline does not constrain left as '
+                       'planned), the drive-log rotation against the lidar beside it and whether they agree, the '
+                       'coverage figures plan vs as built, and the verdict (holds / holds with corrections / does not '
+                       'hold / not checkable); stale = the plan changed since'}
+
+
+def get_housings(tc, **_):
+    from ..core import housings as HS
+    tc.status('Housings in each camera\'s view…')
+    res = HS.run(tc.project, tc.engine, cancel=tc.cancelled)
+    if res is None:
+        return {'error': 'cancelled'}
+    return {**HS.summary(res),
+            'meaning': 'per camera the share of its image each other sensor housing or camera module covers (and where '
+                       'in the image), and the ground coverage with the housings blocking and with the body and rig '
+                       'alone; Analysis ▸ Housings block cameras switches them on or off'}
+
+
+def get_suspension(tc, evaluate=False, **_):
+    from ..core import suspension as SU
+    if evaluate:
+        tc.status('Load cases from the suspension…')
+        res = SU.run(tc.project, tc.engine, cell=max(tc.project.analysis.cell_m, 0.1), cancel=tc.cancelled)
+        if res is None:
+            return {'error': 'cancelled'}
+    else:
+        res = SU.run(tc.project, images=False)
+    return {**SU.summary(res),
+            'meaning': 'static load cases from the suspension (typical values unless entered): each corner\'s drop '
+                       'from kerb, the body\'s pitch (+ nose down) and roll (+ right side down), how far the cameras '
+                       'and sensors move against the load they are calibrated at (what the calibration must absorb), '
+                       'bump stops touched at static load and, with evaluate, the stitched view\'s seam ghost and '
+                       'ground shift; the user edits it on Analysis ▸ Load cases'}
+
+
 def get_requirements(tc, run=False, **_):
     from ..core import requirements as RQ
     if run:
@@ -732,6 +781,35 @@ def calibrate_lidar_camera(tc, camera=None, lidar=None, **_):
         'calibrated on the page or with batch --lidar-calib-folder')}
 
 
+def get_camera_library(tc, module=None, **_):
+    """The project's camera library: every module (its figures, what its source does not give, where they come from)
+    and its lenses (the FOV the maker states, the modelled focal length and the FOV the model shows)."""
+    from ..core.lens import LIBRARY_NOTE, model_fov
+    p = tc.project
+    q = str(module or '').strip().lower()
+    out = []
+    for mid, m in p.modules.items():
+        if q and q not in f'{m.id} {m.name} {m.sensor} {m.interface}'.lower():
+            continue
+        lenses = []
+        for lid, l in p.lenses.items():
+            if l.module_id not in ('', mid):
+                continue
+            seen = model_fov(m, l, circle=True)
+            lenses.append({'id': lid, 'name': l.name, 'label': l.label,
+                           'stated_fov_deg': [_r(x, 2) if x else None for x in tuple(l.sheet_fov)[:3]],
+                           'model_fov_deg': [_r(x, 1) for x in seen], 'focal_mm': _r(l.focal_mm, 3),
+                           'f_number': _r(l.f_number, 1) if l.f_number else None,
+                           'focus_m': [_r(l.focus_near_m, 2) if l.focus_near_m else None, _r(l.focus_far_m, 2)],
+                           'not_given': l.missing()})
+        out.append({'id': mid, 'summary': m.summary(), 'builtin': bool(m.builtin), 'not_given': m.missing(),
+                    'source': m.url or None, 'cameras_using': [c.tag for c in p.variant.cameras if c.module_id == mid],
+                    'lenses': lenses})
+    if not out:
+        return {'error': f'no module matches {module!r}', 'modules': [m.name for m in p.modules.values()]}
+    return {'modules': out, 'note': LIBRARY_NOTE}
+
+
 def get_power_budget(tc, **_):
     from ..core import power as PW
     return {**PW.summary(PW.run(tc.project)),
@@ -754,11 +832,18 @@ def _norm_angle(a):
     return 180.0 if a == -180.0 else a
 
 
-def _lens(p, name):
+def _lens(p, name, module_id=''):
+    """The library lens a name or id means: an id, else a name (several modules' lenses can share a name: the one on
+    module_id, the camera's own, wins), else a unique partial match."""
     t = str(name or '').strip().lower()
     for l in p.lenses.values():
-        if l.id.lower() == t or l.name.lower() == t:
+        if l.id.lower() == t:
             return l
+    exact = [l for l in p.lenses.values() if l.name.lower() == t]
+    if len(exact) > 1:
+        exact = [l for l in exact if l.module_id in ('', module_id)] or exact
+    if exact:
+        return exact[0] if len(exact) == 1 else None
     hits = [l for l in p.lenses.values() if t and (t in l.name.lower() or t in l.id.lower())]
     return hits[0] if len(hits) == 1 else None
 
@@ -793,12 +878,14 @@ def apply_changes(p, changes):
             errors.append(f'{c.tag}: positions and angles must be numbers')
             continue
         if ch.get('lens') is not None:
-            lens = _lens(p, ch['lens'])
+            lens = _lens(p, ch['lens'], c.module_id)
             if lens is None:
-                errors.append(f'{c.tag}: no single lens matches {ch["lens"]!r}; lenses: '
-                              + ', '.join(sorted(l.name for l in p.lenses.values())))
+                errors.append(f'{c.tag}: no single lens matches {ch["lens"]!r}; lens ids: '
+                              + ', '.join(sorted(p.lenses)))
                 continue
             props['lens_id'] = lens.id
+            if lens.module_id and lens.module_id in p.modules and lens.module_id != c.module_id:
+                props['module_id'] = lens.module_id         # a library lens is modelled on its own module's sensor
         if ch.get('visible') is not None:
             props['visible'] = bool(ch['visible'])
         if not props:
@@ -848,7 +935,11 @@ def _row(p, c, k, a, b, mirrored_from=None):
     if k == 'lens_id':
         a = p.lenses[a].name if a in p.lenses else a
         b = p.lenses[b].name if b in p.lenses else b
-    return {'camera': c.tag, 'slot': c.slot, 'prop': 'lens' if k == 'lens_id' else k, 'before': a, 'after': b,
+    elif k == 'module_id':
+        a = p.modules[a].name if a in p.modules else a
+        b = p.modules[b].name if b in p.modules else b
+    return {'camera': c.tag, 'slot': c.slot, 'prop': {'lens_id': 'lens', 'module_id': 'module'}.get(k, k),
+            'before': a, 'after': b,
             'unit': unit, 'mirrored_from': mirrored_from}
 
 
@@ -1349,6 +1440,14 @@ TOOLS = [
          'sees, sees alone, and what would go blind without it; the worst single-camera mounting error.', {},
          get_coverage),
     Tool('get_issues', 'Read the issues list', 'The Issues list (severity, message, cameras involved).', {}, get_issues),
+    Tool('get_camera_library', 'Read the camera library',
+         'Every camera module in the library (e-con Systems GMSL2 and FPD-Link modules, and the project\'s own): '
+         'sensor, resolution, frame rate, shutter, dynamic range, IP rating, temperature, power, the figures its '
+         'source does not give and its page; each lens with the FOV the maker states and the modelled focal length. '
+         'Use it to choose a module or lens; change a camera\'s lens with propose_changes (lens id: the camera '
+         'moves to that lens\'s module).',
+         {'module': {'type': 'string', 'description': 'only modules whose name, id, sensor or interface contain this'}},
+         get_camera_library),
     Tool('get_camera', 'Read camera details',
          'One camera in detail: pose, lens model, sensor, field of view, mount clearance, coverage, seams, issues.',
          {'camera': {'type': 'string', 'description': 'camera tag'}}, get_camera, required=('camera',)),
@@ -1430,6 +1529,19 @@ TOOLS = [
          'frames, data rate against the budget, lidar phase lock, worst camera trigger offset, camera rotations with '
          'their confidence, and the findings. Reads the page\'s result; does not read the log. Cheap.', {},
          get_drive_log_check),
+    Tool('get_housings', 'Housings in the cameras\' views',
+         'What the sensor housings (lidars, radars, GNSS antennas, IMUs) and the other cameras\' modules hide in each '
+         'camera\'s image (share and where), a camera inside a housing, and the ground coverage with the housings and '
+         'with the body and rig alone. Moderate: two coverage analyses.', {}, get_housings),
+    Tool('get_suspension', 'Read the suspension load cases',
+         'Load cases from the suspension and the loads (rig, crew, equipment): per case the corner drops, pitch, roll, '
+         'the worst camera/sensor move against the calibration load, bump stops; evaluate=true adds the ground figures '
+         '(about a second). Cheap without evaluate.', {'evaluate': {'type': 'boolean'}}, get_suspension),
+    Tool('get_asbuilt_check', 'Read the as-built check',
+         'The last recording of the real rig checked against the plan (Calibrate ▸ As-built check): the verdict, per '
+         'camera the mask overlap, outline distance, fitted correction ± error, the lidar estimate and agreement, the '
+         'coverage figures plan vs as built, and the findings. Reads the page\'s result; does not read the recording. '
+         'Cheap.', {}, get_asbuilt_check),
     Tool('plan_lidar_calibration', 'Plan a lidar–camera calibration',
          'The camera–lidar pairs ranked by shared field; for one pair (camera, lidar tags; default the best) the '
          'checkerboard poses to capture and the uncertainty they would give. About half a second.',
@@ -1498,7 +1610,7 @@ TOOLS = [
          'frame_point (x, y: frames the views on a ground point and marks it), frame_all, heatmap '
          '(none | coverage | density | redundancy | stitched), overlay (overlay key such as camlight, volume, '
          'guidelines, frustums, sensors; on), open_page (viewports | camviews | volume | perception | tolerance | '
-         'compare | rig | coverage | timing | recording | power | gnss | exposure | fleet | brackets | dataset | drivelog | requirements | lidar_calib).',
+         'compare | rig | coverage | timing | recording | power | gnss | exposure | fleet | brackets | dataset | drivelog | asbuilt | requirements | lidar_calib).',
          {'action': {'type': 'string', 'enum': list(UI_ACTIONS)}, 'cameras': {'type': 'array', 'items': {'type': 'string'}},
           'x': {'type': 'number'}, 'y': {'type': 'number'}, 'heatmap': {'type': 'string'}, 'overlay': {'type': 'string'},
           'on': {'type': 'boolean'}, 'page': {'type': 'string'}}, show_in_app, 'ui', ('action',)),

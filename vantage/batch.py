@@ -6,10 +6,12 @@
     vantage project.vantage --calibrate-lens views/ --camera F --board 9x6 --square 60 --save out.vantage
     vantage project.vantage --import-calib camchain.yaml F.yaml --save out.vantage
     vantage --sample --load-cases -
+    vantage project.vantage --suspension-data corners.csv --suspension cases.json
     vantage project.vantage --blind-volume volume.json
     vantage project.vantage --perception-range ranges.json --variant 2
     vantage project.vantage --rig-health 10 health.json
     vantage project.vantage --sensor-coverage coverage.json
+    vantage project.vantage --housings housings.json
     vantage project.vantage --sync-plan sync.json --units mm
     vantage project.vantage --recording-budget budget.json
     vantage project.vantage --power-budget power.json
@@ -18,17 +20,21 @@
     vantage project.vantage --brackets out/
     vantage project.vantage --dataset out/
     vantage project.vantage --drive-log drive.mcap report/
+    vantage project.vantage --as-built-check drive/ report/
     vantage project.vantage --check review/
     vantage project.vantage --lidar-calib out/ --lidar-calib-pair F L1 --lidar-calib-folder boards/
     vantage project.vantage --fleet-import V3 install_report.json --fleet fleet/ --save project.vantage
 
 The exit code is 0 when everything is fine, 2 when an analysis or export finds critical issues in the plan (or the
 recording budget finds the recorder or a sensor link cannot keep up, or the power budget finds the DC-DC converter or a
-fuse over its rating, the GNSS study finds an antenna with no sky, or a camera cannot take a printed bracket as planned),
+fuse over its rating, the GNSS study finds an antenna with no sky, a camera cannot take a printed bracket as planned,
+a suspension load case lifts a wheel or exceeds the gross vehicle mass, or a camera sits inside a housing),
 3 when an installation check finds a camera that has to be re-mounted (or could not be solved), the rig health check
 finds a camera faulty (or without a stream), the fleet has a sensor to re-mount in its latest record or a drive log
-shows a fault or a lidar has to be re-mounted (or its pose is not determined by the board poses), and 4 when a lens
-calibration fails, an imported calibration matches no camera, a fleet record, a drive log or a lidar calibration's captures cannot be read or the
+shows a fault or a lidar has to be re-mounted (or its pose is not determined by the board poses) or the as-built check
+finds the plan's coverage does not hold, and 4 when a lens calibration fails, an imported calibration matches no
+camera, a fleet record, a drive log, an as-built check's recording, a suspension data file or a lidar calibration's
+captures cannot be read or the
 sample dataset cannot be written, and 5 when, with --check, a must requirement fails or cannot be evaluated.
 """
 from __future__ import annotations
@@ -335,6 +341,18 @@ def run(args) -> int:
         cdoc, ok = calibrate_lens(project, args)
         cal_docs.append(('calibration', cdoc))
         code = code if ok else 4
+    if args.suspension_data:
+        from .core import suspension as SU
+        try:
+            sst, what, warns = SU.load_file(args.suspension_data, SU.settings_for(project))
+        except (OSError, ValueError) as e:
+            print(f'suspension data: {e}', file=sys.stderr)
+            code = max(code, 4)
+        else:
+            project.analysis.suspension = sst.to_dict()
+            print(f'read the {what} from {os.path.basename(args.suspension_data)}', file=sys.stderr)
+            for w in warns:
+                print(f'  note: {w}', file=sys.stderr)
     if cal_docs:
         doc_ = cal_docs[0][1] if len(cal_docs) == 1 else {'schema': 'vantage.batch_calibration/1', **dict(cal_docs)}
         _out(doc_, '-' if not args.report or args.install_check else args.report)
@@ -350,6 +368,23 @@ def run(args) -> int:
         _out(doc, args.analyse)
     if args.load_cases is not None:
         _out(load_cases_doc(project, eng), args.load_cases)
+    if args.housings is not None:
+        from .core import housings as HS
+        hres = HS.run(project, eng)
+        _out(HS.to_doc(hres, project), args.housings)
+        for iv in hres.cameras:
+            print(f'  {iv.tag:<4} {HS.in_view_text(iv)[0]}', file=sys.stderr)
+        if any(iv.inside for iv in hres.cameras):
+            code = max(code, 2)
+    if args.suspension is not None:
+        from .core import suspension as SU
+        sr = SU.run(project, eng, cell=max(project.analysis.cell_m, 0.05))
+        _out(SU.to_doc(sr, project), args.suspension)
+        for f in sr.findings:
+            if f['severity'] not in ('good', 'note'):
+                print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
+        if any(f['kind'] in ('lift', 'gross') for f in sr.findings):
+            code = max(code, 2)
     if args.blind_volume is not None:
         _out(blind_volume_doc(project, eng, res), args.blind_volume)
     if args.perception_range is not None:
@@ -491,6 +526,28 @@ def run(args) -> int:
                     print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
             if any(f['severity'] == 'fault' for f in lres.findings):
                 code = max(code, 3)
+    if args.as_built_check is not None:
+        from .core import asbuilt as ABL
+        dest = args.as_built_check[1] if len(args.as_built_check) > 1 else '-'
+        try:
+            ares = ABL.run(project, eng, ABL.settings_of(project), project.variant, path=args.as_built_check[0])
+        except (OSError, ValueError) as e:
+            print(f'as-built check: {e}', file=sys.stderr)
+            code = max(code, 4)
+        else:
+            if dest not in ('', '-') and not dest.lower().endswith('.json'):
+                for pth in ABL.export(ares, project, dest):
+                    print(f'wrote {pth}', file=sys.stderr)
+            else:
+                _out(ABL.to_doc(ares, project), dest)
+            for f in ares.findings:
+                if f['severity'] != 'good':
+                    print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
+            print(f'as-built check: {ABL.VERDICT_TEXT.get(ares.verdict, ares.verdict)}', file=sys.stderr)
+            if args.save and ares.asbuilt is not None:
+                project.variants.append(ares.asbuilt)
+            if ares.verdict == 'does_not_hold':
+                code = max(code, 3)
     if args.check is not None:
         from .core import requirements as RQ
         dest = None if args.check == '-' else args.check
@@ -607,6 +664,22 @@ def add_arguments(ap):
     g.add_argument('--drive-log', nargs='+', metavar=('LOG', 'OUT'),
                    help='check a recorded drive (ROS 2 bag folder/.mcap/.db3 or nuScenes folder) against the plan: '
                         'OUT.json, or a folder for the JSON, the CSV, the timeline and overlay PNGs (default: stdout)')
+    g.add_argument('--housings', nargs='?', const='-', metavar='OUT.json',
+                   help='what the sensor housings and the other cameras\' modules hide in each camera\'s image, and '
+                        'the ground coverage with and without them; exit 2 when a camera sits inside a housing')
+    g.add_argument('--suspension', nargs='?', const='-', metavar='OUT.json',
+                   help='load cases from the suspension and the loads (Analysis ▸ Load cases): corner drops, pitch and '
+                        'roll, every camera\'s and sensor\'s move against the calibration load, and the ground figures; '
+                        'exit 2 when a case lifts a wheel or exceeds the gross vehicle mass')
+    g.add_argument('--suspension-data', metavar='FILE',
+                   help='read suspension data (JSON, YAML, a CSV parameter sheet or ride-height table) into the project '
+                        'first (kept with --save); exit 4 when it cannot be read')
+    g.add_argument('--as-built-check', nargs='+', metavar=('REC', 'OUT'),
+                   help='check a recording of the real rig (ROS 2 bag folder/.mcap/.db3, nuScenes folder or a folder '
+                        'of images per camera) against the plan: each camera\'s outline of the vehicle, the pose '
+                        'corrections and the coverage as built; OUT.json, or a folder for the JSON, the CSV and the '
+                        'PNGs (default: stdout); with --save the as-built variant is kept; exit 3 when the plan\'s '
+                        'coverage does not hold')
     g.add_argument('--check', nargs='?', const='-', metavar='OUT',
                    help='evaluate the project\'s requirements (Analysis ▸ Requirements scorecard); OUT.json gets the '
                         'scorecard, a folder the JSON, CSV and the design-review pack (PDF); exit 5 when a must '
@@ -656,4 +729,6 @@ def wanted(args) -> bool:
                                                                'recording_budget', 'sync_plan', 'sensor_coverage',
                                                                'power_budget', 'gnss', 'exposure', 'fleet',
                                                                'fleet_import', 'brackets', 'dataset',
-                                                               'drive_log', 'check', 'lidar_calib'))
+                                                               'drive_log', 'as_built_check', 'check',
+                                                               'suspension', 'suspension_data', 'housings',
+                                                               'lidar_calib'))

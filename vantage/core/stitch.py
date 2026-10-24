@@ -73,7 +73,7 @@ def lut_for_points(project: Project, engine, result, P, body, poses=None, blend_
     X, Y = P[..., 0], P[..., 1]
     Pf = P.reshape(-1, 3)
     vis, dens = {}, {}
-    has_body = engine.vehicle_geom(project) is not None
+    has_body = engine.vehicle_geom(project, variant) is not None       # that variant's housings block too
     from .mathutil import euler_zyx
     for c in cams:
         intr = resolve(project.module_for(c), project.lens_for(c))

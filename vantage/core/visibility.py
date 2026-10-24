@@ -1,4 +1,5 @@
-"""Which cameras see a point: the lens model (field of view and the image rectangle) and body occlusion.
+"""Which cameras see a point: the lens model (field of view and the image rectangle) and occlusion by the body, the
+rig and the sensor and camera housings (the engine's cube maps, core.housings composited in).
 
 The same test the GPU runs per pixel for the 3D view's camera light (ui/render_gl.py), on the CPU: the software
 renderer colours the body with it and the tests check the shader against it.

@@ -1,6 +1,7 @@
 ; Inno Setup script for the Windows installer. packaging/build.py runs it after PyInstaller:
-;   iscc /DAppVersion=1.0.0 /DBundleDir=dist\Vantage /Odist packaging\windows\vantage.iss
-; Installs per user by default (no administrator rights needed); the setup offers an all-users install too.
+;   iscc /DAppVersion=0.1.0 /DBundleDir=dist\Vantage /Odist packaging\windows\vantage.iss
+; Installs per user by default (no administrator rights needed, into %LOCALAPPDATA%\Programs\Vantage); the setup
+; offers an all-users install too. Relative paths here are relative to this file's folder.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -15,7 +16,12 @@ AppName=Vantage
 AppVersion={#AppVersion}
 AppVerName=Vantage {#AppVersion}
 AppComments=Sensor rig planner for autonomous-driving data collection
+AppPublisher=Vantage
 AppPublisherURL=https://github.com/Sherin-SEF-AI/Vantage
+AppSupportURL=https://github.com/Sherin-SEF-AI/Vantage/issues
+AppUpdatesURL=https://github.com/Sherin-SEF-AI/Vantage/releases
+VersionInfoVersion={#AppVersion}
+VersionInfoProductName=Vantage
 DefaultDirName={autopf}\Vantage
 DefaultGroupName=Vantage
 DisableProgramGroupPage=yes
@@ -25,7 +31,9 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputBaseFilename=Vantage-{#AppVersion}-windows-x64-setup
 SetupIconFile=..\icons\vantage.ico
+LicenseFile=..\..\LICENSE
 UninstallDisplayIcon={app}\Vantage.exe
+UninstallDisplayName=Vantage {#AppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -38,9 +46,15 @@ Name: "assoc"; Description: "Open .vantage projects with Vantage"; GroupDescript
 [Files]
 Source: "{#BundleDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+[InstallDelete]
+; an update replaces the program folder's contents: files an older version had and this one does not go
+Type: filesandordirs; Name: "{app}\_internal"
+
 [Icons]
 Name: "{group}\Vantage"; Filename: "{app}\Vantage.exe"
-Name: "{group}\Vantage self-test"; Filename: "{cmd}"; Parameters: "/k ""{app}\vantage-cli.exe"" --self-test"; IconFilename: "{app}\Vantage.exe"
+; cmd /k drops the first and the last quote of its command line unless exactly two quotes enclose a path with a space
+; in it; the extra outer pair keeps the program's path quoted wherever it was installed
+Name: "{group}\Vantage self-test"; Filename: "{cmd}"; Parameters: "/k """"{app}\vantage-cli.exe"" --self-test"""; IconFilename: "{app}\Vantage.exe"
 Name: "{autodesktop}\Vantage"; Filename: "{app}\Vantage.exe"; Tasks: desktopicon
 
 [Registry]

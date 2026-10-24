@@ -10,8 +10,9 @@ lenses, rig metal), sky occlusion (ambient occlusion) from depth maps of the bod
 over the sky, soft shadow maps (Poisson-disc PCF with a normal-offset bias) on the body, the rig and the ground, a
 contact shadow under the body, a ground plane that fades into the background, the textured 3D surround-view bowl,
 round depth-tested point sprites, crisp screen-space outlines around selected triangles, and "camera light": every
-camera's real lens model and body occlusion evaluated per pixel, so the body and the ground show exactly what each
-camera sees while it is being moved.
+camera's real lens model and occlusion (the body, the rig and the sensor and camera housings: the cube maps the
+analysis uses, housings composited in) evaluated per pixel, so the body and the ground show exactly what each camera
+sees while it is being moved, housing shadows included.
 
 Data colours stay true: the ground textures (coverage, density, redundancy, footprints), the bowl texture and the
 camera-light colours are not tone-mapped; they are shaded exactly as before (shadow and contact darkening only).
@@ -253,7 +254,7 @@ bool cam_sees(int i, vec3 p) {
     if (uCubeInfo.w > 0.5) {
         float dist = length(dw);
         float occ = cube_depth(i, dw);
-        if (occ > 0.0 && occ < dist - (0.02 + 0.01 * dist)) return false;
+        if (occ >= 0.0 && occ < dist - (0.02 + 0.01 * dist)) return false;   // 0: the camera is inside a housing
     }
     return true;
 }
@@ -735,22 +736,19 @@ def sky_matrices(lo, hi, dirs) -> tuple[np.ndarray, float, float]:
 
 
 def encode_cubes(cubes: list) -> tuple[np.ndarray, int]:
-    """Occlusion cube maps of several cameras as one RGBA8 atlas (faces across, cameras down), depth in mm in R/G
-    (16 bit), B = occluder present."""
+    """Occlusion cube maps (depth arrays (6, N, N) of several cameras: the body, the rig and the housings composited
+    in) as one RGBA8 atlas (faces across, cameras down), depth in mm in R/G (16 bit), B = occluder present."""
     N = cubes[0].shape[1]
-    H = N * len(cubes)
-    out = np.zeros((H, 6 * N, 4), np.uint8)
-    for i, cb in enumerate(cubes):
-        for f in range(6):
-            d = cb[f]
-            ok = np.isfinite(d)
-            mm = np.where(ok, np.clip(np.round(d * 1000), 0, 65535), 0).astype(np.uint32)
-            blk = out[i * N:(i + 1) * N, f * N:(f + 1) * N]
-            blk[..., 0] = mm >> 8
-            blk[..., 1] = mm & 255
-            blk[..., 2] = np.where(ok, 255, 0)
-            blk[..., 3] = 255
-    return out, N
+    D = np.stack([np.asarray(c, np.float32) for c in cubes])           # (cams, faces, rows, cols)
+    ok = np.isfinite(D)
+    mm = np.rint(np.minimum(D, np.float32(65.535)) * np.float32(1000)).astype(np.uint16)
+    mm[~ok] = 0
+    out = np.empty((len(cubes), N, 6, N, 4), np.uint8)                # (cams, rows, faces, cols, rgba)
+    out[..., 0] = (mm >> 8).transpose(0, 2, 1, 3)
+    out[..., 1] = (mm & 255).transpose(0, 2, 1, 3)
+    out[..., 2] = (ok.view(np.uint8) * 255).transpose(0, 2, 1, 3)
+    out[..., 3] = 255
+    return out.reshape(len(cubes) * N, 6 * N, 4), N
 
 
 def _fingerprint(a: np.ndarray, refs: list):

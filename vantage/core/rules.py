@@ -168,13 +168,17 @@ def collect_issues(project: Project, result, vg, mounts: dict | None = None) -> 
             out.append(Issue('warning', f'Camera sits {worst:.0f} mm from the body edge; the clearance rule is {EDGE_RULE_MM:.0f} mm.',
                              ', '.join(c.tag for c, _ in edge_cams), [c.uid for c, _ in edge_cams]))
     out += sensor_issues(project, vg)
-    from . import exposure, fleet, gnss, power, recording, requirements     # import this module
+    from . import (asbuilt, exposure, fleet, gnss, housings, power, recording, requirements,   # they import
+                   suspension)                                                                # this module
+    out += housings.issues(project, vg)
     out += recording.issues(project)
     out += power.issues(project)
     out += gnss.issues(project, vg)
     out += exposure.issues(project, vg)
     out += fleet.issues(project)
     out += requirements.issues(project)
+    out += suspension.issues(project, vg)
+    out += asbuilt.issues(project)
     out.sort(key=lambda i: SEVERITY_ORDER.get(i.severity, 9))
     return out
 

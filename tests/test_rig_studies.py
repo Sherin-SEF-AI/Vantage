@@ -15,7 +15,8 @@ from vantage.core.project import Sensor
 PAGES = {'power_budget': ('power', 'Analysis'), 'gnss_imu': ('gnss', 'Analysis'), 'sun_dirt': ('exposure', 'Analysis'),
          'mount_brackets': ('brackets', 'Analysis'), 'requirements': ('requirements', 'Analysis'),
          'sample_dataset': ('dataset', 'Export'), 'drive_log': ('drivelog', 'Calibrate'),
-         'fleet': ('fleet', 'Calibrate'), 'lidar_calib': ('lidar_calib', 'Calibrate')}
+         'fleet': ('fleet', 'Calibrate'), 'lidar_calib': ('lidar_calib', 'Calibrate'),
+         'asbuilt': ('asbuilt', 'Calibrate')}
 FORMATS = {'power_budget': ['power_budget/power_budget.json', 'power_budget/power_budget.csv',
                             'power_budget/power_circuits.csv'],
            'gnss_imu': ['gnss_imu/gnss_imu.json', 'gnss_imu/ins_lever_arms.txt', 'gnss_imu/gnss_sky.png'],
@@ -108,6 +109,8 @@ def test_batch_flags_and_exit_codes(tmp_path):
     # a drive log that is not there cannot be read: exit 4
     p.analysis.requirements = {}
     assert _batch(tmp_path, p, drive_log=[str(tmp_path / 'no-such-bag')]) == 4
+    # nor an as-built check's recording
+    assert _batch(tmp_path, p, as_built_check=[str(tmp_path / 'no-such-recording')]) == 4
 
 
 def test_assistant_reads_the_rig_studies():
@@ -116,7 +119,8 @@ def test_assistant_reads_the_rig_studies():
     p = _rig()
     tc = T.ToolContext(p.snapshot(), None, Engine())
     for name in ('get_power_budget', 'get_gnss_imu', 'get_sun_and_dirt', 'get_fleet', 'get_brackets',
-                 'get_sample_dataset', 'get_drive_log_check', 'get_requirements', 'get_requirement_metrics',
+                 'get_sample_dataset', 'get_drive_log_check', 'get_asbuilt_check', 'get_requirements',
+                 'get_requirement_metrics',
                  'plan_lidar_calibration'):
         assert name in T.BY_NAME, name
         out = json.loads(T.run(tc, name, {})[0])
@@ -124,6 +128,7 @@ def test_assistant_reads_the_rig_studies():
     g = json.loads(T.run(tc, 'get_gnss_imu', {'antenna': 'GN2'})[0])
     assert g['antenna_detail']['tag'] == 'GN2'
     assert json.loads(T.run(tc, 'get_drive_log_check', {})[0])['checked'] is False
+    assert json.loads(T.run(tc, 'get_asbuilt_check', {})[0])['checked'] is False
     # the assistant can open each page
     desc = T.BY_NAME['show_in_app'].description
     assert all(page in desc for page, _ in PAGES.values())

@@ -1,0 +1,23 @@
+# What the downloadable bundles are built from (packaging/build.py, .github/workflows/build.yml): the app's
+# requirements (requirements.txt) at versions the CI smoke test passed on Linux, Windows and macOS, plus the optional
+# modules the bundles carry. Change a pin only together with a CI run whose smoke test passes, before tagging.
+#
+#   python -m pip install -r packaging/requirements-bundle.txt
+#
+# Not for running from source (use requirements.txt): this file takes opencv-python-headless in place of
+# opencv-python, so the two must not be installed into the same environment.
+PyQt6==6.11.0
+PyQt6-Qt6==6.11.2
+PyQt6-sip==13.13.0
+numpy==2.5.4
+scipy==1.18.1
+PyOpenGL==3.1.10
+PyYAML==6.0.3
+opencv-python-headless==5.0.0.93   # the same OpenCV without its own GUI and the copy of Qt 5 that comes with it
+certifi==2026.10.23
+keyring==25.7.0                    # the assistant's API key in the OS keyring
+zstandard==0.25.0                  # zstd-compressed ROS 2 bags (MCAP chunks, rosbag2 message compression)
+lz4==4.4.5                         # lz4-compressed MCAP chunks
+tzdata==2026.5                     # named time zones for the sun glare study where the system has none (Windows)
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.9

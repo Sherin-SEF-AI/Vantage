@@ -332,9 +332,9 @@ def to_doc(vr: VolumeResult, project=None) -> dict:
     m = vr.metrics
     doc = {'schema': 'vantage.blind_volume/1',
            'note': 'Space inside the ROI, from the ground up to the height, that no camera sees (same visibility test as '
-                   'the ground analysis: lens model, sensor, body occlusion). An object is detected when any camera sees '
-                   'any part of its column from the ground up to its height. Reach: farthest such point from the body '
-                   'per azimuth sector (0 deg = forward, 90 deg = left).',
+                   'the ground analysis: lens model, sensor, occlusion by the body, rig and housings). An object is '
+                   'detected when any camera sees any part of its column from the ground up to its height. Reach: '
+                   'farthest such point from the body per azimuth sector (0 deg = forward, 90 deg = left).',
            'height_m': r(vr.height), 'level_step_m': r(vr.dz), 'cell_m': r(vr.cell),
            'roi_m2': r(m['roi_m2']), 'roi_m3': r(m['roi_m3']), 'blind_m3': r(m['blind_m3']), 'blind_pct': r(m['blind_pct'], 2),
            'never_seen_m2': r(m['never_seen_m2']), 'covered_to_m': r(m['covered_to_m']),

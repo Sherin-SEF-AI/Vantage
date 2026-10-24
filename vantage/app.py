@@ -11,13 +11,30 @@ APP_ICON = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources',
 
 def make_app(theme=None, scale=None):
     """The QApplication with Vantage's fonts, theme and icon; returns (app, settings)."""
-    from PyQt6.QtCore import Qt, QSettings
+    from PyQt6.QtCore import QEvent, Qt, QSettings, pyqtSignal
     from PyQt6.QtGui import QIcon
     from PyQt6.QtWidgets import QApplication
     from .ui.viewport3d import configure_default_format
+
+    class _App(QApplication):
+        """Keeps macOS's open-document events: a .vantage double-clicked in Finder (or dropped on the Dock icon)
+        arrives as a QFileOpenEvent, not in argv."""
+        file_opened = pyqtSignal(str)
+
+        def __init__(self, argv):
+            super().__init__(argv)
+            self.pending = []
+
+        def event(self, e):
+            if e.type() == QEvent.Type.FileOpen and e.file():
+                self.pending.append(e.file())
+                self.file_opened.emit(e.file())
+                return True
+            return super().event(e)
+
     configure_default_format()
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
-    app = QApplication(sys.argv[:1])
+    app = _App(sys.argv[:1])
     app.setApplicationName('Vantage')
     app.setOrganizationName('Vantage')
     app.setApplicationDisplayName('Vantage')
@@ -33,6 +50,11 @@ def make_app(theme=None, scale=None):
 
 def main(argv=None):
     from . import __version__
+    for s in (sys.stdout, sys.stderr):              # batch output on a Windows console: never crash on → or ▸
+        try:
+            s.reconfigure(errors='replace')
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser(prog='vantage', description='Vantage · sensor rig planner for autonomous-driving data collection')
     ap.add_argument('--version', action='version', version=f'vantage {__version__}')
     ap.add_argument('--self-test', action='store_true',
@@ -73,6 +95,9 @@ def main(argv=None):
     if args.software_3d:
         os.environ['VANTAGE_SOFTWARE_3D'] = '1'
     app, settings = make_app(args.theme, args.scale)
+    app.processEvents()                             # macOS delivers the launch's open-document event here
+    if not args.path and app.pending:
+        args.path = app.pending.pop()
     from .ui.viewport3d import gl_available
 
     from .core import samples
@@ -117,6 +142,9 @@ def main(argv=None):
     w = MainWindow(project, soft_3d=soft)
     st = settings.value('window/state')
     w.show()
+    app.pending.clear()
+    app.file_opened.connect(lambda p: w.open_project(p) if p.lower().endswith('.vantage')
+                            else w.import_vehicle(path=p))
     if model_path:
         from PyQt6.QtCore import QTimer
         QTimer.singleShot(100, lambda: w.import_vehicle(path=model_path))

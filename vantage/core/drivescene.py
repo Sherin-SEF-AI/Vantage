@@ -32,14 +32,16 @@ Sensors
 * Cameras: every pixel's ray (the real lens model, unit calibrations included, or an exact pinhole for rectified
   images) is cast into the scene from the camera's position at the pixel's exposure time: the frame's middle-row time
   (global), or with a rolling shutter each band of 16 rows at its own time (rows read top to bottom over the readout,
-  each exposed for the exposure time). The ego body and rig hide what lies behind them (the same cube depth maps as
-  the analysis). Shading: a fixed sun (Lambert), ground shadows, painted markings antialiased on the pixel footprint,
+  each exposed for the exposure time). The ego body, its rig and the housings of the other sensors and cameras hide
+  what lies behind them (the same cube depth maps as the analysis; core.housings); housings are drawn as dark plastic
+  and metal. Shading: a fixed sun (Lambert), ground shadows, painted markings antialiased on the pixel footprint,
   a little sensor noise. Rendering culls objects per 16 × 16 pixel tile.
 * Lidar: each column of channels fires at its own time (a spinning lidar's head faces phase ∓ 360°·f·t after each
   sync pulse, as core.timing) from the sensor's position at that time, so a sweep is not motion compensated, as a
-  driver delivers it. Rays meet the ground, the objects and the own body and rig (self hits, flagged). A return needs
-  range_min ≤ r ≤ R_max(ρ·cos i) with R_max(ρ) = range_m·√(ρ/0.10) (capped at range_max_m when the model gives one),
-  ρ the material's typical reflectivity and i the incidence angle; Gaussian range noise; intensity = 255·ρ·cos i.
+  driver delivers it. Rays meet the ground, the objects and the own body, rig and the other sensors' and cameras'
+  housings (self hits, flagged). A return needs range_min ≤ r ≤ R_max(ρ·cos i) with R_max(ρ) = range_m·√(ρ/0.10)
+  (capped at range_max_m when the model gives one), ρ the material's typical reflectivity and i the incidence angle;
+  Gaussian range noise; intensity = 255·ρ·cos i.
 * Radar: one detection per target object (cars, trucks, pedestrians, cyclists, poles and sign posts) whose centre is
   in a zone at the range its cross-section allows (sensors.in_field with rcs), with nothing of the body beyond the
   fascia allowance nor a nearer object on the line of sight; the reflection point is the object's nearest point;
@@ -1100,13 +1102,19 @@ class CameraSim:
         self.ray_tile = np.repeat(np.arange(len(start)), counts)
         self.body_d = np.full(len(order), np.inf)
         self.body_shade = np.zeros(len(order))
+        self.house = None                              # per ray: index into house_rgb of the housing seen, -1 none
+        self.house_rgb = np.zeros((0, 3))
         self._cube = None
         if engine is not None and engine.vehicle_geom(project) is not None:
             self._cube = engine.cube(self.pos)
-            bd, sh = self._cube.lookup(dv)
-            ok = np.isfinite(bd) & (bd > NEAR_CLIP)
+            bd, sh, hid = self._cube.lookup_ids(dv)
+            ok = np.isfinite(bd) & ((bd > NEAR_CLIP) | (hid >= 0))      # other housings show however close
             self.body_d = np.where(ok, bd, np.inf)
             self.body_shade = sh.astype(float)
+            if (ok & (hid >= 0)).any():
+                from .housings import RGB as H_RGB
+                self.house = np.where(ok, hid, -1).astype(np.int16)
+                self.house_rgb = np.array([H_RGB.get(h.what, (0.14, 0.14, 0.15)) for h in self._cube.housings])
 
     # ---- projection of vehicle-frame directions into this image (for visibility and checks)
     def project(self, dirs_v):
@@ -1230,6 +1238,10 @@ class CameraSim:
         s = np.nonzero(pid == P_BODY)[0]
         if len(s):
             col[s] = (0.22 + 0.74 * self.body_shade[s, None] / 255.0) * np.array([0.80, 0.82, 0.86])
+            if self.house is not None:                  # the rig's own sensors and cameras: dark plastic and metal
+                from .housings import tone
+                hs = s[self.house[s] >= 0]
+                col[hs] = self.house_rgb[self.house[hs]] * tone(self.body_shade[hs])[:, None]
         s = np.nonzero(pid >= 0)[0]
         if len(s):
             Ps = hits(s)
