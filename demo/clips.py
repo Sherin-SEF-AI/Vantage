@@ -8,12 +8,17 @@ is a silent 1600 x 900 video plus a poster frame. The sample's reference photos 
 
 Needs EGL OpenGL (Mesa) and ffmpeg. The assistant clip talks to tests/fake_groq.py: its model replies are scripted
 for the recording; the tools, figures and proposal are computed live by Vantage.
+
+The recording runs with a throw-away home folder (removed at the end): recordings and datasets the clips write go
+there, the working folder (~/Documents/Vantage) too, and paths the app shows in full are shown from ~ (see tilde()),
+so no real folder of the machine that records appears in a clip.
 """
 from __future__ import annotations
 
 import argparse
 import math
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -35,10 +40,50 @@ from tour import Recorder, ease  # noqa: E402
 W, H = 1600, 900
 tour.W, tour.H = W, H
 
-from PyQt6.QtCore import QPointF, QRectF, Qt  # noqa: E402
-from PyQt6.QtGui import QImage  # noqa: E402
+from PyQt6.QtCore import QPoint, QPointF, QRect, QRectF, Qt  # noqa: E402
+from PyQt6.QtGui import QColor, QImage, QPainter  # noqa: E402
 from PyQt6.QtTest import QTest  # noqa: E402
-from PyQt6.QtWidgets import QApplication  # noqa: E402
+from PyQt6.QtWidgets import QApplication, QDialog, QMenu  # noqa: E402
+
+
+# ====================================================================== the throw-away home folder
+def home() -> str:
+    return os.environ['HOME']
+
+
+def _from_home(text):
+    h = home()
+    return text.replace(h + os.sep, '~' + os.sep).replace(h, '~') if isinstance(text, str) else text
+
+
+def tilde(*widgets):
+    """Show paths under the (throw-away) home folder from ~ in these widgets, as the app itself does where it shortens
+    a path (the dataset page's short_path): wraps their setText / setPlainText, and fixes what they show now."""
+    for w in widgets:
+        for name in ('setText', 'setPlainText', 'setToolTip'):
+            f = getattr(w, name, None)
+            if f is not None:
+                setattr(w, name, lambda text, f=f: f(_from_home(text)))
+        if hasattr(w, 'toPlainText'):
+            w.setPlainText(w.toPlainText())
+        elif hasattr(w, 'text'):
+            w.setText(w.text())
+
+
+def tilde_path_label(pg):
+    """A recording page (drive-log check, as-built check) shows its recording's full path, elided, in path_label: show
+    it from ~ instead, re-derived from the page's settings each time the page fills its fields."""
+    sync = pg._sync_fields
+
+    def synced(*a, **k):
+        out = sync(*a, **k)
+        p = pg.settings.path
+        if p:
+            pg.path_label.setText(_from_home(p))
+            pg.path_label.setToolTip(_from_home(p))
+        return out
+    pg._sync_fields = synced
+    synced()
 
 
 # ====================================================================== the shader renderer in the recorded views
@@ -91,16 +136,43 @@ class Clip(Recorder):
         self.proc.stdin.close()
         self.proc.wait()
 
+    def window_image(self) -> QImage:
+        """The window with its open menus, dialogs and popups (a combo box's list) drawn where they are."""
+        img = self.win.grab().toImage().convertToFormat(QImage.Format.Format_RGB32)
+        if img.width() != W or img.height() != H:
+            img = img.scaled(W, H)
+        p = QPainter(img)
+        o = self.win.mapToGlobal(QPoint(0, 0))
+        tops = [w for w in QApplication.topLevelWidgets()
+                if w is not self.win and w.isVisible() and w.width() > 4
+                and (isinstance(w, (QMenu, QDialog)) or w.windowType() == Qt.WindowType.Popup)]
+        tops.sort(key=lambda w: 0 if isinstance(w, QDialog) else 1)
+        for w in tops:
+            g = w.mapToGlobal(QPoint(0, 0))
+            pos = QPoint(g.x() - o.x(), g.y() - o.y())
+            for k, a in ((14, 18), (8, 26), (3, 40)):
+                p.fillRect(QRect(pos.x() - k // 2, pos.y() + k // 2, w.width() + k, w.height() + k // 2), QColor(0, 0, 0, a))
+            p.drawPixmap(pos, w.grab())
+        p.end()
+        return img
+
 
 class Stage:
     def __init__(self, app, out, fps):
         self.app, self.out, self.fps = app, out, fps
         self.win = None
 
+    # the throw-away home folder, for the clip modules
+    home = property(lambda self: home())
+    tilde = staticmethod(tilde)
+    tilde_path_label = staticmethod(tilde_path_label)
+
     # ---------------------------------------------------------------- set-up
     def window(self, edit=None):
+        from PyQt6.QtCore import QSettings
         from vantage.core import samples
         from vantage.ui.mainwindow import MainWindow
+        QSettings('Vantage', 'Vantage').remove('overlay')     # each clip starts from the app's default overlays
         p = samples.tigor_sample_project()
         p.photos.source = ''                    # the studio photos are third-party: never in a recording
         if edit is not None:
@@ -122,6 +194,9 @@ class Stage:
             return
         w.store.undo.setClean()
         w.cancel_jobs()
+        for d in QApplication.topLevelWidgets():         # a clip's dialogs and popups must not show in the next one
+            if d is not w and d.isVisible() and (isinstance(d, (QDialog, QMenu)) or d.windowType() == Qt.WindowType.Popup):
+                d.hide()
         w.hide()
         w.deleteLater()
         self.win = None
@@ -243,6 +318,8 @@ class Stage:
 
     def camlight(self, r):
         w = self.window()
+        w.ctx.set_overlay('camlight', False)            # on by default: the clip turns it on from the menu
+        self.settle(2)
         r.win = w
         st = w.store
         r.chapter('3D', 'Camera light: what each lens sees')
@@ -523,6 +600,8 @@ class Stage:
         """Rig parts: a roof rack and a sensor mast block and carry cameras."""
         from vantage.core.project import Camera
         w = self.window()
+        w.ctx.set_overlay('camlight', False)            # on by default: the clip turns it on from the menu
+        self.settle(2)
         r.win = w
         st = w.store
         r.chapter('Rig', 'Roof racks and masts that block and carry cameras')
@@ -713,7 +792,7 @@ class Stage:
         r.win = w
         r.chapter('Export', "Calibration in your dataset's format")
         d = ExportDialog(w.ctx, w)
-        d.out.setText('~/Documents/vantage-exports/tigor-ev-svm/6-cam-v3')
+        self.tilde(d.out)                       # the default output folder (in the working folder), from ~
         d.show()
         r.hold(0.4)
         r.zoom(r.wrect(d), 0.9)
@@ -729,7 +808,8 @@ class Stage:
 CLIPS = ['hero', 'coverage', 'placement', 'camlight', 'bowl', 'guidelines', 'stitched', 'volume', 'install',
          'tolerance', 'assistant', 'perception', 'rig', 'liverig', 'datasets', 'sensors', 'sensorcoverage', 'timing',
          'recording', 'power', 'gnss', 'exposure', 'brackets', 'requirements', 'dataset', 'lidarcalib', 'drivelog',
-         'fleet']
+         'fleet', 'housings', 'asbuilt', 'loadcases', 'library']
+POSTER_AT = {'hero': 2.0, 'requirements': 18.0, 'housings': 4.0, 'asbuilt': 13.5}
 
 
 def clip_fn(stage, name):
@@ -740,7 +820,6 @@ def clip_fn(stage, name):
     import importlib
     mod = importlib.import_module(f'clip_{name}')
     return lambda r: mod.clip(stage, r)
-POSTER_AT = {'hero': 2.0, 'requirements': 18.0}
 
 
 def web(out, name, poster_at=None):
@@ -765,6 +844,16 @@ def main():
     ap.add_argument('--theme', default='dark')
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
+    a.out = os.path.abspath(a.out)
+    # a throw-away home folder: what the clips write lands there, and the app shows it as ~ (see tilde())
+    os.environ['HOME'] = tempfile.mkdtemp(prefix='h')
+    try:
+        run(a)
+    finally:
+        shutil.rmtree(os.environ['HOME'], ignore_errors=True)
+
+
+def run(a):
     from vantage.ui.viewport3d import configure_default_format
     configure_default_format()
     app = QApplication(sys.argv[:1])

@@ -26,16 +26,29 @@ taken from a real run of `run_vantage.py --install-check`.
 Time-lapses (the tolerance study, the optimiser, the installation check) are marked on screen with the measured
 speed-up.
 
-## Website clips
+## Website clips and stills
 
 `clips.py` records the short silent clips on the website (`site/media`): the real application driven offscreen, one
-window per clip, its 3D views drawn by the shader renderer through a headless EGL context. The sample's reference
-photos are never shown. The assistant clip talks to `tests/fake_groq.py`, so its model replies are scripted (the
-website says so); the lookups, the optimisation and the proposal are computed live.
+window per clip at 1600 × 900, dark theme, its 3D views drawn by the shader renderer through a headless EGL context.
+Most clips are methods of `Stage` in `clips.py`; the others are `clip(stage, r)` in `clip_<name>.py`. The sample's
+reference photos are never shown. The assistant clip talks to `tests/fake_groq.py`, so its model replies are scripted
+(the website says so); the lookups, the optimisation and the proposal are computed live. The clips that need a
+recording (`drivelog`, `asbuilt`) generate a short synthetic drive with known faults or mounting errors first, as
+the tests do.
+
+Each run uses a throw-away settings folder and a throw-away home folder (removed at the end): the recordings and the
+sample dataset the clips write go there, and paths the app shows in full are shown from `~` (`tilde()`), so no folder
+of the machine that records appears on screen.
+
+`stills.py` takes the website's screenshots with the same stage and recorder, one 1600 × 900 frame each: `window`,
+`compare`, `export`, `suspension` and `prefs`.
 
 ```bash
 python3 demo/clips.py build/clips                      # every clip: <name>.mp4 (web, H.264) and <name>.jpg (poster)
 python3 demo/clips.py build/clips --clips hero,bowl    # some of them
-cp build/clips/*.mp4 site/media/                       # then pick the posters (see the site's media folder)
+python3 demo/stills.py build/stills                    # the stills: <name>.jpg
+cp build/clips/*.mp4 build/clips/*.jpg build/stills/*.jpg site/media/    # after looking at every one
 ```
 
+The poster is the frame at 72 % of a clip unless `POSTER_AT` in `clips.py` names the second. Recording runs at about
+real time, plus the web encode; the clips that generate a drive first take 15–30 s longer.

@@ -4,7 +4,8 @@ Set-up (a temp folder, about 20 s): a short synthetic drive of the data rig as b
 core.dataset, with the front camera F mounted 0.6° off its planned yaw (F, not a camera at either end of the trigger
 line's spread, so the line's planned trigger stays as it is); then stream faults are put into the bag: MR loses every
 tenth frame, R's stamps run 7 ms late (its trigger fires late), QR's topic is missing. The images are rendered at a
-quarter of the sensor size for speed and scaled back up, so their size matches the camera module.
+quarter of the sensor size for speed and scaled back up, so their size matches the camera module. The bag goes to
+~/drives/data_rig_drive in the recording's throw-away home folder (the page shows it from ~).
 
 The clip: open the bag on the page, run, the streams (MR's drops on the timeline, QR missing), the sync table (R 7 ms
 late against the plan), then the overlay of F's lidar points at the plan's rotation and at the correction found.
@@ -23,8 +24,8 @@ LATE_MS = 7.0           # R's trigger
 DROP_EVERY = 10         # MR loses every tenth frame
 
 
-def make_bag(work) -> str:
-    """The faulty drive as a rosbag2 folder in `work`; returns its path."""
+def make_bag(work, out) -> str:
+    """The faulty drive as a rosbag2 folder at `out` (generated in `work`); returns its path."""
     import cv2
     from vantage.core import dataset as DS, rosbag as RB, samples
     from vantage.core.analysis import Engine
@@ -39,7 +40,7 @@ def make_bag(work) -> str:
     DS.generate(p, Engine(), st, gen)
     src = next(os.path.join(r, d) for r, ds, _ in os.walk(gen) for d in ds
                if os.path.isfile(os.path.join(r, d, 'metadata.yaml')))
-    out = os.path.join(work, 'data_rig_drive')
+    os.makedirs(os.path.dirname(out), exist_ok=True)
     W, H = p.module_for(v.cameras[0]).width_px, p.module_for(v.cameras[0]).height_px
     rd = RB.BagReader(src)
     seen = {}
@@ -72,8 +73,9 @@ def make_bag(work) -> str:
 
 def clip(stage, r):
     work = tempfile.mkdtemp(prefix='vantage-drivelog-clip-')
+    drives = os.path.join(stage.home, 'drives')
     try:
-        bag = make_bag(work)
+        bag = make_bag(work, os.path.join(drives, 'data_rig_drive'))
 
         def setup(p):
             p.analysis.drivelog = {'frames_per_camera': 8}
@@ -82,6 +84,7 @@ def clip(stage, r):
         r.chapter('Drive log', 'A recorded drive checked against the plan')
         r.menu('Calibrate', 'Drive-log check')
         pg = w.page('drivelog')
+        stage.tilde_path_label(pg)
         r.hold(0.3)
         r.click(pg.b_dir, real=False, dur=0.5)        # the folder dialog cannot be filmed: open the bag directly
         pg.open_path(bag)
@@ -124,3 +127,4 @@ def clip(stage, r):
         r.hold(1.6)
     finally:
         shutil.rmtree(work, ignore_errors=True)
+        shutil.rmtree(drives, ignore_errors=True)

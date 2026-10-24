@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Vantage · Sensor rig planner for autonomous-driving data collection</title>
-<meta name="description" content="Vantage is a desktop app for designing the sensor rigs of autonomous-driving data-collection vehicles: place the cameras, lidars, radars, GNSS antennas and IMUs on the vehicle, prove in simulation what they will record before any hardware is fitted, then calibrate and verify the real rig and hand the calibration to the data pipeline.">
+<meta name="description" content="Vantage is a free desktop app for designing the sensor rigs of autonomous-driving data-collection vehicles: place the cameras, lidars, radars, GNSS antennas and IMUs on the vehicle, prove in simulation what they will record before any hardware is fitted, then calibrate and verify the real rig and hand the calibration to the data pipeline. Windows, macOS and Linux; GPL-3.0-or-later.">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Vantage · Sensor rig planner for autonomous-driving data collection">
 <meta property="og:description" content="Design data-collection rigs of cameras, lidars, radars, GNSS and IMU with exact lens models and occlusion, simulate what they will record and what they need before fitting the hardware, then calibrate the real rig and check its recordings against the plan.">
@@ -46,8 +46,8 @@
     <h1>Design <span class="nowrap">data-collection</span> rigs that record what your models need.</h1>
     <p class="lede">Vantage designs the sensor rigs of the vehicles that record training data for self-driving models.
       Place the cameras, lidars, radars, GNSS antennas and IMU on the vehicle and prove in simulation what the rig will
-      record, before any hardware is fitted: what every lens sees, where the body blocks it, how many pixels land on the
-      road, what each lidar and radar reaches, whether the recorder and the power supply keep up, and what a drive with
+      record, before any hardware is fitted: what every lens sees, where the body, the rig and the other sensors'
+      housings block it, how many pixels land on the road, what each lidar and radar reaches, whether the recorder and the power supply keep up, and what a drive with
       it looks like to your pipeline. Then calibrate the real rig, check its recordings against the plan and hand the
       calibration to your data pipeline.</p>
     <div class="cta">
@@ -65,11 +65,12 @@
         <span class="chip">Simulated before fitted · six fisheye cameras</span>
       </div>
       <p class="caption">Every colour on the car and the ground is what one camera of the rig will see through its real
-        lens model, with the body hiding what it hides: computed before a single camera is mounted. Recorded in Vantage.</p>
+        lens model, with the body hiding what it hides: computed before a single camera is mounted. Recorded in Vantage
+        with its shader renderer.</p>
     </div>
     <div class="facts">
       <div class="fact"><b>Simulated first</b><span>Coverage, resolution and occlusion before the hardware is fitted</span></div>
-      <div class="fact"><b>Exact optics</b><span>Measured lens models, sensor edges and body occlusion per camera</span></div>
+      <div class="fact"><b>Exact optics</b><span>Lens models, sensor edges, and occlusion by the body, rig and housings per camera</span></div>
       <div class="fact"><b>Live streams</b><span>RTSP, V4L2 and GStreamer, including a Jetson's GMSL cameras</span></div>
       <div class="fact"><b>Calibration out</b><span>nuScenes, KITTI, ROS, Kalibr and OpenCV, in your vehicle frame</span></div>
     </div>
@@ -115,7 +116,7 @@
         <div class="eyebrow">Simulation</div>
         <h3>Coverage, resolution and redundancy, live</h3>
         <p>The ground around the vehicle is evaluated cell by cell for every camera: inside the lens's field of view,
-          inside the image frame, not hidden by the body. For a data-collection rig that answers where the recording has
+          inside the image frame, not hidden by the body, the rig or another sensor's housing. For a data-collection rig that answers where the recording has
           holes, where it is too coarse to label, and where two cameras overlap. The result updates while you work.</p>
         <ul>
           <li><b>Blind ground</b>, coverage and redundancy on a 5, 2 or 1 cm grid inside an ROI drawn around the body or as a polygon.</li>
@@ -142,7 +143,7 @@
           field takes expressions and units, so <code>1880/2 mm</code> means what it says.</p>
         <ul>
           <li>Place on the surface (<kbd>C</kbd>), mirrored pairs with <kbd>Alt</kbd>-click, move (<kbd>G</kbd>) and rotate (<kbd>R</kbd>) gizmos, aim at a ground point.</li>
-          <li>A library of camera modules and lenses: rectilinear, fisheye models and measured Kannala–Brandt, with a datasheet field-of-view check.</li>
+          <li>The <a href="#library">e-con Systems camera library</a> or your own modules and lenses: rectilinear, fisheye models and measured Kannala–Brandt, with a datasheet field-of-view check.</li>
           <li>An editable camera table with paste from Excel, coordinate frames from the rear axle, front axle or bumper, in m or mm.</li>
           <li>Undo for everything, including scrubbing a value with the mouse as one step.</li>
         </ul>
@@ -157,7 +158,31 @@
       </div>
     </article>
 
-    <article class="feature" id="camlight">
+    <article class="feature" id="library">
+      <div class="text">
+        <div class="eyebrow">Camera library</div>
+        <h3>Seventeen e-con Systems camera modules, every figure with its source</h3>
+        <p>The library holds e-con Systems' automotive cameras: the enclosed STURDeCAM range, the NileCAM GMSL2 board
+          cameras and the FPD-Link NeduCAM modules, 17 modules with 20 lenses. Each carries the figures e-con's product
+          page states, the page and the date it was read, and a list of what the page does not give.</p>
+        <ul>
+          <li>STURDeCAM20, 21, 25, 29, 31, 31FSH (heated fisheye), 34, 39, 57, 81 and 88; NileCAM81, 85, 130 and 210; NeduCAM25 (FPD-Link III) and Nedu4CAM57 (FPD-Link IV). Rolling and global shutter, colour, mono and RGB-IR, from 1920 × 1080 to 4208 × 3120.</li>
+          <li>e-con gives each lens's horizontal, vertical and diagonal field of view, not its focal length: the focal length is derived from it and the Kannala–Brandt model fitted to reproduce e-con's figures within 0.5° (the new lenses within 0.03°). Between those angles the lens is modelled, not measured; a unit calibration replaces it.</li>
+          <li>A figure the page does not state is left blank, never guessed; where the app needs one, such as a camera's power, it uses its typical figure.</li>
+          <li>The module editor shows the datasheet fields, the sources and the stated against the modelled field of view; its Preset list moves the cameras to any module and lens in one undo step.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/library.jpg" aria-label="The Library panel with the modules grouped, then the module editor: the Preset list of every e-con module and lens, STURDeCAM88 with its wide lens picked, its datasheet fields and sources, and the stated against the modelled field of view">
+            <source src="media/library.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature flip" id="camlight">
       <div class="text">
         <div class="eyebrow">3D view</div>
         <h3>Camera light: each lens's view, painted on the car</h3>
@@ -180,7 +205,7 @@
       </div>
     </article>
 
-    <article class="feature flip" id="volume">
+    <article class="feature" id="volume">
       <div class="text">
         <div class="eyebrow">3D analysis</div>
         <h3>The blind volume: where something can stand unseen</h3>
@@ -203,7 +228,7 @@
       </div>
     </article>
 
-    <article class="feature" id="perception">
+    <article class="feature flip" id="perception">
       <div class="text">
         <div class="eyebrow">Perception range</div>
         <h3>How far out the rig resolves cars, people and signs</h3>
@@ -227,7 +252,7 @@
       </div>
     </article>
 
-    <article class="feature flip" id="rig">
+    <article class="feature" id="rig">
       <div class="text">
         <div class="eyebrow">Rig parts</div>
         <h3>Roof racks and masts that block and carry cameras</h3>
@@ -254,8 +279,9 @@
       <div class="eyebrow">Lidar, radar and the recorder</div>
       <h2>The whole rig, not just its cameras.</h2>
       <p>A collection vehicle carries lidars and radars next to its cameras, and a recorder that has to keep up with all
-        of them. Vantage places them on the same model, shows what they reach and what the vehicle blocks, times the
-        cameras to the lidar's sweep and adds up the data before anything is bought.</p>
+        of them. Vantage places them on the same model, shows what they reach, what the vehicle blocks and what their
+        housings hide from the cameras, times the cameras to the lidar's sweep and adds up the data before anything is
+        bought.</p>
     </div>
 
     <article class="feature" id="sensors">
@@ -282,7 +308,33 @@
       </div>
     </article>
 
-    <article class="feature flip" id="sensorcoverage">
+    <article class="feature flip" id="housings">
+      <div class="text">
+        <div class="eyebrow">Housings</div>
+        <h3>Sensor housings block the cameras too</h3>
+        <p>Every lidar, radar, GNSS antenna and IMU housing, and every other camera's module, is a solid at its real size
+          and pose that blocks each camera exactly like the body and the rig: in the ground coverage, the blind volume,
+          the perception range, the simulated images, the camera light and the installation check.</p>
+        <ul>
+          <li>On the sample's data rig the front radar RD1 sits just in front of the bumper, below camera F: its housing covers 13.7 % of F's image, and the blind ground in the ROI goes from 0.010 m² with the body and rig alone to 0.240 m². Moved 5 cm back behind the fascia, it is out of the image.</li>
+          <li>The Inspector shows the share of the selected camera's image each housing covers, and where. The Issues list warns above 2 % or at the image centre, is serious above 10 % and critical for a lens inside another housing.</li>
+          <li><b>Analysis ▸ Housings block cameras</b> switches them off to compare with the body and rig alone. A housing set behind the bumper fascia or into a panel stays hidden by the body.</li>
+          <li>Exported as JSON and CSV with the coverage both ways; in batch mode with <code class="nowrap">--housings</code>.</li>
+        </ul>
+        <p class="note">Housings are the datasheets' outer boxes and cylinders; cables, brackets and connectors are not
+          modelled.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/housings.jpg" aria-label="The data rig's front bumper beside camera F's simulated image: the radar housing in the bottom of the image and in the Inspector, housings switched off and on with the blind ground changing, then the radar moved 5 cm back until F is clear">
+            <source src="media/housings.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature" id="sensorcoverage">
       <div class="text">
         <div class="eyebrow">Lidar and radar coverage</div>
         <h3>How many kinds of sensor see each object</h3>
@@ -305,7 +357,7 @@
       </div>
     </article>
 
-    <article class="feature" id="timing">
+    <article class="feature flip" id="timing">
       <div class="text">
         <div class="eyebrow">Sync and timing</div>
         <h3>Cameras that fire when the lidar looks</h3>
@@ -330,7 +382,7 @@
       </div>
     </article>
 
-    <article class="feature flip" id="recording">
+    <article class="feature" id="recording">
       <div class="text">
         <div class="eyebrow">Recording budget</div>
         <h3>Will the recorder keep up?</h3>
@@ -371,8 +423,8 @@
           voltage drop, the alternator's margin while driving and how long an auxiliary battery runs the rig with the
           engine off.</p>
         <ul>
-          <li>On the sample's data rig with an INS and two antennas: 184 W steady and 237 W at switch-on, 200 W from the vehicle. That is 31 % of a 600 W converter, 490 W spare on the alternator and 4 hours on a 1 kWh battery.</li>
-          <li>Fuses sized for you (steady current within 80 %, the switch-on peak within the rating) or typed in: the compute circuit draws 5.75 A, so a 5 A fuse blows; on a 24 V bus the same circuit draws 2.9 A.</li>
+          <li>On the sample's data rig with an INS and two antennas: 183 W steady and 236 W at switch-on, 199 W from the vehicle. That is 31 % of a 600 W converter, 491 W spare on the alternator and 4 hours on a 1 kWh battery.</li>
+          <li>Fuses sized for you (steady current within 80 %, the switch-on peak within the rating) or typed in: the compute circuit draws 5.7 A, so a 5 A fuse blows; on a 24 V bus the same circuit draws 2.8 A.</li>
           <li>Power cables routed from the ECU, with the voltage drop at constant power against a 5 % limit and the device's minimum input, and the wire gauge that would fix it.</li>
           <li>Library power figures are nominal and the peak factors typical: replace them with your units' datasheets. Exported as JSON and CSV; in batch mode with <code class="nowrap">--power-budget</code>.</li>
         </ul>
@@ -593,12 +645,12 @@
     </div>
     <article class="feature" style="padding-top:0">
       <div class="text">
-        <h3>Tolerance, optimiser, load cases, variants</h3>
+        <h3>Tolerance, optimiser, variants</h3>
         <ul>
           <li><b>Monte Carlo tolerance study</b> with a sensitivity tornado and the worst cases pinned for inspection.</li>
           <li><b>Placement optimiser:</b> an evolutionary search scored under tolerance, with a Pareto front.</li>
-          <li><b>Load cases:</b> axle drops become body pitch and drop; for each case the blind area, density, the ground shift of the stitched image and the ghosting at the seams.</li>
           <li><b>Variants</b> side by side with a difference map and a table of every figure.</li>
+          <li><b>Load cases</b> from the suspension and the real loads: <a href="#loadcases">below</a>.</li>
         </ul>
       </div>
       <div class="media">
@@ -611,14 +663,40 @@
         </div>
       </div>
     </article>
+    <article class="feature flip" id="loadcases">
+      <div class="text">
+        <div class="eyebrow">Load cases</div>
+        <h3>How far the cameras move when the car is loaded</h3>
+        <p>The cameras are calibrated at one load; the crew, the luggage and the rig itself change it. From the
+          suspension (springs and motion ratios, tyres, bump stops, anti-roll bars, measured wheel-load curves) and the
+          masses where they sit, a static solve gives each corner's drop, the body's pitch and roll, and every camera's
+          and sensor's move against the calibration load.</p>
+        <ul>
+          <li>Seats, boot, roof, the recording equipment and the rig's own cameras, sensors and parts as masses at points, estimated or entered. An off-centre load rolls the body.</li>
+          <li>On the sample's data rig with typical values: the driver alone rolls the body 0.27° and moves a quarter camera and a corner radar 16 mm; fully loaded, the rear sits on its bump stops and the rear camera moves 85 mm. Run adds the ground figures: the stitched ground shifts up to 65 cm, and the seams ghost by 35 cm.</li>
+          <li>Suspension data from JSON, YAML, or a CSV parameter sheet or ride-height table, units converted (N/mm, lbf/in; kg, lb; mm, in). Typed axle drops still work.</li>
+          <li>Exported as JSON and CSV; in batch mode with <code class="nowrap">--suspension</code> and <code class="nowrap">--suspension-data</code>.</li>
+        </ul>
+        <p class="note">Until you enter your vehicle's suspension, the values are typical of a compact sedan scaled to the
+          model, and the dialog says so. Static loads only: no braking, cornering or kinematic wheel paths.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/loadcases.jpg" aria-label="The load cases dialog on the data rig: the cases with each corner's drop, the loads and the suspension tabs, the driver's roll and every device's move, then Run with the ground shift and seam ghost per case and the full load's moves">
+            <source src="media/loadcases.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
     <div class="tiles">
       <figure>
-        <div class="frame natural"><img src="media/compare.jpg" alt="Four layout variants compared: maps, a difference map and a table" loading="lazy" width="1600" height="900"></div>
+        <div class="frame natural"><img src="media/compare.jpg" alt="The sample's layout variants compared: three coverage maps, a difference map and a table of all five variants" loading="lazy" width="1600" height="900"></div>
         <figcaption>Variants compared: blind ground, redundancy, density and the worst single-camera error.</figcaption>
       </figure>
       <figure>
-        <div class="frame natural"><img src="media/loadcases.jpg" alt="The load cases table with ground shift and seam ghosting per case" loading="lazy" width="1020" height="520"></div>
-        <figcaption>Load cases: how far the stitched image moves and ghosts when the car is loaded.</figcaption>
+        <div class="frame natural"><img src="media/suspension.jpg" alt="The load cases dialog's Suspension tab: each corner's spring, motion ratio, wheel rate, tyre, kerb load, ride height and bump stop" loading="lazy" width="1600" height="900"></div>
+        <figcaption>The suspension behind the load cases, per corner: typical values until you enter or import yours.</figcaption>
       </figure>
     </div>
   </div>
@@ -727,7 +805,35 @@
       </div>
     </article>
 
-    <article class="feature flip" id="fleet">
+    <article class="feature flip" id="asbuilt">
+      <div class="text">
+        <div class="eyebrow">As-built check</div>
+        <h3>Does the real rig see what the plan says?</h3>
+        <p>Open a short drive recorded by the real rig: a ROS 2 bag, a nuScenes folder or a folder of images per camera.
+          What stays the same while the vehicle moves is the vehicle itself. Vantage lays each camera's real outline of
+          it over the simulated one, fits the mounting error that lines them up, and checks whether the plan's coverage
+          still holds with the rig as built.</p>
+        <ul>
+          <li>The ego mask comes from frames taken while moving (odometry, GNSS or the picture changing). Plain road and sky are told from the body by static edges and the planned silhouette; what cannot be decided is left out, not guessed.</li>
+          <li>On a synthetic drive of the sample's data rig with the left mirror camera mounted 2° low and rolled 1°, ML comes out at pitch +1.99° ± 0.02° and roll +1.09° ± 0.10°. The rear camera, turned 1.5°, cannot be told from its outline (its bumper is the road's grey), so the drive-log estimate against the lidar stands in: +1.44°.</li>
+          <li>Axes the outline cannot pin stay as planned; a camera that sees too little of the vehicle is marked not checkable, with the reason.</li>
+          <li>The corrected copy's coverage against the plan, and a verdict: holds, holds with corrections, does not hold. Keep it as an as-built variant in one step; in batch mode with <code class="nowrap">--as-built-check</code>.</li>
+        </ul>
+        <p class="note">Validated on synthetic recordings, where the injected errors came back within about 1.5 standard
+          errors. Real lenses, glossy paint and body meshes add errors of their own.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/asbuilt.jpg" aria-label="The as-built check on a recording of the data rig: the recording opened and run, the verdict tiles, the mirror camera's real outline against the simulated one at the plan's pose and at the fitted pose, the corrections with their standard errors, then the coverage plan against as built">
+            <source src="media/asbuilt.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+          <span class="chip">Time-lapse ×3 while it reads</span>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature" id="fleet">
       <div class="text">
         <div class="eyebrow">Fleet</div>
         <h3>The same rig on every vehicle, month after month</h3>
@@ -766,7 +872,7 @@
       <div class="text">
         <h3>From a question to a measured proposal</h3>
         <ul>
-          <li><b>Answers with reasons:</b> why ground is blind (field of view, image frame, body occlusion), which camera matters most, what the studies show.</li>
+          <li><b>Answers with reasons:</b> why ground is blind (field of view, image frame, the body, a rig part or a sensor housing in the way), which camera matters most, what the studies show.</li>
           <li><b>Agent mode:</b> give it a goal; it plans a checklist, runs studies, searches camera poses, and proposes the best change with its effect.</li>
           <li><b>Proposals</b> show the change and the predicted effect; apply them as one undo step or as a new variant, and the card shows the measured result.</li>
           <li><b>A project brief</b> with your requirements goes with every question; slash commands such as <code>/optimise QR</code> and <code>/compare</code>.</li>
@@ -793,20 +899,21 @@
     <div class="head">
       <div class="eyebrow">Export</div>
       <h2>Hand the design to the people and machines that need it.</h2>
-      <p>Thirty-four formats, each with a live preview. Units, angles and the coordinate frame are chosen per export, and
+      <p>Thirty-six formats, each with a live preview. Units, angles and the coordinate frame are chosen per export, and
         every file says which convention it uses.</p>
     </div>
     <article class="feature flip" id="datasets" style="padding-top:0;border-top:0">
       <div class="text">
         <div class="eyebrow">Datasets</div>
-        <h3>Calibration in your dataset's format</h3>
+        <h3>Calibration in your dataset's format, checked against its tools</h3>
         <p>The calibration your data pipeline reads, written straight from the design or from the measured as-built
-          poses, in the vehicle frame and origin you choose.</p>
+          poses, in the vehicle frame and origin you choose. Each format has been checked against the tool that reads
+          it, not only against Vantage's own maths.</p>
         <ul>
-          <li><b>nuScenes</b> <code>sensor.json</code> and <code>calibrated_sensor.json</code>: cameras, lidars and radars to ego, quaternions w first; loaded and projected by the nuScenes devkit through the sample dataset.</li>
-          <li><b>KITTI</b> <code>calib_cam_to_cam.txt</code>, every sensor's pose in the vehicle frame, <code>calib_velo_to_cam.txt</code> with a lidar and <code>calib_imu_to_velo.txt</code> with an IMU.</li>
-          <li><b>ROS</b> <code>camera_info</code> per camera, and a <b>Kalibr</b> camchain that Vantage also reads back.</li>
-          <li>Fisheye lenses are written as Kannala–Brandt (equidistant), and each file says how its format's tools treat that.</li>
+          <li><b>nuScenes</b> <code>sensor.json</code> and <code>calibrated_sensor.json</code>: cameras, lidars and radars to ego; the nuScenes devkit's own geometry reproduces Vantage's projection.</li>
+          <li><b>KITTI</b> <code>calib_cam_to_cam.txt</code> with <code>P_rect</code> for the rectified pinhole image the README's <code>cv2.fisheye</code> remap makes: the KITTI devkit's projection lands lidar points within 0.001 px in every camera. With a lidar, an object-benchmark calib file per camera, as mmdetection3d and OpenPCDet read it.</li>
+          <li><b>ROS</b> <code>camera_info</code> per camera, read back exactly by ROS 2's camera_calibration_parsers. A <b>Kalibr</b> camchain read by Kalibr's own config reader, each lens in the model that reproduces it (double sphere, omni or extended unified past 90°, with the error stated), and <code>T_cam_imu</code> with an IMU.</li>
+          <li>Where a tool's own assumption does not fit a surround rig (pykitti's stereo layout, image_geometry's Python model ignoring the fisheye model), the file and its README say so.</li>
         </ul>
       </div>
       <div class="media">
@@ -853,13 +960,13 @@
       <div class="card"><h4>Datasets</h4><ul><li><span>nuScenes sensor calibration</span><span>JSON</span></li><li><span>KITTI calibration</span><span>TXT</span></li><li><span>ROS camera_info</span><span>YAML ×N</span></li><li><span>Kalibr camchain</span><span>YAML</span></li></ul></div>
       <div class="card"><h4>Calibration and robotics</h4><ul><li><span>OpenCV fisheye calibration</span><span>YAML ×N</span></li><li><span>ROS 2 URDF + static TF</span><span>URDF, PY</span></li><li><span>Jetson camera config</span><span>JSON</span></li></ul></div>
       <div class="card"><h4>Extrinsics</h4><ul><li><span>Every sensor's pose</span><span>JSON</span></li><li><span>Every sensor's pose</span><span>YAML</span></li><li><span>Every sensor's pose</span><span>CSV</span></li></ul></div>
-      <div class="card"><h4>Documents</h4><ul><li><span>Mount sheet</span><span>PDF</span></li><li><span>Design report</span><span>HTML, PDF</span></li><li><span>Blind volume</span><span>JSON, OBJ</span></li><li><span>Perception range</span><span>JSON, PNG</span></li><li><span>Lidar and radar coverage</span><span>JSON, PNG</span></li><li><span>Sync and timing plan</span><span>JSON, PNG</span></li><li><span>Recording budget</span><span>JSON, CSV</span></li><li><span>Power budget</span><span>JSON, CSV</span></li><li><span>GNSS and IMU</span><span>JSON, TXT, PNG</span></li><li><span>Sun glare and dirt</span><span>JSON, PNG</span></li><li><span>Requirements and review pack</span><span>JSON, CSV, PDF</span></li><li><span>Fleet</span><span>JSON, CSV, PNG</span></li></ul></div>
+      <div class="card"><h4>Documents</h4><ul><li><span>Mount sheet</span><span>PDF</span></li><li><span>Design report</span><span>HTML, PDF</span></li><li><span>Blind volume</span><span>JSON, OBJ</span></li><li><span>Perception range</span><span>JSON, PNG</span></li><li><span>Lidar and radar coverage</span><span>JSON, PNG</span></li><li><span>Sync and timing plan</span><span>JSON, PNG</span></li><li><span>Recording budget</span><span>JSON, CSV</span></li><li><span>Power budget</span><span>JSON, CSV</span></li><li><span>GNSS and IMU</span><span>JSON, TXT, PNG</span></li><li><span>Sun glare and dirt</span><span>JSON, PNG</span></li><li><span>Housings in view</span><span>JSON, CSV</span></li><li><span>Load cases (suspension)</span><span>JSON, CSV</span></li><li><span>Requirements and review pack</span><span>JSON, CSV, PDF</span></li><li><span>Fleet</span><span>JSON, CSV, PNG</span></li></ul></div>
       <div class="card"><h4>Surround view</h4><ul><li><span>Bird's-eye remap tables</span><span>NPZ, BIN</span></li><li><span>3D surround-view bowl</span><span>OBJ, NPZ, PNG</span></li><li><span>Parking guidelines</span><span>JSON, PNG ×N</span></li><li><span>Objects in the stitched view</span><span>JSON, PNG</span></li><li><span>Reference stitcher</span><span>C++, PY</span></li></ul></div>
       <div class="card"><h4>Images and CAD</h4><ul><li><span>Viewport</span><span>PNG</span></li><li><span>Bird's-eye view</span><span>PNG</span></li><li><span>All camera views</span><span>PNG ×N</span></li><li><span>Mount points</span><span>DXF</span></li><li><span>Mount points</span><span>STEP</span></li><li><span>Mount brackets</span><span>STL ×N</span></li></ul></div>
     </div>
     <div class="tiles">
       <figure>
-        <div class="frame natural"><img src="media/export.jpg" alt="The export dialog with a live preview of the bird's-eye remap table header" loading="lazy" width="1210" height="820"></div>
+        <div class="frame natural"><img src="media/export.jpg" alt="The export dialog with a live preview of the bird's-eye remap table header" loading="lazy" width="1600" height="900"></div>
         <figcaption>The export dialog previews each file before it is written.</figcaption>
       </figure>
       <figure id="batch">
@@ -893,29 +1000,29 @@ saved built.vantage with variant 6-cam · v3 · as-built
 <section class="alt" id="download">
   <div class="wrap">
     <div class="head">
-      <div class="eyebrow">Download</div>
+      <div class="eyebrow">Download · version 0.1.0</div>
       <h2>Install Vantage.</h2>
-      <p>Bundles that need no Python are built by the repository's <em>Build installers</em> workflow and attached to a
-        <a href="https://github.com/Sherin-SEF-AI/Vantage/releases">release</a> whenever a version is tagged. Until the
-        first version is tagged, install from source with Python 3.10 or later, or
-        <a href="docs.html#install">build a bundle</a> for your machine.</p>
+      <p>Vantage is free software, licensed under the GPL-3.0-or-later. Downloads that need no Python are on the
+        <a href="https://github.com/Sherin-SEF-AI/Vantage/releases/latest">latest release</a>, with SHA-256 checksums in <code>SHA256SUMS.txt</code>; or install from
+        source with Python 3.10 or later. The downloads are not code-signed yet, so the first start asks you to confirm,
+        as each card says. <a href="docs.html#install">Install</a> in the docs has the details and the self-test.</p>
     </div>
     <div class="dl">
-      <div class="card"><span class="os">Linux</span><h4>Bundle, no Python</h4>
-<pre>tar xf Vantage-*-linux-x86_64.tar.gz
-cd Vantage-*-linux-x86_64
-./install.sh
-vantage --self-test</pre><p>Installs for your user with a menu entry and the <code>.vantage</code> file type.</p></div>
       <div class="card"><span class="os">Windows</span><h4>Installer</h4>
-<pre>Vantage-&lt;version&gt;-windows-x64-setup.exe</pre><p>Per-user install without administrator rights, a Start menu entry, and <code>vantage-cli.exe</code> for batch mode.</p></div>
+<pre>Vantage-*-x64-setup.exe</pre><p>Windows 10 or 11, x64. Installs for your user without administrator rights, with Start menu entries for Vantage and its self-test, and <code>vantage-cli.exe</code> for batch mode. SmartScreen: <em>More info ▸ Run anyway</em>.</p><a href="https://github.com/Sherin-SEF-AI/Vantage/releases/latest">From the latest release</a></div>
       <div class="card"><span class="os">macOS</span><h4>App</h4>
-<pre>unzip Vantage-*-macos-arm64.zip
-mv Vantage.app /Applications</pre><p>Not signed yet: the first time, right-click the app and choose Open.</p></div>
+<pre>unzip Vantage-*-arm64.zip
+mv Vantage.app /Applications</pre><p>macOS 14 or later, Apple silicon. Not signed: the first time, choose <em>Open Anyway</em> in <em>System Settings ▸ Privacy &amp; Security</em>.</p><a href="https://github.com/Sherin-SEF-AI/Vantage/releases/latest">From the latest release</a></div>
+      <div class="card"><span class="os">Linux</span><h4>Bundle, no Python</h4>
+<pre>tar xf Vantage-*.tar.gz
+cd Vantage-*-x86_64
+./install.sh
+vantage --self-test</pre><p>x86_64 with glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer). Installs for your user with a menu entry and the <code>.vantage</code> file type.</p><a href="https://github.com/Sherin-SEF-AI/Vantage/releases/latest">From the latest release</a></div>
       <div class="card"><span class="os">Python</span><h4>From source</h4>
 <pre>git clone https://github.com/Sherin-SEF-AI/Vantage
 cd Vantage
 python3 -m pip install .
-vantage --sample</pre><p>Add <code>[step]</code> for STEP import and <code>[keyring]</code> to keep the assistant's key in the system keyring.</p></div>
+vantage --sample</pre><p>Python 3.10 or later, any system. Add <code>[step]</code> for STEP import, <code>[bags]</code> for compressed ROS 2 bags and <code>[keyring]</code> to keep the assistant's key in the system keyring.</p></div>
     </div>
   </div>
 </section>
@@ -925,12 +1032,15 @@ vantage --sample</pre><p>Add <code>[step]</code> for STEP import and <code>[keyr
   <div class="wrap">
     <div>
       <a class="brand" href="./"><img src="assets/img/logo.png" alt="" width="22" height="22">Vantage</a>
-      <p class="fine">The videos were recorded from the application, driven by a script, with its OpenGL renderer. The
-        sample vehicle and camera names (Tata Tigor EV, e-con Systems STURDeCAM31) describe the bundled sample project
-        and belong to their owners; no affiliation is implied.</p>
+      <p class="fine">Vantage is free software under the GNU General Public License, version 3 or later
+        (<a href="https://github.com/Sherin-SEF-AI/Vantage/blob/main/LICENSE">GPL-3.0-or-later</a>). The videos were
+        recorded from the application, driven by a script, with its OpenGL renderer. The sample vehicle and the camera
+        products (Tata Tigor EV, e-con Systems STURDeCAM, NileCAM and NeduCAM modules) are named to describe the bundled
+        sample project and the camera library and belong to their owners; no affiliation is implied.</p>
     </div>
     <div class="links">
       <a href="docs.html">Documentation</a>
+      <a href="https://github.com/Sherin-SEF-AI/Vantage/releases/latest">Releases</a>
       <a href="docs.html#batch">Batch mode</a>
       <a href="docs.html#assistant">Assistant and privacy</a>
       <a href="https://github.com/Sherin-SEF-AI/Vantage">GitHub</a>

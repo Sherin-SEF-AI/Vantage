@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Documentation · Vantage</title>
-<meta name="description" content="How to use Vantage, the sensor rig planner for autonomous-driving data collection: installing, conventions, placing cameras, lidars and radars, the analysis and studies, sync and timing, the recording budget, surround view, parking guidelines, calibration, the AI assistant, export formats and batch mode.">
+<meta name="description" content="How to use Vantage, the sensor rig planner for autonomous-driving data collection: installing, conventions, placing cameras, lidars and radars, the e-con camera library, housings, the analysis and studies, load cases from the suspension, sync and timing, the recording budget, surround view, parking guidelines, calibration, the as-built check, the AI assistant, export formats and batch mode.">
 <meta property="og:title" content="Vantage documentation">
 <meta property="og:image" content="https://sherin-sef-ai.github.io/Vantage/media/hero.jpg">
 <meta name="theme-color" content="#0f0f0e">
@@ -38,14 +38,16 @@
     <p>Design</p>
     <a href="#import">Importing a vehicle</a>
     <a href="#placement">Placing cameras</a>
+    <a href="#camera-library">Camera library</a>
     <a href="#rig">Rig parts</a>
     <a href="#sensors">Lidars, radars, GNSS, IMU</a>
     <a href="#analysis">Coverage analysis</a>
+    <a href="#housings">Housings in view</a>
     <a href="#overlays">Heatmaps and overlays</a>
     <a href="#issues">Issues and rules</a>
     <p>Studies</p>
     <a href="#tolerance">Tolerance and optimiser</a>
-    <a href="#loadcases">Load cases</a>
+    <a href="#loadcases">Load cases and suspension</a>
     <a href="#variants">Variants</a>
     <a href="#volume">3D blind volume</a>
     <a href="#perception">Perception range</a>
@@ -68,6 +70,7 @@
     <a href="#lidar-calib">Lidar–camera calibration</a>
     <a href="#live-rig">Live rig health</a>
     <a href="#drive-log">Drive-log check</a>
+    <a href="#as-built">As-built check</a>
     <a href="#fleet">Fleet</a>
     <p>Assistant</p>
     <a href="#assistant">Setting up</a>
@@ -83,6 +86,7 @@
     <a href="#batch">Batch mode</a>
     <a href="#shortcuts">Keyboard shortcuts</a>
     <a href="#troubleshooting">Troubleshooting</a>
+    <a href="#licence">Licence</a>
   </aside>
 
   <main class="doc" id="doc">
@@ -95,32 +99,70 @@
 
     <!-- ======================================================== start -->
     <h2 id="install">Install</h2>
+    <p><b>Downloads that need no Python</b> are on the
+      <a href="https://github.com/Sherin-SEF-AI/Vantage/releases/latest">latest release</a>. Each carries its own
+      Python and libraries, so there is nothing else to install; <code>SHA256SUMS.txt</code> next to them lists each
+      file's SHA-256.</p>
+    <table>
+      <tr><th>System</th><th>File</th><th>Needs</th></tr>
+      <tr><td>Windows</td><td><code>Vantage-&lt;version&gt;-windows-x64-setup.exe</code> (installer) or <code>…-windows-x64.zip</code></td><td>Windows 10 or 11, x64</td></tr>
+      <tr><td>macOS</td><td><code>Vantage-&lt;version&gt;-macos-arm64.zip</code></td><td>macOS 14 or later, Apple silicon</td></tr>
+      <tr><td>Linux</td><td><code>Vantage-&lt;version&gt;-linux-x86_64.tar.gz</code></td><td>x86_64, glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer)</td></tr>
+    </table>
+    <p><b>Windows.</b> Run the setup. It installs for the current user without administrator rights (into
+      <code>%LOCALAPPDATA%\Programs\Vantage</code>), adds Vantage and <em>Vantage self-test</em> to the Start menu, and
+      opens <code>.vantage</code> projects. <code>Vantage.exe</code> is the window; <code>vantage-cli.exe</code> in the
+      same folder is for batch mode and <code>--self-test</code> from a terminal. The <code>.zip</code> is the same
+      program without the installer: unzip it anywhere and run <code>Vantage.exe</code>. Uninstall from
+      <em>Settings ▸ Apps</em>.</p>
+    <p><b>macOS.</b> Unzip the file and move <code>Vantage.app</code> to Applications. Batch mode and the self-test:
+      <code>/Applications/Vantage.app/Contents/MacOS/vantage-cli --self-test</code>.</p>
+    <p><b>Linux.</b></p>
+<pre><code>tar xf Vantage-*-linux-x86_64.tar.gz
+cd Vantage-*-linux-x86_64
+./install.sh            # for your user: a menu entry, the .vantage file type, ~/.local/bin/vantage
+vantage --self-test     # checks the analysis, exports, ROS 2 bags, Qt's plugins, OpenGL, every page</code></pre>
+    <p><code>~/.local/opt/vantage/uninstall.sh</code> removes it again (projects and settings are kept). Without
+      installing, run <code>./Vantage</code> from the extracted folder.</p>
+    <p><b>Unsigned builds.</b> The downloads are not code-signed, so the system warns the first time. On Windows,
+      SmartScreen's "Windows protected your PC" has <em>More info ▸ Run anyway</em>. On macOS the first start is
+      refused: choose <em>Open Anyway</em> next to the message about Vantage in <em>System Settings ▸ Privacy &amp;
+      Security</em> (on macOS 14 you can instead Control-click the app and choose <em>Open</em>), or run
+      <code>xattr -dr com.apple.quarantine /Applications/Vantage.app</code> in Terminal if macOS calls the app damaged.
+      Linux asks nothing; check the download against <code>SHA256SUMS.txt</code>.</p>
+    <p><b>Checking a download.</b></p>
+<pre><code>sha256sum -c SHA256SUMS.txt --ignore-missing     # Linux: checks the files you downloaded
+shasum -a 256 Vantage-*-macos-arm64.zip            # macOS: compare with its line in SHA256SUMS.txt
+Get-FileHash .\Vantage-*-windows-x64-setup.exe    # Windows (PowerShell): compare with its line</code></pre>
+    <p><b>Self-test.</b> Check an installation at any time with <code>vantage --self-test</code> (Windows: the
+      <em>Vantage self-test</em> shortcut; macOS: <code>Vantage.app/Contents/MacOS/vantage-cli --self-test</code>).
+      Without showing a window, it opens the sample and analyses its data rig, writes every export format and a ROS 2
+      bag into a temporary folder and reads them back, loads Qt's platform plugins and image formats, draws with
+      OpenGL and with the software renderer, and builds every page. It prints one line per check, ends with
+      <code>self-test passed</code>, and exits with 1 if something the app needs is missing; a warning says what does
+      not work on this machine and what Vantage does instead.</p>
     <p><b>From source</b>, with Python 3.10 or later:</p>
 <pre><code>git clone https://github.com/Sherin-SEF-AI/Vantage
 cd Vantage
-python3 -m pip install .            # add [step] for STEP import, [keyring] for the assistant's key,
-                                    # [bags] for compressed ROS 2 bags
+python3 -m pip install .            # add [step] for STEP import through gmsh, [bags] for compressed
+                                    # ROS 2 bags (zstd, lz4), [keyring] for the assistant's key
 vantage                             # the window; vantage-gui on Windows starts it without a console
 vantage --install-desktop           # Linux: add Vantage to the app menu and dock with its icon</code></pre>
     <p>On Linux, <code>vantage --install-desktop</code> adds the menu entry, the icon and the <code>.vantage</code> file
       type for your user (in <code>~/.local/share</code>), so the dock and the app grid show Vantage with its icon;
       <code>vantage --desktop-shortcut</code> also puts a launcher on the desktop (trusted, so it starts on a
-      double-click), and <code>vantage --uninstall-desktop</code> removes exactly what they added. The bundle's <code>install.sh</code> does
-      the same for an installed bundle.</p>
-    <p><b>Bundles that need no Python</b> (Linux <code>.tar.gz</code>, a Windows installer, a macOS app) are built by
-      the repository's <em>Build installers</em> workflow and attached to a GitHub release whenever a version is
-      tagged. Until the first version is tagged, install from source or build a bundle for your machine:</p>
-<pre><code>python3 -m pip install -r requirements.txt pyinstaller
-python3 packaging/build.py --smoke    # dist/: the bundle and its archive (and the installer on Windows)</code></pre>
-    <p>On Linux, <code>./install.sh</code> in the extracted bundle installs it for your user, with a menu entry and the
-      <code>.vantage</code> file type; <code>uninstall.sh</code> removes it again.</p>
-    <p>Check an installation at any time with <code>vantage --self-test</code>: it runs the analysis, OpenCV, the fonts,
-      the OpenGL renderer and the main window without showing a window, and exits with 1 if something the app needs
-      is missing.</p>
+      double-click), and <code>vantage --uninstall-desktop</code> removes exactly what they added.</p>
+    <p><b>Building a bundle.</b> Tagging a version (<code>v0.1.0</code>) runs the repository's <em>Build
+      installers</em> workflow: it builds and smoke-tests the three bundles and, when all three pass, publishes the
+      release with <code>SHA256SUMS.txt</code> and the changelog entry as its notes. To build for the machine you are
+      on, in a fresh virtual environment:</p>
+<pre><code>python3 -m venv build-env &amp;&amp; . build-env/bin/activate
+python -m pip install -r packaging/requirements-bundle.txt
+python packaging/build.py --smoke   # dist/: the bundle, its archive and on Windows the installer (Inno Setup 6)</code></pre>
 
     <h2 id="first-run">First run</h2>
     <p>The start window lists recent projects and templates. The <b>Tata Tigor EV</b> sample has a measured body, six
-      fisheye cameras and four layout variants; the templates (sedan, hatchback, SUV, van, truck) are generated bodies
+      fisheye cameras and five layout variants (the fifth, <i>Data rig</i>, adds a roof lidar and five radars); the templates (sedan, hatchback, SUV, van, truck) are generated bodies
       with a starting layout. You can also start from the command line:</p>
 <pre><code>vantage --sample                   # the sample project
 vantage --template suv             # a template
@@ -141,8 +183,10 @@ vantage project.vantage            # open a project</code></pre>
       <li><b>Assistant</b> (<kbd>Ctrl</kbd>+<kbd>J</kbd>): the AI design assistant.</li>
     </ul>
     <p>Other pages open from the menus: Camera views (all camera images, the bird's-eye view and the bowl), Tolerance
-      study, Optimiser, Compare variants, Target planner, Installation check, Live rig, Blind volume and Perception
-      range. The command palette
+      study, Optimiser, Compare variants, Target planner, the studies of the Analysis menu (blind volume, perception
+      range, lidar and radar coverage, sync and timing, the recording and power budgets, GNSS and IMU, sun glare and
+      dirt, mount brackets, the requirements scorecard) and the checks of the Calibrate menu (installation check,
+      lidar–camera calibration, live rig, drive-log check, as-built check, fleet). The command palette
       (<kbd>Ctrl</kbd>+<kbd>K</kbd>) finds any command by name.</p>
     <h3 id="navigation">Moving around in 3D</h3>
     <ul>
@@ -195,9 +239,51 @@ vantage project.vantage            # open a project</code></pre>
       <li>The <b>camera table</b> (Cameras tab) is editable and accepts a paste from a spreadsheet.</li>
       <li>Fields accept expressions and units: <code>1880/2 mm</code>, <code>0.62 + 0.05</code>, <code>12°</code>.</li>
     </ul>
-    <p>Camera modules and lenses come from the library: rectilinear, equidistant, equisolid, stereographic and measured
-      Kannala–Brandt projections, with a live r(θ) plot, the image circle on the sensor and a check of the datasheet
-      field of view against the model. Import modules from JSON, CSV or OpenCV YAML.</p>
+    <p>Camera modules and lenses come from the <a href="#camera-library">library</a> or your own: rectilinear,
+      equidistant, equisolid, stereographic and measured Kannala–Brandt projections, with a live r(θ) plot, the image
+      circle on the sensor and a check of the datasheet field of view against the model. Import modules from JSON, CSV
+      or OpenCV YAML.</p>
+
+    <h3 id="camera-library">Camera library</h3>
+    <p>The built-in library holds 17 e-con Systems camera modules with 20 lenses: the enclosed STURDeCAM automotive
+      cameras (STURDeCAM20, 21, 25, 29, 31, the heated-lens 31FSH, 34, 39, 57, 81 and 88), the NileCAM81, 85, 130 and
+      210 GMSL2 board cameras, and the FPD-Link NeduCAM25 and Nedu4CAM57. Each module carries the figures e-con states
+      on its public product page (sensor, resolution, pixel pitch, frame rate, shutter, dynamic range, IP rating,
+      operating temperature, power, size and cable lengths), with the page and the date it was read (24 October 2026).
+      A figure e-con does not give is left blank and listed as not given; where the app needs one (a camera's power,
+      the length of its body), it uses its typical figure.</p>
+    <table>
+      <tr><th>Module</th><th>Sensor</th><th>Image</th><th>Shutter · interface</th><th>Lenses (H × V × D field of view)</th></tr>
+      <tr><td>STURDeCAM31</td><td>Sony ISX031</td><td>1920 × 1536, 30 fps</td><td>rolling · GMSL2</td><td>H05R2 wide 128.7° × 98.7° × 170.1°; H03R2 narrow 54.0° × 42.9° × 70.2°</td></tr>
+      <tr><td>STURDeCAM31FSH</td><td>Sony ISX031</td><td>1920 × 1536, 30 fps</td><td>rolling · GMSL2</td><td>heated fisheye 196° × 155° × 210°</td></tr>
+      <tr><td>STURDeCAM34</td><td>onsemi AR0341AT</td><td>1920 × 1536, 30 fps</td><td>rolling · GMSL2</td><td>H01R1 narrow 64.6° × 51.3° × 83.5°</td></tr>
+      <tr><td>STURDeCAM39</td><td>OmniVision OX03J10</td><td>1920 × 1536, 30 fps</td><td>rolling · GMSL2</td><td>fisheye 196.7° × 155.1° × 200°; wide 121° × 96.7° × 164.5°</td></tr>
+      <tr><td>STURDeCAM25</td><td>onsemi AR0234CS</td><td>1920 × 1200, 60 fps</td><td>global · GMSL2</td><td>111.1° × 68.3° × 132.8°</td></tr>
+      <tr><td>STURDeCAM29</td><td>OmniVision OV2311 (mono)</td><td>1600 × 1300, 60 fps</td><td>global · GMSL2</td><td>93° × 74° × 131°</td></tr>
+      <tr><td>STURDeCAM57</td><td>OmniVision OX05B1S (RGB-IR)</td><td>2592 × 1944, 50 fps</td><td>global · GMSL2</td><td>114.8° × 85.9° × 148.3°</td></tr>
+      <tr><td>STURDeCAM81</td><td>onsemi AR0821</td><td>3840 × 2160, 30 fps</td><td>rolling · GMSL2</td><td>106.3° × 57.1° × 122.6°</td></tr>
+      <tr><td>STURDeCAM88</td><td>OmniVision OX08B40</td><td>3840 × 2160, 30 fps</td><td>rolling · GMSL2</td><td>H02R1 narrow 68.2° × 38.8° × 80.2°; H04R1 wide 120.1° × 67.0° × 137.4°</td></tr>
+      <tr><td>STURDeCAM20</td><td>onsemi AR0230AT</td><td>1920 × 1080, 30 fps</td><td>rolling · GMSL2</td><td>98.5° × 53.5° × 116.5°</td></tr>
+      <tr><td>STURDeCAM21</td><td>onsemi AR0233AT</td><td>1920 × 1080, 30 fps</td><td>rolling · GMSL2</td><td>98.2° × 50.3° × 113.8°</td></tr>
+      <tr><td>NileCAM81</td><td>onsemi AR0821</td><td>3840 × 2160, 16 fps</td><td>rolling · GMSL2</td><td>104.8° × 58.7° × 120°</td></tr>
+      <tr><td>NileCAM85</td><td>Sony IMX715</td><td>3840 × 2160, 30 fps</td><td>rolling · GMSL2</td><td>113° × 61° × 131°</td></tr>
+      <tr><td>NileCAM130</td><td>onsemi AR1335</td><td>4208 × 3120, 10 fps</td><td>rolling · GMSL2</td><td>86° × 64° × 110°</td></tr>
+      <tr><td>NileCAM210</td><td>Sony IMX462</td><td>1920 × 1080, 60 fps</td><td>rolling · GMSL2</td><td>113° × 61° × 132°</td></tr>
+      <tr><td>NeduCAM25</td><td>onsemi AR0234CS</td><td>1920 × 1200, 60 fps</td><td>global · FPD-Link III</td><td>104.6° × 61.6° × 128.2°</td></tr>
+      <tr><td>Nedu4CAM57</td><td>OmniVision OX05B1S (RGB-IR)</td><td>2592 × 1944, 50 fps</td><td>global · FPD-Link IV</td><td>114.8° × 85.9° × 148.3°</td></tr>
+    </table>
+    <p>e-con states each lens's horizontal, vertical and diagonal field of view but not its focal length or aperture.
+      The focal length is derived from that field of view with the projection that fits it best, and the
+      Kannala–Brandt distortion terms are fitted so the model reproduces e-con's figures within 0.5° (the new lenses
+      within 0.03°; the sample's H05R2, an earlier library entry, within 0.43°). The resolution between those angles
+      is therefore modelled, not measured: a <a href="#lens">unit calibration</a> replaces it with your own camera's
+      lens. Two fisheyes (STURDeCAM31FSH and STURDeCAM39's default lens) are wider than their sensor's corners can
+      show: their diagonal is taken as the image circle and the corners are dark.</p>
+    <p>The module editor (<b>Camera ▸ Edit module…</b>) shows the datasheet fields, the projection model, the image
+      circle on the sensor and the datasheet-vs-model check, and under <b>Source</b> where every figure comes from and
+      which ones the page does not give. Pick a module and lens from its <b>Preset</b> list (every library lens under
+      its module) to switch the cameras being edited to it, as one undo step. The Library panel and
+      <b>Camera ▸ Change lens</b> group the lenses by module.</p>
 
     <h2 id="rig">Rig parts</h2>
     <p>The racks, masts and enclosures of a data-collection vehicle block cameras like the body does, and carry
@@ -256,9 +342,9 @@ vantage project.vantage            # open a project</code></pre>
 
     <h2 id="analysis">Coverage analysis</h2>
     <p>The ground inside the <b>ROI</b> (a true offset around the body, or a polygon) is sampled on a 5, 2 or 1 cm grid.
-      For every cell and camera, Vantage checks the lens's field of view, the sensor frame and occlusion by the body
-      (exact, from a cube depth map per camera), and computes the pixel density. With <b>Live analysis</b> on, it
-      re-runs as you edit.</p>
+      For every cell and camera, Vantage checks the lens's field of view, the sensor frame and occlusion by the body,
+      the rig parts and the sensor and camera <a href="#housings">housings</a> (exact, from a cube depth map per
+      camera), and computes the pixel density. With <b>Live analysis</b> on, it re-runs as you edit.</p>
     <table>
       <tr><th>Figure</th><th>Meaning</th></tr>
       <tr><td>Blind in ROI</td><td>Ground no camera sees, m².</td></tr>
@@ -271,6 +357,37 @@ vantage project.vantage            # open a project</code></pre>
     </table>
     <p>Analysis ▸ Obstacles evaluates at a height instead of on the ground (0.5 m and 1.0 m poles, a 0.9 m child),
       and obstacle poles placed in the project report which cameras see them.</p>
+
+    <h2 id="housings">Housings in view</h2>
+    <p>A camera behind a roof lidar, next to a corner radar or under a GNSS antenna does not see through it. Vantage
+      models every sensor's housing (the library model's box or cylinder at its pose) and every camera module (width ×
+      height × length behind the lens) as solids that block the other cameras exactly like the body and the rig: the
+      ground coverage, blind area, redundancy, density and obstacle poles, the blind volume, the perception range, the
+      synthetic images and the sample dataset (housings drawn as dark plastic and metal), the stitched and bowl views,
+      the camera light and the installation check all include them. A housing set behind a bumper fascia or into a
+      panel stays hidden behind the body, and a sensor's or camera's own housing is never in its own view.</p>
+    <p>The Inspector's <b>Mount ▸ Housings</b> row shows the share of the selected camera's image each housing covers
+      and where (for example <i>RD1 13.7 %</i>). The Issues list warns when a housing covers more than 2 % of an image
+      or reaches its centre, flags more than 10 % as serious, and a camera whose lens sits inside another housing as
+      critical. <b>Analysis ▸ Housings block cameras</b> switches them off to compare with the body and rig alone (one
+      undo step, saved with the project).</p>
+    <p>On the sample's <i>Data rig</i>, the front long-range radar RD1 sits just in front of the bumper, below camera F,
+      which looks 40° down through its H05R2 fisheye: the radar's housing covers 13.7 % of F's image, at the bottom centre,
+      and hides ground just ahead of the bumper. Moved 5 cm back behind the fascia, it is out of F's image.</p>
+    <table>
+      <tr><th>Data rig, ROI 34.46 m², 5 cm cells</th><th>Body and rig only</th><th>Housings block</th></tr>
+      <tr><td>Blind in ROI</td><td>0.010 m²</td><td>0.240 m²</td></tr>
+      <tr><td>Covered</td><td>99.97 %</td><td>99.30 %</td></tr>
+      <tr><td>Seen by ≥ 2 cameras</td><td>53.02 %</td><td>52.81 %</td></tr>
+      <tr><td>Ground camera F sees</td><td>7.20 m²</td><td>6.97 m²</td></tr>
+      <tr><td>Housings in view</td><td></td><td>F: RD1 13.7 %; QL, QR: a corner radar each, 0.08 %; R, ML, MR: none</td></tr>
+    </table>
+    <p>Export: <b>Housings in view</b> (<code>housings/housings.json</code>, <code>vantage.housings/1</code>, and
+      <code>housings.csv</code>) lists every housing, what each camera sees of it, and the coverage with and without
+      housings; batch <code>--housings</code>, which exits with 2 when a camera sits inside a housing. Limits: the
+      housings are the datasheets' outer boxes and cylinders (grown by an optional margin), not their exact shapes;
+      edges are as sharp as the occlusion map's 0.35° texels; cables, brackets and connectors are not modelled; the
+      share in view is a share of the image's pixels, not of its solid angle.</p>
 
     <h2 id="overlays">Heatmaps and overlays</h2>
     <p><b>View ▸ Overlays ▸ Heatmap</b> colours the ground by <b>Coverage</b> (which camera is best), <b>Density</b>,
@@ -286,7 +403,7 @@ vantage project.vantage            # open a project</code></pre>
       <tr><th>Overlay</th><th>Shortcut</th><th>Shows</th></tr>
       <tr><td>Frustums</td><td><kbd>Alt</kbd>+<kbd>1</kbd></td><td>Each camera's viewing volume.</td></tr>
       <tr><td>Footprints</td><td><kbd>Alt</kbd>+<kbd>2</kbd></td><td>Each camera's visible ground outline.</td></tr>
-      <tr><td>Camera light</td><td><kbd>Alt</kbd>+<kbd>3</kbd></td><td>What every camera sees, painted on the body and the ground through its real lens and around the body.</td></tr>
+      <tr><td>Camera light</td><td><kbd>Alt</kbd>+<kbd>3</kbd></td><td>What every camera sees, painted on the body and the ground through its real lens and around the body, the rig and the housings.</td></tr>
       <tr><td>Occlusion rays</td><td><kbd>Alt</kbd>+<kbd>4</kbd></td><td>Rays from a camera stopped by the body.</td></tr>
       <tr><td>Seams</td><td><kbd>Alt</kbd>+<kbd>5</kbd></td><td>The bird's-eye stitch seams.</td></tr>
       <tr><td>ROI</td><td><kbd>Alt</kbd>+<kbd>6</kbd></td><td>The region of interest.</td></tr>
@@ -308,7 +425,14 @@ vantage project.vantage            # open a project</code></pre>
     <p>The Issues tab lists what needs attention, by severity: blind ground, cable routed length against the module's
       cable, GMSL port conflicts, the GMSL2 link and deserializer CSI-2 budget (editable link rate, bit depth and
       overhead in the Compute inspector), cameras off the body or in forbidden zones, edge clearance, density below
-      the minimum, and objects vanishing at stitch seams. <b>Show</b> frames the problem; <b>Ask</b> sends it to the
+      the minimum, objects vanishing at stitch seams, a sensor housing or camera module in a camera's image (see
+      <a href="#housings">Housings in view</a>), misplaced lidars, radars and GNSS antennas, the recording and power
+      budgets, the GNSS antennas' sky, multipath and heading baseline, lenses and sensor windows highly exposed to
+      dirt, fleet vehicles out of tolerance, failing must requirements of the scorecard whose metric is cheap, and,
+      once the project has suspension data, a load case that lifts a wheel, exceeds the gross mass, sits on the bump
+      stops or moves the rig beyond the calibration tolerance (marked while the suspension values are typical). After
+      an <a href="#as-built">as-built check</a>, a camera mounted off the plan is serious and one whose coverage does
+      not hold is critical, until the plan changes. <b>Show</b> frames the problem; <b>Ask</b> sends it to the
       assistant.</p>
 
     <!-- ======================================================== studies -->
@@ -320,12 +444,43 @@ vantage project.vantage            # open a project</code></pre>
     <p>The <b>Optimiser</b> runs an evolutionary search over the camera poses, scored under tolerance, and shows the
       Pareto front of coverage against robustness; apply a result as a new variant.</p>
 
-    <h2 id="loadcases">Load cases</h2>
-    <p><b>Analysis ▸ Load cases</b> takes axle drops from kerb weight per case (static suspension deflection) and turns
-      them into body pitch and drop. For each case it reports the blind area and density, the <b>ground shift</b>
-      (how far the kerb-calibrated stitched image moves a ground point) and the <b>seam ghost</b> (how far the two
-      cameras at a seam disagree). The preset drops are examples: enter the vehicle's suspension data.</p>
-    <figure><div class="frame natural"><img src="media/loadcases.jpg" alt="The load cases dialog" loading="lazy" width="1020" height="520"></div></figure>
+    <h2 id="loadcases">Load cases and suspension</h2>
+    <p>A data-collection vehicle carries its rig, a crew and equipment, and its cameras are calibrated at one load.
+      <b>Analysis ▸ Load cases…</b> turns the loads into how far each corner drops, and so how far every camera and
+      sensor moves relative to the road between the calibration load and each case: what the calibration has to
+      absorb.</p>
+    <p>The <b>Suspension</b> tab holds each corner's spring rate and motion ratio (wheel rate = spring rate ×
+      ratio²), the tyre's vertical rate, the bump stop (gap and rate, or a progressive curve), an optional measured
+      wheel-load curve from a K&amp;C rig or CAD kinematics (it replaces the spring and the bump stop), the kerb corner
+      loads and the design ride heights, and the anti-roll bars. Import them from JSON or YAML, a
+      <code>parameter,value,unit</code> CSV sheet or a ride-height table; units are converted (N/mm, kN/m, lbf/in; kg,
+      N, lb; mm, m, in), so typing <code>140 lbf/in</code> into a field works. Until you do, the values are typical of a
+      compact sedan scaled to the model (ride frequencies of 1.25 and 1.5 Hz, 200 N/mm tyres, a kerb mass estimated
+      from the model's size), and the dialog says so.</p>
+    <p>The <b>Loads</b> tab lists masses at points: the seats, the boot and the roof (placed on the vehicle; 75 kg per
+      occupant), the recording computer and the battery, and the rig itself: cameras from their module's weight,
+      sensors and rig parts as typical estimates you can replace with the real masses. Each <b>case</b> ticks the items
+      it carries; <i>Calibrated at</i> picks the load the cameras are calibrated at.</p>
+    <p>The solve is static: a rigid body on four corner springs (each the suspension in series with the tyre),
+      balanced in force and in moment about both axes, so a driver alone or an off-centre rig rolls the body. Per case
+      you get each corner's drop, the pitch and roll, the bump stops touched, and every camera's and sensor's move in
+      millimetres and degrees against the calibration load. <b>Run</b> adds the blind area, the ground shift (how far
+      a stitcher calibrated at that load moves a ground point) and the seam ghost (how far the two cameras at a seam
+      disagree). Anti-dive and anti-squat, kinematic wheel paths, chassis torsion and friction are out of scope; a
+      lifted wheel is flagged, not solved.</p>
+    <p>On the sample's <i>Data rig</i> with the typical values, calibrated with the rig and no occupants: the driver
+      alone drops the corners 4–22 mm, rolls the body 0.27° and moves the radar RD4 and camera QL 16 mm; four occupants
+      drop the rear 66 mm onto the rear bump stops, tilting the body 0.95° nose up; fully loaded with luggage, the
+      rear camera R moves 85 mm, the stitched ground shifts up to 65 cm and the seams ghost by 35 cm.</p>
+    <figure><div class="frame natural"><img src="media/suspension.jpg" alt="The load cases dialog on its Suspension tab: kerb mass, axle shares, tracks and anti-roll bars, and a table of each corner's spring, motion ratio, wheel rate, tyre, kerb load, ride height and bump stop" loading="lazy" width="1600" height="900"></div>
+      <figcaption>The Suspension tab with the typical values the dialog starts from.</figcaption></figure>
+    <p>The <b>Typed drops</b> tab keeps the earlier table: axle drops from kerb per case, when you have the drops but not
+      the suspension. Export: <b>Load cases (suspension)</b>, <code>suspension_load_cases.json</code>
+      (<code>vantage.suspension/1</code>), the cases and the devices as CSV and the suspension data
+      (<code>suspension_data.json</code>, which imports back). Batch: <code>--suspension-data FILE</code> reads a
+      suspension file first (kept with <code>--save</code>; exit 4 when it cannot be read) and <code>--suspension
+      [OUT.json]</code> writes the cases (exit 2 when a case lifts a wheel or exceeds the gross vehicle mass);
+      <code>--load-cases</code> still evaluates the typed drops.</p>
 
     <h2 id="variants">Variants</h2>
     <p>A project holds several layout variants. The variant menu switches, duplicates and renames them; <b>Compare</b>
@@ -346,7 +501,7 @@ vantage project.vantage            # open a project</code></pre>
     <p><b>Analysis ▸ Perception range</b> answers how far out the rig records objects a detector can use. An object
       class has a height, a width, a height above the ground (a sign on a post) and the minimum height in pixels your
       detector needs. A camera <b>resolves</b> an object standing at a point when the object is inside the image and
-      the lens circle, its centre is not hidden by the body or the rig, and its height in the image is at least the
+      the lens circle, its centre is not hidden by the body, the rig or a housing, and its height in the image is at least the
       minimum. The pixel height is measured between the projections of the object's bottom and top through the
       camera's lens model, without a small-angle approximation.</p>
     <table>
@@ -441,7 +596,7 @@ vantage project.vantage            # open a project</code></pre>
       whose output, the rig's bus (12, 24 or 48 V), is split into fused circuits.</p>
     <table>
       <tr><th>Load</th><th>Steady</th><th>Peak</th></tr>
-      <tr><td>Camera</td><td>the module's figure, or 1.5 W typical (a GMSL camera powered over its coax by the deserializer, on the compute circuit)</td><td>× 1.2</td></tr>
+      <tr><td>Camera</td><td>the module's figure (STURDeCAM31: 1.324 W), or 1.5 W typical where the module's page gives none (a GMSL camera powered over its coax by the deserializer, on the compute circuit)</td><td>× 1.2</td></tr>
       <tr><td>Lidar</td><td>the library figure (nominal)</td><td>× 2.0 while it spins up, plus a cold-start heater if set</td></tr>
       <tr><td>Radar, GNSS antenna, IMU</td><td>the library figure (an antenna is powered over its coax by the receiver)</td><td>× 1.2</td></tr>
       <tr><td>Compute, recorder, switch, time server</td><td>60, 40, 15 and 5 W</td><td>× 1.2</td></tr>
@@ -467,8 +622,9 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td>A power cable's drop over the limit, or under the minimum input at the peak / its peak drop over the limit</td><td>serious / warning</td></tr>
       <tr><td>Engine-off runtime under the target</td><td>warning</td></tr>
     </table>
-    <p>The sample's data rig draws 172 W (187 W from the vehicle); with an INS and two GNSS antennas added, 184 W and
-      200 W: 31 % of a 600 W converter, 490 W spare on the alternator and 4 hours on the battery. Library power figures are nominal and the
+    <p>The sample's data rig (six STURDeCAM31 at e-con's 1.324 W each) draws 171 W (186 W from the vehicle); with an
+      INS and two GNSS antennas added, 183 W and 199 W: 31 % of a 600 W converter, 491 W spare on the alternator and
+      4 hours on the battery. Library power figures are nominal and the
       peak factors typical: replace them with your units' datasheets. Export: <code>vantage.power_budget/1</code>
       JSON and device and circuit CSVs; batch <code>--power-budget</code>, which exits with 2 when the converter or a
       fuse is over its rating.</p>
@@ -716,6 +872,50 @@ vantage project.vantage            # open a project</code></pre>
     frame; rolling shutter is not modelled; a view without depth edges (open road) gives no rotation; with only an IMU the
     vehicle's turning between the lidar points and the image is compensated, not its travel.</p>
 
+    <h2 id="as-built">As-built check</h2>
+    <p><b>Calibrate ▸ As-built check…</b> answers the question to settle before trusting the plan's coverage numbers:
+      does each real camera see what the simulation says it sees? Open a short drive recorded by the real rig: a ROS 2
+      bag (a folder, <code>.mcap</code> or <code>.db3</code>), a nuScenes folder, or a plain folder of images per camera
+      (a subfolder named by the camera's tag, or file names that start with it, such as <code>F_000123.jpg</code>).
+      Streams are matched to cameras by the tag in their name; correct the matching in the table if needed. A few
+      seconds of driving past textured surroundings are enough; the recording is read once, in the background.</p>
+    <p><b>Ego mask.</b> From frames spread over the drive and taken while the vehicle moves (odometry or GNSS in the
+      recording tell; without them, how much the picture changed), what stays the same is the vehicle, its rig parts
+      and sensor housings. Plain road and sky stay the same too: they are told from the vehicle by the static edges
+      between them and by lying outside a band around the planned silhouette (<i>Search band</i>). Where nothing
+      decides, that stretch is marked <i>undecided</i> (grey dashes) and left out of every figure. A fisheye's dark area
+      outside the image circle is found on its own and the circle is measured against the lens model.</p>
+    <p><b>Against the plan.</b> The same camera simulated from the plan (body, rig parts, housings, lens model and unit
+      calibration) gives the expected mask. The page shows the real outline (blue) over a frame or over the median of
+      the frames, the simulated one (orange) at the plan's pose or at the fitted one, the overlap (IoU) and the mean
+      distance between the outlines in pixels and degrees. The <b>pose correction</b> is the yaw, pitch and roll that
+      lay the simulated outline onto the real one, with standard errors; an axis the outline in view cannot pin (a
+      straight bumper edge says little about yaw) is shown in brackets and left as planned. A camera that sees too
+      little of the vehicle, or whose correction is too imprecise to act on, is <i>not checkable</i>, and the page says
+      why. With <i>Drive-log estimate</i> on, the <a href="#drive-log">drive-log check</a>'s rotation against the lidar
+      is shown beside it, with whether the two agree, and stands in for a camera the outline cannot check.</p>
+    <p><b>As built.</b> A copy of the variant with every confident correction is analysed against the plan: blind
+      ground, the share seen by two cameras, the shares at the minimum and target density, each camera's visible ground
+      and the scorecard's coverage requirements. The verdict: the plan's coverage <i>holds</i>, <i>holds with
+      corrections</i> (calibrate with the as-built poses), or <i>does not hold</i> (beyond the tolerances you set).
+      <i>Add as-built variant</i> keeps the copy as "… · as built &lt;date&gt;" (one undo step). Export writes
+      <code>asbuilt_check.json</code> (<code>vantage.asbuilt/1</code>), a CSV per camera, the coverage difference and an
+      overlay per camera as PNG.</p>
+    <p>On a synthetic 2.5 s drive of the sample's data rig in which the left mirror camera ML is mounted 2° further
+      down and rolled 1°, and the rear camera R turned 1.5°: ML's outline gives pitch +1.99° ± 0.02° and roll +1.09° ±
+      0.10° (the lidar estimate agrees: +1.91°, +1.05°); R's bumper is the plain road's grey in this scene, so its
+      outline cannot tell, and the drive-log estimate finds yaw +1.44° against the lidar; F, MR and QL hold. The plan's
+      coverage holds with corrections to two cameras. Reading and checking the six cameras took 14 s here.</p>
+    <p>Batch: <code>--as-built-check REC [OUT]</code> writes the JSON (or, for a folder, the JSON, the CSV and the PNGs);
+      with <code>--save</code> the as-built variant is kept; exit 3 when the plan's coverage does not hold, 4 when the
+      recording cannot be read. Limits: the ego mask needs motion and texture in the scene; reflections in glossy paint,
+      low sun and dirt change it. A camera that sees little of the vehicle constrains its rotation poorly. The simulated
+      mask is only as good as the body mesh (a CAD mesh gives exact edges, a generic or photogrammetry body does not)
+      and the occlusion cube (about 0.35° per texel). A shift is weakly observable and is fitted only when asked
+      (<i>Fit a shift</i>). The drive-log estimate is relative to the lidar. The stated errors were checked on synthetic
+      recordings, where the injected errors came back within about 1.5 standard errors; real lenses and body meshes add
+      systematic errors.</p>
+
     <h2 id="fleet">Fleet</h2>
     <p><b>Calibrate ▸ Fleet</b> tracks the rig on every vehicle built to the design. Add each vehicle (name, VIN, note) and
       give it records: the measured poses of its sensors on a date. <b>Import…</b> reads an installation check report,
@@ -748,6 +948,8 @@ vantage project.vantage            # open a project</code></pre>
       <li>Open <b>Preferences ▸ Assistant</b> (<kbd>Ctrl</kbd>+<kbd>,</kbd>), tick <b>Use the assistant</b>, paste the key and press <b>Test</b>: Vantage checks the key and loads the chat models it may use.</li>
       <li>Pick a model (GPT-OSS 120B by default) and a reasoning effort, then <b>Apply</b>.</li>
     </ol>
+    <figure><div class="frame natural"><img src="media/prefs.jpg" alt="Preferences, Assistant tab: Use the assistant, the API key field with Test, the model and the reasoning effort, and what is sent" loading="lazy" width="1600" height="900"></div>
+      <figcaption>Preferences ▸ Assistant before a key is entered.</figcaption></figure>
     <p>The key is kept in the system keyring when the optional <code>keyring</code> package and a keyring service are
       available, otherwise in a private file in your settings folder that only you can read; never in projects. The
       <code>GROQ_API_KEY</code> environment variable takes precedence.</p>
@@ -759,11 +961,12 @@ vantage project.vantage            # open a project</code></pre>
     <table>
       <tr><th>Tool</th><th>What it does</th></tr>
       <tr><td>Overview, coverage, issues, camera details, seams</td><td>Read the design and the analysis figures; the overview includes the lidars and radars (pose, model, field, range).</td></tr>
-      <tr><td>Check what sees a point</td><td>For a point, which cameras see it and why not (field of view, image frame, body occlusion), with density and range.</td></tr>
+      <tr><td>Check what sees a point</td><td>For a point, which cameras see it and why not (field of view, image frame, or the body, a rig part or a named sensor housing in the way), with density and range.</td></tr>
       <tr><td>Find blind regions</td><td>Blind and low-density regions with where they are and why each camera misses them.</td></tr>
       <tr><td>Run a study</td><td>Blind volume, objects in the stitched view (with seam advice), load cases, mounting tolerance, perception range, lidar and radar coverage.</td></tr>
       <tr><td>Sync plan, recording budget</td><td>Camera triggers against the lidar sweep with suggested trigger lines; every sensor's data rate, the links, the write speed and hours per disk set.</td></tr>
       <tr><td>Live rig health</td><td>While the Live rig page runs: each stream's frame rate, drops, exposure, sharpness and drift indicator, with its verdict and reasons. Stream addresses are not sent.</td></tr>
+      <tr><td>Housings, load cases, as-built check, camera library</td><td>What each sensor housing and camera module hides in each camera's image and the coverage with and without them; the suspension load cases (corner drops, pitch and roll, each device's move against the calibration load; with evaluate, the ground figures); the last as-built check's verdict, corrections and coverage; the library's modules and lenses with their stated and modelled fields of view and what their pages do not give.</td></tr>
       <tr><td>Compare variants</td><td>The figures of every variant side by side.</td></tr>
       <tr><td>Optimise a camera</td><td>Searches one camera's pose within ranges for the least blind ground, best minimum density or most redundancy, optionally keeping a minimum density; says when the gain is not worth it.</td></tr>
       <tr><td>Simulate / propose a change</td><td>Camera poses, lenses, seam angles or thresholds, analysed on a copy; a proposal shows the predicted effect.</td></tr>
@@ -797,8 +1000,8 @@ vantage project.vantage            # open a project</code></pre>
     <div class="callout"><p>With each question, Vantage sends Groq the question, a short context line (project and
       variant names, the open page, the selected cameras), your project brief, and the results of the lookups the
       model asks for: camera, lidar, radar, GNSS antenna and IMU poses, lens, module and sensor model names, analysis
-      figures, the fleet's vehicle names and measured offsets (never VINs), a checked drive log's file name and findings,
-      and the requirements. The vehicle model, images, point clouds, captures and files are never sent. Groq processes them under its own terms. Answers can be wrong: check a proposal's
+      figures, the fleet's vehicle names and measured offsets (never VINs), a checked drive log's or as-built
+      recording's file name and findings, and the requirements. The vehicle model, images, point clouds, captures and files are never sent. Groq processes them under its own terms. Answers can be wrong: check a proposal's
       predicted effect before applying it.</p></div>
 
     <!-- ======================================================== data -->
@@ -810,8 +1013,8 @@ vantage project.vantage            # open a project</code></pre>
       crossing ahead. The ego starts at 80 % of the set speed, reaches it within 3 s and eases into the bend.</p>
     <table>
       <tr><th>Sensor</th><th>What it records</th></tr>
-      <tr><td>Camera</td><td>The scene through the real lens model and the camera's unit calibration. The body and rig
-    hide what lies behind them. A frame is stamped at the middle row's exposure centre and fires at the sync plan's
+      <tr><td>Camera</td><td>The scene through the real lens model and the camera's unit calibration. The body, the rig
+    and the other sensors' housings hide what lies behind them (housings drawn as dark plastic and metal). A frame is stamped at the middle row's exposure centre and fires at the sync plan's
     trigger time. With a rolling shutter, each band of rows is drawn at its own time.</td></tr>
       <tr><td>Lidar</td><td>Every channel, column by column, at the azimuth the phase lock sets, fired from where the
     vehicle is at that instant: the sweep is not motion compensated, as a driver delivers it. A return needs
@@ -871,6 +1074,8 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td></td><td>Power budget</td><td>JSON, CSV</td><td><code>power_budget</code></td></tr>
       <tr><td></td><td>GNSS and IMU</td><td>JSON, TXT, PNG</td><td><code>gnss_imu</code></td></tr>
       <tr><td></td><td>Sun glare and dirt</td><td>JSON, PNG</td><td><code>exposure</code></td></tr>
+      <tr><td></td><td>Housings in view</td><td>JSON, CSV</td><td><code>housings</code></td></tr>
+      <tr><td></td><td>Load cases (suspension)</td><td>JSON, CSV</td><td><code>suspension_load_cases</code></td></tr>
       <tr><td></td><td>Fleet</td><td>JSON, CSV, PNG</td><td><code>fleet</code></td></tr>
       <tr><td></td><td>Requirements scorecard and review pack</td><td>JSON, CSV, PDF</td><td><code>requirements</code></td></tr>
       <tr><td>Extrinsics</td><td>Camera, lidar, radar, GNSS and IMU poses</td><td>JSON</td><td><code>extrinsics_json</code></td></tr>
@@ -895,32 +1100,43 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td></td><td>For CAD</td><td>STEP</td><td><code>step</code></td></tr>
       <tr><td></td><td>Mount brackets</td><td>STL ×N, JSON, PNG</td><td><code>brackets</code></td></tr>
     </table>
+    <p>The drive-log and as-built checks need a recording, so they export from their own pages (<b>Export…</b>) and
+      their batch flags; the sample dataset is a page of its own (<b>Export ▸ Sample dataset…</b>).</p>
 
     <h2 id="datasets">Dataset calibration</h2>
-    <p>The <b>Datasets</b> exports write the calibration in the layouts training datasets and their tools read. They
-      are always in metres; the export frame and origin apply as for every export. Camera frames are optical: x right,
-      y down, z forward. A rectilinear lens is written as an exact pinhole with no distortion; every other lens as
-      Kannala–Brandt (equidistant, the model of <code>cv2.fisheye</code>), from the unit calibration if the camera has
-      one.</p>
+    <p>The <b>Datasets</b> exports write the calibration in the layouts training datasets and their tools read, and
+      each has been checked against the tool that reads it, not only against Vantage's own maths. They are always in
+      metres; the export frame and origin apply as for every export. Camera frames are optical: x right, y down,
+      z forward. A rectilinear lens is written as an exact pinhole with no distortion; in nuScenes, KITTI and
+      camera_info every other lens as Kannala–Brandt (equidistant, the model of <code>cv2.fisheye</code>), from the
+      unit calibration if the camera has one; Kalibr gets the camera model that reproduces each lens.</p>
     <table>
       <tr><th>Format</th><th>Files</th><th>Notes</th></tr>
-      <tr><td>nuScenes</td><td><code>nuscenes/sensor.json</code>, <code>calibrated_sensor.json</code>, README</td><td>Camera to ego: <code>p_ego = R(rotation) · p_camera + translation</code>, quaternion <code>[w, x, y, z]</code>. nuScenes puts the ego frame at the rear axle, which is the default export frame. The fisheye coefficients are in an extra <code>vantage_distortion</code> field the nuScenes tools ignore. Lidars and radars follow the cameras as <code>LIDAR_&lt;TAG&gt;</code> and <code>RADAR_&lt;TAG&gt;</code> with an empty <code>camera_intrinsic</code>. Tokens are stable across re-exports.</td></tr>
-      <tr><td>KITTI</td><td><code>kitti/calib_cam_to_cam.txt</code>, <code>calib_cams_to_vehicle.txt</code>, <code>calib_velo_to_cam.txt</code> (with a lidar), <code>calib_imu_to_velo.txt</code> (with an IMU and a lidar), README</td><td>Per camera S, K, D, and R, T from camera 00; the images are not rectified, so S_rect = S, R_rect = I and P_rect = [K | 0]. For a fisheye, D_xx holds k1–k4 and a <code>DISTORTION_MODEL_xx: equidistant</code> line says so; tools that assume radtan will misread it, so undistort with cv2.fisheye first. Lidars and radars get <code>Tr_&lt;tag&gt;_to_vehicle</code> lines; <code>calib_velo_to_cam.txt</code> maps the first lidar into camera 00 (R, T as KITTI's velodyne file), <code>calib_imu_to_velo.txt</code> the first IMU into the first lidar (as KITTI's IMU-to-velodyne file).</td></tr>
-      <tr><td>ROS camera_info</td><td>one YAML per camera</td><td>As <code>camera_calibration_parsers</code> writes it: <code>equidistant</code> for a fisheye, <code>plumb_bob</code> for a pinhole.</td></tr>
-      <tr><td>Kalibr</td><td><code>kalibr/camchain.yaml</code></td><td><code>T_cn_cnm1</code> maps the previous camera into this one; <code>equidistant</code> or <code>radtan</code>. Vantage imports the file back.</td></tr>
+      <tr><td>nuScenes</td><td><code>nuscenes/sensor.json</code>, <code>calibrated_sensor.json</code>, README</td><td>Camera to ego: <code>p_ego = R(rotation) · p_camera + translation</code>, quaternion <code>[w, x, y, z]</code>. nuScenes puts the ego frame at the rear axle, which is the default export frame. The fisheye coefficients are in an extra <code>vantage_distortion</code> field the nuScenes tools ignore; the README lists any lens the Kannala–Brandt coefficients only approximate or cannot fully reach. Lidars and radars follow the cameras as <code>LIDAR_&lt;TAG&gt;</code> and <code>RADAR_&lt;TAG&gt;</code> with an empty <code>camera_intrinsic</code>. Tokens are stable across re-exports.</td></tr>
+      <tr><td>KITTI</td><td><code>kitti/calib_cam_to_cam.txt</code>, <code>calib_cams_to_vehicle.txt</code>, <code>calib_velo_to_cam.txt</code> (with a lidar), <code>calib_imu_to_velo.txt</code> (with an IMU and a lidar), <code>object/&lt;TAG&gt;.txt</code> per camera (with a lidar), README</td><td>Per camera S, K, D of the raw image and R, T from camera 00. KITTI's images are rectified pinhole images: rectified image xx here is the raw image undistorted to a pinhole camera with the same K and size (R_rect = I; the README gives the <code>cv2.fisheye.initUndistortRectifyMap</code> call and how much of the lens it keeps, for example 128.9° × 99.1° raw to 95.4° × 82.7° rectified for the H05R2), and P_rect_xx = K_xx [R_xx | T_xx] projects camera 00 coordinates into it, as the KITTI devkit's <code>P_rect_xx · R_rect_00 · Tr_velo_to_cam</code> needs. For a fisheye, D_xx holds k1–k4 and a <code>DISTORTION_MODEL_xx: equidistant</code> line says so. A surround rig's cameras are not parallel, so tools that assume KITTI's stereo layout (pykitti, the devkit's <code>loadCalibration.m</code>) are right for camera 00 only: use <code>Tr_cam_xx_to_vehicle</code> or the object files for the others. Lidars and radars get <code>Tr_&lt;tag&gt;_to_vehicle</code> lines; <code>calib_velo_to_cam.txt</code> maps the first lidar into camera 00, <code>calib_imu_to_velo.txt</code> the first IMU into the first lidar. The object files are the KITTI object benchmark's seven lines per camera (P0–P3 = [K | 0], R0_rect, Tr_velo_to_cam, Tr_imu_to_velo), read by position by mmdetection3d and OpenPCDet.</td></tr>
+      <tr><td>ROS camera_info</td><td>one YAML per camera</td><td>As <code>camera_calibration_parsers</code> writes it (binning and ROI included, the camera name as camera_info_manager allows): <code>equidistant</code> for a fisheye, <code>plumb_bob</code> for a pinhole; R = I and P = [K | 0], as ROS's own calibrator does for fisheyes. image_proc and the C++ image_geometry rectify it; image_geometry's Python model ignores the distortion model, so use <code>cv2.fisheye</code> there.</td></tr>
+      <tr><td>Kalibr</td><td><code>kalibr/camchain.yaml</code>, <code>imu.yaml</code> (with an IMU)</td><td><code>T_cn_cnm1</code> maps the previous camera into this one. Each lens gets the model that reproduces it: pinhole-equi within 90° off axis (exact for Kannala–Brandt lenses), otherwise the best of double sphere, omni-radtan and extended unified, fitted over every pixel within 0.25 px RMS and 1 px at worst, or a warning line in the file; the header gives each camera's error. With an IMU, <code>T_cam_imu</code> and <code>timeshift_cam_imu</code> (Kalibr's camchain-imucam layout) and an <code>imu.yaml</code> whose noise figures are Kalibr's documented example values until the IMU model has its own (the file says so). <code>cam_overlaps</code> come from the analysis's shared ground and are always mutual. Vantage imports a pinhole camchain back.</td></tr>
     </table>
-    <p>The tests reproject points through every written file and compare them with Vantage's own projection (within
-      0.05 px). The nuScenes calibration has also been loaded through the nuScenes devkit by way of the
-      <a href="#sample-dataset">sample dataset</a>, whose lidar points the devkit projects onto the same pixels as Vantage.
-      KITTI, camera_info and Kalibr have not been checked against their own tools: check one frame before a large
-      conversion.</p>
+    <p>What each format was checked against: the KITTI raw devkit's MATLAB readers and its projection (lidar and IMU
+      points land within 0.001 px of Vantage's projection in every camera; the readers were reimplemented from the
+      devkit's source, as no MATLAB was at hand), pykitti (every matrix exact on a KITTI-like stereo layout of four
+      parallel cameras, camera 00's on the surround rig), the object files as mmdetection3d and OpenPCDet read them,
+      ROS 2's <code>camera_calibration_parsers</code> compiled from its source (every file read back to exactly the
+      numbers written) and image_geometry, Kalibr's own config reader and camera models, and the nuScenes devkit's
+      geometry code (to 0.0001 px). The repository's tests reimplement each tool's reading from its source; with
+      <code>VANTAGE_DEVKITS</code> pointing at the tools they also run the tools themselves. The nuScenes calibration
+      is also what the <a href="#sample-dataset">sample dataset</a> uses, whose lidar points the devkit projects onto
+      the same pixels as Vantage.</p>
 
     <h2 id="batch">Batch mode</h2>
     <p>Everything below runs without a window, for CI pipelines and the end of the production line. Use
       <code>vantage</code> (or <code>vantage-cli</code> in a bundle, <code>python3 run_vantage.py</code> from a
       checkout).</p>
 <pre><code>vantage project.vantage --analyse report.json        # metrics, seams, issues, link budget, targets, stitched objects
-vantage project.vantage --load-cases -               # load cases as JSON on stdout
+vantage project.vantage --load-cases -               # the typed load cases as JSON on stdout
+vantage project.vantage --suspension-data corners.csv --suspension cases.json   # load cases from the
+                                                     # suspension and the loads: corner drops, roll, device moves
+vantage project.vantage --housings housings.json     # what housings hide in each camera's image, coverage both ways
 vantage project.vantage --blind-volume volume.json   # 3D blind volume, unseen objects, reach rose
 vantage project.vantage --perception-range ranges.json   # range per object class and direction, stereo pairs
 vantage project.vantage --sensor-coverage coverage.json  # lidar/radar reach, blocked beams, sector verdicts
@@ -932,6 +1148,8 @@ vantage project.vantage --exposure exposure.json    # sun in each camera over th
 vantage project.vantage --brackets out/             # a printable STL bracket per camera, checks, sheet
 vantage project.vantage --dataset out/              # a synthetic drive as a nuScenes folder and a ROS 2 bag
 vantage project.vantage --drive-log drive/ report/  # a recorded drive against the plan
+vantage project.vantage --as-built-check drive/ report/   # each camera's view of the vehicle in a recording
+                                                     # against the plan; the coverage as built
 vantage project.vantage --fleet-import V3 check.json --fleet fleet/ --save project.vantage
 vantage project.vantage --check review/            # the requirements scorecard and the design-review pack (CI gate)
 vantage project.vantage --lidar-calib out/ --lidar-calib-pair F L1 --lidar-calib-folder boards/
@@ -952,6 +1170,7 @@ vantage project.vantage --import-calib camchain.yaml F.yaml --save calibrated.va
       <tr><td><code>--min-boards</code></td><td>Boards a camera must see (default 1).</td></tr>
       <tr><td><code>--no-joint</code>, <code>--board-tol MM</code></td><td>Solve each camera alone; how far a board may lie off its place (default 20).</td></tr>
       <tr><td><code>--no-balance</code>, <code>--blend linear|multiband</code></td><td>Stitched PNG options.</td></tr>
+      <tr><td><code>--save OUT.vantage</code></td><td>Save the project afterwards: with imported or fitted calibrations, fleet records, the suspension data read by <code>--suspension-data</code>, or the as-built variant of <code>--as-built-check</code>.</td></tr>
     </table>
     <p>Captures are matched to cameras by the tag in the file name (<code>F.png</code>, <code>cam_QR.jpg</code>,
       <code>ML-capture.tif</code>); imported calibrations by camera name or ROS topic in the file, the file name, or the
@@ -959,9 +1178,9 @@ vantage project.vantage --import-calib camchain.yaml F.yaml --save calibrated.va
     <table>
       <tr><th>Exit code</th><th>Meaning</th></tr>
       <tr><td><code>0</code></td><td>Fine.</td></tr>
-      <tr><td><code>2</code></td><td>The plan has critical issues (with <code>--analyse</code> or <code>--export</code>); or, with <code>--recording-budget</code>, the recorder or a sensor's link cannot keep up; with <code>--power-budget</code>, the DC-DC converter or a fuse is over its rating; with <code>--gnss</code>, an antenna has no sky; with <code>--brackets</code>, a camera cannot take a printed bracket as planned.</td></tr>
-      <tr><td><code>3</code></td><td>A camera has to be re-mounted or could not be checked; or, with <code>--rig-health</code>, a camera is faulty or has no stream; with <code>--drive-log</code>, the recording shows a fault; with <code>--fleet</code>, a sensor needs re-mounting in its vehicle's latest record; with <code>--lidar-calib</code>, the lidar has to be re-mounted or the board poses did not determine its pose.</td></tr>
-      <tr><td><code>4</code></td><td>A lens calibration failed, or an imported calibration matched no camera or did not fit it; or a <code>--fleet-import</code> file, the <code>--drive-log</code> recording or the <code>--lidar-calib-folder</code> captures could not be read, or the <code>--dataset</code> could not be written.</td></tr>
+      <tr><td><code>2</code></td><td>The plan has critical issues (with <code>--analyse</code> or <code>--export</code>); or, with <code>--recording-budget</code>, the recorder or a sensor's link cannot keep up; with <code>--power-budget</code>, the DC-DC converter or a fuse is over its rating; with <code>--gnss</code>, an antenna has no sky; with <code>--brackets</code>, a camera cannot take a printed bracket as planned; with <code>--suspension</code>, a load case lifts a wheel or exceeds the gross vehicle mass; with <code>--housings</code>, a camera sits inside a housing.</td></tr>
+      <tr><td><code>3</code></td><td>A camera has to be re-mounted or could not be checked; or, with <code>--rig-health</code>, a camera is faulty or has no stream; with <code>--drive-log</code>, the recording shows a fault; with <code>--as-built-check</code>, the plan's coverage does not hold as built; with <code>--fleet</code>, a sensor needs re-mounting in its vehicle's latest record; with <code>--lidar-calib</code>, the lidar has to be re-mounted or the board poses did not determine its pose.</td></tr>
+      <tr><td><code>4</code></td><td>A lens calibration failed, or an imported calibration matched no camera or did not fit it; or a <code>--fleet-import</code> file, the <code>--drive-log</code> or <code>--as-built-check</code> recording, the <code>--suspension-data</code> file or the <code>--lidar-calib-folder</code> captures could not be read, or the <code>--dataset</code> could not be written.</td></tr>
       <tr><td><code>5</code></td><td>With <code>--check</code>, a must requirement fails or cannot be evaluated.</td></tr>
     </table>
     <p>When several apply, the highest is returned.</p>
@@ -988,18 +1207,33 @@ vantage project.vantage --import-calib camchain.yaml F.yaml --save calibrated.va
     <ul>
       <li><b>Check the installation:</b> <code>vantage --self-test</code> prints one line per check.</li>
       <li><b>The 3D view looks flat or fails:</b> the shader renderer falls back to fixed-function OpenGL and then to a software renderer by itself; <code>--software-3d</code> forces the software renderer.</li>
+      <li><b>Windows says "Windows protected your PC":</b> the download is not code-signed; choose <em>More info</em>, then <em>Run anyway</em>. Check the file against <code>SHA256SUMS.txt</code> first if you like (<a href="#install">Install</a>).</li>
+      <li><b>macOS refuses to open Vantage, or calls it damaged:</b> choose <em>Open Anyway</em> in <em>System Settings ▸ Privacy &amp; Security</em>, or run <code>xattr -dr com.apple.quarantine /Applications/Vantage.app</code>.</li>
       <li><b>The assistant says the key was not accepted:</b> check it in Preferences ▸ Assistant with <b>Test</b>; a <code>GROQ_API_KEY</code> environment variable overrides a saved key.</li>
       <li><b>Report a problem:</b> <a href="https://github.com/Sherin-SEF-AI/Vantage/issues">open an issue</a> with the steps and, if you can, the project file.</li>
     </ul>
+
+    <h2 id="licence">Licence</h2>
+    <p>Vantage is free software: you can redistribute it and modify it under the terms of the
+      <a href="https://github.com/Sherin-SEF-AI/Vantage/blob/main/LICENSE">GNU General Public License</a> as published by
+      the Free Software Foundation, version 3 or (at your option) any later version (GPL-3.0-or-later). It comes with
+      no warranty. The downloads also carry the licences of the libraries they bundle (PyQt6 and Qt, NumPy, SciPy,
+      OpenCV and others) in their <code>licenses</code> folder. The fonts are IBM Plex Sans and IBM Plex Mono, under
+      the SIL Open Font License 1.1.</p>
   </main>
 </div>
 
 <footer>
   <div class="wrap">
-    <div><a class="brand" href="./"><img src="assets/img/logo.png" alt="" width="22" height="22">Vantage</a></div>
+    <div>
+      <a class="brand" href="./"><img src="assets/img/logo.png" alt="" width="22" height="22">Vantage</a>
+      <p class="fine">Free software under the GNU General Public License, version 3 or later
+        (<a href="#licence">GPL-3.0-or-later</a>).</p>
+    </div>
     <div class="links">
       <a href="./">Home</a>
       <a href="./#download">Download</a>
+      <a href="https://github.com/Sherin-SEF-AI/Vantage/releases/latest">Releases</a>
       <a href="https://github.com/Sherin-SEF-AI/Vantage">GitHub</a>
     </div>
   </div>

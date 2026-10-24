@@ -1,11 +1,12 @@
 """Website clip 'dataset': Export ▸ Sample dataset on the data rig with GNSS and an INS. The preview of the synthetic
 drive at two instants (the six camera images, the lidar top view with the ground-truth boxes), the drive shortened
-to 2 s on the form, then Generate into a temp folder: the job runs on camera and the summary with the devkit snippet
-appears. The written dataset is removed afterwards."""
+to 2 s on the form, then Generate: the dataset goes into the working folder (~/Documents/Vantage, in the recording's
+throw-away home folder), the job runs on camera and the summary with the devkit snippet appears, its paths from ~. The
+written dataset is removed afterwards."""
 from __future__ import annotations
 
+import os
 import shutil
-import tempfile
 
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtTest import QTest
@@ -41,11 +42,12 @@ def clip(stage, r):
         p.analysis.dataset = {'image_scale': 0.25}      # small images, so the generation finishes on camera
     w = stage._nav_window(setup)
     r.win = w
-    out = tempfile.mkdtemp(prefix='vantage-dataset-')
+    out = os.path.join(stage.home, 'Documents', 'Vantage')        # the working folder Generate writes into
     try:
         r.chapter('Sample dataset', 'A synthetic drive recorded by exactly this rig')
         r.menu('Export', 'Sample dataset')
         pg = w.page('dataset')
+        stage.tilde(pg.out)                  # the load snippet names the folder in full: from ~, as the page's summary
         r.wait_for(lambda: pg.preview_data is not None and not pg._pbusy, timeout=60)
         r.hold(0.6)
         _scrub_to(r, pg, 30)
@@ -66,9 +68,8 @@ def clip(stage, r):
         r.tick(6)
         QTest.keyClick(f.lineEdit(), Qt.Key.Key_Return)
         r.hold(0.6)
-        # generate into the temp folder (the folder dialog is not filmed): progress, then the summary
-        r.click(pg.b_generate, real=False)
-        pg.generate(out)
+        # Generate: a new folder in the working folder; progress, then the summary
+        r.click(pg.b_generate)
         r.move(r.wpos(pg.top), 0.6, wait=False)          # the pointer off the progress line
         r.wait_for(lambda: not pg.busy, timeout=240, speed=2)
         r.hold(0.4)
