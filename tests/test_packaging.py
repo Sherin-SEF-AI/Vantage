@@ -190,12 +190,12 @@ def test_desktop_shortcut(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------------------------------- the release
-def test_version_is_0_1_0_and_tops_the_changelog():
-    """The first release is 0.1.0 (validated in simulation only), and the CHANGELOG's top entry, which the release job
-    publishes as the notes, is that version with the sections a user needs before downloading."""
+def test_version_tops_the_changelog():
+    """The version (0.1.1: the first release plus Linux arm64) is the CHANGELOG's top entry, which the release job
+    publishes as the notes, with the sections a user needs before downloading."""
     from vantage import __version__
     release = _packaging_module('release')
-    assert __version__ == '0.1.0' == release.version()
+    assert __version__ == '0.1.1' == release.version()
     entries = release.changelog()
     assert entries and entries[0][0] == __version__
     assert len({v for v, _, _ in entries}) == len(entries)                  # one entry per version
@@ -203,7 +203,8 @@ def test_version_is_0_1_0_and_tops_the_changelog():
     for heading in ('**What it does**', '**Downloads**', '**Unsigned builds**', '**Known limits**'):
         assert heading in notes, heading
     for name in (f'Vantage-{__version__}-windows-x64-setup.exe', f'Vantage-{__version__}-macos-arm64.zip',
-                 f'Vantage-{__version__}-linux-x86_64.tar.gz', 'SHA256SUMS.txt', 'SmartScreen', 'Open Anyway'):
+                 f'Vantage-{__version__}-linux-x86_64.tar.gz', f'Vantage-{__version__}-linux-arm64.tar.gz',
+                 'JetPack 6', 'SHA256SUMS.txt', 'SmartScreen', 'Open Anyway'):
         assert name in notes, name
     with pytest.raises(ValueError):
         release.notes('9.9.9')
@@ -280,13 +281,23 @@ def test_bundle_requirements():
     """packaging/requirements-bundle.txt pins every requirement of the app (OpenCV as its headless build), the
     optional modules the bundles carry and PyInstaller, each to one version."""
     deps = {_req_name(d) for d in _pyproject()['project']['dependencies']}
-    pins = {}
+    pins, marked = {}, {}
     for ln in _text('packaging', 'requirements-bundle.txt').splitlines():
         ln = ln.split('#')[0].strip()
         if ln:
-            name, _, ver = ln.partition('==')
+            spec, _, marker = ln.partition(';')
+            name, _, ver = spec.partition('==')
+            ver = ver.strip()
             assert ver and all(c.isdigit() or c == '.' for c in ver), ln
             pins[name.strip().lower()] = ver
+            if marker.strip():
+                marked.setdefault(name.strip().lower(), set()).add((marker.strip(), ver))
+    # PyQt6 is pinned per machine: Linux arm64 (Jetson, JetPack 6, glibc 2.35) takes the last release with arm64
+    # wheels for glibc 2.28; the markers cover every machine exactly once
+    for name in ('pyqt6', 'pyqt6-qt6'):
+        m = dict(marked[name])
+        assert set(m) == {'platform_machine != "aarch64"', 'platform_machine == "aarch64"'}, m
+        assert m['platform_machine == "aarch64"'].startswith('6.7.')
     want = {('opencv-python-headless' if d == 'opencv-python' else d) for d in deps}
     want |= {'keyring', 'zstandard', 'lz4', 'tzdata', 'pyinstaller', 'pyinstaller-hooks-contrib', 'pyqt6-qt6'}
     assert want <= set(pins), want - set(pins)
@@ -306,7 +317,7 @@ def test_workflow_releases_only_after_every_bundle():
     assert 'workflow_dispatch' in on and on['push']['tags'] == ['v*']
     jobs = doc['jobs']
     b, rel = jobs['bundle'], jobs['release']
-    assert set(b['strategy']['matrix']['os']) == {'ubuntu-22.04', 'windows-latest', 'macos-14'}
+    assert set(b['strategy']['matrix']['os']) == {'ubuntu-22.04', 'ubuntu-22.04-arm', 'windows-latest', 'macos-14'}
     assert b['strategy']['fail-fast'] is False
     assert doc['permissions'] == {'contents': 'read'} and rel['permissions'] == {'contents': 'write'}
     # the release waits for the whole matrix and runs only for a version tag (never by hand)
@@ -323,7 +334,7 @@ def test_workflow_releases_only_after_every_bundle():
     for lib in ('libxcb-cursor0', 'libxcb-keysyms1', 'libxcb-shape0', 'libxcb-icccm4', 'libgl1-mesa-dri', 'libegl1'):
         assert lib in apt, lib
     upload = steps['actions/upload-artifact@v4']['with']
-    assert upload['if-no-files-found'] == 'error'
+    assert upload['if-no-files-found'] == 'error' and 'runner.arch' in upload['name']    # two Linux jobs
     rsteps = {s.get('name', s.get('uses', '')): s for s in rel['steps']}
     sums = rsteps['Checksums and release notes']['run']
     assert 'sha256sum' in sums and 'SHA256SUMS.txt' in sums and 'release.py notes --tag' in sums

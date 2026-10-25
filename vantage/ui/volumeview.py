@@ -369,7 +369,11 @@ class VolumeMap(QWidget):
         self._key = None
         self.setMouseTracking(True)
         self.setMinimumSize(200, 160)
-        THEME.changed.connect(lambda *_: (setattr(self, '_key', None), self.update()))
+        THEME.changed.connect(self._theme_changed)      # a bound slot: disconnected when the widget goes
+
+    def _theme_changed(self, *_):
+        self._key = None
+        self.update()
 
     def set_result(self, vr):
         self.vr = vr

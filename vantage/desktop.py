@@ -15,6 +15,8 @@ import shutil
 import subprocess
 import sys
 
+from .sysenv import system_env
+
 APP_ID = 'vantage'
 MARK = 'X-Vantage-Installed-By=vantage --install-desktop'
 SIZES = (16, 24, 32, 48, 64, 128, 256, 512)
@@ -142,7 +144,8 @@ def desktop_dir() -> str:
     """The user's desktop folder (xdg-user-dir DESKTOP, else ~/Desktop)."""
     if shutil.which('xdg-user-dir'):
         try:
-            d = subprocess.run(['xdg-user-dir', 'DESKTOP'], capture_output=True, text=True, timeout=10).stdout.strip()
+            d = subprocess.run(['xdg-user-dir', 'DESKTOP'], capture_output=True, text=True, timeout=10,
+                               env=system_env()).stdout.strip()
             if d:
                 return d
         except (OSError, subprocess.SubprocessError):
@@ -163,7 +166,7 @@ def shortcut(folder: str | None = None, base: str | None = None) -> list[str]:
         fh.write(entry(command()))
     os.chmod(path, 0o755)                                     # a launcher must be executable to start
     if shutil.which('gio'):                                    # and trusted, for GNOME's desktop icons
-        subprocess.run(['gio', 'set', path, 'metadata::trusted', 'true'], stdout=subprocess.DEVNULL,
+        subprocess.run(['gio', 'set', path, 'metadata::trusted', 'true'], env=system_env(), stdout=subprocess.DEVNULL,
                        stderr=subprocess.DEVNULL, check=False, timeout=10)
     return written + [path]
 
@@ -188,4 +191,5 @@ def _refresh(base: str):
                 ['gtk-update-icon-cache', '-f', '-t', os.path.join(base, 'icons', 'hicolor')],
                 ['update-mime-database', os.path.join(base, 'mime')]):
         if shutil.which(cmd[0]):
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=30)
+            subprocess.run(cmd, env=system_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+                           timeout=30)

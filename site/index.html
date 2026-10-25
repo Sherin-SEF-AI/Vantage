@@ -1000,7 +1000,7 @@ saved built.vantage with variant 6-cam · v3 · as-built
 <section class="alt" id="download">
   <div class="wrap">
     <div class="head">
-      <div class="eyebrow">Download · version 0.1.0</div>
+      <div class="eyebrow">Download · version 0.1.1</div>
       <h2>Install Vantage.</h2>
       <p>Vantage is free software, licensed under the GPL-3.0-or-later. Downloads that need no Python are on the
         <a href="https://github.com/Sherin-SEF-AI/Vantage/releases/latest">latest release</a>, with SHA-256 checksums in <code>SHA256SUMS.txt</code>; or install from
@@ -1014,10 +1014,10 @@ saved built.vantage with variant 6-cam · v3 · as-built
 <pre>unzip Vantage-*-arm64.zip
 mv Vantage.app /Applications</pre><p>macOS 14 or later, Apple silicon. Not signed: the first time, choose <em>Open Anyway</em> in <em>System Settings ▸ Privacy &amp; Security</em>.</p><a href="https://github.com/Sherin-SEF-AI/Vantage/releases/latest">From the latest release</a></div>
       <div class="card"><span class="os">Linux</span><h4>Bundle, no Python</h4>
-<pre>tar xf Vantage-*.tar.gz
-cd Vantage-*-x86_64
+<pre>tar xf Vantage-*-linux-*.tar.gz
+cd Vantage-*-linux-*/
 ./install.sh
-vantage --self-test</pre><p>x86_64 with glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer). Installs for your user with a menu entry and the <code>.vantage</code> file type.</p><a href="https://github.com/Sherin-SEF-AI/Vantage/releases/latest">From the latest release</a></div>
+vantage --self-test</pre><p>x86_64 or arm64, glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer). The arm64 bundle runs on the vehicle itself: an NVIDIA Jetson Orin with JetPack 6, cameras as V4L2 devices or GStreamer pipelines. Installs for your user with a menu entry and the <code>.vantage</code> file type.</p><a href="https://github.com/Sherin-SEF-AI/Vantage/releases/latest">From the latest release</a></div>
       <div class="card"><span class="os">Python</span><h4>From source</h4>
 <pre>git clone https://github.com/Sherin-SEF-AI/Vantage
 cd Vantage

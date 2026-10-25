@@ -36,6 +36,7 @@ Each one carries its own Python and libraries, so there is nothing else to insta
 | Windows | `Vantage-<version>-windows-x64-setup.exe` (installer) or `…-windows-x64.zip` | Windows 10 or 11, x64 |
 | macOS | `Vantage-<version>-macos-arm64.zip` | macOS 14 or later, Apple silicon |
 | Linux | `Vantage-<version>-linux-x86_64.tar.gz` | x86_64, glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer) |
+| Linux arm64 | `Vantage-<version>-linux-arm64.tar.gz` | arm64, glibc 2.35 or later: NVIDIA Jetson Orin with JetPack 6, Ubuntu 22.04 arm64 and newer |
 
 **Windows.** Run the setup. It installs for the current user without administrator rights (into
 `%LOCALAPPDATA%\Programs\Vantage`), adds Vantage and *Vantage self-test* to the Start menu, and opens `.vantage`
@@ -53,14 +54,22 @@ Vantage. On macOS 14 you can instead Control-click the app and choose **Open**. 
 **Linux.**
 
 ```bash
-tar xf Vantage-*-linux-x86_64.tar.gz
-cd Vantage-*-linux-x86_64
+tar xf Vantage-*-linux-x86_64.tar.gz      # or …-linux-arm64.tar.gz on an arm64 machine such as a Jetson
+cd Vantage-*-linux-*/
 ./install.sh            # per user: ~/.local/opt/vantage, a menu entry, the .vantage file type, ~/.local/bin/vantage
-vantage --self-test     # checks the analysis, the exports, ROS 2 bags, Qt's plugins, OpenGL and every page
+vantage --self-test     # checks the analysis, the exports, cameras, ROS 2 bags, Qt's plugins, OpenGL and every page
 ```
 
 `~/.local/opt/vantage/uninstall.sh` removes it again (projects and settings are kept). Without installing, run
 `./Vantage` from the extracted folder.
+
+**On the vehicle (NVIDIA Jetson).** The arm64 bundle runs on a Jetson Orin with JetPack 6, so the live rig health, the
+drive-log check and the as-built check run on the data-collection computer itself. Cameras open as V4L2 devices
+(`/dev/video0`, as e-con's GMSL drivers expose them) or as GStreamer pipelines such as
+`nvarguscamerasrc sensor-id=0 ! nvvidconv ! video/x-raw,format=BGRx ! appsink`: the bundle's OpenCV has no GStreamer,
+so Vantage runs the pipeline in the system's `gst-launch-1.0` (JetPack's, with NVIDIA's plug-ins) and reads the frames
+back. `vantage --self-test` says which of these work on the machine. JetPack 5 (Ubuntu 20.04) is too old for the
+bundle: run from source there.
 
 **Checking a download.** `SHA256SUMS.txt` in the release lists the SHA-256 of every file:
 
@@ -87,9 +96,9 @@ vantage --desktop-shortcut          # Linux: the same, plus a Vantage launcher o
 vantage project.vantage --analyse report.json
 ```
 
-**Building the downloads.** Tag a version (`git tag v0.1.0 && git push origin v0.1.0`). The *Build installers*
-workflow builds and smoke-tests all three bundles. When all three pass, it publishes the GitHub release with
-`SHA256SUMS.txt` and the CHANGELOG entry as notes. Starting the workflow by hand from the Actions tab builds the
+**Building the downloads.** Tag a version (`git tag v0.1.1 && git push origin v0.1.1`). The *Build installers*
+workflow builds and smoke-tests all four bundles (Linux x86_64 and arm64, Windows, macOS). When all pass, it publishes
+the GitHub release with `SHA256SUMS.txt` and the CHANGELOG entry as notes. Starting the workflow by hand from the Actions tab builds the
 bundles as artifacts only, without a release. To build for the machine you are on, in a fresh virtual environment
 (the bundle requirements take OpenCV without its GUI):
 
@@ -236,7 +245,8 @@ injected pitch, roll and yaw recovered within their stated errors), suspension l
 and tyres in series, bump stops, measured curves, roll from off-centre loads), the dataset calibration files against
 the tools that read them (the KITTI devkit's projection, pykitti, Kalibr's config reader and camera models, ROS 2's
 camera_info parser and image_geometry; the tool-based tests run when `VANTAGE_DEVKITS` points at them), every e-con
-module and lens against its stated fields of view, packaging (the spec collects every page, the release workflow,
+module and lens against its stated fields of view, GStreamer pipelines through the system's gst-launch-1.0 (frames
+read back exactly, padded rows, errors; run where gstreamer1.0-tools is installed), packaging (the spec collects every page, the release workflow,
 install.sh and uninstall.sh, the self-test), stitching, load cases, link budget, rig health (statistics
 on known sequences, synthetic and video-file streams, the drift indicator; no device or network stream is opened),
 stream passwords kept out of project files, rig parts (occlusion, mounting, URDF), perception range (ranges against
@@ -264,7 +274,9 @@ vantage/core   engine: lens models, mesh, loaders, body generator, occlusion, an
                fleet, requirements)
 vantage/runtime  reference bird's-eye stitchers shipped with the remap tables (C++17, Python)
 vantage/batch  command-line batch mode
-vantage/selftest  --self-test: checks an installation (analysis, exports, bags, plugins, OpenGL, every page) without a window
+vantage/selftest  --self-test: checks an installation (analysis, exports, cameras, bags, plugins, OpenGL, every page)
+                  without a window
+vantage/sysenv  the environment for system programs started from the bundle (GStreamer, ffmpeg, desktop tools)
 vantage/ui     Qt UI: main window, docks, viewports (render_gl: the shader renderer), plan views, camera images,
                charts, dialogs, workspaces, the bowl controller
 tests/         pytest suites

@@ -104,6 +104,29 @@ def test_install_check_accepts_rgb_and_other_resolutions(sample, captures):
     assert r.pos is not None and np.abs(r.dang_deg - np.array(ERRORS['ML'][:3])).max() < 0.3
 
 
+def test_board_detection_does_not_depend_on_what_ran_before(sample, captures):
+    """OpenCV's SB detector draws on OpenCV's global random generator: with OpenCV 5 (the downloads' OpenCV) a check
+    of camera F gave other corners, for one board a grid 75 px off, after a check of another camera had run."""
+    import copy
+    import cv2
+    p, e, _ = sample
+    rng = np.random.default_rng(5)                  # the layout of test_joint_solve_ties_cameras_together_…
+    laid = copy.deepcopy(p.targets)
+    for t in laid:
+        t.x += rng.uniform(-0.02, 0.02)
+        t.y += rng.uniform(-0.02, 0.02)
+        t.yaw += rng.uniform(-1, 1)
+    f = p.variant.cameras[0]
+    d = np.r_[rng.uniform(-1, 1, 3), rng.uniform(-0.01, 0.01, 3)]
+    img = render_capture(p, e, f, 960, 768, pose=_err_pose(f, d), targets=laid, seed=f.slot)
+    a = check_camera(p, f, img).detected
+    ml = p.variant.by_tag('ML')
+    check_camera(p, ml, np.repeat(cv2.resize(captures['ML'], (1280, 1024))[..., None], 3, axis=2))
+    b = check_camera(p, f, img).detected
+    assert [o.name for o in a] == [o.name for o in b] and len(a) == 3
+    assert all(np.array_equal(x.image_pts, y.image_pts) for x, y in zip(a, b))
+
+
 # ----------------------------------------------------------------------------- stitching
 def test_stitch_measured_poses_remove_the_error(sample):
     """Stitched with the planned poses, captures from mis-mounted cameras ghost; with the measured poses

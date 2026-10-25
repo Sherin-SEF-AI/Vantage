@@ -62,7 +62,10 @@ class ChartBase(QWidget):
         self.title = ''
         self.subtitle = ''
         self.tip = None                 # (anchor QPointF, value text, [label lines]) while hovering a mark
-        THEME.changed.connect(lambda *_: self.update())
+        THEME.changed.connect(self._theme_changed)      # a bound slot: disconnected when the widget goes
+
+    def _theme_changed(self, *_):
+        self.update()
 
     def paint_title(self, p, right=''):
         if self.title:

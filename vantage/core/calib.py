@@ -161,10 +161,9 @@ def _gray(img):
 
 def _sb(gray, pattern, exhaustive=False):
     import cv2
-    from .install import _warm_up
-    _warm_up()                       # the detector's first call in a process is not repeatable
+    from .install import find_sb      # repeatable: the same corners whatever ran before
     flags = cv2.CALIB_CB_NORMALIZE_IMAGE | cv2.CALIB_CB_ACCURACY | (cv2.CALIB_CB_EXHAUSTIVE if exhaustive else 0)
-    ok, c = cv2.findChessboardCornersSB(gray, pattern, flags=flags)
+    ok, c = find_sb(gray, pattern, flags)
     return c.reshape(-1, 2).astype(np.float64) if ok else None
 
 

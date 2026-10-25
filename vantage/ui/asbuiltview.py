@@ -31,7 +31,10 @@ class AsBuiltView(QWidget):
         self.caption = ''
         self.note = ''
         self.empty = 'Run the check to see each camera\'s real outline against the plan\'s.'
-        THEME.changed.connect(lambda *_: self.update())
+        THEME.changed.connect(self._theme_changed)      # a bound slot: disconnected when the widget goes
+
+    def _theme_changed(self, *_):
+        self.update()
 
     def clear(self, empty=None):
         self.img, self.layers, self.caption, self.note = None, None, '', ''

@@ -149,6 +149,41 @@ def _check_opencv(S):
     return OK, f'OpenCV {cv2.__version__}: chessboard detector, PNG and JPEG codecs'
 
 
+def _check_cameras(S):
+    """How live cameras open: V4L2 devices, GStreamer pipelines (through OpenCV, or through the system's
+    gst-launch-1.0 when OpenCV has no GStreamer, as in the bundles; a test pipeline is run), RTSP/HTTP streams and
+    video files through FFmpeg. No camera is opened."""
+    import cv2
+    from .core import capture as C
+    info = cv2.getBuildInformation().splitlines()
+
+    def has(key):
+        line = next((l for l in info if l.strip().lower().startswith(key + ':')), '')
+        return 'YES' in line.split(':', 1)[-1].upper()
+    linux = sys.platform.startswith('linux')
+    parts = ['V4L2 devices' if has('v4l/v4l2') else 'no V4L2'] if linux else []
+    if C.opencv_has_gstreamer():
+        parts.append('GStreamer pipelines through OpenCV')
+    elif shutil.which('gst-launch-1.0'):
+        try:
+            g = C.GstPipe('videotestsrc num-buffers=2 ! video/x-raw,width=64,height=48', timeout=10)
+        except RuntimeError as e:
+            if 'videotestsrc' not in str(e):
+                return WARN, f"the system's gst-launch-1.0 cannot run a test pipeline: {_first_line(e)}"
+            parts.append("GStreamer pipelines through the system's gst-launch-1.0 (not tried: no videotestsrc)")
+        else:
+            ok, f = g.read()
+            g.release()
+            if not ok or f.shape != (48, 64, 3):
+                return WARN, "the system's gst-launch-1.0 ran a test pipeline but no frame came back"
+            parts.append("GStreamer pipelines through the system's gst-launch-1.0 (a test pipeline ran)")
+    elif linux:
+        parts.append('GStreamer pipelines need gst-launch-1.0 (gstreamer1.0-tools)')
+    if not has('ffmpeg'):
+        return WARN, '; '.join(parts + ['no FFmpeg in OpenCV: RTSP/HTTP streams and video files cannot be opened'])
+    return OK, '; '.join(parts + ['RTSP/HTTP streams and video files through FFmpeg'])
+
+
 def _check_fonts(S):
     from PyQt6.QtGui import QFontDatabase
     fams = set(QFontDatabase.families())
@@ -586,9 +621,9 @@ def _check_exports(S):
     return OK, f'{len(ex.FORMATS)} formats, {files} files ({size / 1e6:.0f} MB) written, checked and removed'
 
 
-CHECKS = (('analysis', _check_analysis), ('opencv', _check_opencv), ('fonts', _check_fonts),
-          ('qt plugins', _check_qt_plugins), ('time zones', _check_time_zones), ('https', _check_https),
-          ('keyring', _check_keyring), ('ros 2 bags', _check_bags), ('opengl', _check_opengl),
+CHECKS = (('analysis', _check_analysis), ('opencv', _check_opencv), ('cameras', _check_cameras),
+          ('fonts', _check_fonts), ('qt plugins', _check_qt_plugins), ('time zones', _check_time_zones),
+          ('https', _check_https), ('keyring', _check_keyring), ('ros 2 bags', _check_bags), ('opengl', _check_opengl),
           ('main window', _check_window), ('pages', _check_pages), ('software 3d', _check_software_3d),
           ('exports', _check_exports))
 NAMES = tuple(n for n, _ in CHECKS)

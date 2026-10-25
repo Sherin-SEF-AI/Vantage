@@ -148,13 +148,27 @@ def _warm_up():
         _warmed = True
 
 
-def _find(patch, pattern):
+SB_SEED = 0x5EED
+_sb_lock = threading.Lock()
+
+
+def find_sb(gray, pattern, flags):
+    """cv2.findChessboardCornersSB, repeatable. The detector draws on OpenCV's global random generator, so with
+    OpenCV 5 the same image gave other corners (at worst a wrong grid) depending on how many random numbers earlier
+    calls had used: each call starts the generator from the same seed, one call at a time (the seed is global)."""
     import cv2
     if not _warmed:
         _warm_up()
+    with _sb_lock:
+        cv2.setRNGSeed(SB_SEED)
+        return cv2.findChessboardCornersSB(gray, pattern, flags=flags)
+
+
+def _find(patch, pattern):
+    import cv2
     flags = cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY | cv2.CALIB_CB_NORMALIZE_IMAGE
     for pat in (pattern, (pattern[1], pattern[0])):
-        ok, corners = cv2.findChessboardCornersSB(patch, pat, flags=flags)
+        ok, corners = find_sb(patch, pat, flags)
         if ok:
             return corners.reshape(pat[1], pat[0], 2)
         ok, corners = cv2.findChessboardCorners(patch, pat, flags=cv2.CALIB_CB_ADAPTIVE_THRESH | cv2.CALIB_CB_NORMALIZE_IMAGE)

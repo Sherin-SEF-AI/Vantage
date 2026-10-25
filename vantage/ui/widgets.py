@@ -450,7 +450,10 @@ class SectionHeader(QWidget):
         lay.addLayout(self.right)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._sync()
-        THEME.changed.connect(lambda *_: self._sync())
+        THEME.changed.connect(self._theme_changed)      # a bound slot: disconnected when the widget goes
+
+    def _theme_changed(self, *_):
+        self._sync()
 
     def _sync(self):
         self.chev.setPixmap(icons.pixmap('chev-d' if self.expanded else 'chev-r', THEME.tok['ink2'], 12))

@@ -699,3 +699,25 @@ def test_resave_keeps_the_stored_thumbnail(app, tmp_path):
     p.save(b)
     with zipfile.ZipFile(b) as z:
         assert z.read('thumb.png') == png
+
+
+def test_deleted_widgets_leave_the_theme_signal(app):
+    """Widgets subscribed to THEME.changed with a lambda stayed connected after they were deleted: the next theme
+    change called into a deleted C++ object (RuntimeError; PyQt6 6.7, which the Linux arm64 bundle carries, aborts
+    the app on it). Bound slots are disconnected with their widget."""
+    from PyQt6 import sip
+    from vantage.ui.charts import BarList, Histogram
+    from vantage.ui.theme import THEME
+    from vantage.ui.volumeview import VolumeMap
+    before = THEME.receivers(THEME.changed)
+    ws = [BarList(), Histogram(), VolumeMap()]
+    assert THEME.receivers(THEME.changed) == before + len(ws)
+    for w in ws:
+        sip.delete(w)                   # what a page or dialog going away does to its charts
+    errors = []
+    hook, sys.excepthook = sys.excepthook, lambda *a: errors.append(a)
+    try:
+        THEME.changed.emit(THEME.name)
+    finally:
+        sys.excepthook = hook
+    assert not errors

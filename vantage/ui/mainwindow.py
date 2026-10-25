@@ -887,7 +887,10 @@ class MainWindow(QMainWindow):
         c.message.connect(self.msg)
         c.tool_changed.connect(self._sync_tool)
         c.overlays_changed.connect(self._sync_overlay_ui)
-        THEME.changed.connect(lambda *_: self._retheme())
+        THEME.changed.connect(self._theme_changed)      # a bound slot: disconnected when the widget goes
+
+    def _theme_changed(self, *_):
+        self._retheme()
 
     def _first_run(self):
         self._fill_variant_combo()
@@ -1989,11 +1992,12 @@ class MainWindow(QMainWindow):
                 if progress:
                     progress((i + 1) / n)
                 QApplication.processEvents()
+            from ..sysenv import system_env
             ff = shutil.which('ffmpeg')
             if path.lower().endswith('.mp4') and ff:
                 r = subprocess.run([ff, '-y', '-loglevel', 'error', '-framerate', str(fps), '-i', os.path.join(tmp, 'f%05d.png'),
                                     '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '18', '-movflags', '+faststart', path],
-                                   capture_output=True, text=True)
+                                   capture_output=True, text=True, env=system_env())
                 if r.returncode != 0:
                     raise RuntimeError(r.stderr.strip()[-300:])
                 out = path

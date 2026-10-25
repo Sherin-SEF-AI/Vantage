@@ -384,11 +384,14 @@ class BracketsPage(QWidget):
         self.ctl.progress.connect(lambda f: self.bar.setValue(int(f * 1000)))
         ctx.store.changed.connect(lambda *_: self._sync_fields())
         ctx.store.project_replaced.connect(self._sync_fields)
-        THEME.changed.connect(lambda *_: self.refresh())
+        THEME.changed.connect(self._theme_changed)      # a bound slot: disconnected when the widget goes
         self._sync_fields()
         self.refresh()
 
     # ------------------------------------------------------------------ settings panel
+
+    def _theme_changed(self, *_):
+        self.refresh()
     def _left(self):
         w = QWidget()
         w.setObjectName('panel')

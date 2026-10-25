@@ -50,7 +50,10 @@ class PlanView(QWidget):
         self.selected = -1
         self.hover = -1
         self._hits = []                  # (QPolygonF, index, tooltip)
-        THEME.changed.connect(lambda *_: self.update())
+        THEME.changed.connect(self._theme_changed)      # a bound slot: disconnected when the widget goes
+
+    def _theme_changed(self, *_):
+        self.update()
 
     def set_data(self, project, cam, lidar, poses, board, dist, empty=''):
         self.project, self.cam, self.lidar = project, cam, lidar
@@ -196,7 +199,10 @@ class OverlayView(QWidget):
         self._pix = None
         self._pix_key = None
         self._pts = {}
-        THEME.changed.connect(lambda *_: self.update())
+        THEME.changed.connect(self._theme_changed)      # a bound slot: disconnected when the widget goes
+
+    def _theme_changed(self, *_):
+        self.update()
 
     def set_result(self, project, result, empty=''):
         self.project, self.result = project, result

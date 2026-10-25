@@ -1823,11 +1823,14 @@ class AssistantPanel(QWidget):
         self.ctl.agent_changed.connect(lambda *_: self._show_empty() if self.empty is not None else None)
         self.ctx.store.changed.connect(lambda *_: self._brief_btn())
         self.ctx.store.project_replaced.connect(self._brief_btn)
-        THEME.changed.connect(lambda *_: self._restyle())
+        THEME.changed.connect(self._theme_changed)      # a bound slot: disconnected when the widget goes
         self._restyle()
         self._clear()
 
     # ---------------------------------------------------------------- state
+
+    def _theme_changed(self, *_):
+        self._restyle()
     def _restyle(self):
         t = THEME.tok
         self.hairline.setStyleSheet(f'background: {t["hair"]};')

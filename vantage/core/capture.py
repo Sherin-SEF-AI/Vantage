@@ -3,12 +3,21 @@
 A live source is anything OpenCV can open: a V4L2 device (/dev/video0 or just 0), a GStreamer pipeline
 (contains '!', e.g. the nvarguscamerasrc / v4l2src pipelines of a Jetson GMSL deserialiser), an RTSP/HTTP URL
 or a video file. A background thread keeps only the newest frame so a grab is never stale.
+
+GStreamer pipelines: the OpenCV wheels from PyPI (and so the downloadable bundles) are built without GStreamer. Then
+the pipeline runs in the system's own gst-launch-1.0 (GstPipe), which on a Jetson has NVIDIA's plug-ins
+(nvarguscamerasrc, nvvidconv): Vantage appends a conversion to raw BGR and a sink writing to a pipe it reads.
 """
 from __future__ import annotations
 
 import os
+import re
+import shlex
+import shutil
+import subprocess
 import threading
 import time
+from collections import deque
 
 import numpy as np
 
@@ -66,6 +75,139 @@ def default_spec(port: int) -> str:
     return f'/dev/video{max(0, port - 1)}'
 
 
+# ------------------------------------------------------------------ GStreamer pipelines without OpenCV's GStreamer
+GST_SINK = 'vantagesink'
+GST_TIMEOUT_S = 15.0                # a Jetson's camera pipeline can take a few seconds to negotiate
+_GST_CV = []
+
+
+def opencv_has_gstreamer() -> bool:
+    """Whether this OpenCV was built with GStreamer (the PyPI wheels are not)."""
+    if not _GST_CV:
+        import cv2
+        line = next((l for l in cv2.getBuildInformation().splitlines() if l.strip().startswith('GStreamer:')), '')
+        _GST_CV.append('YES' in line.split(':', 1)[-1].upper())
+    return _GST_CV[0]
+
+
+def gst_pipeline(spec: str, fd: int) -> list[str]:
+    """gst-launch-1.0's arguments for an OpenCV-style pipeline: its appsink (if any) replaced by a conversion to raw
+    BGR and a sink that writes the frames to file descriptor fd."""
+    s = re.sub(r'!\s*appsink\b[^!]*$', '', spec.strip()).strip().rstrip('!').strip()
+    return shlex.split(s) + ['!', 'videoconvert', '!', 'video/x-raw,format=BGR', '!', 'fdsink', f'name={GST_SINK}',
+                             f'fd={fd}', 'sync=false']
+
+
+_CAPS = re.compile(rf'{GST_SINK}\.GstPad:sink: caps = (.*)')
+
+
+def parse_caps(text: str) -> dict | None:
+    """width, height and frame rate from the caps gst-launch -v reports for the sink's pad, or None."""
+    m = _CAPS.search(text)
+    if not m:
+        return None
+    caps = m.group(1)
+    w, h = re.search(r'width=\(int\)(\d+)', caps), re.search(r'height=\(int\)(\d+)', caps)
+    if not (w and h):
+        return None
+    fr = re.search(r'framerate=\(fraction\)(\d+)/(\d+)', caps)
+    fps = int(fr.group(1)) / int(fr.group(2)) if fr and int(fr.group(2)) else 0.0
+    return {'width': int(w.group(1)), 'height': int(h.group(1)), 'fps': fps}
+
+
+class GstPipe:
+    """cv2.VideoCapture's isOpened / read / get / set / release for a GStreamer pipeline run by the system's
+    gst-launch-1.0. Frames arrive as raw BGR on a pipe (rows padded to 4 bytes, as GStreamer lays them out); the
+    frame size comes from the caps gst-launch -v prints. Raises RuntimeError with GStreamer's message when the
+    pipeline does not start."""
+
+    def __init__(self, spec: str, timeout: float = GST_TIMEOUT_S):
+        from ..sysenv import system_env
+        gst = shutil.which('gst-launch-1.0')
+        if not gst:
+            raise RuntimeError('this OpenCV has no GStreamer support and gst-launch-1.0 is not installed '
+                               '(install gstreamer1.0-tools)')
+        r, w = os.pipe()
+        try:
+            self.proc = subprocess.Popen([gst, '-v', *gst_pipeline(spec, w)], stdout=subprocess.PIPE,
+                                         stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, pass_fds=(w,),
+                                         env=system_env(), text=True, errors='replace', bufsize=1)
+        except OSError:
+            os.close(r)
+            raise
+        finally:
+            os.close(w)
+        self._fd = r
+        self.caps = None
+        self.lines = deque(maxlen=60)
+        ready = threading.Event()
+        threading.Thread(target=self._drain, args=(ready,), name='gst-launch', daemon=True).start()
+        ready.wait(timeout)
+        if self.caps is None:
+            err = [l for l in self.lines if 'ERROR' in l or 'erroneous' in l or 'no element' in l]
+            self.release()
+            raise RuntimeError((err[0] if err else f'no frame format from the pipeline within {timeout:g} s').strip())
+        self.width, self.height = self.caps['width'], self.caps['height']
+        self.stride = (self.width * 3 + 3) // 4 * 4
+        self.frame_bytes = self.stride * self.height
+
+    def _drain(self, ready):
+        """Read gst-launch's messages (it blocks on a full pipe otherwise); the sink's caps set the frame size."""
+        try:
+            for line in self.proc.stdout:
+                self.lines.append(line.rstrip())
+                if self.caps is None:
+                    c = parse_caps(line)
+                    if c is not None:
+                        self.caps = c
+                        ready.set()
+        except (OSError, ValueError):
+            pass
+        finally:
+            ready.set()
+
+    def isOpened(self) -> bool:
+        return self._fd is not None
+
+    def read(self):
+        if self._fd is None:
+            return False, None
+        buf = bytearray(self.frame_bytes)
+        view, n = memoryview(buf), 0
+        try:
+            while n < self.frame_bytes:
+                k = os.readv(self._fd, [view[n:]])
+                if k <= 0:
+                    return False, None
+                n += k
+        except OSError:
+            return False, None
+        rows = np.frombuffer(buf, np.uint8).reshape(self.height, self.stride)
+        return True, np.ascontiguousarray(rows[:, :self.width * 3]).reshape(self.height, self.width, 3)
+
+    def get(self, prop) -> float:
+        import cv2
+        return {cv2.CAP_PROP_FRAME_WIDTH: float(getattr(self, 'width', 0)),
+                cv2.CAP_PROP_FRAME_HEIGHT: float(getattr(self, 'height', 0)),
+                cv2.CAP_PROP_FPS: float((self.caps or {}).get('fps', 0.0))}.get(prop, 0.0)
+
+    def set(self, prop, value) -> bool:
+        return False
+
+    def release(self):
+        fd, self._fd = self._fd, None
+        if fd is not None:
+            os.close(fd)                    # the sink's next write fails: the pipeline stops
+        p = self.proc
+        if p.poll() is None:
+            p.terminate()
+            try:
+                p.wait(2.0)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait(2.0)
+
+
 def _open(spec: str):
     import cv2
     from .credentials import resolve
@@ -73,7 +215,7 @@ def _open(spec: str):
     if s.isdigit():
         return cv2.VideoCapture(int(s))
     if '!' in s:
-        return cv2.VideoCapture(s, cv2.CAP_GSTREAMER)
+        return cv2.VideoCapture(s, cv2.CAP_GSTREAMER) if opencv_has_gstreamer() else GstPipe(s)
     if s.startswith('/dev/video'):
         return cv2.VideoCapture(s, cv2.CAP_V4L2)
     return cv2.VideoCapture(s)

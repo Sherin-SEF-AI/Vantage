@@ -31,7 +31,10 @@ class OverlayView(QWidget):
         self.caption = ''
         self.note = ''
         self.empty = 'Run the check to see the lidar points over the camera images.'
-        THEME.changed.connect(lambda *_: self.update())
+        THEME.changed.connect(self._theme_changed)      # a bound slot: disconnected when the widget goes
+
+    def _theme_changed(self, *_):
+        self.update()
 
     def clear(self, empty=None):
         self.img, self.pts, self.caption, self.note = None, None, '', ''

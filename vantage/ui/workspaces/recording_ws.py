@@ -76,7 +76,10 @@ class Tile(QWidget):
         self.setFixedHeight(76)
         if tip:
             self.setToolTip(tip)
-        THEME.changed.connect(lambda *_: self.update())
+        THEME.changed.connect(self._theme_changed)      # a bound slot: disconnected when the widget goes
+
+    def _theme_changed(self, *_):
+        self.update()
 
     def set(self, value, unit='', note='', sev=None):
         self.value, self.unit, self.note, self.sev = value, unit, note, sev

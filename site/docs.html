@@ -108,6 +108,7 @@
       <tr><td>Windows</td><td><code>Vantage-&lt;version&gt;-windows-x64-setup.exe</code> (installer) or <code>…-windows-x64.zip</code></td><td>Windows 10 or 11, x64</td></tr>
       <tr><td>macOS</td><td><code>Vantage-&lt;version&gt;-macos-arm64.zip</code></td><td>macOS 14 or later, Apple silicon</td></tr>
       <tr><td>Linux</td><td><code>Vantage-&lt;version&gt;-linux-x86_64.tar.gz</code></td><td>x86_64, glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer)</td></tr>
+      <tr><td>Linux arm64</td><td><code>Vantage-&lt;version&gt;-linux-arm64.tar.gz</code></td><td>arm64, glibc 2.35 or later: NVIDIA Jetson Orin with JetPack 6, Ubuntu 22.04 arm64 and newer</td></tr>
     </table>
     <p><b>Windows.</b> Run the setup. It installs for the current user without administrator rights (into
       <code>%LOCALAPPDATA%\Programs\Vantage</code>), adds Vantage and <em>Vantage self-test</em> to the Start menu, and
@@ -118,12 +119,21 @@
     <p><b>macOS.</b> Unzip the file and move <code>Vantage.app</code> to Applications. Batch mode and the self-test:
       <code>/Applications/Vantage.app/Contents/MacOS/vantage-cli --self-test</code>.</p>
     <p><b>Linux.</b></p>
-<pre><code>tar xf Vantage-*-linux-x86_64.tar.gz
-cd Vantage-*-linux-x86_64
+<pre><code>tar xf Vantage-*-linux-x86_64.tar.gz    # or …-linux-arm64.tar.gz on an arm64 machine such as a Jetson
+cd Vantage-*-linux-*/
 ./install.sh            # for your user: a menu entry, the .vantage file type, ~/.local/bin/vantage
-vantage --self-test     # checks the analysis, exports, ROS 2 bags, Qt's plugins, OpenGL, every page</code></pre>
+vantage --self-test     # checks the analysis, exports, cameras, ROS 2 bags, Qt's plugins, OpenGL, every page</code></pre>
     <p><code>~/.local/opt/vantage/uninstall.sh</code> removes it again (projects and settings are kept). Without
       installing, run <code>./Vantage</code> from the extracted folder.</p>
+    <p><b>On the vehicle (NVIDIA Jetson).</b> The arm64 bundle runs on a Jetson Orin with JetPack 6, so the live rig
+      health, the drive-log check and the as-built check run on the data-collection computer itself, right after a
+      drive. Cameras open as V4L2 devices (<code>/dev/video0</code>, as e-con's GMSL drivers expose them) or as
+      GStreamer pipelines such as <code>nvarguscamerasrc sensor-id=0 ! nvvidconv ! video/x-raw,format=BGRx ! appsink</code>.
+      The bundle's OpenCV has no GStreamer, so Vantage runs the pipeline in the system's <code>gst-launch-1.0</code>
+      (JetPack's, with NVIDIA's plug-ins; else <code>sudo apt install gstreamer1.0-tools</code>) and reads the frames
+      back raw. <code>vantage --self-test</code> says which of these work on the machine (it runs a GStreamer test
+      pipeline). The arm64 bundle carries Qt 6.7 (PyQt6's later arm64 builds need Ubuntu 24.04); JetPack 5
+      (Ubuntu 20.04) is too old for it: run from source there.</p>
     <p><b>Unsigned builds.</b> The downloads are not code-signed, so the system warns the first time. On Windows,
       SmartScreen's "Windows protected your PC" has <em>More info ▸ Run anyway</em>. On macOS the first start is
       refused: choose <em>Open Anyway</em> next to the message about Vantage in <em>System Settings ▸ Privacy &amp;
@@ -152,8 +162,8 @@ vantage --install-desktop           # Linux: add Vantage to the app menu and doc
       type for your user (in <code>~/.local/share</code>), so the dock and the app grid show Vantage with its icon;
       <code>vantage --desktop-shortcut</code> also puts a launcher on the desktop (trusted, so it starts on a
       double-click), and <code>vantage --uninstall-desktop</code> removes exactly what they added.</p>
-    <p><b>Building a bundle.</b> Tagging a version (<code>v0.1.0</code>) runs the repository's <em>Build
-      installers</em> workflow: it builds and smoke-tests the three bundles and, when all three pass, publishes the
+    <p><b>Building a bundle.</b> Tagging a version (<code>v0.1.1</code>) runs the repository's <em>Build
+      installers</em> workflow: it builds and smoke-tests the four bundles (Linux x86_64 and arm64, Windows, macOS) and, when all pass, publishes the
       release with <code>SHA256SUMS.txt</code> and the changelog entry as its notes. To build for the machine you are
       on, in a fresh virtual environment:</p>
 <pre><code>python3 -m venv build-env &amp;&amp; . build-env/bin/activate

@@ -1,7 +1,7 @@
-# Builds the downloadable Vantage bundles (Linux tar.gz, Windows installer + zip, macOS app zip), smoke-tests each
-# one (--version, a batch analysis, --self-test with every check passing) and keeps them as workflow artifacts.
-# On a version tag (git tag v0.1.0 && git push origin v0.1.0) it then publishes them as that version's GitHub release
-# with SHA256SUMS.txt and the CHANGELOG entry as release notes, but only when all three bundles passed.
+# Builds the downloadable Vantage bundles (Linux x86_64 and arm64 tar.gz, Windows installer + zip, macOS app zip),
+# smoke-tests each one (--version, a batch analysis, --self-test with every check passing) and keeps them as workflow
+# artifacts. On a version tag (git tag v0.1.1 && git push origin v0.1.1) it then publishes them as that version's
+# GitHub release with SHA256SUMS.txt and the CHANGELOG entry as release notes, but only when every bundle passed.
 # Also runs by hand (Actions > Build installers > Run workflow): bundles as artifacts, no release.
 name: Build installers
 
@@ -19,8 +19,9 @@ jobs:
       fail-fast: false
       matrix:
         # the oldest supported Ubuntu, so the Linux bundle runs on as many distributions as possible (glibc 2.35+);
+        # ubuntu-22.04-arm builds the Linux arm64 bundle on the Ubuntu NVIDIA's JetPack 6 is based on (Jetson Orin);
         # macos-14 runs on Apple silicon, so the macOS app is arm64
-        os: [ubuntu-22.04, windows-latest, macos-14]
+        os: [ubuntu-22.04, ubuntu-22.04-arm, windows-latest, macos-14]
     runs-on: ${{ matrix.os }}
     env:
       QT_QPA_PLATFORM: offscreen
@@ -71,7 +72,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: vantage-${{ runner.os }}
+          name: vantage-${{ runner.os }}-${{ runner.arch }}
           path: |
             dist/*.tar.gz
             dist/*.zip
@@ -99,7 +100,7 @@ jobs:
           cd dist
           ls -la
           n=$(ls | wc -l)
-          if [ "$n" -lt 4 ]; then echo "expected the Linux, Windows (zip and setup) and macOS files, got $n" >&2; exit 1; fi
+          if [ "$n" -lt 5 ]; then echo "expected the two Linux, Windows (zip and setup) and macOS files, got $n" >&2; exit 1; fi
           sha256sum -- * > SHA256SUMS.txt
           cat SHA256SUMS.txt
           cd ..

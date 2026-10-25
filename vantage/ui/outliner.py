@@ -115,8 +115,11 @@ class Outliner(QTreeWidget):
         st.selection_changed.connect(self.sync_selection)
         ctx.analysis.finished.connect(lambda *_: self.rebuild())
         ctx.analysis.secondary.connect(lambda k, v: self.rebuild() if k in ('issues', 'targets') else None)
-        THEME.changed.connect(lambda *_: self.viewport().update())
+        THEME.changed.connect(self._theme_changed)      # a bound slot: disconnected when the widget goes
         self.rebuild()
+
+    def _theme_changed(self, *_):
+        self.viewport().update()
 
     def closeEditor(self, editor, hint):
         super().closeEditor(editor, hint)
@@ -486,8 +489,11 @@ class LibraryPanel(QWidget):
         self.kind.currentIndexChanged.connect(self.rebuild)
         ctx.store.changed.connect(lambda s: self.rebuild() if 'library' in s else None)
         ctx.store.project_replaced.connect(self.rebuild)
-        THEME.changed.connect(lambda *_: self.tree.viewport().update())
+        THEME.changed.connect(self._theme_changed)      # a bound slot: disconnected when the widget goes
         self.rebuild()
+
+    def _theme_changed(self, *_):
+        self.tree.viewport().update()
 
     def rebuild(self):
         t = self.tree
