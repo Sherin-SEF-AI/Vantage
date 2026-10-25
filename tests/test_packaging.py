@@ -331,7 +331,8 @@ def test_workflow_releases_only_after_every_bundle():
     assert 'pytest' in steps['Packaging tests (Linux)']['run'] and 'tests/test_packaging.py' in \
         steps['Packaging tests (Linux)']['run']
     apt = steps['Qt and OpenGL libraries (Linux)']['run']
-    for lib in ('libxcb-cursor0', 'libxcb-keysyms1', 'libxcb-shape0', 'libxcb-icccm4', 'libgl1-mesa-dri', 'libegl1'):
+    for lib in ('libxcb-cursor0', 'libxcb-keysyms1', 'libxcb-shape0', 'libxcb-icccm4', 'libgl1-mesa-dri', 'libegl1',
+                'gstreamer1.0-tools', 'gstreamer1.0-plugins-base'):
         assert lib in apt, lib
     upload = steps['actions/upload-artifact@v4']['with']
     assert upload['if-no-files-found'] == 'error' and 'runner.arch' in upload['name']    # two Linux jobs
