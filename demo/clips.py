@@ -808,8 +808,10 @@ class Stage:
 CLIPS = ['hero', 'coverage', 'placement', 'camlight', 'bowl', 'guidelines', 'stitched', 'volume', 'install',
          'tolerance', 'assistant', 'perception', 'rig', 'liverig', 'datasets', 'sensors', 'sensorcoverage', 'timing',
          'recording', 'power', 'gnss', 'exposure', 'brackets', 'requirements', 'dataset', 'lidarcalib', 'drivelog',
-         'fleet', 'housings', 'asbuilt', 'loadcases', 'library']
-POSTER_AT = {'hero': 2.0, 'requirements': 18.0, 'housings': 4.0, 'asbuilt': 13.5}
+         'fleet', 'housings', 'asbuilt', 'loadcases', 'library', 'weather', 'critical', 'terrain', 'harness', 'materials',
+         'observability', 'automation']
+POSTER_AT = {'hero': 2.0, 'requirements': 18.0, 'housings': 4.0, 'asbuilt': 13.5, 'weather': 12.0, 'critical': 17.5,
+             'terrain': 6.5, 'materials': 13.5, 'observability': 17.5, 'automation': 15.0}
 
 
 def clip_fn(stage, name):

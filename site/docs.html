@@ -48,15 +48,20 @@
     <p>Studies</p>
     <a href="#tolerance">Tolerance and optimiser</a>
     <a href="#loadcases">Load cases and suspension</a>
+    <a href="#terrain">Road and body motion</a>
     <a href="#variants">Variants</a>
     <a href="#volume">3D blind volume</a>
     <a href="#perception">Perception range</a>
+    <a href="#weather">Weather and night</a>
+    <a href="#critical">Critical targets</a>
     <a href="#sensor-coverage">Lidar and radar coverage</a>
     <a href="#timing">Sync and timing</a>
     <a href="#recording">Recording budget</a>
     <a href="#power">Power budget</a>
+    <a href="#harness">Cable harness</a>
     <a href="#gnss">GNSS and IMU</a>
     <a href="#exposure">Sun glare and dirt</a>
+    <a href="#materials">Materials, glass and wipers</a>
     <a href="#brackets">Mount brackets</a>
     <a href="#requirements">Requirements scorecard</a>
     <a href="#stitched">Objects in the stitched view</a>
@@ -68,6 +73,7 @@
     <a href="#lens">Unit lens calibration</a>
     <a href="#install-check">Installation check</a>
     <a href="#lidar-calib">Lidar–camera calibration</a>
+    <a href="#observability">Calibration observability</a>
     <a href="#live-rig">Live rig health</a>
     <a href="#drive-log">Drive-log check</a>
     <a href="#as-built">As-built check</a>
@@ -80,6 +86,7 @@
     <p>Data</p>
     <a href="#sample-dataset">Sample dataset</a>
     <a href="#rosbags">ROS 2 bags</a>
+    <a href="#automation">Automation and CI</a>
     <p>Reference</p>
     <a href="#formats">Export formats</a>
     <a href="#datasets">Dataset calibration</a>
@@ -162,7 +169,7 @@ vantage --install-desktop           # Linux: add Vantage to the app menu and doc
       type for your user (in <code>~/.local/share</code>), so the dock and the app grid show Vantage with its icon;
       <code>vantage --desktop-shortcut</code> also puts a launcher on the desktop (trusted, so it starts on a
       double-click), and <code>vantage --uninstall-desktop</code> removes exactly what they added.</p>
-    <p><b>Building a bundle.</b> Tagging a version (<code>v0.1.1</code>) runs the repository's <em>Build
+    <p><b>Building a bundle.</b> Tagging a version (<code>v0.2.0</code>) runs the repository's <em>Build
       installers</em> workflow: it builds and smoke-tests the four bundles (Linux x86_64 and arm64, Windows, macOS) and, when all pass, publishes the
       release with <code>SHA256SUMS.txt</code> and the changelog entry as its notes. To build for the machine you are
       on, in a fresh virtual environment:</p>
@@ -427,6 +434,9 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td>Lidar points</td><td></td><td>One simulated sweep per lidar, computed in the background: returns coloured by range, beams that the body, the rig or another housing stops in red.</td></tr>
       <tr><td>GNSS sky</td><td></td><td>A dome over each GNSS antenna, coloured where the sky is blocked, with its open share.</td></tr>
       <tr><td>Mount brackets</td><td></td><td>The brackets generated on the Mount brackets page, on the vehicle.</td></tr>
+      <tr><td>Critical targets</td><td></td><td>The critical targets in the plan and 3D, green where a camera resolves them and red where none does, with a line from each camera that does.</td></tr>
+      <tr><td>Cable harness</td><td></td><td>Every cable's route along the body to its entry point and the compute box, kept up to date in the background.</td></tr>
+      <tr><td>Wiper sweep</td><td></td><td>The wipers' swept areas and parked blades on the windscreen (3D).</td></tr>
     </table>
     <p><b>View ▸ Render image</b> (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>) saves the 3D view at up to four
       times its size; <b>Turntable video</b> records an orbit (MP4 with ffmpeg, otherwise PNG frames).</p>
@@ -438,8 +448,15 @@ vantage project.vantage            # open a project</code></pre>
       the minimum, objects vanishing at stitch seams, a sensor housing or camera module in a camera's image (see
       <a href="#housings">Housings in view</a>), misplaced lidars, radars and GNSS antennas, the recording and power
       budgets, the GNSS antennas' sky, multipath and heading baseline, lenses and sensor windows highly exposed to
-      dirt, fleet vehicles out of tolerance, failing must requirements of the scorecard whose metric is cheap, and,
-      once the project has suspension data, a load case that lifts a wheel, exceeds the gross mass, sits on the bump
+      dirt, fleet vehicles out of tolerance, failing must requirements of the scorecard whose metric is cheap, radars
+      looking into metal or losing 3 dB or more through the fascia, high radar multipath risk, glare and unwiped views
+      behind glass (<a href="#materials">materials</a>), critical targets no camera resolves and mounts tighter than the
+      install tolerance for a target only that camera resolves (<a href="#critical">critical targets</a>), on a road a
+      wheel lifting or the body or a sensor touching it (<a href="#terrain">road</a>), cables over their link's limit,
+      GNSS cables without RF margin and stereo pairs or trigger lines split over two deserializers
+      (<a href="#harness">cable harness</a>), cameras the planned boards cannot pin
+      (<a href="#observability">calibration observability</a>), automation settings Vantage had to drop or the last
+      automated run failing (<a href="#automation">automation</a>), and, once the project has suspension data, a load case that lifts a wheel, exceeds the gross mass, sits on the bump
       stops or moves the rig beyond the calibration tolerance (marked while the suspension values are typical). After
       an <a href="#as-built">as-built check</a>, a camera mounted off the plan is serious and one whose coverage does
       not hold is critical, until the plan changes. <b>Show</b> frames the problem; <b>Ask</b> sends it to the
@@ -492,6 +509,41 @@ vantage project.vantage            # open a project</code></pre>
       [OUT.json]</code> writes the cases (exit 2 when a case lifts a wheel or exceeds the gross vehicle mass);
       <code>--load-cases</code> still evaluates the typed drops.</p>
 
+    <h2 id="terrain">Road and body motion</h2>
+    <p>The coverage analysis assumes flat ground until you give it a road. <b>Analysis ▸ Road and body motion…</b> adds
+      road primitives: a <b>ramp</b> (grade and where it starts), a <b>crest</b> (the radius of the vertical curve and the
+      grade it falls into), a <b>garage ramp</b> (its grade with a transition at half the grade), a <b>speed bump</b>
+      (height and length), a <b>kerb</b> (beside the car or across the road ahead or behind) and a <b>crowned road</b>
+      (the cross fall either side of the crown line). Distances are from the bumper, or from the body's side for a kerb
+      beside the car; a negative distance puts the primitive under the car. They add up to one height field.</p>
+    <p>The car stands on the road: each tyre rests on it and the suspension (the load cases' model, at kerb) takes any
+      twist four wheels cannot follow. Every ground point then sits on the road, and a camera sees it only if the point is
+      in its image, the body, rig and housings do not hide it, the point faces the camera and the camera's ray clears the
+      road on the way. The heat maps, the coverage figures and the Issues use the road at once; the top view draws its
+      edges and height contours, the 3D view the road itself with the heat map on it. Switch it off to go back to flat
+      ground without losing it. With no primitive the analysis is exactly what it was.</p>
+    <p><b>Run</b> compares the road with flat ground: the blind area and density, the ground each camera loses, how far
+      the centre line ahead and behind stays in view (a crest or a garage ramp hides what lies beyond; the side-on profile
+      shows it green where seen, red where only flat ground would be seen), the distance at which each speed bump and kerb
+      is first seen as the car approaches (its top in view and its height spanning at least 3 pixels in one image) and
+      where it drops out of view near the bumper, and the clearance of the body's underside and of every camera and
+      sensor where the car stands and while it drives over each primitive.</p>
+    <p><b>Body motion</b> puts the load transfer of braking, accelerating and cornering through the suspension: the car's
+      weight acts at its centre of gravity, the anti-dive, anti-lift and anti-squat percentages and the roll centres say
+      how much of the transfer the linkage takes instead of the springs, and the wheel rates, anti-roll bars and tyres take
+      the rest. Presets (hard braking 0.8 g, normal braking 0.3 g, full acceleration 0.3 g, cornering 0.5 g either way,
+      braking in a bend) and two sliders give the body's pitch, roll and heave against the load the cameras are calibrated
+      at, how far the horizon moves in each forward camera's image (pixels and degrees) and, as in the load cases, the
+      blind area and how far the stitched ground shifts. On the sample, hard braking pitches the body 2.25° and moves
+      F's horizon 36 px; cornering at 0.5 g rolls it 2.6°. The centre of gravity is estimated from the model's height and
+      the other inputs are typical until you enter yours; the figures are steady-state (no dampers or overshoot).</p>
+    <p>The Issues list flags a wheel that would lift, the body cutting into the road and a camera or sensor within 5 cm
+      of it, standing or driving over a primitive. Export: <code>vantage.terrain/1</code> JSON, the motion cases as CSV
+      and, with a road, the profile as CSV and PNG; batch <code>--terrain</code>, which exits with 2 when the body or a
+      sensor would touch the road or no camera resolves a speed bump or kerb. Studies that build their own ground points
+      (the optimiser, the tolerance study, the perception range, the stitched objects, the installation check and the
+      load cases) stay on flat ground.</p>
+
     <h2 id="variants">Variants</h2>
     <p>A project holds several layout variants. The variant menu switches, duplicates and renames them; <b>Compare</b>
       shows them side by side with a difference map of best-camera density and a table of every figure.</p>
@@ -531,6 +583,56 @@ vantage project.vantage            # open a project</code></pre>
     <p>Export: the ranges, verdicts and pairs as JSON (<code>vantage.perception_range/1</code>) and the plot as PNG;
       batch mode <code>--perception-range</code>. A sector that falls short is reported but does not change the exit
       code.</p>
+
+    <h2 id="weather">Weather and night</h2>
+    <p><b>Analysis ▸ Weather and night…</b> opens the perception range page on its <b>Weather</b> block, which picks the
+      condition its envelopes show: clear (the reference, no weather model), overcast, night on an unlit road or under
+      street lights (headlamps on, low or high beam), light or heavy rain, fog or snow. Every condition but clear has
+      figures you can edit (visibility, rain and snow rates, ambient light, beam); they are saved with the project and
+      undoable. The sample dataset renders the same condition, and batch mode takes it with <code>--condition</code>.</p>
+    <p>A camera still resolves an object when the object is big enough in the image, as in clear weather, and also while
+      its contrast, which fades as exp(−σd) over its distance d (σ from the fog's visibility, the rain or the snow), stays
+      above 5 %, and, at night, while enough of its height is lit by the headlamps and the ambient light to the camera's
+      minimum luminance. That minimum comes from the module's pixel size, the lens's f-number and the frame rate with a
+      typical sensor (quantum efficiency, read noise, the signal-to-noise a detector needs). The headlamps are a typical
+      beam pattern shaped after UN R112 (a low beam with its cut-off below the horizon, or a high beam).</p>
+    <p>A lidar's range shrinks with the two-way extinction of fog, rain and snow (the lidar equation); in fog and snow some
+      beams return from droplets and flakes close to the sensor (a heuristic). A radar loses range to rain (ITU-R P.838-3 at
+      77 GHz) and, much less, to fog; night does not affect either. Drops on a lens are estimated from its dirt and spray
+      exposure, less the share of its view the wipers clear (a heuristic).</p>
+    <p>The <b>Weather</b> panel compares every condition: how far ahead each object is resolved, the sector checks that
+      pass, each camera, lidar and radar against clear, and findings. On the sample's data rig an unlit night leaves
+      pedestrians resolved to 19 m ahead (66 m in daylight) and nothing behind; heavy rain takes the long-range radar from
+      250 to 195 m and the roof lidar from 90 to 76 m; 150 m fog takes the lidar to 40 m. These are typical models, not
+      measurements: the Notes tab lists them and what they leave out (glare from oncoming lights, the own headlamps' veil
+      in fog, wet-road reflections, spray from other vehicles, a wet radar fascia). Export: <b>Weather comparison</b>
+      (<code>vantage.weather/1</code> JSON, two CSVs and a PNG); the perception range export names its condition; batch
+      <code>--weather</code>.</p>
+
+    <h2 id="critical">Critical targets and mounting envelopes</h2>
+    <p><b>Analysis ▸ Critical targets</b> places the objects the rig must resolve where they matter: a child 0.9 m tall
+      standing 2 m in front of the bumper, a pedestrian, a car, a traffic light above the junction or on a post at the
+      stop line, a sign, a kerb by the front wheel, a lane marking on a 50 m curve. Presets put them relative to the body
+      with typical sizes and needs; every figure can be typed, a target dragged in the top view or put where you click in
+      the plan or the 3D view. They are saved with the project and every edit can be undone.</p>
+    <p>For each target and camera the page shows how much of it is in the image, how much is seen (the body, the rig and
+      the sensor housings are tested ray by ray), how many pixels the camera puts across its height (a lane marking: its
+      width) through the real lens model, and whether it is in focus. A camera meets a target when enough of it is seen
+      with enough pixels. The lidars' points on it and the radars that detect it are listed too (each radar's range
+      derated by what it looks through, as in the <a href="#materials">materials</a> study); a target can also require
+      lidar points.</p>
+    <p>The inverse question is the mechanical one: how far may each camera's mount be off before it stops resolving a
+      target? Each axis — yaw, pitch, roll and x, y, z — is moved alone both ways until the target is lost (to 0.01° and
+      0.1 mm), then all six at once on a 729-pose grid. The bars show each camera's envelope against the install
+      tolerance (dashed), the target that binds it, and the surfaces a move would run into. Export the sheet (CSV and PNG)
+      for the team designing the brackets.</p>
+    <p>The Issues list flags a target no camera resolves (serious) and a mount tighter than the install tolerance for a
+      target only that camera resolves (warning); <b>View ▸ Overlays ▸ Critical targets</b> draws them, coloured by
+      verdict, in the main views. The placement optimiser can require every critical target, or weigh the ones a
+      candidate leaves unresolved, and adds its best three candidates as variants in one step. Sizes and pixel needs are
+      typical figures, not a standard: set your detector's. Export: <code>vantage.critical_targets/1</code> JSON, a CSV
+      per target and camera, <code>mounting_envelopes.csv</code> and two PNGs; batch <code>--critical-targets</code>, which
+      exits with 2 when no camera resolves a target.</p>
 
     <h2 id="sensor-coverage">Lidar and radar coverage</h2>
     <p><b>Analysis ▸ Lidar and radar coverage</b> shows what the variant's lidars and radars add to the cameras, using
@@ -639,6 +741,50 @@ vantage project.vantage            # open a project</code></pre>
       JSON and device and circuit CSVs; batch <code>--power-budget</code>, which exits with 2 when the converter or a
       fuse is over its rating.</p>
 
+    <h2 id="harness">Cable harness</h2>
+    <p><b>Analysis ▸ Cable harness</b> routes every visible camera's and sensor's cable along the vehicle. A cable leaves
+      its device, follows the body's outer surface to an entry point and runs inside to the compute box (the ECU) along
+      the trim: down or up a pillar, along the sill or headliner and across. That inside part is the Manhattan path ×
+      the ECU's routing slack; the vehicle model has no interior. A device inside the body (an IMU on the floor, a radar
+      behind the bumper fascia) starts inside. A compute box on a roof rack is reached along the surface. A GNSS
+      antenna's coax goes to the GNSS/INS unit when the variant has one with antenna inputs.</p>
+    <p>Entry points are placed from the body's shape: a roof grommet near the roof's rear edge, a bulkhead grommet at
+      the base of the windscreen, door seals at the front doors' leading and the rear doors' trailing edges (from the
+      shut lines when the body has them), a tailgate seal and a rear-panel grommet. Edit, add, switch off or limit each
+      one (the cables it takes) in the table; positions are taken onto the body, off glass and shut lines.</p>
+    <p>The surface path is the cheapest on the body's surface graph. A metre on glass costs 25, one over a door, the
+      bonnet, the tailgate or a shut line (by part or mount-zone name) 10, one across a gap between shells (a mirror, a
+      rig part) 2. The path is then pulled straight wherever the straight line stays on the surface: on a plane it is
+      the straight line, and across a box's edge it is within 1.5 % of the true shortest path. The run's length is
+      (the drop to the body + the surface path) × 1.05 for clips and bends + the inside path + the service loop
+      + the camera's route extra.</p>
+    <table>
+      <tr><th>Cable</th><th>Checked against (typical)</th></tr>
+      <tr><td>GMSL2, FPD-Link III/IV coax</td><td>15 m reach, the module's cable options and the fitted cable</td></tr>
+      <tr><td>100BASE-T1, 1000BASE-T1</td><td>15 m (IEEE 802.3bw, 802.3bp)</td></tr>
+      <tr><td>100BASE-TX, 1000BASE-T</td><td>100 m</td></tr>
+      <tr><td>CAN FD, RS-422</td><td>about 40 m, about 100 m at 1 Mbit/s</td></tr>
+      <tr><td>GNSS coax (RG-174, RG-58, LMR-240, LMR-400)</td><td>1.1, 0.7, 0.34, 0.17 dB/m at L1 + 0.1 dB per
+        connector, against the LNA gain (28 dB) less what the receiver needs (15 dB)</td></tr>
+      <tr><td>Power pair</td><td>the power budget's drop at the device</td></tr>
+    </table>
+    <p>A run over its limit, or a GNSS cable without RF margin, is serious (90 % of the limit or under 3 dB of margin:
+      a warning). A route over glass or a moving part, a cable hanging more than 0.3 m in free air (add the mast as a
+      rig part) and an entry point over its capacity are warnings. <b>Use the routed lengths everywhere</b> (off by
+      default) makes the routed lengths replace the Manhattan estimate in the Issues list, the camera cable check and the
+      power budget; the placement optimiser keeps the estimate. On the sample's data rig the 18 cables come to 56.2 m;
+      the front camera needs 3.64 m over the bonnet to the cowl grommet, where the estimate said 2.95 m and its cable is
+      3 m. <b>View ▸ Overlays ▸ Cable harness</b> draws the routes in the main views.</p>
+    <p>The timing plan also checks the deserializers. Cameras that need sub-millisecond sync must share a deserializer
+      (GMSL ports 1–4 or 5–8) and a trigger line. A stereo pair on different ones is a warning, with the port move
+      that fixes it; so is a trigger line driving cameras on both deserializers when they would fit on one. A line
+      with more cameras than one deserializer has links is a note: wire it to both deserializers' frame-sync
+      inputs.</p>
+    <p>Limits are typical figures; check your cables and connectors. Bend radii, connector sizes, inline connectors at
+      the grommets and bundles are not modelled. Export: <code>vantage.harness/1</code> JSON (every run with its
+      path in the vehicle frame), CSV and PNG; batch <code>--harness</code>, which exits with 2 when a cable is longer
+      than its link allows, no module cable reaches or a GNSS cable has no RF margin.</p>
+
     <h2 id="gnss">GNSS and IMU</h2>
     <p><b>Analysis ▸ GNSS and IMU</b> checks the GNSS antennas and the IMU or GNSS/INS: what sky each antenna sees, the
       dual-antenna heading baseline, the lever arms the INS needs, and how well each sensor's world pose (and so every label
@@ -695,6 +841,41 @@ vantage project.vantage            # open a project</code></pre>
       and water films matter little at 77 GHz. The dirt map colours every face of the body in four views.</p>
     <p>Assumptions: clear sky, a flat horizon (no buildings, trees or terrain), the sun as a point, the vehicle level and
       driving straight. Export: <code>exposure.json</code> (<code>vantage.exposure/1</code>) and <code>exposure.png</code>.</p>
+
+    <h2 id="materials">Materials, glass and wipers</h2>
+    <p>A radar behind a bumper sees through plastic and paint, a camera behind the windscreen through glass, and both
+      depend on what those are. <b>Analysis ▸ Materials, glass and wipers</b> gives every part of the vehicle a material:
+      painted steel, aluminium, chrome and carbon fibre (77 GHz does not pass them), a painted PP bumper fascia, unpainted
+      plastic trim, PC/ABS mouldings, a PC radar cover or lamp lens, laminated windscreen and tempered side glass, and
+      tyre rubber. Each part takes the material its name and role suggest; on a body modelled as one part, its ends below
+      the bumper line count as the fascia and the band between the side windows and the bonnet as the windscreen. Set any
+      part's material and thickness under <b>Parts</b>. The figures are typical values from published 77 GHz
+      measurements (each with its source in the export), not your vehicle's: measure your fascia and enter it.</p>
+    <p><b>Radars.</b> For every radar Vantage traces rays over its field, finds the surface each leaves the vehicle
+      through and computes the loss through it as layers (substrate, primer, basecoat, clear coat) at the ray's angle. The
+      table shows the two-way loss, each zone's range after it (range shrinks with the fourth root of the loss: 3 dB costs
+      16 %), the fascia's thickness in half wavelengths and the thickness nearby that reflects least, the reflection back
+      into the radar and whether the gap between radar and fascia is near a resonance, and metal in or beside the beam,
+      summed up as a multipath risk. The map shows the loss over the field. Metallic paint over a radar costs dB (on the
+      sample's corner radars 3.9 dB against 2.7 dB with a solid paint, 80 m instead of 86 m on a car); a repainted
+      metallic bumper 8.3 dB. The <a href="#sensor-coverage">lidar and radar coverage</a> and the
+      <a href="#critical">critical targets</a> use the derated ranges: the sample's corner radars reach a car at 88 m
+      instead of the datasheet's 102 m.</p>
+    <p><b>Cameras behind glass.</b> For a camera behind the windscreen: the light it loses at its angle through the
+      glass, where its centre appears (the glass slides every ray sideways a few millimetres), the pixel error that leaves
+      for near objects, and how much of the dashboard the glass reflects into the image. Tick <b>Glare shield</b> when a
+      black shield sits under the camera.</p>
+    <p><b>Wipers.</b> The windscreen is measured and typical wipers sized from it (tandem, opposed or single arm, left- or
+      right-hand drive), or enter your own arms. The view from inside shows what they clear and each windscreen camera's
+      footprint on the glass, red where no blade passes; the dirt score there is the exposure model's.
+      <b>View ▸ Overlays ▸ Wiper sweep</b> draws the sweep on the windscreen in the 3D view.</p>
+    <p>The Issues list flags a radar looking into metal, a two-way loss of 3 dB or more, a high multipath risk, glare
+      without a shield and a camera looking through unwiped glass. Export: <b>Materials, glass and wipers</b>
+      (<code>materials/materials.json</code>, <code>vantage.materials/1</code>, two CSVs and a PNG); batch
+      <code>--materials</code>, which exits with 2 when a radar looks into metal over half its field. Limits: surfaces are
+      planar layers at each ray (no curvature or edge diffraction), the multipath risk is an indicator, glass is
+      plane-parallel (a head-up-display wedge is not modelled), the wipe pattern is the ring-sector model, and the
+      automatic regions are geometric guesses.</p>
 
     <h2 id="brackets">Mount brackets</h2>
     <p><b>Analysis ▸ Mount brackets</b> makes a 3D-printable bracket for each visible camera that holds it at exactly its
@@ -831,6 +1012,41 @@ vantage project.vantage            # open a project</code></pre>
     the boards were all tilted alike, the page says which direction is not determined, rather than reporting a number. The
     overlay draws the lidar's points on the camera image through the plan and through the solve: on the board when the
     calibration is right. Apply moves the lidar to its measured pose; As a new variant keeps the plan alongside.</p>
+
+    <h2 id="observability">Calibration observability</h2>
+    <p><b>Calibrate ▸ Calibration observability</b> tells you how firmly the calibration you have planned will pin each
+      sensor's pose, before anything is printed or captured. For every camera it takes the corners of the boards it will
+      see (the targets of Calibrate ▸ Target planner: a checkerboard only when the whole board is in view, a ChArUco board
+      corner by corner, an AprilGrid tag by tag, and only where the squares are big enough in the image and nothing of the
+      vehicle is in the way) and asks how precisely their positions in the image, each found to within the corner noise,
+      fix where the camera sits. Boards laid by hand may lie a little off their plan (±20 mm and ±1° by default, as the
+      installation check's joint solve assumes); every camera that shares a board then also helps place that board.</p>
+    <p>The table gives each camera's 1σ in yaw, pitch and roll (degrees) and x, y and z (millimetres) against the
+      requirement you set (0.1° and 10 mm by default), and, in the tooltips, what the corners alone would give with the
+      boards exactly where planned: when the two differ a lot, the boards' placement is what limits the camera, and laying
+      them against a jig helps more than moving them. Pick a camera to see its weakest direction (for example a shift
+      forward traded against a pitch), how much each board contributes and how bad the camera would be without it, the
+      reasons in plain words, and suggestions that were tried and measured: a board moved closer or aside, turned, a new
+      board where the camera sees a whole one, or the boards laid more precisely, each with what it gains for this camera
+      and costs the others. <b>Apply</b> moves or adds the board in the targets (Edit ▸ Undo takes it back).</p>
+    <p>Two cameras that see a common board are tied by it: the <b>Pairs</b> tab gives their relative pose's 1σ, usually
+      much better than either camera's pose in the vehicle. The <b>Lidar–camera</b> tab uses the boards the lidar–camera
+      calibration plans for each camera–lidar pair and says whether the camera's corners or the lidar's points limit it.
+      Place corner reflectors (their size gives their radar cross-section at 77 GHz) for the <b>Radars</b> tab: each
+      radar's yaw and position from the reflectors' ranges and azimuths, with typical radar noise figures you can replace
+      with yours.</p>
+    <p>These are predictions from the geometry, not measurements. <b>Verify</b> checks them: it simulates the captures
+      with noisy corners (and boards laid off their plan), solves them with the solves that will solve the real ones (the
+      installation check's joint solve, the lidar–camera calibration's) and compares the spread of the answers with the
+      predicted 1σ.</p>
+    <p>The <b>Fusion</b> tab shows, for each camera, how many lidar points and scan lines land on a pedestrian, cyclist,
+      car or sign where the camera resolves it out to the required range, how many of the object's pixels share one lidar
+      point, and a map of the image coloured by lidar points per pixel: black where no lidar point lands (below the lidar's
+      lowest beam, behind the body, above its field).</p>
+    <p>Once targets are planned, the Issues list flags a camera that sees no board whole (serious), one the boards pin to
+      more than twice the requirement and a radar short of reflectors. Export: <code>vantage.observability/1</code> JSON,
+      CSV and PNGs; batch <code>--observability</code> (a folder gets every file; <code>--verify N</code> adds N Monte
+      Carlo trials, about 4 s each), which exits with 2 when a camera sees no board whole.</p>
 
     <h2 id="live-rig">Live rig health</h2>
     <p><b>Calibrate ▸ Live rig</b> watches every camera's stream at once, for checking a rig before and during a
@@ -1067,6 +1283,37 @@ vantage project.vantage            # open a project</code></pre>
     <p>Limits: bags compressed as whole files (<code>compression_mode: file</code>) must be decompressed first with
     <code>ros2 bag decompress</code>; XCDR2 data and <code>wstring</code> fields are not read.</p>
 
+    <h2 id="automation">Automation and CI</h2>
+    <p><b>Export ▸ Automation</b> keeps what downstream needs in step with the design. When it is on, Vantage regenerates
+      the chosen export formats into a folder next to the project file — by default the calibration files: extrinsics,
+      OpenCV and ROS <code>camera_info</code> per camera, the URDF and static TF, nuScenes, KITTI and Kalibr — runs the
+      requirements check into <code>requirements/</code>, writes <code>vantage_summary.json</code> and then runs your own
+      command. It runs on save (the default), once nothing has changed for a quiet period (unsaved edits included), or only
+      with <b>Run now</b>. The folder must lie inside the project's folder; files the previous run wrote and this one did
+      not (a camera removed, a format dropped) are removed, your own files never.</p>
+    <p>The command lives only in your settings on this computer, for that project file; a project file can never set or
+      run one. It is shown in full and runs only after you approve it; changing it asks again. It runs through the shell
+      in the project's folder, with a time limit, and Stop ends it with everything it started. It is stored as plain
+      text: keep passwords and tokens in environment variables. The assistant can read the automation's state but never
+      the command, and cannot start a run. The command gets:</p>
+    <table>
+      <tr><th>Variable</th><th>Value</th></tr>
+      <tr><td><code>VANTAGE_EXPORT_DIR</code></td><td>the export folder</td></tr>
+      <tr><td><code>VANTAGE_PROJECT</code>, <code>VANTAGE_PROJECT_DIR</code></td><td>the project file and its folder</td></tr>
+      <tr><td><code>VANTAGE_VARIANT</code>, <code>VANTAGE_VARIANT_UID</code></td><td>the exported variant</td></tr>
+      <tr><td><code>VANTAGE_SUMMARY</code></td><td><code>vantage_summary.json</code>: every file with its SHA-256, what changed, the requirements verdict, the Issues</td></tr>
+      <tr><td><code>VANTAGE_CHECK_EXIT</code></td><td>the requirements check's exit code (5 when a must requirement fails)</td></tr>
+      <tr><td><code>VANTAGE_TRIGGER</code>, <code>VANTAGE_RUN_ID</code>, <code>VANTAGE_UNSAVED</code></td><td>save, change, manual or watch; the run; 1 when unsaved edits were exported</td></tr>
+    </table>
+    <p>The page shows each run's output as it comes, the exit code, the duration and the files that changed — by
+      content, so the time stamps exports carry do not count; PDFs embed their creation time and are listed as rewritten —
+      and a history of the runs on this computer. <b>CI templates…</b> (also the export format <code>ci_templates</code>
+      and batch <code>--ci-templates DIR</code>) writes a GitHub Actions workflow and a GitLab CI job that install this
+      Vantage version, run <code>--export</code> and <code>--check</code> on the project in its repository and keep the
+      calibration files and the review pack as artifacts. Headless:
+      <code>vantage --watch project.vantage --on-change "make perception-test"</code> regenerates and runs the command at
+      the start and after every change of the file, and exits with the last run's code (the command's own).</p>
+
     <!-- ======================================================== reference -->
     <h2 id="formats">Export formats</h2>
     <p><b>Export ▸ Export</b> (<kbd>Ctrl</kbd>+<kbd>E</kbd>) previews every file before writing it. The frame, units
@@ -1088,6 +1335,13 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td></td><td>Load cases (suspension)</td><td>JSON, CSV</td><td><code>suspension_load_cases</code></td></tr>
       <tr><td></td><td>Fleet</td><td>JSON, CSV, PNG</td><td><code>fleet</code></td></tr>
       <tr><td></td><td>Requirements scorecard and review pack</td><td>JSON, CSV, PDF</td><td><code>requirements</code></td></tr>
+      <tr><td></td><td>Calibration observability</td><td>JSON, CSV, PNG</td><td><code>observability</code></td></tr>
+      <tr><td></td><td>Cable harness</td><td>JSON, CSV, PNG</td><td><code>harness</code></td></tr>
+      <tr><td></td><td>Road and body motion</td><td>JSON, CSV, PNG</td><td><code>terrain</code></td></tr>
+      <tr><td></td><td>Critical targets and mounting envelopes</td><td>JSON, CSV, PNG</td><td><code>critical_targets</code></td></tr>
+      <tr><td></td><td>Materials, glass and wipers</td><td>JSON, CSV, PNG</td><td><code>materials</code></td></tr>
+      <tr><td></td><td>Weather comparison</td><td>JSON, CSV, PNG</td><td><code>weather</code></td></tr>
+      <tr><td></td><td>CI templates (GitHub Actions, GitLab CI)</td><td>YAML, MD</td><td><code>ci_templates</code></td></tr>
       <tr><td>Extrinsics</td><td>Camera, lidar, radar, GNSS and IMU poses</td><td>JSON</td><td><code>extrinsics_json</code></td></tr>
       <tr><td></td><td>Camera, lidar and radar poses</td><td>YAML</td><td><code>extrinsics_yaml</code></td></tr>
       <tr><td></td><td>Camera, lidar and radar poses</td><td>CSV</td><td><code>extrinsics_csv</code></td></tr>
@@ -1164,6 +1418,15 @@ vantage project.vantage --fleet-import V3 check.json --fleet fleet/ --save proje
 vantage project.vantage --check review/            # the requirements scorecard and the design-review pack (CI gate)
 vantage project.vantage --lidar-calib out/ --lidar-calib-pair F L1 --lidar-calib-folder boards/
 vantage project.vantage --rig-health 10 health.json  # read every camera's stream for 10 s
+vantage project.vantage --observability obs/ --verify 30   # how firmly the planned boards pin each camera
+vantage project.vantage --harness harness.json      # every cable routed along the body, against its link
+vantage project.vantage --terrain road.json         # coverage on the road, bumps first seen, clearance, body motion
+vantage project.vantage --critical-targets envelopes/   # who resolves each critical target; mounting envelopes
+vantage project.vantage --materials materials.json  # radars through the fascia, cameras behind glass, wipers
+vantage project.vantage --weather weather.json      # rain, fog, snow and night compared
+vantage project.vantage --perception-range night.json --condition night
+vantage --watch project.vantage --on-change "make perception-test"   # regenerate and run your check on every change
+vantage project.vantage --ci-templates ci/          # a GitHub Actions workflow and a GitLab CI job
 vantage project.vantage --export out/ --formats nuscenes_calib,kitti_calib,ros_camera_info
 vantage project.vantage --install-check captures/ --report check.json \
         --lut-out out/bev_lut --as-built built.vantage
@@ -1180,6 +1443,10 @@ vantage project.vantage --import-calib camchain.yaml F.yaml --save calibrated.va
       <tr><td><code>--min-boards</code></td><td>Boards a camera must see (default 1).</td></tr>
       <tr><td><code>--no-joint</code>, <code>--board-tol MM</code></td><td>Solve each camera alone; how far a board may lie off its place (default 20).</td></tr>
       <tr><td><code>--no-balance</code>, <code>--blend linear|multiband</code></td><td>Stitched PNG options.</td></tr>
+      <tr><td><code>--condition ID</code></td><td>The weather <code>--perception-range</code>, <code>--dataset</code> and <code>--weather</code> use: <code>clear</code>, <code>overcast</code>, <code>night</code>, <code>night_lit</code>, <code>light_rain</code>, <code>heavy_rain</code>, <code>fog</code> or <code>snow</code> (default: the project's).</td></tr>
+      <tr><td><code>--verify N</code></td><td>With <code>--observability</code>: check the predictions with N Monte Carlo trials of the real solves.</td></tr>
+      <tr><td><code>--watch PROJECT.vantage</code>, <code>--on-change CMD</code></td><td>Regenerate the formats of the project's automation settings (<code>--export DIR</code>, <code>--formats</code> and <code>--variant</code> override them) at the start and after every change of the file, then run CMD through the shell in the project's folder. The command comes from the command line only.</td></tr>
+      <tr><td><code>--watch-runs N</code>, <code>--watch-interval S</code></td><td>With <code>--watch</code>: stop after N runs (default: when stopped); how often to look at the file (default 1 s).</td></tr>
       <tr><td><code>--save OUT.vantage</code></td><td>Save the project afterwards: with imported or fitted calibrations, fleet records, the suspension data read by <code>--suspension-data</code>, or the as-built variant of <code>--as-built-check</code>.</td></tr>
     </table>
     <p>Captures are matched to cameras by the tag in the file name (<code>F.png</code>, <code>cam_QR.jpg</code>,
@@ -1188,12 +1455,14 @@ vantage project.vantage --import-calib camchain.yaml F.yaml --save calibrated.va
     <table>
       <tr><th>Exit code</th><th>Meaning</th></tr>
       <tr><td><code>0</code></td><td>Fine.</td></tr>
-      <tr><td><code>2</code></td><td>The plan has critical issues (with <code>--analyse</code> or <code>--export</code>); or, with <code>--recording-budget</code>, the recorder or a sensor's link cannot keep up; with <code>--power-budget</code>, the DC-DC converter or a fuse is over its rating; with <code>--gnss</code>, an antenna has no sky; with <code>--brackets</code>, a camera cannot take a printed bracket as planned; with <code>--suspension</code>, a load case lifts a wheel or exceeds the gross vehicle mass; with <code>--housings</code>, a camera sits inside a housing.</td></tr>
+      <tr><td><code>2</code></td><td>The plan has critical issues (with <code>--analyse</code> or <code>--export</code>); or, with <code>--recording-budget</code>, the recorder or a sensor's link cannot keep up; with <code>--power-budget</code>, the DC-DC converter or a fuse is over its rating; with <code>--gnss</code>, an antenna has no sky; with <code>--brackets</code>, a camera cannot take a printed bracket as planned; with <code>--suspension</code>, a load case lifts a wheel or exceeds the gross vehicle mass; with <code>--housings</code>, a camera sits inside a housing; with <code>--critical-targets</code>, no camera resolves a critical target; with <code>--materials</code>, a radar looks into metal over half its field; with <code>--terrain</code>, the body or a sensor would touch the road or no camera resolves a speed bump or kerb; with <code>--harness</code>, a cable is longer than its link allows, no module cable reaches or a GNSS cable has no RF margin; with <code>--observability</code> and calibration targets planned, a camera sees no board whole.</td></tr>
       <tr><td><code>3</code></td><td>A camera has to be re-mounted or could not be checked; or, with <code>--rig-health</code>, a camera is faulty or has no stream; with <code>--drive-log</code>, the recording shows a fault; with <code>--as-built-check</code>, the plan's coverage does not hold as built; with <code>--fleet</code>, a sensor needs re-mounting in its vehicle's latest record; with <code>--lidar-calib</code>, the lidar has to be re-mounted or the board poses did not determine its pose.</td></tr>
       <tr><td><code>4</code></td><td>A lens calibration failed, or an imported calibration matched no camera or did not fit it; or a <code>--fleet-import</code> file, the <code>--drive-log</code> or <code>--as-built-check</code> recording, the <code>--suspension-data</code> file or the <code>--lidar-calib-folder</code> captures could not be read, or the <code>--dataset</code> could not be written.</td></tr>
       <tr><td><code>5</code></td><td>With <code>--check</code>, a must requirement fails or cannot be evaluated.</td></tr>
     </table>
-    <p>When several apply, the highest is returned.</p>
+    <p>When several apply, the highest is returned. <code>--watch</code> exits with its last run's code: the command's own
+      when it ran, else 5 when the requirements check fails, 4 when the project could not be read or a format not
+      written, 130 when stopped during the command.</p>
 
     <h2 id="shortcuts">Keyboard shortcuts</h2>
     <table>

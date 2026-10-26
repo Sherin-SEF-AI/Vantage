@@ -47,7 +47,8 @@
     <p class="lede">Vantage designs the sensor rigs of the vehicles that record training data for self-driving models.
       Place the cameras, lidars, radars, GNSS antennas and IMU on the vehicle and prove in simulation what the rig will
       record, before any hardware is fitted: what every lens sees, where the body, the rig and the other sensors'
-      housings block it, how many pixels land on the road, what each lidar and radar reaches, whether the recorder and the power supply keep up, and what a drive with
+      housings block it, how many pixels land on the road, what each lidar and radar reaches through the bumper, in rain,
+      fog and at night, whether the recorder, the power supply and the cables keep up, and what a drive with
       it looks like to your pipeline. Then calibrate the real rig, check its recordings against the plan and hand the
       calibration to your data pipeline.</p>
     <div class="cta">
@@ -91,12 +92,14 @@
         wheels, glass and the zones where cameras may go.</p></div>
       <div class="step"><h3>Place the sensors</h3><p>Snap camera modules from the library onto the body, mirror them in
         pairs and aim them; add lidars, radars, GNSS antennas and an IMU; watch what the rig sees update as you go.</p></div>
-      <div class="step"><h3>Simulate the recording</h3><p>Simulated camera images, coverage, pixel density, overlaps,
-        the 3D blind volume, lidar and radar reach, trigger timing, the data and power budgets, the GNSS sky, sun glare
-        and a whole synthetic drive, checked against your requirements before anything is bought or drilled.</p></div>
-      <div class="step"><h3>Fit, calibrate, verify</h3><p>Print the brackets, calibrate each camera from its live
-        stream and each lidar to a camera, check the installed rig and its first recordings against the plan, follow
-        every vehicle of the fleet, and export the calibration in your dataset's format.</p></div>
+      <div class="step"><h3>Simulate the recording</h3><p>Simulated camera images, coverage on flat ground or a real
+        road, pixel density, overlaps, the 3D blind volume, lidar and radar reach, weather and night, trigger timing, the
+        data and power budgets, the cable harness, the GNSS sky, sun glare and a whole synthetic drive, checked against
+        your requirements before anything is bought or drilled.</p></div>
+      <div class="step"><h3>Fit, calibrate, verify</h3><p>Print the brackets, check that the planned boards pin every
+        camera, calibrate each camera from its live stream and each lidar to a camera, check the installed rig and its
+        first recordings against the plan, follow every vehicle of the fleet, and keep the calibration files in step
+        with the design.</p></div>
     </div>
   </div>
 </section>
@@ -252,6 +255,60 @@
       </div>
     </article>
 
+    <article class="feature" id="weather">
+      <div class="text">
+        <div class="eyebrow">Weather and night</div>
+        <h3>How far the rig still sees in rain, fog and at night</h3>
+        <p>Pick a condition on the perception range page and every range follows it: a camera loses an object once its
+          contrast fades below 5 % or the headlamps and street lights leave it too dark for the sensor, and the lidars
+          and radars lose range to the rain, fog and snow between them and it. The sample dataset renders the same
+          condition.</p>
+        <ul>
+          <li>On the sample's data rig an unlit night leaves pedestrians resolved to 19 m ahead (66 m by day) and nothing behind. The camera's darkest usable scene comes from its pixel size, f-number and frame rate; the headlamps are a typical low beam shaped after UN R112.</li>
+          <li>Heavy rain takes the long-range radar from 250 to 195 m (ITU-R P.838-3 at 77 GHz) and the roof lidar from 90 to 76 m; 150 m fog takes the lidar to 40 m, with false returns from droplets on about 11 % of its beams (a heuristic).</li>
+          <li>A panel compares every condition with clear: the range ahead per object, the sector checks that still pass, and each camera, lidar and radar. The clear envelope stays dashed on the map.</li>
+          <li>Exported as JSON, CSV and PNG; in batch mode with <code class="nowrap">--weather</code>, and <code class="nowrap">--condition</code> sets the weather for <code class="nowrap">--perception-range</code> and <code class="nowrap">--dataset</code>.</li>
+        </ul>
+        <p class="note">Typical models, not measurements. Glare from oncoming lights, the headlamps' own veil in fog, wet
+          roads, spray and a wet radar fascia are not modelled.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/weather.jpg" aria-label="The perception range page on the data rig with its weather block: night on an unlit road shrinks the envelopes inside the dashed clear ones, the comparison of every condition, then heavy rain with each camera's, lidar's and radar's range against clear">
+            <source src="media/weather.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature flip" id="critical">
+      <div class="text">
+        <div class="eyebrow">Critical targets</div>
+        <h3>What the rig must never miss, and how far each mount may be off</h3>
+        <p>Place the objects that must be resolved where they matter: a 0.9 m child in front of the bumper, a pedestrian,
+          a traffic light, a kerb by the front wheel, a lane marking on a curve. Vantage checks each through every
+          camera's real lens, ray by ray around the body, the rig and the housings, then turns the question round: how
+          far may each camera's mount be off before it loses one?</p>
+        <ul>
+          <li>On the sample's data rig a child 2 m ahead spans 398 px of F's image (24 needed) and a child 1 m behind 614 px of R's. Only F resolves a pedestrian 10 m ahead: 153 px, with 146 lidar points per frame and three radars on it.</li>
+          <li>An overhead traffic light 15 m ahead is in no camera's image, though the lidar puts 30 points on it: the Issues list names it as serious.</li>
+          <li>Each axis is moved both ways until a target is lost, to 0.01° and 0.1 mm, then all six at once on a 729-pose grid. F may pitch 8.3° further down before it loses the pedestrian; moved back, it meets the bumper after 17 mm. Every camera holds at the ±10 mm, ±1° install tolerance.</li>
+          <li>The placement optimiser can require every target or weigh the missed ones. Exported as JSON, CSV and PNG with a mounting sheet for the bracket designers; in batch mode with <code class="nowrap">--critical-targets</code>, which exits with 2 when no camera resolves a target.</li>
+        </ul>
+        <p class="note">Sizes and pixel needs are typical figures, not a standard: set your detector's. Targets are flat
+          and stand on level ground.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/critical.jpg" aria-label="The critical targets page on the data rig: a child, a pedestrian, an overhead traffic light and a kerb added from the presets, the verdict of each, the cameras on the pedestrian and F's mounting envelope against the install tolerance, then the traffic light no camera sees">
+            <source src="media/critical.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
     <article class="feature" id="rig">
       <div class="text">
         <div class="eyebrow">Rig parts</div>
@@ -341,7 +398,7 @@
         <p>For every direction and object class, how far the cameras, the lidars and the radars detect it, against the
           range your dataset needs. A sector two or more of them cover is redundant, one is single, none is a gap.</p>
         <ul>
-          <li>Lidar points counted on each object from the real beam elevations, around the body and the rig; radar ranges scaled by each object's cross-section.</li>
+          <li>Lidar points counted on each object from the real beam elevations, around the body and the rig; radar ranges scaled by each object's cross-section and by what the radar looks through: on the sample the corner radars lose 2.67 dB through the painted bumper fascia (<a href="#materials">below</a>).</li>
           <li>What the vehicle blocks: on the sample, 35 % of a lidar sitting on the roof hits the roof, and its nearest ground point is 8.5 m or more from the body. Raised 0.6 m, it loses none.</li>
           <li>How much of each camera image the lidar covers, for projecting points into images.</li>
           <li>Exported as JSON and a PNG plan; in batch mode with <code class="nowrap">--sensor-coverage</code>.</li>
@@ -408,10 +465,11 @@
 
     <div class="head" style="margin:72px 0 8px" id="build">
       <div class="eyebrow">Before the rig is built</div>
-      <h2>Power, sky, sun and brackets, checked on the model.</h2>
-      <p>The rest of what decides whether a rig works on the road: whether the vehicle can power it, whether its GNSS
-        antennas see the sky and its INS knows its lever arms, which cameras will stare into the sun and which lenses
-        will be dirty, and the brackets that put each camera where the plan says.</p>
+      <h2>Power, cables, sky, sun, materials and brackets, checked on the model.</h2>
+      <p>The rest of what decides whether a rig works on the road: whether the vehicle can power it and every cable
+        reaches, whether its GNSS antennas see the sky and its INS knows its lever arms, which cameras will stare into
+        the sun and which lenses will be dirty, what the radars look through, and the brackets that put each camera
+        where the plan says.</p>
     </div>
 
     <article class="feature" id="power">
@@ -439,7 +497,34 @@
       </div>
     </article>
 
-    <article class="feature flip" id="gnss">
+    <article class="feature flip" id="harness">
+      <div class="text">
+        <div class="eyebrow">Cable harness</div>
+        <h3>Every cable routed along the body, against its link's reach</h3>
+        <p>Each camera's and sensor's cable runs along the body's outer surface to an entry point (a roof grommet, a door
+          seal, the bulkhead grommet at the windscreen's base, the tailgate) and on inside along the trim to the compute
+          box. The surface path is the cheapest on the body, kept off glass, doors and shut lines and pulled straight:
+          exact on a plane, within 1.5 % of the shortest path across an edge.</p>
+        <ul>
+          <li>On the sample's data rig the 18 cables come to 56.2 m. The front camera needs 3.64 m over the bonnet to the bulkhead grommet, where the estimate along the axes said 2.95 m: its 3 m cable does not reach.</li>
+          <li>Each run against its link: GMSL2 and FPD-Link coax (15 m and the module's cable options), 100/1000BASE-T1, CAN FD, RS-422; GNSS coax as an RF loss budget at L1 against the antenna amplifier's gain; power pairs by the power budget's voltage drop. The limits are typical, each with its basis.</li>
+          <li>One switch makes the routed lengths replace the estimate in the Issues list, the camera cable check and the power budget; <b>View ▸ Overlays ▸ Cable harness</b> draws the routes in the main views.</li>
+          <li>The sync plan also checks the deserializers: a stereo pair or a trigger line split across two is a warning, with the port move that fixes it. Exported as JSON with every path in the vehicle frame, CSV and PNG; in batch mode with <code class="nowrap">--harness</code>, which exits with 2 when a cable cannot reach.</li>
+        </ul>
+        <p class="note">The vehicle model has no interior: the inside run is the trim path along the axes with the
+          routing slack. Bend radii, connectors at the grommets and bundles are not modelled.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/harness.jpg" aria-label="The cable harness page on the data rig: the tiles, every route drawn on the body from above, the front camera's run over the bonnet picked, longer than its 3 m cable, the routes from the side and in 3D, then the findings">
+            <source src="media/harness.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature" id="gnss">
       <div class="text">
         <div class="eyebrow">GNSS and IMU</div>
         <h3>Open sky for the antennas, lever arms for the INS</h3>
@@ -468,7 +553,7 @@
       </div>
     </article>
 
-    <article class="feature" id="exposure">
+    <article class="feature flip" id="exposure">
       <div class="text">
         <div class="eyebrow">Sun glare and dirt</div>
         <h3>Which cameras look into the sun, and when</h3>
@@ -487,6 +572,33 @@
         <div class="frame">
           <video muted loop playsinline preload="none" poster="media/exposure.jpg" aria-label="The sun glare and dirt page on the sample's data rig: the table of sun-in-image shares, an east–west route typed as headings raising the front and rear cameras' glare, a quarter camera's month-by-hour heatmap and sky chart, then the dirt map of the body">
             <source src="media/exposure.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature" id="materials">
+      <div class="text">
+        <div class="eyebrow">Materials, glass and wipers</div>
+        <h3>What the radars look through, and the cameras behind glass</h3>
+        <p>Every part of the vehicle has a material: painted steel, a painted bumper fascia, plastic trim, a radar cover,
+          laminated glass, each with typical 77 GHz figures from published measurements and their source. Vantage traces
+          each radar's field to what lies in front of it and works out the loss layer by layer (plastic, primer,
+          basecoat, clear coat) at every ray's angle. The coverage and the critical targets use the shortened ranges.</p>
+        <ul>
+          <li>On the sample's data rig the corner radars RD2–RD5 sit 12 mm behind the fascia: 2.67 dB lost there and back with a solid paint, so their range on a car drops from 100 to 86 m. Metallic paint costs 3.9 dB (80 m), a repainted metallic bumper 8.3 dB (62 m). RD1, in front of the bumper, loses nothing.</li>
+          <li>The fascia's thickness in half wavelengths and the nearby thickness that reflects least (3.6 mm here), the radar–fascia gap against its resonances, and metal in or beside the beam, summed up as a multipath risk.</li>
+          <li>A camera behind the windscreen: added to the sample, it keeps 73 % of the light at 67° to the glass, its centre appears 3.8 mm off (0.25 px left at 3 m), and the glass reflects a third of the dashboard's brightness into its image, a warning until a glare shield is ticked.</li>
+          <li>Wipers sized from the windscreen, or your own arms, with each windscreen camera's footprint on the glass, red where no blade passes: typical tandem wipers clear all of that camera's view. Exported as JSON, CSV and PNG; in batch mode with <code class="nowrap">--materials</code>, which exits with 2 when a radar looks into metal.</li>
+        </ul>
+        <p class="note">Material figures are typical literature values, not your vehicle's: measure your fascia and enter
+          it. Surfaces are flat layers at each ray, and the multipath risk is an indicator.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/materials.jpg" aria-label="The materials page on the data rig: each radar's loss through the bumper fascia and its map over the field, solid against metallic and repaired paint, then a camera added behind the windscreen: the light it loses, its centre shift, the dashboard glare and the wipers' sweep over its view">
+            <source src="media/materials.mp4" type="video/mp4"></video>
           <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
           <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
         </div>
@@ -640,8 +752,8 @@
     <div class="head">
       <div class="eyebrow">Robustness</div>
       <h2>Designs that survive the real world.</h2>
-      <p>A camera is never mounted exactly where it was drawn, and a loaded car sits lower. These studies tell you how
-        much that matters, and which camera to worry about.</p>
+      <p>A camera is never mounted exactly where it was drawn, a loaded car sits lower, and the road is not flat. These
+        studies tell you how much that matters, and which camera to worry about.</p>
     </div>
     <article class="feature" style="padding-top:0">
       <div class="text">
@@ -650,7 +762,7 @@
           <li><b>Monte Carlo tolerance study</b> with a sensitivity tornado and the worst cases pinned for inspection.</li>
           <li><b>Placement optimiser:</b> an evolutionary search scored under tolerance, with a Pareto front.</li>
           <li><b>Variants</b> side by side with a difference map and a table of every figure.</li>
-          <li><b>Load cases</b> from the suspension and the real loads: <a href="#loadcases">below</a>.</li>
+          <li><b>Load cases</b> from the suspension and the real loads, and <b>the road and body motion</b>: <a href="#loadcases">below</a>.</li>
         </ul>
       </div>
       <div class="media">
@@ -689,6 +801,32 @@
         </div>
       </div>
     </article>
+    <article class="feature" id="terrain">
+      <div class="text">
+        <div class="eyebrow">Road and body motion</div>
+        <h3>The rig on a real road: crests, speed bumps, braking and cornering</h3>
+        <p>Put the car on a road instead of flat ground: a ramp, a crest, a garage ramp, a speed bump, a kerb, a crowned
+          road. The car stands on its four tyres, and every heat map, figure and Issue uses the road: a point counts only
+          where the camera's ray clears the road itself. Body motion puts braking, accelerating and cornering through the
+          suspension.</p>
+        <ul>
+          <li>On the sample, a crest 5 m ahead (a 300 m curve into an 8 % fall) keeps the road ahead in view to 20 m, where flat ground is seen to the end of the 60 m check; the side-on profile shows what drops out of view.</li>
+          <li>An 80 mm speed bump is first resolved 20 m ahead on level road, when its height spans 3 px in F's image; beyond that crest, only at 18 m. The body's underside and every sensor are checked for clearance standing and while driving over each bump, kerb and ramp.</li>
+          <li>Hard braking at 0.8 g pitches the body 2.25° and moves F's horizon 36 px; cornering at 0.5 g rolls it 2.55°; braking in a bend shifts the stitched ground 75 cm. The suspension, the centre of gravity and the anti-dive figures are typical until you enter yours.</li>
+          <li>Exported as JSON, CSV and PNG; in batch mode with <code class="nowrap">--terrain</code>, which exits with 2 when the body or a sensor would touch the road.</li>
+        </ul>
+        <p class="note">Body motion is steady state: no dampers or overshoot. The optimiser, the tolerance study, the
+          perception range, the installation check and the load cases keep to flat ground.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/terrain.jpg" aria-label="The road and body motion page: a crest added ahead of the car with the side-on profile red where the road beyond it drops out of view, a speed bump first seen 18 m ahead, hard braking with the front camera's horizon shift, then the road and its coverage in the main 3D view">
+            <source src="media/terrain.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
     <div class="tiles">
       <figure>
         <div class="frame natural"><img src="media/compare.jpg" alt="The sample's layout variants compared: three coverage maps, a difference map and a table of all five variants" loading="lazy" width="1600" height="900"></div>
@@ -714,7 +852,7 @@
           plan from one frame each.</p>
         <ul>
           <li>Boards are found in rectified patches cut out of the fisheye image with the exact lens model, and the pose is solved per camera.</li>
-          <li>A <b>joint solve</b> refines all cameras together with each board's placement, so neighbouring cameras agree at the seams.</li>
+          <li>A <b>joint solve</b> refines all cameras together with each board's placement, so neighbouring cameras agree at the seams. It now reaches its optimum every time, in about 0.15 s for six cameras instead of 3.4 s, and its answers scatter as its own uncertainty predicts (checked over 40 simulated installations).</li>
           <li>Per camera: Δx Δy Δz, Δyaw Δpitch Δroll and a verdict against your tolerance; the measured poses become an <b>as-built</b> variant.</li>
           <li><b>Unit lens calibration</b> from 10–20 board views (cv::fisheye), or import calibrations from OpenCV, ROS camera_info, Kalibr or JSON.</li>
         </ul>
@@ -765,8 +903,8 @@
           model; the lidar sees the board's plane, its edge and its squares. One solve gives the lidar's pose relative to
           the camera, and so in the vehicle, against the plan and with its uncertainty.</p>
         <ul>
-          <li>A pose plan that places and turns each board so that together they pin all six degrees of freedom: on the sample, the board planes alone would put the roof lidar within about ±0.9 / ±1.7 / ±3.4 mm (a prediction from the points expected on each board at 15 mm range noise).</li>
-          <li>Try it on synthetic captures through the real lens and the lidar's beams: a lidar mounted 15 mm forward, 8 mm up and 0.6° turned measures 15.0 mm, 10.4 mm and 0.61° off the plan, 2.4 mm and 0.023° from the true mounting, with a 1σ of ±2.1 mm.</li>
+          <li>A pose plan that places and turns each board so that together they pin all six degrees of freedom. On the sample, the board planes alone would put the roof lidar within ±4.2 / ±6.3 / ±16.4 mm: the camera's corners, 4–8 m away through a fisheye, fix each board's distance only to centimetres. That prediction now matches 300 simulated calibrations within 7 %; the edges and the checker do far better.</li>
+          <li>Try it on synthetic captures through the real lens and the lidar's beams: a lidar mounted 15 mm forward, 8 mm up and 0.6° turned measures 15.2 mm, 10.2 mm and 0.61° off the plan, 2.2 mm and 0.021° from the true mounting, with a 1σ of ±2.1 mm. The solve takes 0.1 s, and a bias of about 3 mm that range noise along oblique beams used to cause is gone.</li>
           <li>Real image and point-cloud pairs from a folder: PCD, KITTI and nuScenes .bin, PLY, NumPy, CSV.</li>
           <li>The lidar's points on the image through the plan and through the solve. Boards that all lean the same way are reported as leaving a direction undetermined, not given a number. Apply the measured pose or keep it as a new variant; in batch mode with <code class="nowrap">--lidar-calib</code>.</li>
         </ul>
@@ -781,7 +919,34 @@
       </div>
     </article>
 
-    <article class="feature" id="drivelog">
+    <article class="feature" id="observability">
+      <div class="text">
+        <div class="eyebrow">Calibration observability</div>
+        <h3>How firmly the planned boards will pin each sensor, before any is printed</h3>
+        <p>Vantage asks how precisely the corners of the planned boards, each found to a fraction of a pixel through the
+          camera's lens model, will fix where every camera sits, with the boards laid by hand a little off their plan as
+          the installation check's joint solve assumes. Weak directions are explained in plain words, and fixes are
+          tried and measured before they are offered.</p>
+        <ul>
+          <li>On the sample's eight floor boards every camera's yaw comes out at ±0.13° (1σ), 1.3× a 0.1° requirement. The corners alone would give ±0.01°, so where the boards lie is what limits it: laid against a jig (±5 mm, ±0.25°) the worst axis drops to 0.5×.</li>
+          <li>Cameras that share a board are tied far tighter than either is to the vehicle (F to ML at 0.5× the requirement). Lidar–camera pairs use the lidar–camera calibration's boards and say whether the corners or the lidar's points limit them; radars use the corner reflectors you place.</li>
+          <li><b>Verify</b> solves simulated captures with the solves that will solve the real ones and compares their spread with the prediction. The fusion tab maps where lidar points land in each image: on 22 % of F's view of a surface 20 m out, about one point per 37 pixels there.</li>
+          <li><b>Apply</b> moves or adds a suggested board in one undo step. Exported as JSON, CSV and PNG; in batch mode with <code class="nowrap">--observability</code> (and <code class="nowrap">--verify N</code>), which exits with 2 when a camera sees no board whole.</li>
+        </ul>
+        <p class="note">Predictions from the geometry, not measurements: the lens models are taken as exact and the corner
+          noise as equal on every corner.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/observability.jpg" aria-label="The calibration observability page on the data rig: the boards in plan with each camera ringed by its verdict, the table of 1σ per axis, a camera's weakest direction and the board suggestions, the boards laid to a jig, then the fusion maps of lidar points per pixel">
+            <source src="media/observability.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature flip" id="drivelog">
       <div class="text">
         <div class="eyebrow">Drive-log check</div>
         <h3>The recorded drive, checked against the plan</h3>
@@ -805,7 +970,7 @@
       </div>
     </article>
 
-    <article class="feature flip" id="asbuilt">
+    <article class="feature" id="asbuilt">
       <div class="text">
         <div class="eyebrow">As-built check</div>
         <h3>Does the real rig see what the plan says?</h3>
@@ -833,7 +998,7 @@
       </div>
     </article>
 
-    <article class="feature" id="fleet">
+    <article class="feature flip" id="fleet">
       <div class="text">
         <div class="eyebrow">Fleet</div>
         <h3>The same rig on every vehicle, month after month</h3>
@@ -899,7 +1064,7 @@
     <div class="head">
       <div class="eyebrow">Export</div>
       <h2>Hand the design to the people and machines that need it.</h2>
-      <p>Thirty-six formats, each with a live preview. Units, angles and the coordinate frame are chosen per export, and
+      <p>Forty-three formats, each with a live preview. Units, angles and the coordinate frame are chosen per export, and
         every file says which convention it uses.</p>
     </div>
     <article class="feature flip" id="datasets" style="padding-top:0;border-top:0">
@@ -944,8 +1109,9 @@
           <li>The bag has images, camera_info, points, detections, IMU, GNSS fixes, /tf and ground-truth markers, with the
             URDF's frame ids; in batch mode with <code class="nowrap">--dataset</code>.</li>
         </ul>
-        <p class="note">The scene is synthetic: simple shapes and typical material reflectivities, one sun, no weather.
-          Use it to test a pipeline, not to train a model.</p>
+        <p class="note">The scene is synthetic: simple shapes and typical material reflectivities, one sun, and fog, rain,
+          snow or night from the typical weather models when you pick them. Use it to test a pipeline, not to train a
+          model.</p>
       </div>
       <div class="media">
         <div class="frame">
@@ -956,11 +1122,36 @@
         </div>
       </div>
     </article>
+    <article class="feature flip" id="automation">
+      <div class="text">
+        <div class="eyebrow">Automation and CI</div>
+        <h3>The calibration files stay in step with the design, and your checks run on them</h3>
+        <p>Switch on <b>Export ▸ Automation</b>, and on every save, after a quiet period or by hand Vantage regenerates
+          the chosen exports into a folder next to the project, runs the requirements check, writes a summary of what
+          changed and then runs your own command, such as <code>make test</code>.</p>
+        <ul>
+          <li>The command is kept only in your settings on this computer, never in the project file. It is shown in full and runs only once you approve it; changing it asks again. The assistant can see whether one is set, never its text, and cannot start a run.</li>
+          <li>Changes are found by content, not time stamps: on the sample 26 files are written in under a second, and with camera F moved 5 cm, 10 of them change (F's OpenCV file, the extrinsics, URDF, TF, nuScenes, KITTI and Kalibr files, the requirements results) while the other cameras' files stay as they were. Files a removed camera no longer produces are removed; yours never are.</li>
+          <li>The command gets <code>VANTAGE_EXPORT_DIR</code>, <code>VANTAGE_SUMMARY</code> (every file with its SHA-256, what changed, the requirements verdict) and <code>VANTAGE_CHECK_EXIT</code>; its output streams into the page with the exit code, the duration and a history of runs.</li>
+          <li>Headless, <code class="nowrap">vantage --watch rig.vantage --on-change "make test"</code> does the same after every change of the file; the CI templates run <code class="nowrap">--export</code> and <code class="nowrap">--check</code> in GitHub Actions or GitLab CI.</li>
+        </ul>
+        <p class="note">The command runs with your permissions: approving its exact text is the only gate. Keep passwords
+          and tokens in environment variables, not in the command.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/automation.jpg" aria-label="The automation page: automation turned on, make test typed as the command and approved in its dialog, a run with the regenerated files and the command's output, then a camera moved and the project saved: the run that follows lists the files that changed">
+            <source src="media/automation.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+      </div>
+    </article>
     <div class="grid3">
       <div class="card"><h4>Datasets</h4><ul><li><span>nuScenes sensor calibration</span><span>JSON</span></li><li><span>KITTI calibration</span><span>TXT</span></li><li><span>ROS camera_info</span><span>YAML ×N</span></li><li><span>Kalibr camchain</span><span>YAML</span></li></ul></div>
-      <div class="card"><h4>Calibration and robotics</h4><ul><li><span>OpenCV fisheye calibration</span><span>YAML ×N</span></li><li><span>ROS 2 URDF + static TF</span><span>URDF, PY</span></li><li><span>Jetson camera config</span><span>JSON</span></li></ul></div>
-      <div class="card"><h4>Extrinsics</h4><ul><li><span>Every sensor's pose</span><span>JSON</span></li><li><span>Every sensor's pose</span><span>YAML</span></li><li><span>Every sensor's pose</span><span>CSV</span></li></ul></div>
-      <div class="card"><h4>Documents</h4><ul><li><span>Mount sheet</span><span>PDF</span></li><li><span>Design report</span><span>HTML, PDF</span></li><li><span>Blind volume</span><span>JSON, OBJ</span></li><li><span>Perception range</span><span>JSON, PNG</span></li><li><span>Lidar and radar coverage</span><span>JSON, PNG</span></li><li><span>Sync and timing plan</span><span>JSON, PNG</span></li><li><span>Recording budget</span><span>JSON, CSV</span></li><li><span>Power budget</span><span>JSON, CSV</span></li><li><span>GNSS and IMU</span><span>JSON, TXT, PNG</span></li><li><span>Sun glare and dirt</span><span>JSON, PNG</span></li><li><span>Housings in view</span><span>JSON, CSV</span></li><li><span>Load cases (suspension)</span><span>JSON, CSV</span></li><li><span>Requirements and review pack</span><span>JSON, CSV, PDF</span></li><li><span>Fleet</span><span>JSON, CSV, PNG</span></li></ul></div>
+      <div class="card"><h4>Calibration and robotics</h4><ul><li><span>OpenCV fisheye calibration</span><span>YAML ×N</span></li><li><span>ROS 2 URDF + static TF</span><span>URDF, PY</span></li><li><span>Jetson camera config</span><span>JSON</span></li><li><span>Extrinsics: every sensor's pose</span><span>JSON</span></li><li><span>Extrinsics: every sensor's pose</span><span>YAML</span></li><li><span>Extrinsics: every sensor's pose</span><span>CSV</span></li></ul></div>
+      <div class="card"><h4>Documents</h4><ul><li><span>Mount sheet</span><span>PDF</span></li><li><span>Design report</span><span>HTML, PDF</span></li><li><span>Requirements and review pack</span><span>JSON, CSV, PDF</span></li><li><span>Fleet</span><span>JSON, CSV, PNG</span></li><li><span>CI templates (GitHub, GitLab)</span><span>YAML, MD</span></li></ul></div>
+      <div class="card"><h4>Studies</h4><ul><li><span>Blind volume</span><span>JSON, OBJ</span></li><li><span>Perception range</span><span>JSON, PNG</span></li><li><span>Weather comparison</span><span>JSON, CSV, PNG</span></li><li><span>Critical targets and envelopes</span><span>JSON, CSV, PNG</span></li><li><span>Lidar and radar coverage</span><span>JSON, PNG</span></li><li><span>Sync and timing plan</span><span>JSON, PNG</span></li><li><span>Recording budget</span><span>JSON, CSV</span></li><li><span>Power budget</span><span>JSON, CSV</span></li><li><span>Cable harness</span><span>JSON, CSV, PNG</span></li><li><span>GNSS and IMU</span><span>JSON, TXT, PNG</span></li><li><span>Sun glare and dirt</span><span>JSON, PNG</span></li><li><span>Materials, glass and wipers</span><span>JSON, CSV, PNG</span></li><li><span>Housings in view</span><span>JSON, CSV</span></li><li><span>Load cases (suspension)</span><span>JSON, CSV</span></li><li><span>Road and body motion</span><span>JSON, CSV, PNG</span></li><li><span>Calibration observability</span><span>JSON, CSV, PNG</span></li></ul></div>
       <div class="card"><h4>Surround view</h4><ul><li><span>Bird's-eye remap tables</span><span>NPZ, BIN</span></li><li><span>3D surround-view bowl</span><span>OBJ, NPZ, PNG</span></li><li><span>Parking guidelines</span><span>JSON, PNG ×N</span></li><li><span>Objects in the stitched view</span><span>JSON, PNG</span></li><li><span>Reference stitcher</span><span>C++, PY</span></li></ul></div>
       <div class="card"><h4>Images and CAD</h4><ul><li><span>Viewport</span><span>PNG</span></li><li><span>Bird's-eye view</span><span>PNG</span></li><li><span>All camera views</span><span>PNG ×N</span></li><li><span>Mount points</span><span>DXF</span></li><li><span>Mount points</span><span>STEP</span></li><li><span>Mount brackets</span><span>STL ×N</span></li></ul></div>
     </div>
@@ -974,23 +1165,25 @@
           <div class="bar"><i></i><i></i><i></i></div>
 <pre><span class="c"># the same engine without a window, for CI and the factory</span>
 <span class="p">$</span> vantage tigor.vantage --analyse report.json
-analysed 6-cam · v3: 6 cameras in 0.4 s
+analysed 6-cam · v3: 6 cameras in 0.5 s
 wrote report.json
 <span class="c"># exit code 2: a critical issue (0.010 m² of blind ground)</span>
 <span class="p">$</span> vantage tigor.vantage --install-check captures/ \
       --report check.json --as-built built.vantage
-analysed 6-cam · v3: 6 cameras in 0.4 s
+analysed 6-cam · v3: 6 cameras in 0.5 s
 wrote check.json
 saved built.vantage with variant 6-cam · v3 · as-built
 <span class="p">$</span> jq -r '.cameras[] | "\(.tag) \(.status) \(.rotation_error_deg)°"' check.json
-<span class="g">F good 0.107°</span>
-<span class="g">R good 0.013°</span>
-<span class="g">ML good 0.075°</span>
-<span class="g">MR good 0.047°</span>
-<span class="g">QL good 0.146°</span>
-<span class="w">QR warning 1.438°</span></pre>
+<span class="g">F good 0.131°</span>
+<span class="g">R good 0.042°</span>
+<span class="g">ML good 0.134°</span>
+<span class="g">MR good 0.154°</span>
+<span class="g">QL good 0.171°</span>
+<span class="w">QR warning 1.356°</span></pre>
         </div>
-        <figcaption>A real batch run on the sample. The captures were synthetic, rendered with a 1.5° yaw and 9 mm height error on QR; the check found 1.44°.</figcaption>
+        <figcaption>A real batch run on the sample. The captures were synthetic, rendered with a 1.5° yaw and 9 mm height
+          error on QR; the check found 1.36°. With the boards laid by hand to ±20 mm and ±1°, each camera's yaw is
+          known to about ±0.13°, as <a href="#observability">calibration observability</a> predicts.</figcaption>
       </figure>
     </div>
   </div>
@@ -1000,7 +1193,7 @@ saved built.vantage with variant 6-cam · v3 · as-built
 <section class="alt" id="download">
   <div class="wrap">
     <div class="head">
-      <div class="eyebrow">Download · version 0.1.1</div>
+      <div class="eyebrow">Download · version 0.2.0</div>
       <h2>Install Vantage.</h2>
       <p>Vantage is free software, licensed under the GPL-3.0-or-later. Downloads that need no Python are on the
         <a href="https://github.com/Sherin-SEF-AI/Vantage/releases/latest">latest release</a>, with SHA-256 checksums in <code>SHA256SUMS.txt</code>; or install from
