@@ -99,6 +99,27 @@ class OptimiserPage(QWidget):
             g.addWidget(w, i, 1)
         ll.addLayout(g)
         ll.addSpacing(4)
+        ll.addWidget(label('Critical targets', bold=True))
+        ch = QHBoxLayout()
+        ch.setSpacing(4)
+        self.crit = QComboBox()
+        self.crit.addItem('Ignore', 'off')
+        self.crit.addItem('Every target resolved', 'require')
+        self.crit.addItem('Weigh unresolved targets', 'weigh')
+        self.crit.setToolTip('The targets of Analysis ▸ Critical targets: required, a candidate that leaves one '
+                             'unresolved never reaches the Pareto front; weighed, each unresolved target adds the '
+                             'weight to its objective (m² of blind area, cameras or px/cm)')
+        self.crit.currentIndexChanged.connect(self._crit_mode)
+        self.crit_w = ScrubSpinBox('w', 'plain', 2, '', step=0.1)
+        self.crit_w.set_value(1.0)
+        self.crit_w.setToolTip('Added to a candidate\'s objective per critical target it leaves unresolved')
+        self.crit_w.setFixedWidth(84)
+        ch.addWidget(self.crit, 1)
+        ch.addWidget(self.crit_w)
+        ll.addLayout(ch)
+        self.crit_note = label('', muted=True, small=True, wrap=True)
+        ll.addWidget(self.crit_note)
+        ll.addSpacing(4)
         fh = QHBoxLayout()
         fh.addWidget(label('Free variables', bold=True))
         fh.addStretch(1)
@@ -165,8 +186,11 @@ class OptimiserPage(QWidget):
         self.scatter.picked.connect(self.select)
         cl.addWidget(self.scatter, 3)
         cl.addWidget(label('Candidates · Pareto front'))
-        self.table = QTableWidget(0, 7)
-        self.table.setHorizontalHeaderLabels(['', 'Cams', 'Blind m²', 'Worst m²', 'Min px/cm', 'Cable max m', 'Changes vs current'])
+        self.table = QTableWidget(0, 8)
+        self.table.setHorizontalHeaderLabels(['', 'Cams', 'Blind m²', 'Worst m²', 'Min px/cm', 'Cable max m',
+                                              'Targets', 'Changes vs current'])
+        self.table.horizontalHeaderItem(6).setToolTip('Critical targets resolved at the candidate\'s pose (the icon: '
+                                                      'still resolved in every tolerance sample)')
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(ROW_H + 1)
         self.table.horizontalHeader().setFixedHeight(ROW_H)
@@ -174,9 +198,10 @@ class OptimiserPage(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         hh = self.table.horizontalHeader()
-        for c in range(6):
+        for c in range(7):
             hh.setSectionResizeMode(c, QHeaderView.ResizeMode.ResizeToContents)
-        hh.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
+        hh.setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
+        self.table.setColumnHidden(6, True)
         self.table.cellClicked.connect(lambda r, c: self.select(r))
         cl.addWidget(self.table, 2)
         split.addWidget(centre)
@@ -207,7 +232,13 @@ class OptimiserPage(QWidget):
         self.b_prev.clicked.connect(self.preview3d)
         self.b_apply = button('Apply as new variant', 'primary')
         self.b_apply.clicked.connect(self.apply)
+        self.b_three = button('Add the best three', None, None, 'Add the first three candidates of the Pareto front '
+                                                                'as variants, in one undo step (the active variant '
+                                                                'stays)')
+        self.b_three.clicked.connect(lambda: self.apply_best())
+        self.b_three.setEnabled(False)
         fl.addWidget(self.b_prev)
+        fl.addWidget(self.b_three)
         fl.addWidget(self.b_apply)
         rl.addWidget(foot)
         split.addWidget(right)
@@ -231,6 +262,7 @@ class OptimiserPage(QWidget):
         self.sel = None
         self.sel_result = self.base_result = self.sel_cams = None
         self.table.setRowCount(0)
+        self.b_three.setEnabled(False)
         self.scatter.set_data([], [], [], None, None)
         self.summary.setText('')
         for v in self.s.values():
@@ -256,6 +288,17 @@ class OptimiserPage(QWidget):
             self.plan.label = 'Select a candidate'
             self.delta.label = ''
         self.cable.set_value(max(max((c.cable_m for c in v.cameras), default=3.0), 3.0))
+        self._crit_mode()
+
+    def _crit_mode(self, *_):
+        from ...core.critical import settings_of
+        n = sum(t['enabled'] for t in settings_of(self.ctx.store.project).targets)
+        mode = self.crit.currentData()
+        self.crit_w.setEnabled(mode == 'weigh')
+        self.crit.setEnabled(n > 0)
+        self.crit_note.setText(f'{n} target{"s" * (n != 1)} from Analysis ▸ Critical targets; the cameras\' '
+                               f'requirement only (the lidars do not move).' if n else
+                               'No critical targets yet: place them in Analysis ▸ Critical targets.')
 
     def _fill_vars(self):
         self._busy = True
@@ -309,10 +352,12 @@ class OptimiserPage(QWidget):
 
     def settings(self) -> OptSettings:
         key = self.obj.checkedButton().property('key')
+        crit = self.crit.currentData() if self.crit.isEnabled() else 'off'
         return OptSettings(objective=key, under_tolerance=self.under_tol.isChecked(), zones=self.zones.currentData(),
                            height=(self.h_lo.value(), self.h_hi.value()), cable_max=self.cable.value(),
                            count=(int(self.c_lo.value()), int(self.c_hi.value())), generations=int(max(1, self.gens.value())),
-                           population=int(max(6, self.pop.value())), vars=self.vars)
+                           population=int(max(6, self.pop.value())), vars=self.vars, critical=crit,
+                           critical_weight=max(0.0, float(self.crit_w.value())))
 
     # ------------------------------------------------------------------ run
     def toggle(self):
@@ -366,15 +411,27 @@ class OptimiserPage(QWidget):
 
     def _fill_table(self, opt):
         self.table.setRowCount(len(self.cands))
+        self.table.setColumnHidden(6, opt.crit is None)
+        self.b_three.setEnabled(len(self.cands) > 0)
         for i, c in enumerate(self.cands):
-            vals = [c.label, str(c.cams), f'{c.blind:.3f}', f'{c.worst:.3f}', f'{c.min_density:.1f}', f'{c.cable_max:.2f}', opt.changes(c)]
+            vals = [c.label, str(c.cams), f'{c.blind:.3f}', f'{c.worst:.3f}', f'{c.min_density:.1f}',
+                    f'{c.cable_max:.2f}', opt.targets_text(c), opt.changes(c)]
             for j, v in enumerate(vals):
                 it = QTableWidgetItem(v)
-                it.setFont(mono(12) if j < 6 else mono(11))
-                if 0 < j < 6:
+                it.setFont(mono(12) if j < 7 else mono(11))
+                if 0 < j < 7:
                     it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 if j == 5:
                     it.setIcon(icons.status_icon('good' if c.cable_ok else 'serious', 12))
+                if j == 6 and opt.crit is not None:
+                    pen = opt.crit_penalty(c)
+                    it.setIcon(icons.status_icon('good' if pen == 0 else 'warning' if c.crit_unmet == 0 else
+                                                 'serious', 12))
+                    it.setToolTip('Every critical target resolved' + (' in every tolerance sample' if
+                                                                       opt.st.under_tolerance else '')
+                                  if pen == 0 else
+                                  (f'Unresolved: {", ".join(c.crit_missing)}' if c.crit_missing else
+                                   f'{pen} target{"s" * (pen > 1)} lost in a tolerance sample'))
                 self.table.setItem(i, j, it)
 
     def finished(self, opt):
@@ -413,8 +470,11 @@ class OptimiserPage(QWidget):
             pv._img_key = None
             pv.fit()
         nom = getattr(self.opt, 'nominal_cand', None)
-        self.summary.setText(f'{cand.label} keeps {cand.blind:.3f} m² blind and moves the tolerance worst case from '
-                             f'{nom.worst:.3f} to {cand.worst:.3f} m².' if nom else '')
+        crit = '' if self.opt.crit is None else \
+            f' It resolves {self.opt.targets_text(cand)} critical targets' + (
+                f' (current {self.opt.targets_text(nom)})' if nom else '') + '.'
+        self.summary.setText((f'{cand.label} keeps {cand.blind:.3f} m² blind and moves the tolerance worst case from '
+                              f'{nom.worst:.3f} to {cand.worst:.3f} m².' if nom else '') + crit)
         self.table.selectRow(i)
         self.scatter.selected = i
         self.scatter.update()
@@ -455,6 +515,29 @@ class OptimiserPage(QWidget):
         self.ctx.store.edit('variants', fn, f'Applied optimiser {cand.label} as {name}')
         self.ctx.window._fill_variant_combo()
         self.ctx.msg(f'Created variant {name}')
+
+    def apply_best(self, n=3):
+        """The first n candidates of the Pareto front (as the table lists them) as new variants, one undo step; the
+        active variant stays, so they can be compared."""
+        if self.opt is None or not self.cands:
+            return []
+        base = self.ctx.store.project.variant.name
+        taken = {v.name for v in self.ctx.store.project.variants}
+        new = []
+        for cand in self.cands[:n]:
+            name, k = f'{base} · {cand.label}', 2
+            while name in taken:
+                name, k = f'{base} · {cand.label} ({k})', k + 1
+            taken.add(name)
+            new.append(self.opt.to_variant(cand, name))
+
+        def fn(p):
+            p.variants.extend(new)
+        self.ctx.store.edit('variants', fn, f'Added optimiser {", ".join(c.label for c in self.cands[:n])} as '
+                                            f'variants')
+        self.ctx.window._fill_variant_combo()
+        self.ctx.msg(f'Added {len(new)} variant{"s" * (len(new) != 1)}: {", ".join(v.name for v in new)}', 5000)
+        return new
 
 
 def _chip_icon(slot):

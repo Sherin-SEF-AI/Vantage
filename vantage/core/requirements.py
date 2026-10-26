@@ -1696,10 +1696,11 @@ def _planned_sigma(ev):
     return r
 
 
-@_metric('lidar_calib.planned_sigma_mm', 'Lidar–camera calibration precision as planned (position, 1σ)', 'mm',
+@_metric('lidar_calib.planned_sigma_mm', 'Lidar–camera calibration from the board planes alone (position, 1σ)', 'mm',
          'lidar_plan', '<=', 1, (),
-         'The worst axis of the lidar position the planned board poses determine (a prediction from the board planes; '
-         'edges and the checker improve on it)')
+         'The worst axis of the lidar position the planned board poses determine from their planes alone (a '
+         'prediction; the edges and the checker do much better, so it is a check that the plan constrains the lidar '
+         'at all, not the calibration\'s accuracy)')
 def _m_lc_psig(ev, prm):
     r = _planned_sigma(ev)
     v = max(r['sigma'][k] for k in ('x_mm', 'y_mm', 'z_mm'))
@@ -2224,10 +2225,12 @@ def _plan_lidar_calib(project, v):
     if lc is None or not v.cameras or not any(s.visible and s.kind == 'lidar' for s in v.sensors):
         return []
     st = lc.LidarCalibSettings.from_dict(project.analysis.lidar_calib)
-    return [{'metric': 'lidar_calib.planned_sigma_mm', 'params': {}, 'op': '<=', 'target': st.pos_tol_mm / 2,
-             'priority': 'should', 'text': f'The planned calibration boards pin the lidar to {st.pos_tol_mm / 2:g} mm '
-                                           f'(1σ)',
-             'note': 'The lidar–camera calibration flags a 1σ above half its tolerance.'}]
+    return [{'metric': 'lidar_calib.planned_sigma_mm', 'params': {}, 'op': '<=', 'target': 2 * st.pos_tol_mm,
+             'priority': 'should', 'text': f'The planned calibration boards\' planes alone pin the lidar to '
+                                           f'{2 * st.pos_tol_mm:g} mm (1σ)',
+             'note': 'From the board planes alone, a fisheye camera 4–8 m from the boards gives about 15–20 mm; the '
+                     'edges and the checker bring the calibration to a few millimetres. A plan above this leaves the '
+                     'lidar poorly constrained.'}]
 
 
 def _plan_drivelog(project, v):
@@ -2362,8 +2365,8 @@ _EXTRA_TEMPLATES: list = [
      'op': '<=', 'target': 1.0, 'priority': 'should'},
     {'text': 'No camera rotated more than 0.3° from the plan in the test drive', 'metric': 'drivelog.rotation_deg',
      'params': {}, 'op': '<=', 'target': 0.3, 'priority': 'should'},
-    {'text': 'The planned board poses calibrate the lidar to 3 mm (1σ)', 'metric': 'lidar_calib.planned_sigma_mm',
-     'params': {}, 'op': '<=', 'target': 3.0, 'priority': 'should'},
+    {'text': 'The planned board poses\' planes alone pin the lidar to 20 mm (1σ)',
+     'metric': 'lidar_calib.planned_sigma_mm', 'params': {}, 'op': '<=', 'target': 20.0, 'priority': 'should'},
     {'text': 'The lidar within 10 mm of its planned position (measured)', 'metric': 'lidar_calib.delta_mm',
      'params': {}, 'op': '<=', 'target': 10.0, 'priority': 'must'},
     {'text': 'The lidar within 0.3° of its planned orientation (measured)', 'metric': 'lidar_calib.delta_deg',

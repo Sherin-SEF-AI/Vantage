@@ -168,8 +168,15 @@ def test_a_radar_behind_the_bumper_fascia_still_sees_but_one_inside_the_body_doe
     out = SC.run(p, e, settings=st)
     assert out.radar[0, 0] == pytest.approx(250.0) and out.metrics['radars'] == 1 and out.lidars == []
     front = float(p.vehicle.mesh.bbox[1][0])
-    rd.x = front - 0.08                                             # 8 cm into the bumper: the fascia is ignored
-    assert SC.run(p, e, settings=st).radar[0, 0] == pytest.approx(250.0)
+    rd.x = front - 0.08                     # 8 cm into the bumper: the fascia does not block, it costs what it loses
+    from vantage.core import materials as MT
+    rep = MT.cached_run(p, e.vehicle_geom(p)).radar('RD1')
+    assert rep['mount'] == 'behind' and 0 < rep['zones'][0]['loss_db'] < 6
+    factor = 10 ** (-rep['zones'][0]['loss_db'] / 40)               # range ∝ (two-way transmission)^¼
+    assert SC.run(p, e, settings=st).radar[0, 0] == pytest.approx(250.0 * factor, rel=0.01) and factor < 0.97
+    p.analysis.materials = {'paint': 'none'}                       # an unpainted fascia loses less
+    assert SC.run(p, e, settings=st).radar[0, 0] > 250.0 * factor + 1.0
+    p.analysis.materials = {}
     rd.x = front - 0.6                                              # in the engine bay: the bumper is in the way
     assert SC.run(p, e, settings=st).radar[0, 0] == 0.0
 

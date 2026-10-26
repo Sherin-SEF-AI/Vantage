@@ -1,4 +1,11 @@
-"""Placement optimiser: evolutionary search over mount offsets and aim, scored under tolerance."""
+"""Placement optimiser: evolutionary search over mount offsets and aim, scored under tolerance.
+
+Critical targets (core.critical, Analysis ▸ Critical targets) can join the search: 'require' keeps every candidate
+that leaves a target unresolved off the Pareto front (as a cable over its limit is), 'weigh' adds critical_weight per
+unresolved target to the candidate's objective (in the objective's own unit: m² of blind area, cameras, px/cm). Under
+tolerance a target counts as resolved only when it stays resolved in every tolerance sample (the line of sight of the
+planned position is kept for the samples, as the coverage score keeps the planned position's occlusion map). The
+lidars do not move in the search, so only the cameras' requirement is checked."""
 from __future__ import annotations
 
 import copy
@@ -56,6 +63,11 @@ class OptSettings:
     cell: float = 0.10
     seed: int = 7
     vars: list = field(default_factory=list)
+    critical: str = 'off'             # off | require (every critical target resolved) | weigh
+    critical_weight: float = 1.0      # 'weigh': added to the objective per unresolved target
+
+
+CRITICAL_MODES = ('off', 'require', 'weigh')
 
 
 @dataclass
@@ -70,6 +82,9 @@ class Candidate:
     positions: dict = field(default_factory=dict)   # uid -> (x, y, z)
     rank: int = 0
     label: str = ''
+    crit_unmet: int = 0              # critical targets no camera resolves at the candidate's pose
+    crit_tol: int = 0                # ... in its worst tolerance sample (= crit_unmet without the tolerance score)
+    crit_missing: list = field(default_factory=list)   # their names (at the candidate's pose)
 
 
 def default_vars(project: Project, variant: Variant) -> list[FreeVar]:
@@ -116,6 +131,11 @@ class Optimiser:
         self.evals = 0
         self.t0 = time.perf_counter()
         self._surface_cache = {}
+        self.crit = None
+        if st.critical in ('require', 'weigh'):
+            from .critical import TargetCheck
+            tc = TargetCheck(project, self.vg, self.variant)
+            self.crit = tc if tc else None
 
     # ---------------------------------------------------------- genes
     def nominal(self) -> Candidate:
@@ -196,6 +216,9 @@ class Optimiser:
         cand.positions = {c.uid: (c.x, c.y, c.z) for c in cams}
         if not cams:
             cand.blind = cand.worst = 1e9
+            if self.crit is not None:                   # nothing resolves any target
+                cand.crit_unmet = cand.crit_tol = len(self.crit.targets)
+                cand.crit_missing = [t['name'] for t in self.crit.targets]
             return cand
         data = []
         for c in cams:
@@ -210,19 +233,27 @@ class Optimiser:
         cand.blind = blind
         cand.min_density = float(D.max(0)[cov].min()) if cov.any() else 0.0
         worst = blind
+        if self.crit is not None:
+            met = self.crit.met(cams)
+            cand.crit_unmet = cand.crit_tol = int((~met).sum())
+            cand.crit_missing = self.crit.names(met)
         if self.st.under_tolerance and self.st.tol_samples > 0:
             for _ in range(self.st.tol_samples):
                 Vs, Ds = [], []
+                poses = {}
                 for (c, intr, cube), (v0, d0) in zip(data, nominal):
                     dv = self.rng.uniform(-1, 1, 5)
                     R = rot_zyx(c.yaw + dv[0] * self.st.tol_deg, c.pitch + dv[1] * self.st.tol_deg, c.roll)
                     pos = c.pos() + np.r_[dv[2:5]] * self.st.tol_mm / 1000
                     v, d, _, _ = eval_points(self.P, c, intr, cube, R_override=R, pos_override=pos)
                     Vs.append(v)
+                    poses[c.uid] = (R, pos)
                 b = float((np.stack(Vs).sum(0) == 0).sum() * self.a)
                 worst = max(worst, b)
+                if self.crit is not None and cand.crit_tol < len(self.crit.targets):
+                    cand.crit_tol = max(cand.crit_tol, int((~self.crit.met(cams, poses)).sum()))
         cand.worst = worst
-        cables = [route_length(self.project, c) for c in cams]
+        cables = [route_length(self.project, c, routed=False) for c in cams]     # the estimate: fast in the loop
         cand.cable_max = max(cables)
         cand.cable_ok = all(r <= max(c.cable_m, self.st.cable_max) + 1e-6 for r, c in zip(cables, cams))
         z_ok = all(self.st.height[0] - 1e-6 <= c.z <= self.st.height[1] + 1e-6 for c in cams)
@@ -231,12 +262,41 @@ class Optimiser:
         self.evals += 1
         return cand
 
+    def crit_penalty(self, c: Candidate) -> int:
+        """Critical targets the candidate leaves unresolved (in its worst tolerance sample when scored under
+        tolerance); 0 without critical targets in the search."""
+        if self.crit is None:
+            return 0
+        return c.crit_tol if self.st.under_tolerance else c.crit_unmet
+
     def objectives(self, c: Candidate):
+        pen = self.crit_penalty(c)
+        w = self.st.critical_weight * pen if self.st.critical == 'weigh' else 0.0
         if self.st.objective == 'cameras':
-            return (c.cams + (0 if c.worst < 0.01 else 10), c.worst, -c.min_density)
-        if self.st.objective == 'density':
-            return (-c.min_density + (0 if c.worst < 0.05 else 10), c.worst, c.cams)
-        return (c.worst, -c.min_density, c.cams)
+            out = (c.cams + (0 if c.worst < 0.01 else 10) + w, c.worst, -c.min_density)
+        elif self.st.objective == 'density':
+            out = (-c.min_density + (0 if c.worst < 0.05 else 10) + w, c.worst, c.cams)
+        else:
+            out = (c.worst + w, -c.min_density, c.cams)
+        return (pen,) + out if self.st.critical == 'require' else out
+
+    def feasible(self, c: Candidate) -> bool:
+        """Within the cable limit and, with critical targets required, resolving all of them."""
+        return c.cable_ok and not (self.st.critical == 'require' and self.crit_penalty(c) > 0)
+
+    def _front(self, cands):
+        """The Pareto front of the feasible candidates; without any, of those closest to feasible (cable within
+        its limit where possible, then the fewest unresolved targets)."""
+        ok = [c for c in cands if self.feasible(c)]
+        if not ok and cands:
+            pool = [c for c in cands if c.cable_ok] or list(cands)
+            least = min(self.crit_penalty(c) for c in pool)
+            ok = [c for c in pool if self.crit_penalty(c) == least]
+        key = None
+        if self.st.critical == 'weigh' and self.crit is not None:
+            w = self.st.critical_weight
+            key = lambda c: (c.worst + w * self.crit_penalty(c), -c.min_density, c.cams)   # noqa: E731
+        return pareto(ok, key)
 
     # ---------------------------------------------------------- loop
     def run(self, progress=None, cancel=None):
@@ -246,7 +306,7 @@ class Optimiser:
         self.nominal_cand = nom
         pop = [nom] + [self.evaluate(self.mutate(nom, 1.5)) for _ in range(st.population - 1)]
         self.evaluated += pop
-        self.front = pareto([c for c in pop if c.cable_ok] or pop)
+        self.front = self._front(pop)
         for gen in range(st.generations):
             if cancel and cancel():
                 break
@@ -264,12 +324,11 @@ class Optimiser:
                     break
             self.evaluated += kids
             pop = sorted(pop + kids, key=self.objectives)[:st.population]
-            pool = self.front + [c for c in kids if c.cable_ok]
-            self.front = pareto(pool or kids)
+            self.front = self._front(self.front + kids)
             if progress:
                 progress(self)
         if not self.front:
-            self.front = pareto([c for c in self.evaluated if c.cable_ok] or self.evaluated)
+            self.front = self._front(self.evaluated)
         return self.front
 
     def candidates(self, k=5):
@@ -279,7 +338,7 @@ class Optimiser:
         for c in front:
             if nom is not None and c is nom:
                 continue
-            key = (round(c.worst, 3), round(c.min_density, 1), c.cams)
+            key = (round(c.worst, 3), round(c.min_density, 1), c.cams, c.crit_tol, c.crit_unmet)
             if key in seen:
                 continue
             seen.add(key)
@@ -317,10 +376,25 @@ class Optimiser:
                 done.add(pair)
         if not cand.cable_ok:
             out.append('cable over limit')
+        if cand.crit_missing:
+            out.append('misses ' + ', '.join(cand.crit_missing))
+        elif self.crit is not None and self.crit_penalty(cand):
+            out.append(f'loses {self.crit_penalty(cand)} critical target{"s" * (self.crit_penalty(cand) > 1)} '
+                       f'under tolerance')
         return ' · '.join(out) or 'no change'
 
+    def targets_text(self, cand: Candidate) -> str:
+        """'7/8' critical targets resolved at the candidate's pose ('' without critical targets in the search)."""
+        if self.crit is None:
+            return ''
+        n = len(self.crit.targets)
+        return f'{n - cand.crit_unmet}/{n}'
+
     def to_variant(self, cand: Candidate, name: str) -> Variant:
-        v = Variant(name=name, note=f'Optimiser {cand.label}: worst {cand.worst:.3f} m² under tolerance')
+        note = f'Optimiser {cand.label}: worst {cand.worst:.3f} m² under tolerance'
+        if self.crit is not None:
+            note += f'; critical targets resolved {self.targets_text(cand)}'
+        v = Variant(name=name, note=note)
         uid_map = {}
         for uid, gene in cand.genes.items():
             c = self.camera_for(uid, gene)
@@ -337,10 +411,13 @@ class Optimiser:
         return v
 
 
-def pareto(cands: list[Candidate]) -> list[Candidate]:
+def pareto(cands: list[Candidate], key=None) -> list[Candidate]:
+    """The candidates no other beats on every objective (worst blind area, minimum density, cameras; key(c) gives
+    other objective tuples, smaller is better)."""
     if not cands:
         return []
-    P = np.array([(c.worst, -c.min_density, c.cams) for c in cands], float)
+    key = key or (lambda c: (c.worst, -c.min_density, c.cams))
+    P = np.array([key(c) for c in cands], float)
     keep = np.ones(len(P), bool)
     for i in range(len(P)):
         if not keep[i]:

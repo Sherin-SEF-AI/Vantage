@@ -36,19 +36,33 @@ ROLES = (ROLE_MOUNTABLE, ROLE_GLASS, ROLE_WHEELS, ROLE_IGNORED)
 @dataclass
 class Part:
     name: str
-    material: str = ''
+    material: str = ''                 # the material name imported with the model ('rig' for the rig's parts)
     alpha: float = 1.0
     color: tuple = (0.8, 0.8, 0.8)
     role: str = ROLE_MOUNTABLE
+    surface: str = ''                  # surface material class (core.materials.CLASSES id); '' = from role and name
+    surface_mm: float = 0.0            # its thickness, mm (0 = the class's typical one)
 
     def to_dict(self):
-        return {'name': self.name, 'material': self.material, 'alpha': self.alpha,
-                'color': list(self.color), 'role': self.role}
+        d = {'name': self.name, 'material': self.material, 'alpha': self.alpha,
+             'color': list(self.color), 'role': self.role}
+        if self.surface:                       # only when set: files without materials stay as they were
+            d['surface'] = self.surface
+        if self.surface_mm > 0:
+            d['surface_mm'] = self.surface_mm
+        return d
 
     @staticmethod
     def from_dict(d):
+        surface = d.get('surface', '')
+        try:
+            mm = float(d.get('surface_mm', 0.0) or 0.0)
+        except (TypeError, ValueError):
+            mm = 0.0
         return Part(d.get('name', 'Part'), d.get('material', ''), float(d.get('alpha', 1.0)),
-                    tuple(d.get('color', (0.8, 0.8, 0.8))), d.get('role', ROLE_MOUNTABLE))
+                    tuple(d.get('color', (0.8, 0.8, 0.8))), d.get('role', ROLE_MOUNTABLE),
+                    surface[:40] if isinstance(surface, str) else '',
+                    min(max(mm, 0.0), 100.0) if math.isfinite(mm) else 0.0)
 
 
 @dataclass

@@ -9,6 +9,13 @@ its left and right edges, square to the line of sight.
 
 Directions are azimuths about the vehicle centre (the middle of the body's bounding box, on the ground), counter-
 clockwise from +x (forward); ranges are measured from that centre, on the ground, in metres.
+
+Weather (core.weather): under a condition other than 'clear' an object is also resolved only while its contrast,
+attenuated over the distance from the camera, stays above the detector's threshold and, at night, while enough of its
+height is lit (headlamps and ambient light) to the camera's minimum luminance. The far range then stops where the first
+threshold fails, interpolated between the samples (the pixel threshold as before, the weather margin linear in range).
+'Clear' runs exactly the geometry above. The geometry is computed once; every compared condition applies its
+thresholds on top (PerceptionResult.weather['compare']).
 """
 from __future__ import annotations
 
@@ -130,6 +137,7 @@ class PerceptionResult:
     pairs: list                     # overlapping camera pairs
     metrics: dict
     variant_uid: str = ''
+    weather: dict | None = None     # core.weather: the condition, its camera figures and the compared conditions
 
     def tag(self, i):
         return self.cams[i][1] if 0 <= i < len(self.cams) else None
@@ -204,6 +212,32 @@ def _far_range(ok, visible, hpx, ranges, min_px, rows):
     return far + t * (ranges[j] - ranges[i])
 
 
+def _far_range_wx(ok, visible, hpx, ranges, min_px, rows, margin):
+    """_far_range with a weather margin (A, R): ln of how far the object stays above the condition's thresholds,
+    ≥ 0 where it does. Where the next sample is in view but fails the weather threshold, the far range is where the
+    margin crosses 0 (linear in range between the samples); where it fails both thresholds, the nearer crossing.
+    With no weather failure anywhere this is _far_range exactly."""
+    R = len(ranges)
+    has = ok.any(1)
+    i = R - 1 - np.argmax(ok[:, ::-1], axis=1)
+    j = np.minimum(i + 1, R - 1)
+    far = np.where(has, ranges[i], 0.0)
+    hi, hj = hpx[rows, i], hpx[rows, j]
+    cross = has & (j > i) & visible[rows, j] & (hj > 0) & (hj < min_px) & (hi > hj)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        t = (1.0 / min_px - 1.0 / hi) / (1.0 / hj - 1.0 / hi)
+    t = np.clip(np.where(cross, t, 0.0), 0.0, 1.0)
+    mi, mj = margin[rows, i], margin[rows, j]
+    wfail = has & (j > i) & visible[rows, j] & (mj < 0) & (mi >= 0)
+    if wfail.any():
+        with np.errstate(divide='ignore', invalid='ignore'):
+            tw = np.where(np.isfinite(mj) & np.isfinite(mi), mi / (mi - mj), 0.0)
+        tw = np.clip(np.where(wfail, tw, 1.0), 0.0, 1.0)
+        pxfail = hj < min_px
+        t = np.where(wfail, np.where(pxfail, np.minimum(t, tw), tw), t)
+    return far + t * (ranges[j] - ranges[i])
+
+
 def _sector_of(az_deg):
     """Index into SECTORS of each azimuth (sectors are 45° wide, centred on their direction)."""
     a = (np.asarray(az_deg, float) + 22.5) % 360.0
@@ -211,10 +245,62 @@ def _sector_of(az_deg):
     return np.array(order)[(a // 45.0).astype(int) % 8]
 
 
-def analyse(project, engine, res=None, settings: PerceptionSettings | None = None, progress=None, cancel=None):
-    """The perception range of the project's active variant. Returns None when cancelled."""
+def _sectors(st, classes, az, far) -> list:
+    """Per sector: the required range and per class the shortest and median far range in it and the verdict."""
+    sec = _sector_of(az)
+    sectors = []
+    for si, (name, cdeg) in enumerate(SECTORS):
+        m = sec == si
+        req = float(st.required.get(name, 0.0))
+        out = {}
+        for k, cls in enumerate(classes):
+            v = far[k, m]
+            lo_ = float(v.min()) if v.size else 0.0
+            out[cls.name] = {'min_m': lo_, 'median_m': float(np.median(v)) if v.size else 0.0,
+                             'pass': bool(lo_ >= req), 'shortfall_m': max(0.0, req - lo_),
+                             'worst_azimuth_deg': float(az[m][int(np.argmin(v))]) if v.size else None}
+        sectors.append({'name': name, 'centre_deg': cdeg, 'required_m': req, 'classes': out})
+    return sectors
+
+
+HEADING_DEG = 20.0                   # a camera's range near its heading: the best within this of its yaw
+
+
+def _compare_row(c, classes, cams, az, cam_far, st) -> dict:
+    """One compared condition: per class the range ahead, the median, the shortest per sector and the verdicts; per
+    camera its best range within HEADING_DEG of its heading (azimuths about the vehicle centre)."""
+    far = cam_far.max(0) if len(cams) else np.zeros((len(classes), len(az)))
+    sectors = _sectors(st, classes, az, far)
+    per_class = {}
+    for k, cls in enumerate(classes):
+        per_class[cls.name] = {'ahead_m': float(far[k, 0]), 'median_m': float(np.median(far[k])),
+                               'sectors': {s['name']: s['classes'][cls.name]['min_m'] for s in sectors},
+                               'passed': sum(1 for s in sectors if s['classes'][cls.name]['pass'])}
+    per_cam = {}
+    for ci, cam in enumerate(cams):
+        near = np.abs((az - float(cam.yaw) + 180.0) % 360.0 - 180.0) <= HEADING_DEG
+        per_cam[cam.tag] = {cls.name: float(cam_far[ci, k, near].max()) if near.any() else 0.0
+                            for k, cls in enumerate(classes)}
+    passed = sum(1 for s in sectors for v in s['classes'].values() if v['pass'])
+    return {'id': c.id, 'label': c.label(), 'passed': passed, 'checks': len(sectors) * len(classes),
+            'per_class': per_class, 'per_camera': per_cam, 'far': far, 'sectors': sectors}
+
+
+def analyse(project, engine, res=None, settings: PerceptionSettings | None = None, progress=None, cancel=None,
+            weather=None, compare=(), weather_settings=None):
+    """The perception range of the project's active variant. Returns None when cancelled.
+    weather: a core.weather Condition, a condition id, or None for the project's selected condition ('clear' unless
+    set); compare: further conditions (or ids) whose ranges and verdicts go into result.weather['compare']."""
+    from . import weather as W
     t0 = time.perf_counter()
     st = settings or PerceptionSettings.from_dict(getattr(project.analysis, 'perception', None))
+    wst = weather_settings or W.settings_of(project)
+    cond = W.resolve_condition(project, weather, wst)
+    conds = []
+    for c in compare or ():
+        c = W.resolve_condition(project, c, wst)
+        if all(c.id != o.id for o in conds):
+            conds.append(c)
     classes = st.object_classes()
     vg = engine.vehicle_geom(project)
     if vg is not None:
@@ -243,19 +329,51 @@ def analyse(project, engine, res=None, settings: PerceptionSettings | None = Non
     theta20 = np.full((C, A), np.nan)
     i20 = int(np.argmin(np.abs(ranges - OVERLAP_AT)))
     intrs = []
+    # ---- weather: the conditions with thresholds (not clear), each object's luminance, each camera's floor
+    wx = ([cond] if not cond.clear else []) + [c for c in conds if not c.clear and c.id != cond.id]
+    clear_far = np.zeros((C, K, A)) if wx else None
+    cmp_far = {c.id: np.zeros((C, K, A)) for c in conds}
+    looks = [W.object_look(cls.name, wst) for cls in classes]
+    lamps = W.lamp_positions(vg, wst) if any(c.night for c in wx) else None
+    lum = {}
+    for c in wx:
+        for k, cls in enumerate(classes):
+            if cancel is not None and cancel():
+                return None
+            lum[(c.id, k)] = W.object_luminance(G, cls.base, cls.height, looks[k][1], c, wst, lamps)
+    floors = []
     steps = max(1, C * K)
     for ci, c in enumerate(cams):
         intr = resolve(project.module_for(c), project.lens_for(c))
         intrs.append(intr)
+        floors.append(W.camera_floor(project.module_for(c), project.lens_for(c), wst) if wx else None)
         cube = engine.cube(c.pos()) if vg is not None else None
         for k, cls in enumerate(classes):
             if cancel is not None and cancel():
                 return None
             hpx, _, seen = object_pixels(c, intr, G, cls, cube)
             ok = seen & ~inside & (hpx >= cls.min_px)
+            far0 = _far_range(ok.reshape(A, R), (seen & ~inside).reshape(A, R), hpx.reshape(A, R),
+                              ranges, cls.min_px, rows)
             resolved[ci, k] = ok.reshape(A, R)
-            cam_far[ci, k] = _far_range(ok.reshape(A, R), (seen & ~inside).reshape(A, R), hpx.reshape(A, R),
-                                        ranges, cls.min_px, rows)
+            cam_far[ci, k] = far0
+            if wx:
+                clear_far[ci, k] = far0
+                mid = np.c_[G, np.full(len(G), cls.base + cls.height / 2)]
+                d_cam = np.linalg.norm(mid - c.pos(), axis=1)
+                for w in wx:
+                    m = W.camera_margin(w, wst, d_cam, looks[k][0], lum[(w.id, k)], floors[ci]['l_min'])
+                    okw = ok & (m >= 0)
+                    farw = _far_range_wx(okw.reshape(A, R), (seen & ~inside).reshape(A, R), hpx.reshape(A, R),
+                                         ranges, cls.min_px, rows, m.reshape(A, R))
+                    if w is cond:
+                        resolved[ci, k] = okw.reshape(A, R)
+                        cam_far[ci, k] = farw
+                    if w.id in cmp_far:
+                        cmp_far[w.id][ci, k] = farw
+            for cid, arr in cmp_far.items():
+                if cid == 'clear' or (cid == cond.id and cond.clear):
+                    arr[ci, k] = far0
             if k == 0:
                 s = (seen & ~inside).reshape(A, R)[:, i20]
                 seen20[ci] = s
@@ -270,19 +388,7 @@ def analyse(project, engine, res=None, settings: PerceptionSettings | None = Non
     near = np.where(anyr.any(-1), ranges[np.argmax(anyr, axis=-1)], np.inf)
     best = np.where(far > 0, np.argmax(cam_far, axis=0), -1) if C else np.full((K, A), -1)
     # ---- sectors
-    sec = _sector_of(az)
-    sectors = []
-    for si, (name, cdeg) in enumerate(SECTORS):
-        m = sec == si
-        req = float(st.required.get(name, 0.0))
-        out = {}
-        for k, cls in enumerate(classes):
-            v = far[k, m]
-            lo_ = float(v.min()) if v.size else 0.0
-            out[cls.name] = {'min_m': lo_, 'median_m': float(np.median(v)) if v.size else 0.0,
-                             'pass': bool(lo_ >= req), 'shortfall_m': max(0.0, req - lo_),
-                             'worst_azimuth_deg': float(az[m][int(np.argmin(v))]) if v.size else None}
-        sectors.append({'name': name, 'centre_deg': cdeg, 'required_m': req, 'classes': out})
+    sectors = _sectors(st, classes, az, far)
     # ---- camera pairs
     pairs = []
     for i in range(C):
@@ -307,9 +413,15 @@ def analyse(project, engine, res=None, settings: PerceptionSettings | None = Non
     metrics = {'seconds': time.perf_counter() - t0, 'points': int(len(G) * C * K), 'cameras': C,
                'passed': sum(1 for s in sectors for v in s['classes'].values() if v['pass']),
                'checks': len(sectors) * K}
+    weather_doc = {'condition': cond, 'settings': wst.to_dict(),
+                   'cameras': [dict(tag=c.tag, **{k: v for k, v in fl.items()}) for c, fl in zip(cams, floors)
+                               if fl is not None],
+                   'looks': {cls.name: looks[k] for k, cls in enumerate(classes)},
+                   'clear_far': None if clear_far is None else (clear_far.max(0) if C else np.zeros((K, A))),
+                   'compare': [_compare_row(c, classes, cams, az, cmp_far[c.id], st) for c in conds]}
     return PerceptionResult(st, classes, [(c.uid, c.tag, c.slot) for c in cams], centre, body, az, ranges, far, near,
                             best, cam_far, count, sectors, pairs, metrics,
-                            getattr(res, 'variant_uid', '') or project.variant.uid)
+                            getattr(res, 'variant_uid', '') or project.variant.uid, weather_doc)
 
 
 # =========================================================================== output
@@ -325,7 +437,15 @@ def summary(pr: PerceptionResult) -> dict:
                               'baseline_m': round(p['baseline_m'], 3),
                               'depth_error_m': {k: round(v, 3) for k, v in p['depth_error_m'].items()}}
                              for p in pr.pairs[:4]],
-            'passed': pr.metrics['passed'], 'checks': pr.metrics['checks']}
+            'passed': pr.metrics['passed'], 'checks': pr.metrics['checks'],
+            **({'condition': _condition(pr).label()} if not _condition(pr).clear else {})}
+
+
+def _condition(pr: PerceptionResult):
+    """The weather condition the result was computed for (core.weather; 'clear' for results without one)."""
+    from . import weather as W
+    c = (pr.weather or {}).get('condition')
+    return c if isinstance(c, W.Condition) else W.PRESET['clear']
 
 
 def to_doc(pr: PerceptionResult, project=None, L=None, A=None, origin=(0.0, 0.0)) -> dict:
@@ -362,6 +482,22 @@ def to_doc(pr: PerceptionResult, project=None, L=None, A=None, origin=(0.0, 0.0)
                               'focal_px_per_rad': round(p['f_px_per_rad'], 2),
                               'depth_error': {k: rng(v) for k, v in p['depth_error_m'].items()}} for p in pr.pairs]},
     }
+    c = _condition(pr)
+    if not c.clear:                     # 'clear' exports exactly as before weather existed
+        from . import weather as W
+        w = pr.weather or {}
+        doc['condition'] = {
+            'id': c.id, 'label': c.label(), 'light': c.light, 'ambient_lux': c.ambient_lux, 'beam': c.beam,
+            'visibility': L(c.visibility_m) if c.visibility_m > 0 else None, 'rain_mm_h': c.rain_mm_h,
+            'snow_mm_h': c.snow_mm_h, 'snow': c.snow,
+            'resolved_when': 'as above, and the object\'s contrast attenuated over its distance from the camera stays '
+                             'above the detector\'s threshold and, at night, enough of its height is lit to the '
+                             'camera\'s minimum luminance (core.weather)',
+            'objects': {n: {'contrast': v[0], 'reflectance': v[1]} for n, v in w.get('looks', {}).items()},
+            'cameras': {d['tag']: {'min_luminance_cd_m2': round(d['l_min'], 5),
+                                   'exposure_ms': round(d['exposure_ms'], 3), 'f_number': d['f_number']}
+                        for d in w.get('cameras', [])},
+            'assumptions': W.ASSUMPTIONS}
     return doc
 
 
@@ -435,7 +571,10 @@ def png(pr: PerceptionResult, size=900, k_sel=0) -> bytes:
         text(name, min(max(x - w / 2, 4), size - w - 4), min(max(y + h / 2, head + h + 4), size + head - 6),
              (175, 174, 168))
     m = pr.metrics
-    text(f'Perception range  {m["passed"]} of {m["checks"]} sector checks pass', 16, 24, (236, 235, 230), 0.6)
+    cond = _condition(pr)
+    text(f'Perception range  {m["passed"]} of {m["checks"]} sector checks pass' +
+         ('' if cond.clear else '  ' + cond.label().replace('·', '-').encode('ascii', 'replace').decode()),
+         16, 24, (236, 235, 230), 0.6)
     x = 16
     for k, cl in enumerate(pr.classes):
         col = _bgr(CLASS_COLORS[k % len(CLASS_COLORS)])

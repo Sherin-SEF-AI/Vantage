@@ -20,6 +20,11 @@ from .lens import resolve
 from .mathutil import BODY_TO_OPTICAL, euler_zyx, rot_z
 from .project import Project
 
+HUBER_SCALE = 3.0       # corner residuals beyond 3 × pixel_sigma count linearly (a stray corner pulls less)
+FD_STEP = 1e-6          # central-difference step of the Jacobian (rad, m)
+BOARD_REACH = 10.0      # how many placement σ a board may move in the solve
+MAX_BOARD_TURN_DEG = 30.0       # and never further round than this (a square grid repeats every 90°)
+
 
 @dataclass
 class BoardFix:
@@ -99,7 +104,6 @@ def joint_solve(project: Project, cams: list, obs: dict, init: dict, img_shapes:
     solve); img_shapes: uid -> image shape the observations are in. A board observation that no placement of the board
     explains (a mis-detected grid) is set aside and listed in JointResult.rejected."""
     from scipy.optimize import least_squares
-    from scipy.sparse import lil_matrix
     cams = [c for c in cams if obs.get(c.uid) and c.uid in init]
     res = JointResult({}, {})
     if not cams:
@@ -125,8 +129,9 @@ def joint_solve(project: Project, cams: list, obs: dict, init: dict, img_shapes:
             if o.target_uid in bidx:
                 allblocks.append((ci, bidx[o.target_uid], np.asarray(o.world, float), np.asarray(o.image_pts, float), o))
     centres = {u: np.array([targets[u].x, targets[u].y, 0.0]) for u in board_ids}
-    sig_b = board_sigma_mm / 1000.0
-    sig_y = math.radians(board_sigma_deg)
+    # a tolerance of 0 (or junk) pins the boards to a micrometre and a ten-thousandth of a degree rather than failing
+    sig_b = (board_sigma_mm if board_sigma_mm > 1e-3 else 1e-3) / 1000.0
+    sig_y = math.radians(board_sigma_deg if board_sigma_deg > 1e-4 else 1e-4)
 
     def unpack(x):
         cp = x[:6 * nc].reshape(nc, 6)
@@ -147,30 +152,53 @@ def joint_solve(project: Project, cams: list, obs: dict, init: dict, img_shapes:
         sx, sy = scale[ci]
         return np.stack([u * sx, v * sy], -1) - uv
 
+    prior = np.tile([1 / sig_b, 1 / sig_b, 1 / sig_y], nb)
+    # a board laid by hand lies within a few σ of its place: bounds keep the solve away from the placements a square
+    # grid cannot tell apart (turned a quarter or half round), where a mis-matched grid in one camera would otherwise be
+    # explained by turning the board and moving the other cameras that see it
+    reach = np.tile([BOARD_REACH * sig_b, BOARD_REACH * sig_b, min(BOARD_REACH * sig_y, math.radians(MAX_BOARD_TURN_DEG))],
+                    nb)
+    bounds = (np.r_[np.full(6 * nc, -np.inf), -reach], np.r_[np.full(6 * nc, np.inf), reach])
+
     def solve(blocks, x0):
+        n_par = 6 * nc + 3 * nb
+        spans, r0 = [], 0
+        for b in blocks:
+            spans.append((r0, r0 + 2 * len(b[2])))
+            r0 += 2 * len(b[2])
+        n_res = r0 + 3 * nb
+
         def residuals(x):
             out = [(block_px(x, b) / pixel_sigma).ravel() for b in blocks]
             if nb:
-                _, bp = unpack(x)
-                out.append(np.c_[bp[:, 0] / sig_b, bp[:, 1] / sig_b, bp[:, 2] / sig_y].ravel())
+                out.append(x[6 * nc:] * prior)
             return np.concatenate(out)
-        n_par = 6 * nc + 3 * nb
-        n_res = sum(2 * len(b[2]) for b in blocks) + 3 * nb
-        S = lil_matrix((n_res, n_par), dtype=int)
-        r0 = 0
-        for ci, bi, W, _, _ in blocks:
-            n = 2 * len(W)
-            S[r0:r0 + n, 6 * ci:6 * ci + 6] = 1
+
+        def jacobian(x):
+            # a block's pixels depend only on its camera's 6 and its board's 3 parameters: central differences of that
+            # block alone, into a dense matrix (a few hundred rows by 6 per camera + 3 per board)
+            J = np.zeros((n_res, n_par))
+            for (a, e), b in zip(spans, blocks):
+                ci, bi = b[0], b[1]
+                cols = [*range(6 * ci, 6 * ci + 6), *(range(6 * nc + 3 * bi, 6 * nc + 3 * bi + 3) if nb else ())]
+                for k in cols:
+                    d = np.zeros(n_par)
+                    d[k] = FD_STEP
+                    J[a:e, k] = ((block_px(x + d, b) - block_px(x - d, b)) / (2 * FD_STEP * pixel_sigma)).ravel()
             if nb:
-                S[r0:r0 + n, 6 * nc + 3 * bi:6 * nc + 3 * bi + 3] = 1
-            r0 += n
-        for bi in range(nb):
-            for k in range(3):
-                S[r0 + 3 * bi + k, 6 * nc + 3 * bi + k] = 1
-        # tight tolerances: some directions (a camera that sees two boards side on) are shallow, and a loose stop leaves
-        # the answer depending on where the solve started
-        return least_squares(residuals, x0, jac_sparsity=S, method='trf', loss='huber', f_scale=3.0, x_scale='jac',
-                             ftol=1e-12, xtol=1e-12, gtol=1e-12, max_nfev=600)
+                J[r0:, 6 * nc:] = np.diag(prior)
+            return J
+        # The trust-region steps are solved exactly (SVD of the dense Jacobian). With a sparse Jacobian least_squares
+        # solves them iteratively (LSMR), which barely moves along the shallow directions the board priors hold (every
+        # camera and board shifting together): the solve then ran into max_nfev short of its optimum, its answers
+        # 1.2–3.3× wider than the noise allows (round 6 Monte Carlo: 38 of 40 trials, a median χ² of 55 left; every
+        # solve took all 600 evaluations). Plain least squares first: Gauss–Newton converges from far off; then the
+        # Huber loss from there (a few steps) for the odd stray corner. Tight tolerances: some directions (a camera
+        # that sees two boards side on) are shallow, and a loose stop leaves the answer depending on the start.
+        common = dict(jac=jacobian, bounds=bounds, method='trf', tr_solver='exact', x_scale='jac', ftol=1e-12,
+                      xtol=1e-12, gtol=1e-12)
+        x1 = least_squares(residuals, x0, loss='linear', max_nfev=200, **common).x
+        return least_squares(residuals, x1, loss='huber', f_scale=HUBER_SCALE, max_nfev=100, **common)
 
     blocks = list(allblocks)
     x = np.zeros(6 * nc + 3 * nb)

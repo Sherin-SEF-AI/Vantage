@@ -64,7 +64,10 @@ def inputs_key(project) -> str:
     a = project.analysis
     return json.dumps({'mesh': [id(m), getattr(m, 'n_tris', 0), project.vehicle.occluder_target],
                        'variant': v.to_dict(), 'rig': [r.to_dict() for r in project.rig],
-                       'coverage': a.sensor_coverage, 'perception': a.perception,
+                       'coverage': a.sensor_coverage, 'perception': a.perception, 'weather': a.weather,
+                       'housings': a.housings, 'materials': a.materials,     # the radars' fascia, the condition
+                       'parts': [(q.name, q.role, q.material, getattr(q, 'surface', ''), getattr(q, 'surface_mm', 0.0))
+                                 for q in (m.parts if m is not None else [])],
                        'library': project.section('library')}, sort_keys=True, default=str)
 
 
@@ -370,7 +373,7 @@ class CoverageMap(ChartBase):
             p.setPen(QPen(modality_color('radar', 0.6), 1.0, Qt.PenStyle.DashLine))
             p.setBrush(modality_color('radar', 0.08))
             for r_ in res.radars:
-                for w in S.radar_wedges(r_.sensor, r_.spec, cl.rcs, samples=48):
+                for w in S.radar_wedges(r_.sensor, r_.spec, cl.rcs, samples=48, zone_scale=r_.zone_scale):
                     p.drawPolygon(QPolygonF([_world(c, k, res, x, y) for x, y in w]))
         # required ranges: green two or more sensor types, amber one, red none
         p.setBrush(Qt.BrushStyle.NoBrush)

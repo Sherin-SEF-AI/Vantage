@@ -220,6 +220,8 @@ class MainScene(QObject):
         res = self.result
         if res is None or (self.bowl is not None and self.bowl.draw is not None):
             return None
+        if self._road() is not None:
+            return None                     # on a road the heat map is drawn on its surface (_road_draw)
         heat = self.ctx.heatmap if self.mode == 'scene' else 'bev'
         fp = self.ctx.overlays.get('footprints', True)
         mode = heat if heat != 'none' else ('footprints' if fp else 'blank')
@@ -250,7 +252,7 @@ class MainScene(QObject):
         photo = self.ctx.shading == 'photo' or vp.cam.custom is not None
         lit = bool(self.ctx.overlays.get('shadows', True)) and not photo
         return Style(shadows=lit and self.mode == 'scene', ao=lit and self.mode == 'scene',
-                     ground_plane=self.mode == 'scene' and not photo and lit,
+                     ground_plane=self.mode == 'scene' and not photo and lit and self._road() is None,
                      ground_rgb=tuple(bg * 0.9 + ink * 0.1), sky_rgb=(0.62, 0.66, 0.72) if dark else (0.86, 0.88, 0.91),
                      bounce_rgb=(0.24, 0.23, 0.22) if dark else (0.50, 0.48, 0.45))
 
@@ -355,6 +357,9 @@ class MainScene(QObject):
             from .sensorview import scene_draws as sensor_draws
             out += rig_draws(self.ctx, gl)
             out += sensor_draws(self.ctx, gl)
+        road = self._road()
+        if road is not None:
+            out.append(self._road_draw(vp, road))
         if self.mode == 'scene':
             ov = self.ctx.overlays
             if ov.get('brackets', True):
@@ -364,8 +369,138 @@ class MainScene(QObject):
                 late += radar_draws(self.ctx, gl, vp=vp)
             if ov.get('gnsssky') and p.variant.sensors:
                 late += self._ov3d().dome_draws(gl)[0]
+            if ov.get('critical'):                      # View ▸ Overlays ▸ Critical targets
+                from .workspaces import critical_ws as CW
+                if not isinstance(self, CW.CriticalScene):   # the page's own 3D view draws them always
+                    late += CW.scene_tris(self.ctx, gl)
         out += guides.scene_tris(self, vp)
         return out + late
+
+    # ------------------------------------------------------------------ the road (core.terrain)
+    def _road(self):
+        """The project's road when it has one switched on (main 3D view only), else None: flat ground."""
+        if self.mode != 'scene':
+            return None
+        from ..core import terrain as TR
+        try:
+            return TR.active(self.project)
+        except Exception as ex:                    # a broken road must not cost the view
+            print('terrain:', ex)
+            return None
+
+    @staticmethod
+    def _drape(road, pts, lift=0.0, base=None):
+        """World points (…, 3) on flat ground (z above it) moved onto the road (z above it, or above `base`) and into
+        the body frame of the car standing on it; unchanged without a road."""
+        if road is None:
+            return pts
+        P = np.array(pts, float)
+        flat = P.reshape(-1, 3)
+        flat[:, 2] += (road.height(flat[:, 0], flat[:, 1]) if base is None else base) + lift
+        pose = road.pose()
+        if pose is not None:
+            flat[:] = (flat - pose[1]) @ pose[0]
+        return P
+
+    def _road_edges(self, road):
+        """Each primitive's edges as lines on the road's surface (a kerb's face solid, the rest dashed)."""
+        ref = road.ref
+        x0, x1 = ref['rear_x'] - 15.0, ref['front_x'] + 25.0
+        out = []
+        for f in road.features:
+            for k, b in enumerate(f.breaks()):
+                if f.kind == 'kerb' and k > 0:
+                    continue
+                c = f.origin + f.sign * b
+                t = np.linspace(x0, x1, 161) if f.axis == 1 else np.linspace(-8.0, 8.0, 65)
+                pts = np.c_[t, np.full_like(t, c), np.zeros_like(t)] if f.axis == 1 else \
+                    np.c_[np.full_like(t, c), t, np.zeros_like(t)]
+                face = f.kind == 'kerb'
+                if face:                                   # on top of the face, where it shows
+                    pts[:, f.axis] += f.sign * 0.012
+                out.append(LineDraw(self._drape(road, pts, 0.006), THEME.color('ink', 0.85 if face else 0.6),
+                                    1.6 if face else 1.0, dash=not face, dash_len=0.12))
+        return out
+
+    def _road_draw(self, vp, road):
+        """The road's surface as triangles (the body frame of the car standing on it), lit, with the coverage heat
+        map on it: fine over the analysis grid, coarse around it, with the primitives' edges as break lines."""
+        gl = getattr(vp, 'renderer', None) is not None
+        res = self.result
+        heat = self.ctx.heatmap
+        fp = self.ctx.overlays.get('footprints', True)
+        mode = heat if heat != 'none' else ('footprints' if fp else 'blank')
+        iso = frozenset(self.ctx.isolate) if self.ctx.isolate else None
+        sres = getattr(getattr(self.ctx, 'stitched', None), 'result', None) if mode == 'stitched' else None
+        a = self.project.analysis
+        thr = (a.min_density, a.target_density) if mode == 'density' else None
+        key = (road.key, mode, THEME.name, iso, thr, gl)
+        cache = getattr(self, '_road_cache', (None, None, None, None))
+        if cache[0] == key and cache[2] is res and cache[3] is sres:     # the objects, not their ids (reused)
+            return cache[1]
+        from ..core.terrain import FACE_M
+        ref = road.ref
+        if res is not None:
+            fx0, fy0, fx1, fy1 = maps.extent(res)
+        else:
+            fx0, fy0, fx1, fy1 = ref['rear_x'] - 2.0, -3.0, ref['front_x'] + 2.0, 3.0
+        ox0, ox1, oy0, oy1 = min(ref['rear_x'] - 15.0, fx0), max(ref['front_x'] + 25.0, fx1), min(-8.0, fy0), \
+            max(8.0, fy1)
+        fine, coarse = (0.1, 0.5) if gl else (0.3, 1.5)
+        bx, by = [], []
+        for f in road.features:
+            for b in f.breaks():
+                c = f.origin + f.sign * b
+                (bx if f.axis == 0 else by).extend([c, c + f.sign * FACE_M] if f.kind == 'kerb' else [c])
+            if f.kind == 'bump':
+                (bx if f.axis == 0 else by).extend(f.origin + f.sign * np.linspace(0, f.d['length'], 9))
+
+        def axis(o0, f0, f1, o1, extra):
+            v = np.r_[np.arange(o0, f0, coarse), np.arange(f0, f1, fine), np.arange(f1, o1 + 1e-9, coarse), extra]
+            v = np.unique(np.round(v[(v >= o0) & (v <= o1)], 4))
+            return v
+        xs, ys = axis(ox0, fx0, fx1, ox1, bx), axis(oy0, fy0, fy1, oy1, by)
+        X, Y = np.meshgrid(xs, ys)
+        Z = road.height(X, Y)
+        gx, gy = road.gradient(X, Y)
+        N = np.stack([-gx, -gy, np.ones_like(gx)], -1)
+        N /= np.linalg.norm(N, axis=-1, keepdims=True)
+        V = np.stack([X, Y, Z], -1)
+        q = [(slice(None, -1), slice(None, -1)), (slice(None, -1), slice(1, None)), (slice(1, None), slice(1, None)),
+             (slice(1, None), slice(None, -1))]
+        c00, c01, c11, c10 = (V[a_, b_].reshape(-1, 3) for a_, b_ in q)
+        n00, n01, n11, n10 = (N[a_, b_].reshape(-1, 3) for a_, b_ in q)
+        tri = np.concatenate([np.stack([c00, c01, c11], 1), np.stack([c00, c11, c10], 1)])
+        nrm = np.concatenate([np.stack([n00, n01, n11], 1), np.stack([n00, n11, n10], 1)])
+        dark = THEME.name != 'light'
+        base = np.array([0.30, 0.30, 0.29] if dark else [0.70, 0.70, 0.68])
+        rgb = np.tile(base, (len(tri), 1))
+        if res is not None:
+            if sres is not None:
+                img, ext = maps.stitched(sres, k=2), maps.stitched_extent(sres)
+            else:
+                img, ext = maps.make(res, mode, k=2, isolate=iso, thresholds=thr), maps.extent(res)
+            if img is not None:
+                h_, w_ = img.shape[:2]
+                cen = tri.mean(axis=1)
+                u = ((cen[:, 0] - ext[0]) / (ext[2] - ext[0]) * w_).astype(int)
+                v = ((ext[3] - cen[:, 1]) / (ext[3] - ext[1]) * h_).astype(int)
+                inside = (u >= 0) & (u < w_) & (v >= 0) & (v < h_)
+                px = np.zeros((len(tri), 4))
+                px[inside] = img[v[inside], u[inside]].astype(float) / 255.0
+                al = px[:, 3:4]
+                rgb = rgb * (1 - al) + px[:, :3] * al
+        if not gl:                                     # the software renderer does not light triangles: shade here
+            light = np.array([0.35, 0.25, 0.9]) / np.linalg.norm([0.35, 0.25, 0.9])
+            rgb = rgb * (0.55 + 0.45 * np.clip(nrm.mean(axis=1) @ light, 0, 1))[:, None]
+        pose = road.pose()
+        if pose is not None:
+            tri = (tri - pose[1]) @ pose[0]
+            nrm = nrm @ pose[0]
+        td = TriDraw(tri.astype(np.float32), np.c_[rgb, np.ones(len(tri))].astype(np.float32), depth=True,
+                     normals=nrm.astype(np.float32) if gl else None)
+        self._road_cache = (key, td, res, sres)
+        return td
 
     def _bowl(self):
         res = self.result
@@ -432,12 +567,15 @@ class MainScene(QObject):
         ov = self.ctx.overlays
         res = self.result
         textured = self.bowl_draw(vp) is not None
-        if ov.get('grid', True) and not textured:
+        road = self._road()
+        if ov.get('grid', True) and not textured and road is None:
             out += self._grid()
+        if road is not None:
+            out += self._road_edges(road)
         if res is not None:
             if ov.get('roi', True) and not textured:
                 for b in res.grid.boundary:
-                    pts = np.c_[b, np.full(len(b), 0.004)]
+                    pts = self._drape(road, np.c_[b, np.full(len(b), 0.004)])
                     out.append(LineDraw(pts, THEME.color('ink', 0.9), 1.2, dash=True, dash_len=0.09))
             if ov.get('footprints', True) and self.mode == 'scene':
                 for c in res.cams:
@@ -445,7 +583,8 @@ class MainScene(QObject):
                         continue
                     if len(c.segments):
                         sel = c.uid in self.ctx.store.sel_cams
-                        segs = np.concatenate([c.segments, np.full(c.segments.shape[:2] + (1,), 0.005)], axis=2)
+                        segs = self._drape(road, np.concatenate([c.segments, np.full(c.segments.shape[:2] + (1,), 0.005)],
+                                                                axis=2))
                         out.append(LineDraw(segs, THEME.cam(c.slot), 1.6 if sel else 1.1, segments=True))
             if ov.get('seams', True) and res.seams:
                 cx, cy = res.centre
@@ -461,7 +600,8 @@ class MainScene(QObject):
                     ok[ok] &= g.roi[jj[ok], ii[ok]]
                     if ok.sum() > 1:
                         idx = np.nonzero(ok)[0]
-                        out.append(LineDraw(pts[idx[0]:idx[-1] + 1], THEME.color('ink', 0.75), 1.0, dash=True, dash_len=0.06))
+                        out.append(LineDraw(self._drape(road, pts[idx[0]:idx[-1] + 1]), THEME.color('ink', 0.75), 1.0,
+                                            dash=True, dash_len=0.06))
             if ov.get('occlusion') and self.mode == 'scene':
                 out += self._occlusion_rays()
         if ov.get('frustums', True):
@@ -479,9 +619,12 @@ class MainScene(QObject):
                 break
             a = np.linspace(0, 2 * math.pi, 17)
             ring = np.c_[ob.x + ob.radius * np.cos(a), ob.y + ob.radius * np.sin(a), np.zeros(17)]
-            out.append(LineDraw(ring, THEME.color('ink2'), 1.0))
-            out.append(LineDraw(np.array([[ob.x, ob.y, 0], [ob.x, ob.y, ob.height]]), THEME.color('ink2'), 1.5))
-            out.append(LineDraw(ring + np.array([0, 0, ob.height]), THEME.color('ink2'), 1.0))
+            base = float(road.height(ob.x, ob.y)) if road is not None else 0.0      # it stands on the road
+            out.append(LineDraw(self._drape(road, ring, 0.0, base), THEME.color('ink2'), 1.0))
+            out.append(LineDraw(self._drape(road, np.array([[ob.x, ob.y, 0], [ob.x, ob.y, ob.height]]), 0.0, base),
+                                THEME.color('ink2'), 1.5))
+            out.append(LineDraw(self._drape(road, ring + np.array([0, 0, ob.height]), 0.0, base), THEME.color('ink2'),
+                                1.0))
         if ov.get('dimensions') and p.vehicle.mesh is not None and self.mode == 'scene':
             out += self._dimensions()
         if self.measure:
@@ -499,6 +642,16 @@ class MainScene(QObject):
             out += scene_lines(self.ctx)
         if self.mode == 'scene' and ov.get('gnsssky') and self.project.variant.sensors:
             out += self._ov3d().dome_draws(getattr(vp, 'renderer', None) is not None)[1]
+        if self.mode == 'scene' and ov.get('critical'):
+            from .workspaces import critical_ws as CW
+            if not isinstance(self, CW.CriticalScene):
+                out += CW.scene_lines(self.ctx)
+        if self.mode == 'scene' and ov.get('harness'):  # View ▸ Overlays ▸ Cable harness: the routes as lines
+            from .harnessview import scene_draws as harness_draws
+            out += harness_draws(self.ctx, getattr(vp, 'renderer', None) is not None)
+        if self.mode == 'scene' and ov.get('wipers'):  # View ▸ Overlays ▸ Wiper sweep (Analysis ▸ Materials)
+            from .workspaces.materials_ws import scene_lines as wiper_lines
+            out += wiper_lines(self.ctx)
         out += guides.scene_lines(self, vp)
         return out
 
@@ -538,9 +691,10 @@ class MainScene(QObject):
         if len(jj) == 0:
             return []
         sel = np.linspace(0, len(jj) - 1, min(40, len(jj))).astype(int)
+        road = self._road()
         segs = []
         for k in sel:
-            P = np.array([g.xs[ii[k]], g.ys[jj[k]], 0.0])
+            P = self._drape(road, np.array([[g.xs[ii[k]], g.ys[jj[k]], 0.0]]), 0.0)[0]
             segs.append([c.pos(), P])
         return [LineDraw(np.array(segs), _qc(STATUS['critical'], 0.55), 1.0, segments=True)]
 

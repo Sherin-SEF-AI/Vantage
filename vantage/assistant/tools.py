@@ -19,6 +19,7 @@ import numpy as np
 from ..core.analysis import camera_frames
 from ..core.lens import resolve
 from ..core.project import mirror_props
+from ..core.weather import IDS as _WEATHER_IDS
 
 POSE = ('x', 'y', 'z', 'yaw', 'pitch', 'roll')
 DELTAS = {'dx': 'x', 'dy': 'y', 'dz': 'z', 'dyaw': 'yaw', 'dpitch': 'pitch', 'droll': 'roll'}
@@ -698,6 +699,102 @@ def get_suspension(tc, evaluate=False, **_):
                        'ground shift; the user edits it on Analysis ▸ Load cases'}
 
 
+def get_calibration_observability(tc, verify_trials=0, **_):
+    from ..core import observability as OB
+    tc.status('Calibration observability…')
+    res = OB.run(tc.project, tc.engine, cancel=tc.cancelled)
+    if res is None:
+        return {'error': 'cancelled'}
+    try:
+        n = int(verify_trials or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if n > 0:
+        n = min(max(n, 5), 60)
+        tc.status(f'Monte Carlo check, {n} trials…')
+        if OB.monte_carlo(res, trials=n, cancel=tc.cancelled) is None:
+            return {'error': 'cancelled'}
+    return {**OB.summary(res),
+            'meaning': '1σ of each camera\'s pose (yaw/pitch/roll °, x/y/z mm, vehicle frame) the planned boards give '
+                       'through the installation check\'s joint solve (boards placed by hand to the placement σ), the '
+                       'worst axis against the requirement, the weakest direction and the best suggestion; camera pairs '
+                       'tied by a shared board; lidar–camera pairs from the lidar–camera calibration\'s board plan; '
+                       'radars from the corner reflectors; lidar points per camera pixel. Predictions: verify_trials > 0 '
+                       'checks them by Monte Carlo (about 4 s a trial). The page is Calibrate ▸ Calibration '
+                       'observability'}
+
+
+def get_cable_harness(tc, variant=None, **_):
+    from ..core import harness as HN
+    v = None
+    if variant:
+        v = next((x for i, x in enumerate(tc.project.variants)
+                  if variant in (x.name, x.uid, str(i + 1))), None)
+        if v is None:
+            return {'error': f'no variant {variant!r}; variants: ' + ', '.join(x.name for x in tc.project.variants)}
+    tc.status('Routing the cables…')
+    res = HN.run(tc.project, tc.engine, variant=v, cancel=tc.cancelled)
+    if res is None:
+        return {'error': 'cancelled'}
+    return {**HN.summary(res),
+            'meaning': 'every cable of the rig routed along the body to an entry point and the compute box: per run '
+                       'the cable, destination, entry point, routed length against the Manhattan estimate and its '
+                       'link\'s limit (share), the GNSS cables\' RF margin (dB) and the power pairs\' drop; totals by '
+                       'cable type; findings. Limits are typical figures; used_everywhere says whether the routed '
+                       'lengths replace the estimate in the Issues list and the power budget'}
+
+
+def get_road_and_body_motion(tc, **_):
+    from ..core import terrain as TR
+    tc.status('Road and body motion…')
+    res = TR.run(tc.project, tc.engine, cancel=tc.cancelled)
+    if res is None:
+        return {'error': 'cancelled'}
+    return {**TR.summary(res),
+            'meaning': 'the road under the car (analysis.terrain primitives; flat ground when none) and what it '
+                       'changes against flat ground: blind ground, how far the road ahead/behind stays in view, '
+                       'when each bump or kerb is first seen as the car approaches (m) and by which camera, the '
+                       'body\'s clearance; and per motion case (g: + accelerating, + turning left) the body\'s '
+                       'pitch (+ nose down), roll (+ right side down) and heave against the calibration load, the '
+                       'forward cameras\' horizon shift in px (+ down) and the stitched ground shift. Typical '
+                       'suspension and motion figures unless entered; the user edits it on Analysis ▸ Road and '
+                       'body motion'}
+
+
+def get_critical_targets(tc, envelopes=True, **_):
+    from ..core import critical as CR
+    if not any(t['enabled'] for t in CR.settings_of(tc.project).targets):
+        return {'error': 'no critical targets: place them in Analysis ▸ Critical targets'}
+    tc.status('Critical targets and mounting envelopes…')
+    res = CR.run(tc.project, tc.engine, envelopes=bool(envelopes), cancel=tc.cancelled)
+    if res is None:
+        return {'error': 'cancelled'}
+    return {**CR.summary(res),
+            'meaning': 'per critical target the cameras that resolve it (pixels across its height, share seen, '
+                       'focus), lidar points and radars; per camera how far its mount may be off on each axis '
+                       'before a target is lost, the target that binds it, the joint share (all axes at once) and '
+                       'whether it holds at the install tolerance'}
+
+
+def get_materials(tc, **_):
+    from ..core import materials as MT
+    tc.status('Materials, glass and wipers…')
+    res = MT.run(tc.project, tc.engine, cancel=tc.cancelled)
+    if res is None:
+        return {'error': 'cancelled'}
+    return {**MT.summary(res),
+            'meaning': 'per radar what it looks through, the two-way loss and the derated range per zone, and the '
+                       'multipath risk; per camera behind glass the light passed, the apparent centre shift and the '
+                       'dashboard glare; the wipers\' share of the windscreen and of each windscreen camera\'s view. '
+                       'Material figures are typical literature values unless the parts were set on the page'}
+
+
+def get_automation(tc, **_):
+    from PyQt6.QtCore import QSettings
+    from ..core import automation as AU
+    return AU.overview(tc.project, commands=AU.CommandStore(QSettings('Vantage', 'Vantage')))
+
+
 def get_requirements(tc, run=False, **_):
     from ..core import requirements as RQ
     if run:
@@ -1137,10 +1234,12 @@ def compare_variants(tc, variants=None, **_):
     return {'variants': out}
 
 
-STUDIES = ('blind_volume', 'stitched_objects', 'load_cases', 'mounting_tolerance', 'perception_range', 'sensor_coverage')
+STUDIES = ('blind_volume', 'stitched_objects', 'load_cases', 'mounting_tolerance', 'perception_range', 'sensor_coverage',
+           'weather')
 
 
-def run_study(tc, study='', height=None, object_height=None, tolerance_deg=None, tolerance_mm=None, **_):
+def run_study(tc, study='', height=None, object_height=None, tolerance_deg=None, tolerance_mm=None, condition=None,
+              **_):
     p, eng = tc.project, tc.engine
     if study not in STUDIES:
         return {'error': f'study must be one of {", ".join(STUDIES)}'}
@@ -1219,6 +1318,21 @@ def run_study(tc, study='', height=None, object_height=None, tolerance_deg=None,
                                'two or more modalities reach the required range, single = one, gap = none. '
                                'blocked_pct: share of a lidar\'s points that land on the vehicle or the rig. '
                                'ground_blind_from_body: how far from the body the nearest lidar ground point lies.'}
+        if study == 'weather':
+            from ..core import weather as WX
+            st = WX.settings_of(p)
+            if condition in WX.IDS:
+                st.condition = condition
+            elif condition:
+                return {'error': f'condition must be one of {", ".join(WX.IDS)}'}
+            tc.status('Weather…')
+            wr = WX.run(p, eng, st, cancel=tc.cancelled)
+            if wr is None:
+                return {'error': 'cancelled'}
+            return {'study': study, **WX.summary(wr),
+                    'meaning': 'per weather condition: how far straight ahead each object is resolved, the perception '
+                               'range\'s sector checks that pass, each lidar\'s and radar\'s range against clear; '
+                               'typical models and heuristics as listed in assumptions'}
         if study == 'load_cases':
             from ..core import loadcases as LC
             tc.status('Load cases…')
@@ -1550,6 +1664,37 @@ TOOLS = [
          'Calibrates the lidar to the camera from simulated captures of the planned board poses: verdict, offset from '
          'the plan, 1-sigma uncertainty, undetermined directions. About 8 seconds.',
          {'camera': {'type': 'string'}, 'lidar': {'type': 'string'}}, calibrate_lidar_camera, 'compute'),
+    Tool('get_calibration_observability', 'How well the planned calibration pins each sensor',
+         'Per camera the 1σ of its pose from the planned boards, the weakest direction and suggested board moves; camera '
+         'pairs; lidar–camera pairs; radars; camera–lidar fusion density. About 1–3 s; verify_trials adds a Monte Carlo '
+         'check (about 4 s a trial).', {'verify_trials': {'type': 'integer'}}, get_calibration_observability,
+         'compute'),
+    Tool('get_cable_harness', 'Read the cable harness',
+         'Every cable of the rig routed along the body to an entry point and the compute box, with each run\'s '
+         'length against its link\'s limit, the GNSS cables\' RF margin and the power pairs\' drop; totals, longest '
+         'and tightest run, entry points used, findings. About a second the first time.',
+         {'variant': {'type': 'string', 'description': 'variant name or 1-based index (default: the active one)'}},
+         get_cable_harness),
+    Tool('get_road_and_body_motion', 'Road and body motion',
+         'The road under the car and the body motion: blind ground on the road against flat ground, how far the road '
+         'stays in view (a crest hides what lies beyond), when bumps and kerbs are first seen, body clearance driving '
+         'over them; brake dive, squat and cornering roll per case with each forward camera\'s horizon shift and the '
+         'stitched ground shift. A few seconds.', {}, get_road_and_body_motion, 'compute'),
+    Tool('get_critical_targets', 'Critical targets and mounting envelopes',
+         'The critical targets placed in Analysis ▸ Critical targets: which cameras resolve each one, lidar points and '
+         'radars on it, and every camera\'s mounting envelope (how far yaw/pitch/roll and x/y/z may be off before a '
+         'target is lost), the binding target, joint share, tolerance verdict. A few seconds with envelopes; '
+         'envelopes=false is quick.', {'envelopes': {'type': 'boolean'}}, get_critical_targets, 'compute'),
+    Tool('get_materials', 'Materials, glass and wipers',
+         'What each radar looks through (the part\'s material and paint, two-way loss, the derated range per zone, '
+         'reflection, the radar–fascia gap and multipath risk), each camera behind glass (light passed, apparent '
+         'centre shift, dashboard glare) and the windscreen wipers (wiped share of the glass and of each windscreen '
+         'camera\'s view). Under a second.', {}, get_materials),
+    Tool('get_automation', 'Read the automation',
+         'What Vantage regenerates when the design changes (export formats, the folder next to the project, the '
+         'requirements check, the trigger: on save, after changes or by hand) and the last runs on this computer: '
+         'status, the exit code of the user\'s own command, duration and the files that changed. Says whether a '
+         'command is set and approved, never its text; the assistant cannot run it. Cheap.', {}, get_automation),
     Tool('get_requirements', 'Read the requirements scorecard',
          'The project\'s requirements with value, target, margin and pass/fail, and the verdict. Cheap metrics at once; '
          'run=true also runs the studies the others need (seconds).',
@@ -1574,9 +1719,12 @@ TOOLS = [
          'resolved per sector against the required ranges, and the stereo camera pairs), sensor_coverage (with '
          'lidars or radars: per object and sector the camera, lidar and radar ranges and whether two, one or no '
          'modality reaches the required range; the share of each lidar\'s points the vehicle blocks, its ground blind '
-         'zone, and how much of each camera image a lidar covers).',
+         'zone, and how much of each camera image a lidar covers), weather (rain, fog, snow and night: per condition '
+         'how far ahead each object is resolved, the sector checks that pass and each lidar\'s and radar\'s range '
+         'against clear; `condition` picks the one the perception range shows, default the project\'s).',
          {'study': {'type': 'string', 'enum': list(STUDIES)}, 'height': {'type': 'number'},
-          'object_height': {'type': 'number'}, 'tolerance_deg': {'type': 'number'}, 'tolerance_mm': {'type': 'number'}},
+          'object_height': {'type': 'number'}, 'tolerance_deg': {'type': 'number'}, 'tolerance_mm': {'type': 'number'},
+          'condition': {'type': 'string', 'enum': list(_WEATHER_IDS)}},
          run_study, 'compute', ('study',)),
     Tool('optimise_camera', 'Optimise a camera',
          'Search one camera\'s pose (relative to where it is now, within ranges) for the best blind area, minimum '
@@ -1609,8 +1757,10 @@ TOOLS = [
          'Show something to the user in the app (does not change the design): select_cameras (cameras), '
          'frame_point (x, y: frames the views on a ground point and marks it), frame_all, heatmap '
          '(none | coverage | density | redundancy | stitched), overlay (overlay key such as camlight, volume, '
-         'guidelines, frustums, sensors; on), open_page (viewports | camviews | volume | perception | tolerance | '
-         'compare | rig | coverage | timing | recording | power | gnss | exposure | fleet | brackets | dataset | drivelog | asbuilt | requirements | lidar_calib).',
+         'guidelines, frustums, sensors, critical, wipers, harness; on), open_page (viewports | camviews | volume | '
+         'perception | tolerance | compare | rig | coverage | timing | recording | power | gnss | exposure | fleet | '
+         'brackets | dataset | drivelog | asbuilt | requirements | lidar_calib | critical | materials | automation | '
+         'terrain | harness | observability).',
          {'action': {'type': 'string', 'enum': list(UI_ACTIONS)}, 'cameras': {'type': 'array', 'items': {'type': 'string'}},
           'x': {'type': 'number'}, 'y': {'type': 'number'}, 'heatmap': {'type': 'string'}, 'overlay': {'type': 'string'},
           'on': {'type': 'boolean'}, 'page': {'type': 'string'}}, show_in_app, 'ui', ('action',)),

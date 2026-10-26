@@ -12,6 +12,7 @@ from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPolygonF
 from PyQt6.QtWidgets import QToolTip
 
 from ..core import perception as PR
+from ..core import weather as W
 from .charts import ChartBase
 from .theme import THEME, STATUS, mono, sans
 
@@ -117,7 +118,10 @@ class PerceptionController(QObject):
             self._mark_stale()
 
     def _on_edit(self, *_):
-        if self._for is not None and self.settings.to_dict() != self._for[1]:
+        # the perception settings, or the weather the envelopes follow (also when it is edited elsewhere, say by
+        # Typical on the weather panel or an undo, while this page is hidden)
+        if self._for is not None and (self.settings.to_dict() != self._for[1] or
+                                      W.settings_of(self.ctx.store.project).to_dict() != self._for[3]):
             self._mark_stale()
 
     def set_active(self, on: bool):
@@ -152,7 +156,7 @@ class PerceptionController(QObject):
         gen = self._gen
         self.busy = True
         self.status = 'Computing the perception range…'
-        key = (ctx.store.project, st.to_dict(), res)
+        key = (ctx.store.project, st.to_dict(), res, W.settings_of(project).to_dict())
 
         def work(progress, cancel):
             return key, PR.analyse(project, eng, res, st, progress=progress, cancel=cancel)
@@ -187,7 +191,8 @@ class PerceptionController(QObject):
             self.changed.emit()
             return
         self.result, self._for = pr, key
-        self.stale = key[2] is not self.ctx.analysis.result or key[1] != self.settings.to_dict()
+        self.stale = key[2] is not self.ctx.analysis.result or key[1] != self.settings.to_dict() or \
+            key[3] != W.settings_of(self.ctx.store.project).to_dict()
         m = pr.metrics
         self.status = (f'{m["passed"]} of {m["checks"]} sector checks pass · {m["points"]:,} object placements · '
                        f'{m["seconds"]:.1f} s').replace(',', ' ')

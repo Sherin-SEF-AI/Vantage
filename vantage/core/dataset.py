@@ -34,6 +34,11 @@ origin at origin_lat / origin_lon / origin_alt, WGS84); ego / base_link is the v
 centre on the ground). Bag frame ids are the URDF export's link names: <tag>_link for sensor bodies and lidars,
 radars, GNSS antennas and IMUs (REP 103 axes), <tag>_optical_frame for camera images.
 
+Weather: DatasetSettings.weather names a core.weather condition ('' follows the project's selected one, 'clear' unless
+set): fog, rain, snow and night show in the camera images, the lidar loses far returns and gains false near ones, the
+radar's reach and RCS shrink with the rain's loss (core.drivescene). 'Clear' writes exactly what it wrote before weather
+existed; another condition is named in dataset.json (scene.weather) and the README.
+
 Limits: see core.drivescene (synthetic geometry, simple materials, no weather): the scene is for testing a pipeline,
 not for training.
 """
@@ -55,6 +60,7 @@ import numpy as np
 from . import drivescene as DS
 from . import exporters as EX
 from . import timing as TM
+from . import weather as WX
 from .mathutil import BODY_TO_OPTICAL, quat_from_matrix, rot_zyx
 
 SCHEMA = 'vantage.dataset/1'
@@ -155,9 +161,13 @@ class DatasetSettings:
     origin_lat: float = 13.0827
     origin_lon: float = 80.2707
     origin_alt: float = 7.0
+    weather: str = ''                  # a core.weather condition id; '' = the project's selected condition
 
     def to_dict(self):
-        return asdict(self)
+        d = asdict(self)
+        if not d['weather']:            # the default stays out: settings, tokens and dataset.json as before weather
+            del d['weather']
+        return d
 
     @staticmethod
     def from_dict(d: dict | None) -> 'DatasetSettings':
@@ -170,6 +180,8 @@ class DatasetSettings:
             s.camera_rate = d['camera_rate']
         if d.get('channel_names') in CHANNEL_NAMES:
             s.channel_names = d['channel_names']
+        if d.get('weather') in WX.IDS:
+            s.weather = d['weather']
         for k in BOOLS:
             v = d.get(k)
             if isinstance(v, (bool, int)) and not isinstance(v, float):
@@ -205,6 +217,7 @@ class DatasetResult:
     seconds: float
     notes: list = field(default_factory=list)
     bag: dict | None = None            # BagWriter.close()
+    weather: dict | None = None        # the core.weather condition (None: clear)
 
 
 # =========================================================================== helpers
@@ -511,6 +524,7 @@ def preview(project, engine, settings: DatasetSettings | None = None, t: float =
         from .analysis import Engine
         engine = Engine()
     engine.vehicle_geom(p)
+    wx = WX.scene_weather(p, st.weather or None, engine)
     ctx = EX._context(p, None, EX.ExportOptions(frame='rear_axle'))
     models = {cm.cam.uid: cm for cm in ctx.models}
     x, y, psi = (float(a) for a in scene.drive.pose(t))
@@ -527,13 +541,13 @@ def preview(project, engine, settings: DatasetSettings | None = None, t: float =
         w, h, K, _, _ = _camera_setup(p, cm, scale, st.undistort)
         cs = _camera_sim(p, engine, c.sensor, w, h, st.undistort, K)
         img = cs.render(scene, t - plan['readout'] / 2 - plan['exposure'] / 2, plan['readout'], plan['exposure'],
-                        st.rolling_shutter, noise=0.0)
+                        st.rolling_shutter, noise=0.0, wx=wx)
         out['cameras'].append({'tag': c.sensor.tag, 'slot': c.sensor.slot, 'image': img, 'channel': c.channel})
     pts = []
     for c in (c for c in plan['chans'] if c.kind == 'lidar'):
         ls = _lidar_sim(p, engine, c.sensor)
         t0 = math.floor(t / ls.period) * ls.period
-        sw = ls.sweep(scene, t0, st.lidar_noise_cm / 100.0, st.drop_self_hits, seed=1)
+        sw = ls.sweep(scene, t0, st.lidar_noise_cm / 100.0, st.drop_self_hits, seed=1, wx=wx)
         # each point at its own firing pose -> world -> the ego frame at t (no motion skew in the picture)
         tc = t0 + sw['t'].astype(float)
         xs, ys, ps_ = scene.drive.pose(tc)
@@ -546,7 +560,7 @@ def preview(project, engine, settings: DatasetSettings | None = None, t: float =
     for c in (c for c in plan['chans'] if c.kind == 'radar'):
         rs = _radar_sim(p, engine, c.sensor)
         tk = c.stamps[np.abs(c.stamps - t).argmin()]
-        det = rs.scan(scene, float(tk), seed=1)
+        det = rs.scan(scene, float(tk), seed=1, wx=wx)
         q = np.c_[det['x'], det['y'], det['z']] @ rs.R_vs.T + rs.pos
         out['radar'].append({'tag': c.sensor.tag, 'points': q, 'v_r': det['v_r']})
     for b in scene.boxes_at(t, near=(x, y)):
@@ -701,6 +715,9 @@ def generate(project, engine, settings: DatasetSettings | dict | None, out_dir: 
         from .analysis import Engine
         engine = Engine()
     engine.vehicle_geom(p)
+    wx = WX.scene_weather(p, st.weather or None, engine)
+    if wx is not None:
+        notes.append(f'Weather: {wx.condition.label()} (core.weather; typical models).')
 
     def prog(f, text=''):
         if progress is not None:
@@ -723,7 +740,7 @@ def generate(project, engine, settings: DatasetSettings | dict | None, out_dir: 
     nus, bag_dir = _prepare(out_dir, bag_name(p), st, created)
     try:
         res = _generate(p, v, engine, st, plan, scene, ctx, models, RB, out_dir, nus, bag_dir, notes, prog, stop,
-                        t_start)
+                        t_start, wx)
     except BaseException:
         _cleanup(created)
         raise
@@ -732,11 +749,14 @@ def generate(project, engine, settings: DatasetSettings | dict | None, out_dir: 
     return res
 
 
-def _generate(p, v, engine, st, plan, scene, ctx, models, RB, out_dir, nus, bag_dir, notes, prog, stop, t_start):
+def _generate(p, v, engine, st, plan, scene, ctx, models, RB, out_dir, nus, bag_dir, notes, prog, stop, t_start,
+              wx=None):
     chans = plan['chans']
     samples = plan['samples']
     readout, exposure = plan['readout'], plan['exposure']
-    run_key = EX._token('vantage', 'dataset', p.name, v.name, json.dumps(st.to_dict(), sort_keys=True))
+    key_st = dict(st.to_dict(), weather=wx.condition.to_doc()) if wx is not None else \
+        {k: v for k, v in st.to_dict().items() if k != 'weather'}          # clear: the tokens as before weather
+    run_key = EX._token('vantage', 'dataset', p.name, v.name, json.dumps(key_st, sort_keys=True))
     sample_tok = [EX._token('vantage', 'sample', run_key, _us(t)) for t in samples]
     sample_us = [_us(t) for t in samples]
     # ---- calibrated sensors: the nuscenes_calib export's rows (visible sensors), intrinsics scaled to the images
@@ -893,7 +913,7 @@ def _generate(p, v, engine, st, plan, scene, ctx, models, RB, out_dir, nus, bag_
     def render_job(c, k):
         sim = sims[c.channel]
         img = sim.render(scene, float(c.times[k]), readout, exposure, st.rolling_shutter, noise=2.0,
-                         seed=[int(st.seed), zlib.crc32(c.channel.encode()), int(k)])
+                         seed=[int(st.seed), zlib.crc32(c.channel.encode()), int(k)], wx=wx)
         import cv2
         ok, buf = cv2.imencode('.jpg', np.ascontiguousarray(img[..., ::-1]),
                                [int(cv2.IMWRITE_JPEG_QUALITY), int(st.jpeg_quality)])
@@ -960,7 +980,7 @@ def _generate(p, v, engine, st, plan, scene, ctx, models, RB, out_dir, nus, bag_
                 elif c.kind == 'lidar':
                     sim = sims[c.channel]
                     sw = sim.sweep(scene, float(c.times[k]), st.lidar_noise_cm / 100.0, st.drop_self_hits,
-                                   seed=[int(st.seed), 104729, ci, k])
+                                   seed=[int(st.seed), 104729, ci, k], wx=wx)
                     pc['bytes'] += len(sw['xyz']) * 20
                     if st.nuscenes:
                         if sd_record(c, k, 'pcd.bin', _lidar_bin(sw)):
@@ -973,7 +993,8 @@ def _generate(p, v, engine, st, plan, scene, ctx, models, RB, out_dir, nus, bag_
                         a['intensity'], a['ring'], a['t'] = sw['intensity'], sw['ring'], sw['t']
                         bag_write(c.topic + '/points', t_ns, RB.pointcloud2(a, t_ns, f'{c.tag}_link'))
                 elif c.kind == 'radar':
-                    det = sims[c.channel].scan(scene, float(c.times[k]), seed=[int(st.seed), 15485863, ci, k])
+                    det = sims[c.channel].scan(scene, float(c.times[k]), seed=[int(st.seed), 15485863, ci, k],
+                                               wx=wx)
                     pc['bytes'] += len(det['x']) * 43
                     if st.nuscenes:
                         if sd_record(c, k, 'pcd', _pcd_radar(det)):
@@ -1045,7 +1066,8 @@ def _generate(p, v, engine, st, plan, scene, ctx, models, RB, out_dir, nus, bag_
                         v.name, v.uid, list(per_chan.values()), counts,
                         {'nuscenes': nbytes['nuscenes'], 'rosbag': nbytes['rosbag'],
                          'total': nbytes['nuscenes'] + nbytes['rosbag']},
-                        _scene_doc(scene, st, plan), 0.0, notes, bag_res)
+                        _scene_doc(scene, st, plan, wx), 0.0, notes, bag_res,
+                        None if wx is None else wx.condition.to_doc())
     res.seconds = time.perf_counter() - t_start
     export(res, p, out_dir)
     prog(1.0, 'Done')
@@ -1219,16 +1241,24 @@ def _write_tables(p, v, st, scene, nus, logname, run_key, samples, sample_tok, s
         write_file(f'{VERSION}/{name}.json', (json.dumps(rows, indent=1) + '\n').encode('utf-8'))
 
 
-def _scene_doc(scene, st, plan) -> dict:
+def _scene_doc(scene, st, plan, wx=None) -> dict:
     rd = scene.road
-    return {'kind': st.scene, 'seed': st.seed, 'duration_s': st.duration_s, 'speed_kmh': st.speed_kmh,
-            'ego_travel_m': round(float(scene.drive.travel(st.duration_s)), 3),
-            'bend': {'direction': 'left' if rd.turn > 0 else 'right', 'radius_m': rd.R,
-                     'angle_deg': round(math.degrees(rd.theta), 3), 'starts_at_m': round(rd.L1, 3)},
-            'objects': len(scene.objects), 'annotated_actors': sum(1 for o in scene.objects if o.category),
-            'keyframe_hz': plan['keyframe_hz'], 'samples': len(plan['samples']),
-            'camera_readout_ms': plan['readout'] * 1000.0, 'camera_exposure_ms': plan['exposure'] * 1000.0,
-            'origin': {'lat': st.origin_lat, 'lon': st.origin_lon, 'alt': st.origin_alt, 'datum': 'WGS84'}}
+    doc = {'kind': st.scene, 'seed': st.seed, 'duration_s': st.duration_s, 'speed_kmh': st.speed_kmh,
+           'ego_travel_m': round(float(scene.drive.travel(st.duration_s)), 3),
+           'bend': {'direction': 'left' if rd.turn > 0 else 'right', 'radius_m': rd.R,
+                    'angle_deg': round(math.degrees(rd.theta), 3), 'starts_at_m': round(rd.L1, 3)},
+           'objects': len(scene.objects), 'annotated_actors': sum(1 for o in scene.objects if o.category),
+           'keyframe_hz': plan['keyframe_hz'], 'samples': len(plan['samples']),
+           'camera_readout_ms': plan['readout'] * 1000.0, 'camera_exposure_ms': plan['exposure'] * 1000.0,
+           'origin': {'lat': st.origin_lat, 'lon': st.origin_lon, 'alt': st.origin_alt, 'datum': 'WGS84'}}
+    if wx is not None:                  # clear: the scene as before weather existed
+        doc['weather'] = dict(wx.condition.to_doc(), extinction_550nm_per_km=round(wx.sigma_vis * 1000.0, 4),
+                              lidar_extinction_per_km=round(wx.sigma_lidar * 1000.0, 4),
+                              lidar_false_return_share=round(wx.false_share, 4),
+                              radar_attenuation_db_km=round(wx.radar_db_km, 4),
+                              lens_drop_share={wx.tags.get(u, u): round(v, 4) for u, v in wx.drops.items()},
+                              headlamps_m=[[round(float(q), 3) for q in L] for L in wx.lamps])
+    return doc
 
 
 def run(project, engine=None, settings=None, variant=None, progress=None, cancel=None, out_dir=None):
@@ -1300,7 +1330,7 @@ def to_doc(res: DatasetResult, project=None) -> dict:
                       'nuscenes_calib export, scaled to the image size',
             'bag_frames': '<tag>_link (sensor bodies, REP 103), <tag>_optical_frame (camera images): the URDF '
                           'export\'s link names'},
-        'assumptions': ASSUMPTIONS,
+        'assumptions': ASSUMPTIONS + ('' if not res.weather else ' Weather: ' + WX.ASSUMPTIONS),
         'scene_limits': DS.__doc__.split('Modelling limits:')[1].strip() if 'Modelling limits:' in (DS.__doc__ or '')
         else '',
         'notes': res.notes,
@@ -1317,11 +1347,12 @@ def _readme(res: DatasetResult) -> str:
                 f'{res.counts["samples"]} samples, {res.counts["sample_data"]} sample_data, '
                 f'{res.counts["annotations"]} annotations of {res.counts["instances"]} instances') \
         if res.nuscenes_dir else '- nuScenes: not written'
+    wx_line = (' no\nweather. Not for training.' if not res.weather else
+               f'\nweather: {res.weather["label"]} (typical models, core.weather). Not for training.')
     return f"""# Vantage synthetic drive · {res.project} / {res.variant}
 
 A {st.duration_s:g} s {SCENE_LABEL[st.scene].lower()} drive at {st.speed_kmh:g} km/h (seed {st.seed}) recorded by the
-planned rig, for testing ingestion, labelling tools and loaders. **Synthetic**: simple geometry and materials, no
-weather. Not for training.
+planned rig, for testing ingestion, labelling tools and loaders. **Synthetic**: simple geometry and materials,{wx_line}
 
 {nus_line}
 {bag_line}
@@ -1350,7 +1381,7 @@ Conventions:
    'Images are the real (fisheye) lens: undistort with vantage_distortion (Kannala-Brandt) before using the 3x3.'}
 - Bag frame ids are the URDF export's link names (`<tag>_link`, `<tag>_optical_frame`).
 
-{ASSUMPTIONS}
+{ASSUMPTIONS}{'' if not res.weather else chr(10) + chr(10) + 'Weather: ' + WX.ASSUMPTIONS}
 """
 
 

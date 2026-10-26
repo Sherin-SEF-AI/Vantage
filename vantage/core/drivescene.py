@@ -54,6 +54,20 @@ Ground truth: per actor and time its box (nuScenes wlh), yaw and velocity in the
 counted by the object each hit; nuScenes visibility from rays between the cameras and points on the box's faces that
 face the ego (the share visible in any camera, past nearer objects and the body).
 
+Weather (core.weather; the simulators take a SceneWeather, None for clear, which runs exactly as without it)
+* Cameras: by day an overcast sky drops the sun's shading and shadows, rain darkens the road; at night every surface
+  is lit by the ambient light and the ego's two headlamps (their typical beam pattern, inverse square, the cosine on
+  the surface, shadows cast by the scene's objects), its luminance mapped through the camera's photon budget (signal
+  in electrons with shot and read noise; auto-exposure puts the frame's 99th percentile at full scale with the gain
+  capped at NIGHT_FULL_SCALE × the camera's minimum luminance; highlights compressed as 1 − exp(−1.2x), gamma 2.2).
+  Fog, rain and snow blend each pixel toward the airlight with the transmission exp(−σd) over its ray's length. Drops
+  sit on the lens (their share of the image from core.weather's heuristic, blurred, drifting slowly down) and flakes
+  fall in snow.
+* Lidar: a return needs r ≤ the weather's derated R_max(ρ) (two-way extinction, Lambert W), its intensity falls by
+  exp(−2αr), and a share of the beams return early from droplets or flakes (object id P_WEATHER).
+* Radar: a target's cross-section counts reduced by the two-way rain and fog loss at its distance (so its range
+  shrinks as the radar equation says) and its reported RCS is lower by that loss.
+
 Modelling limits: synthetic geometry (boxes, cylinders, spheres), simple materials, one fixed sun, no weather, no
 multipath or beam divergence, one lidar return per beam, one radar detection per object, flat road, no suspension
 motion, actors at constant speeds that do not react to each other. The scene is for testing a pipeline (ingestion,
@@ -62,7 +76,8 @@ labelling tools, loaders), not for training.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+import zlib
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -89,6 +104,8 @@ RADAR_NOISE = {'range_m': 0.10, 'azimuth_deg': 0.25, 'elevation_deg': 0.5, 'velo
 # materials (what a hit is shaded and reflects like)
 M_SKY, M_GROUND, M_CAR, M_BUILDING, M_PLAIN, M_PERSON, M_SIGN, M_BODY = range(8)
 P_GROUND, P_BODY, P_SKY = -3, -2, -1          # prim index codes in the buffers
+P_WEATHER = -4                                 # a lidar return from fog droplets, rain or snow (core.weather)
+NIGHT_FULL_SCALE = 12.0                        # night: full scale at this many times the camera's minimum luminance
 BOX, CYL, SPH = 0, 1, 2
 # typical lidar reflectivity at 850-905 nm (assumptions)
 REFL = {'asphalt': 0.08, 'paint': 0.55, 'cycle': 0.10, 'pavement': 0.25, 'grass': 0.45, 'kerb': 0.30,
@@ -1061,6 +1078,7 @@ class CameraSim:
     def __init__(self, project, engine, cam, w: int, h: int, rectified: bool = False, K=None):
         self.cam, self.w, self.h, self.rectified = cam, int(w), int(h), bool(rectified)
         self.intr = intr = resolve(project.module_for(cam), project.lens_for(cam))
+        self.module, self.lens = project.module_for(cam), project.lens_for(cam)     # the night photon budget
         self.sx, self.sy = self.w / intr.width, self.h / intr.height
         R = rot_zyx(cam.yaw, cam.pitch, cam.roll)
         self.R_vc = R                                  # camera body -> vehicle
@@ -1142,9 +1160,10 @@ class CameraSim:
         return t_trigger + readout_s * centre + exposure_s / 2, t_mid
 
     def render(self, scene: Scene, t_trigger: float, readout_s=0.0, exposure_s=0.0, rolling=False, noise=2.0,
-               seed=0, want_ids=False):
+               seed=0, want_ids=False, wx=None):
         """RGB uint8 (h, w, 3) image of the scene for a frame triggered at t_trigger (and the object id per pixel when
-        want_ids: -3 ground, -2 body, -1 sky or outside the image circle)."""
+        want_ids: -3 ground, -2 body, -1 sky or outside the image circle). wx: a core.weather SceneWeather (None:
+        clear)."""
         tb, t_mid = self.times(t_trigger, readout_s, exposure_s, rolling)
         drive = scene.drive
         ps = scene.prims_at(t_mid)
@@ -1192,12 +1211,15 @@ class CameraSim:
                 j = idx[closer]
                 best[j] = t[closer]
                 pid[j] = i
-        col = self._shade(scene, ps, O, D, best, pid, dt)
-        img = np.full((self.h * self.w, 3), 0.16 * 255.0, np.float32)
-        img[self.pix] = col * 255.0
-        if noise:
-            img += np.random.default_rng(seed).standard_normal(img.shape, dtype=np.float32) * noise
-        out = np.clip(img, 0, 255).astype(np.uint8).reshape(self.h, self.w, 3)
+        if wx is not None:
+            out = self._weather_image(scene, ps, O, D, best, pid, dt, wx, noise, seed, t_mid)
+        else:
+            col = self._shade(scene, ps, O, D, best, pid, dt)
+            img = np.full((self.h * self.w, 3), 0.16 * 255.0, np.float32)
+            img[self.pix] = col * 255.0
+            if noise:
+                img += np.random.default_rng(seed).standard_normal(img.shape, dtype=np.float32) * noise
+            out = np.clip(img, 0, 255).astype(np.uint8).reshape(self.h, self.w, 3)
         if not want_ids:
             return out
         ids = np.full(self.h * self.w, P_SKY, np.int32)
@@ -1301,6 +1323,186 @@ class CameraSim:
             t = ps.hit(i, Pi, np.broadcast_to(SUN, (len(idx), 3)))
             lit[idx[np.isfinite(t)]] = 0.0
         return lit
+
+
+    # ---- weather (core.weather)
+    def _surfaces(self, scene, ps, O, D, best, pid, dt):
+        """Per ray what it meets, before lighting: kind (0 sky, 1 own body, 2 object, 3 ground), colour (the material's
+        for objects and the ground, the clear shading for the own body), the world point, its normal, and for the
+        ground whether the sun reaches it."""
+        n = len(D)
+        kind = np.zeros(n, np.int8)
+        rgb = np.zeros((n, 3), np.float32)
+        P = O + D * np.where(np.isfinite(best), best, 0.0)[:, None]
+        nrm = np.zeros((n, 3))
+        sun = np.ones(n)
+        s = np.nonzero(pid == P_BODY)[0]
+        if len(s):
+            kind[s] = 1
+            rgb[s] = (0.22 + 0.74 * self.body_shade[s, None] / 255.0) * np.array([0.80, 0.82, 0.86])
+            if self.house is not None:
+                from .housings import tone
+                hs = s[self.house[s] >= 0]
+                rgb[hs] = self.house_rgb[self.house[hs]] * tone(self.body_shade[hs])[:, None]
+        s = np.nonzero(pid >= 0)[0]
+        if len(s):
+            kind[s] = 2
+            Ps = P[s].copy()
+            if dt is not None:
+                mv = ps.vx[pid[s]] != 0
+                Ps[mv, 0] -= ps.vx[pid[s][mv]] * dt[s][mv]
+                Ps[mv, 1] -= ps.vy[pid[s][mv]] * dt[s][mv]
+            nrm[s] = ps.normals(pid[s], Ps)
+            rgb[s], _ = surface_shade(ps, pid[s], Ps, nrm[s])
+        s = np.nonzero(pid == P_GROUND)[0]
+        if len(s):
+            kind[s] = 3
+            g = P[s]
+            sd_s, sd_d = scene.road.to_sd(g[:, 0], g[:, 1])
+            fw = best[s] * self.pix_ang / np.clip(np.abs(D[s, 2]), 0.05, 1.0)
+            rgb[s], _ = ground_material(scene.road, sd_s.astype(np.float32), sd_d.astype(np.float32),
+                                        fw.astype(np.float32), scene.crossing_s)
+            nrm[s] = (0.0, 0.0, 1.0)
+            sun[s] = self._shadows(ps, g, s, None if dt is None else dt[s])
+        return kind, rgb, P, nrm, sun
+
+    def _lamp_shadows(self, ps, P, lamp_w, pose):
+        """1 where a world point P (m, 3) sees the headlamp at lamp_w, 0 where an object of the scene is in between
+        (parts ahead of the lamp only: the beam does not reach behind it)."""
+        lit = np.ones(len(P))
+        if not len(P) or not ps.n:
+            return lit
+        v = P - lamp_w
+        dist = np.maximum(np.linalg.norm(v, axis=1), 1e-9)
+        u = v / dist[:, None]
+        w = ps.bc - lamp_w
+        dc = np.linalg.norm(w, axis=1)
+        xm, ym, pm = pose
+        ahead = (w[:, 0] * math.cos(pm) + w[:, 1] * math.sin(pm)) > -ps.br
+        cand = np.nonzero(ahead & (dc < 90.0) & (dc > ps.br) & (ps.z1 > 0.25))[0]
+        for i in cand:
+            uc = w[i] / dc[i]
+            cosr = math.sqrt(max(1.0 - (ps.br[i] / dc[i]) ** 2, 0.0))
+            sel = np.nonzero((u @ uc >= cosr - 1e-9) & (dist > dc[i] - ps.br[i]) & (lit > 0))[0]
+            if not len(sel):
+                continue
+            t = ps.hit(i, lamp_w, u[sel])
+            lit[sel[t < dist[sel] - 0.05]] = 0.0
+        return lit
+
+    def _weather_image(self, scene, ps, O, D, best, pid, dt, wx, noise, seed, t_mid):
+        """The frame under a weather condition (see the module docstring): uint8 (h, w, 3)."""
+        from . import weather as W
+        c = wx.condition
+        kind, rgb, P, nrm, sun = self._surfaces(scene, ps, O, D, best, pid, dt)
+        n = len(D)
+        T = np.exp(-wx.sigma_vis * np.where(np.isfinite(best), best, np.inf)) if wx.sigma_vis > 0 else \
+            np.ones(len(D))                                                    # the sky: 0 in fog, haze, rain
+        rain = c.rain_mm_h > 0
+        if not c.night:
+            sunny = c.ambient_lux >= 20000.0
+            col = np.zeros((n, 3), np.float32)
+            s = kind == 0
+            el = np.clip(D[s, 2], 0, 1)[:, None]
+            sky = np.array([0.80, 0.84, 0.88]) * (1 - el) + np.array([0.55, 0.66, 0.80]) * el
+            col[s] = sky if sunny else 0.25 * sky + 0.75 * np.array([0.76, 0.77, 0.79])
+            s = kind == 1
+            col[s] = rgb[s] * (1.0 if sunny else 0.85)
+            s = kind == 2
+            col[s] = rgb[s] * ((0.50 + 0.55 * np.clip(nrm[s] @ SUN, 0, 1)) if sunny else
+                               (0.66 + 0.16 * np.clip(nrm[s, 2], 0, 1)))[:, None]
+            s = kind == 3
+            col[s] = rgb[s] * ((0.62 + 0.38 * sun[s]) if sunny else np.full(int(s.sum()), 0.80))[:, None] * \
+                (0.72 if rain else 1.0)
+            air = np.array([0.80, 0.81, 0.83]) * (1.0 if sunny else 0.92)
+            col = col * T[:, None] + air * (1.0 - T[:, None])
+            img = np.full((self.h * self.w, 3), 0.16 * 255.0, np.float32)
+            img[self.pix] = col * 255.0
+            if noise:
+                img += np.random.default_rng(seed).standard_normal(img.shape, dtype=np.float32) * noise
+            out = np.clip(img, 0, 255).astype(np.uint8).reshape(self.h, self.w, 3)
+        else:
+            xm, ym, pm = (float(v) for v in scene.drive.pose(t_mid))
+            Rz = _rz(pm)
+            st = wx.settings
+            lum = np.zeros((n, 3))
+            lit = (kind == 2) | (kind == 3)
+            Pv = (P[lit] - np.array([xm, ym, 0.0])) @ Rz
+            nv = nrm[lit] @ Rz
+            E = np.full(int(lit.sum()), float(c.ambient_lux))
+            for Lv in wx.lamps:
+                Lw = np.array([xm, ym, 0.0]) + Rz @ Lv
+                El = W.illuminance(Pv, replace(c, ambient_lux=0.0), st, Lv[None, :], normals=nv)
+                on = El > 1e-3
+                if on.any():
+                    El[on] *= self._lamp_shadows(ps, P[lit][on], Lw, (xm, ym, pm))
+                E = E + El
+            wet = np.where(kind[lit] == 3, 0.72 if rain else 1.0, 1.0)              # a wet road is darker
+            lum[lit] = rgb[lit] * (E * wet / math.pi)[:, None]
+            s = kind == 1
+            lum[s] = rgb[s] * c.ambient_lux / math.pi
+            s = kind == 0
+            lum[s] = (0.003 + 0.01 * c.ambient_lux) * np.array([0.60, 0.66, 0.85])
+            air = 0.5 * c.ambient_lux / math.pi
+            lum = lum * T[:, None] + air * (1.0 - T[:, None])
+            fl = W.camera_floor(self.module, self.lens, st)
+            k_e = fl['electrons_per_cd_m2']
+            S = lum * k_e
+            # auto-exposure: the frame's bright end (99th percentile) at full scale, the gain at most NIGHT_FULL_SCALE
+            # times the camera's minimum luminance
+            L_fs = max(NIGHT_FULL_SCALE * fl['l_min'], float(np.percentile(lum.mean(1), 99)) if n else 0.0)
+            S_fs = L_fs * k_e
+            if noise:
+                rng = np.random.default_rng(seed)
+                S = S + rng.standard_normal(S.shape) * np.sqrt(np.maximum(S, 0.0) + st.read_noise_e ** 2)
+            lin = 1.0 - np.exp(-1.2 * np.maximum(S / S_fs, 0.0))          # highlights compressed, as an HDR camera
+            img = np.zeros((self.h * self.w, 3), np.float32)
+            img[self.pix] = np.power(lin, 1 / 2.2) * 255.0
+            out = np.clip(img, 0, 255).astype(np.uint8).reshape(self.h, self.w, 3)
+        base = [int(np.atleast_1d(seed)[0])] if np.ndim(seed) else [int(seed)]
+        lens_seed = base + [zlib.crc32(str(self.cam.tag).encode()), 4093]
+        share = wx.drops.get(self.cam.uid, 0.0)
+        if share > 0:
+            out = _lens_drops(out, share, lens_seed, t_mid)
+        if c.snow_mm_h > 0:
+            out = _flakes(out, c.snow_mm_h, list(np.atleast_1d(seed).astype(np.int64)) + [7919], c.night)
+        return out
+
+def _lens_drops(img, share, seed, t):
+    """Drops on the lens covering about `share` of the image: each a blurred, slightly brighter view of what lies
+    behind it with a soft edge, seeded per camera (the same drops all drive), drifting down slowly."""
+    import cv2
+    h, w = img.shape[:2]
+    rng = np.random.default_rng(seed)
+    a, b = 0.012 * w, 0.040 * w
+    mean_area = math.pi * (a * a + a * b + b * b) / 3.0
+    n = int(round(share * w * h / mean_area))
+    if n <= 0:
+        return img
+    r = rng.uniform(a, b, n)
+    x = rng.uniform(0, w, n)
+    y = (rng.uniform(0, h, n) + 0.01 * h * float(t) * rng.uniform(0.5, 1.5, n)) % h
+    mask = np.zeros((h, w), np.float32)
+    for xi, yi, ri in zip(x, y, r):
+        cv2.circle(mask, (int(xi), int(yi)), max(int(ri), 1), 1.0, -1, cv2.LINE_AA)
+    mask = cv2.GaussianBlur(mask, (0, 0), 0.002 * w + 0.8) * 0.92
+    blur = cv2.GaussianBlur(img.astype(np.float32), (0, 0), 0.012 * w + 1.0)
+    out = img.astype(np.float32) * (1.0 - mask[..., None]) + np.minimum(blur * 1.06, 255.0) * mask[..., None]
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def _flakes(img, rate, seed, night):
+    """Falling snow in front of the lens: bright flakes, more for a heavier snowfall (a new set every frame)."""
+    import cv2
+    h, w = img.shape[:2]
+    rng = np.random.default_rng(seed)
+    n = int(min(rate, 30.0) * 120 * (w * h) / (640 * 512))
+    over = img.copy()
+    k = w / 640.0
+    tone = 120 if night else 235
+    for xi, yi, ri in zip(rng.uniform(0, w, n), rng.uniform(0, h, n), rng.uniform(0.6, 2.4, n) * k):
+        cv2.circle(over, (int(xi), int(yi)), max(int(round(ri)), 1), (tone, tone, tone), -1, cv2.LINE_AA)
+    return cv2.addWeighted(over, 0.85, img, 0.15, 0)
 
 
 # =========================================================================== lidar
@@ -1411,8 +1613,9 @@ class LidarSim:
             return slice(c0, c1), np.arange(self.J)
         return slice(c0, c1), self._columns(azc - half, azc + half, step)
 
-    def sweep(self, scene: Scene, t0: float, noise_m=0.015, drop_self=True, seed=0) -> dict:
-        """One sweep starting at t0 (a sync pulse): every return in the sensor frame at its own firing time."""
+    def sweep(self, scene: Scene, t0: float, noise_m=0.015, drop_self=True, seed=0, wx=None) -> dict:
+        """One sweep starting at t0 (a sync pulse): every return in the sensor frame at its own firing time. wx: a
+        core.weather SceneWeather (None: clear)."""
         drive = scene.drive
         tc = t0 + self.t_col
         x, y, psi = drive.pose(tc)
@@ -1488,11 +1691,17 @@ class LidarSim:
         cosi = np.abs(np.sum(nr * d, axis=1))
         cosi = np.where(b, 0.8, cosi)                               # the body's normal is not known here
         rho = refl * np.clip(cosi, 0.02, 1.0)
-        rmax = np.minimum(self.m.range_m * np.sqrt(rho / 0.10), self.r_max_cap)
+        if wx is None:
+            rmax = np.minimum(self.m.range_m * np.sqrt(rho / 0.10), self.r_max_cap)
+        else:                                   # the weather's two-way extinction (core.weather)
+            rmax = np.minimum(wx.lidar_rmax(self.m.range_m * np.sqrt(rho / 0.10)), self.r_max_cap)
         keep = (r >= self.m.range_min_m) & (r <= rmax)
         if drop_self:
             keep &= ~b
         ci, cj, r, rho, pk = ci[keep], cj[keep], r[keep], rho[keep], pk[keep]
+        if wx is not None:
+            rho = rho * np.exp(-2.0 * wx.sigma_lidar * r)
+            ci, cj, r, rho, pk = self._false_returns(ci, cj, r, rho, pk, wx, seed)
         if noise_m > 0 and len(r):
             r = r + np.random.default_rng(seed).normal(0.0, noise_m, len(r))
         order = np.lexsort((ci, cj))                                 # firing order: column by column
@@ -1504,6 +1713,31 @@ class LidarSim:
                 'ring': ci.astype(np.uint16), 't': self.t_col[cj].astype(np.float32), 'obj': obj.astype(np.int32),
                 'self': pk == P_BODY, 'rays': self.C * self.J}
 
+
+    def _false_returns(self, ci, cj, r, rho, pk, wx, seed):
+        """A share of the beams (core.weather's heuristic) return early from droplets or flakes, in front of what they
+        would have hit: fog close in (2 m mean beyond the minimum range), rain and snow anywhere in the near zone."""
+        from .weather import FALSE_NEAR_M
+        p = wx.false_share
+        if p <= 0:
+            return ci, cj, r, rho, pk
+        rng = np.random.default_rng([*(int(v) for v in np.atleast_1d(seed)), 2718])
+        hit = rng.random((self.C, self.J)) < p
+        bi, bj = np.nonzero(hit)
+        r0 = self.m.range_min_m
+        if wx.condition.visibility_m > 0:
+            rf = r0 + np.minimum(rng.exponential(2.0, len(bi)), 2 * FALSE_NEAR_M)
+        else:
+            rf = rng.uniform(r0, max(FALSE_NEAR_M, r0 + 0.5), len(bi))
+        rt = np.full((self.C, self.J), np.inf)
+        rt[ci, cj] = r
+        win = rf < rt[bi, bj]
+        bi, bj, rf = bi[win], bj[win], rf[win]
+        gone = np.zeros((self.C, self.J), bool)
+        gone[bi, bj] = True
+        keep = ~gone[ci, cj]
+        return (np.r_[ci[keep], bi], np.r_[cj[keep], bj], np.r_[r[keep], rf],
+                np.r_[rho[keep], rng.uniform(0.01, 0.06, len(bi))], np.r_[pk[keep], np.full(len(bi), P_WEATHER)])
 
 # =========================================================================== radar
 class RadarSim:
@@ -1522,9 +1756,10 @@ class RadarSim:
         depth = self.cube.lookup(dirs_v)[0]
         return (depth < dist - (0.02 + 0.01 * dist)) & (depth > RADAR_FASCIA_M)
 
-    def scan(self, scene: Scene, t: float, seed=0, clutter=4) -> dict:
+    def scan(self, scene: Scene, t: float, seed=0, clutter=4, wx=None) -> dict:
         """Detections at time t in the radar frame: x y z (m), radial velocity relative to the radar v_r (m/s), the
-        same compensated for the ego's motion, RCS (dBsm), dynamic property, the object hit (-1 clutter)."""
+        same compensated for the ego's motion, RCS (dBsm), dynamic property, the object hit (-1 clutter). wx: a
+        core.weather SceneWeather (None: clear): each target's cross-section counts reduced by the two-way loss."""
         rng = np.random.default_rng(seed)
         drive = scene.drive
         x, y, psi = (float(v) for v in drive.pose(t))
@@ -1539,7 +1774,7 @@ class RadarSim:
         ps = scene.prims_at(t)
         R_ws = Rw @ self.R_vs
         reach = self.m.max_range() * SN.radar_scale(max(TARGET_RCS.values())) + 5.0
-        tg, P, ids = [], [], []
+        tg, P, ids, rc = [], [], [], []
         for o in scene.objects:
             if o.rcs <= 0:
                 continue
@@ -1547,7 +1782,9 @@ class RadarSim:
             if math.hypot(ox - o_w[0], oy - o_w[1]) > reach:
                 continue
             cen = np.array([ox, oy, o.base + o.size[2] / 2])
-            if not SN.in_field(self.s, self.m, (Rw.T @ (cen - ego))[None], rcs=o.rcs)[0]:
+            rcs = o.rcs if wx is None else \
+                o.rcs * 10.0 ** (-0.2 * wx.radar_db_km * float(np.linalg.norm(cen - o_w)) / 1000.0)
+            if not SN.in_field(self.s, self.m, (Rw.T @ (cen - ego))[None], rcs=rcs)[0]:
                 continue
             # the reflection: the object's nearest point at the radar's height (within its box)
             c, s_ = math.cos(oyaw), math.sin(oyaw)
@@ -1562,6 +1799,7 @@ class RadarSim:
                 px, py = float(np.clip(lx, -L / 2, L / 2)), float(np.clip(ly, -W / 2, W / 2))
             pz = float(np.clip(o_w[2], o.base + 0.2 * H, o.base + 0.8 * H))
             tg.append(o)
+            rc.append(rcs)
             P.append((ox + px * c - py * s_, oy + px * s_ + py * c, pz))
             ids.append(o.id)
         rows = []
@@ -1580,7 +1818,8 @@ class RadarSim:
                 tt = ps.hit(i, o_w, U[k])
                 ok[k[(tt < dist[k] - 0.05) & (ids[k] != ps.obj[i])]] = False
             for k in np.nonzero(ok)[0]:
-                rows.append((P[k], U[k], scene.actor_velocity(tg[k], t), tg[k].rcs, tg[k].id))
+                rows.append((P[k], U[k], scene.actor_velocity(tg[k], t), tg[k].rcs if wx is None else rc[k],
+                             tg[k].id))
         # clutter: building and wall faces in the widest zone
         if clutter and self.m.zones:
             rng_m, ah, _ = max(self.m.zones, key=lambda z: z[1])
@@ -1592,7 +1831,11 @@ class RadarSim:
                 tt = ps.hit(i, o_w, dirs)
                 cl = tt < best
                 best[cl], bobj[cl] = tt[cl], ps.obj[i]
-            ok = np.isfinite(best) & (best < rng_m * SN.radar_scale(3.0)) & (best > self.m.range_min_m)
+            reach_c = rng_m * SN.radar_scale(3.0)
+            if wx is not None:
+                from .weather import radar_range
+                reach_c = radar_range(reach_c, wx.radar_db_km)
+            ok = np.isfinite(best) & (best < reach_c) & (best > self.m.range_min_m)
             ok &= np.array([b >= 0 and scene.by_id[int(b)].kind in ('building', 'wall') for b in bobj])
             for k in np.nonzero(ok)[0][:clutter]:
                 rows.append((o_w + dirs[k] * best[k], dirs[k], np.zeros(3), float(rng.uniform(0.3, 3.0)), -1))

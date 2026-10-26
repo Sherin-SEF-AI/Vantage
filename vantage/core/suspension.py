@@ -21,8 +21,13 @@ The model (static loads only)
   Results are given from kerb and, for the cameras, relative to the calibration load (the case the cameras are
   calibrated at): that difference is what the calibration has to absorb.
 
-Out of scope: anti-dive and anti-squat and every other kinematic effect of braking, accelerating or cornering (static
-loads only), wheel motion along a kinematic arc (the wheel travels vertically), chassis torsion, bushing compliance,
+Braking, accelerating and cornering (transfer, dynamic_solve; used by core.terrain): the quasi-static load transfer of
+a steady acceleration, with anti-dive, anti-lift and anti-squat percentages and roll-centre heights as inputs, solved
+with the same corners (the linkage's share bypasses the springs). The same solve takes a road that is not flat under
+the tyres (ground: each tyre's road raised or lowered).
+
+Out of scope: dampers and transients, every other kinematic effect of braking, accelerating or cornering, wheel motion
+along a kinematic arc (the wheel travels vertically), chassis torsion, bushing compliance,
 damper and bush friction (a real car settles a few millimetres either side of the friction-free position, depending on
 how it was loaded), tyre pressure changes, fuel level. A wheel that would lift is reported, not solved.
 
@@ -1021,10 +1026,20 @@ class Statics:
         return [c for c in CORNERS if self.corners[c].on_bump]
 
 
-def solve(st: SuspensionSettings, xy: dict, loads) -> Statics:
+def solve(st: SuspensionSettings, xy: dict, loads, ground=None, moment=None, link=None) -> Statics:
     """Static solve of the added loads [(name, kg, x, y, z)] on the four corners at xy {corner: (x, y)}: Newton's method
     on the seven equations (vertical force and the moments about x and y, and each corner's spring in series with its
-    tyre); unknowns heave w, slopes b (mm/m along x) and c (mm/m along y), and the four suspension travels."""
+    tyre); unknowns heave w, slopes b (mm/m along x) and c (mm/m along y), and the four suspension travels.
+
+    Optional, for a road that is not flat and for the quasi-static load transfer of braking, accelerating and
+    cornering (see transfer()):
+    - ground: {corner: mm} the road under each tyre raised (+) or lowered from flat; the tyre deflects by the body's
+      drop plus the rise. A road that is one plane under the four tyres moves the body with it and loads no spring.
+    - moment: (Mx, My) N·m added to the loads' Σ weight × x and Σ weight × y (an inertial load transfer moves load
+      between the tyres without adding any).
+    - link: {corner: N} the part of each tyre's added force that bypasses the spring (taken by the suspension linkage:
+      anti-dive, anti-squat, the roll centres; and the unsprung masses' own load transfer).
+    Without them the solve is exactly the static one above."""
     loads = [(n, float(m), float(x), float(y), float(z)) for n, m, x, y, z in loads
              if math.isfinite(float(m)) and float(m) != 0.0]
     W = np.array([m * G for _, m, *_ in loads])
@@ -1037,12 +1052,23 @@ def solve(st: SuspensionSettings, xy: dict, loads) -> Statics:
     laws = [_CornerLaw(st.corners[c]) for c in CORNERS]
     arb = np.array([st.arb(AXLE[c]) for c in CORNERS])
     pi = [CORNERS.index(PARTNER[c]) for c in CORNERS]
+    g = None if ground is None else np.array([float(ground.get(c, 0.0)) for c in CORNERS])
+    lk = None if link is None else np.array([float(link.get(c, 0.0)) for c in CORNERS])
+    extra = 0.0
+    if moment is not None:
+        Mx += float(moment[0])
+        My += float(moment[1])
+        extra += abs(float(moment[0])) + abs(float(moment[1]))
+    if g is not None:
+        extra += float(np.abs(kt * g).sum())
+    if lk is not None:
+        extra += float(np.abs(lk).sum())
 
     def residual(u):
         w, b, cc = u[:3]
         s = u[3:]
         D = w + b * X + cc * Y
-        Ft = kt * (D - s)
+        Ft = kt * ((D if g is None else D + g) - s)
         r = np.empty(7)
         r[0] = Ft.sum() - Wt
         r[1] = (Ft * X).sum() - Mx
@@ -1057,13 +1083,15 @@ def solve(st: SuspensionSettings, xy: dict, loads) -> Statics:
             j = pi[i]
             a = arb[i] * (s[i] - s[j]) / 2.0
             r[3 + i] = Ft[i] - f - a
+            if lk is not None:
+                r[3 + i] -= lk[i]
             J[3 + i, :3] = [kt[i], kt[i] * X[i], kt[i] * Y[i]]
             J[3 + i, 3 + i] = -kt[i] - k - arb[i] / 2.0
             J[3 + i, 3 + j] = arb[i] / 2.0
         return r, J
 
     u = np.zeros(7)
-    tol = 1e-7 * (abs(Wt) + 1.0)
+    tol = 1e-7 * (abs(Wt) + 1.0) + 1e-9 * extra
     r, J = residual(u)
     nr = float(np.linalg.norm(r))
     it = 0
@@ -1087,7 +1115,8 @@ def solve(st: SuspensionSettings, xy: dict, loads) -> Statics:
     w, b, cc = (float(v) for v in u[:3])
     s = u[3:]
     D = w + b * X + cc * Y
-    Ft = kt * (D - s)
+    Dg = D if g is None else D + g              # the tyre's deflection is the body's drop plus the road's rise
+    Ft = kt * (Dg - s)
     corners = {}
     for i, c in enumerate(CORNERS):
         co = st.corners[c]
@@ -1096,13 +1125,158 @@ def solve(st: SuspensionSettings, xy: dict, loads) -> Statics:
         bump = max(si - co.bump_gap, 0.0) if co.has_bump else 0.0
         beyond = bool(co.curve) and not (law.range[0] - 1e-9 <= si <= law.range[1] + 1e-9)
         load = float(co.kerb_load + Ft[i] / G)
-        corners[c] = CornerState(float(Ft[i]), load, si, float(D[i]) - si, float(D[i]),
+        corners[c] = CornerState(float(Ft[i]), load, si, float(Dg[i]) - si, float(D[i]),
                                  (co.ride_height - si) if co.ride_height > 0 else None, bump,
                                  bool(bump > 1e-9), bool(load <= 0.0), bool(beyond))
     added = sum(m for _, m, *_ in loads)
     cog = tuple(sum(ld[1] * ld[k] for ld in loads) / added for k in (2, 3, 4)) if added else (0.0, 0.0, 0.0)
     return Statics(added, st.kerb_mass + added, cog, corners, w, math.degrees(math.atan(b / 1000.0)),
                    -math.degrees(math.atan(cc / 1000.0)), it, converged)
+
+
+# =========================================================================== braking, accelerating, cornering
+# The quasi-static load transfer of a steady acceleration (no dampers, no transients): the inertial force of the
+# vehicle at its centre of gravity moves load between the tyres (the pitch moment M·a_x·h, the roll moment M·a_y·h). Of
+# that load, the unsprung masses' share and the share the suspension linkage takes (anti-dive and anti-lift under
+# braking, anti-squat or anti-lift at the driven axle under acceleration, the roll centres in a turn) reaches the tyres
+# without deflecting the springs; the rest deflects the springs (and the anti-roll bars), and all of it the tyres.
+# Typical figures, every one labelled typical in the UI:
+# - centre of gravity: passenger cars carry it at roughly 0.35-0.40 of their overall height (0.5-0.6 m on a car
+#   1.4-1.6 m tall); 0.37 is used unless the height is entered.
+# - anti-dive 20 % front, anti-lift 10 % rear under braking, 15 % at the driven axle under acceleration: passenger cars
+#   mostly stay well under 50 % (more makes the brakes feel wooden; Milliken & Milliken, Race Car Vehicle Dynamics, SAE
+#   1995, ch. 17; Gillespie, Fundamentals of Vehicle Dynamics, SAE 1992, ch. 9).
+# - roll centres 0.08 m front (MacPherson strut), 0.20 m rear (twist beam): typical of compact front-driven cars.
+# - unsprung mass 35 kg per corner (TYP_UNSPRUNG_KG) at the wheel centre's height.
+TYP_CG_FRACTION = 0.37
+TYP_CG_M = 0.55
+TYP_WHEEL_R = 0.31
+TYP_ANTI = {'dive': 20.0, 'lift': 10.0, 'squat': 15.0}
+TYP_RC = {'front': 0.08, 'rear': 0.20}
+DRIVES = ('front', 'rear', 'awd')
+DRIVE_LABEL = {'front': 'Front-wheel drive', 'rear': 'Rear-wheel drive', 'awd': 'All-wheel drive (50/50)'}
+DYN_LIMITS = {'cg_height': (0.0, 3.0), 'anti_dive': (0.0, 100.0), 'anti_lift': (0.0, 100.0),
+              'anti_squat': (0.0, 100.0), 'rc_front': (-0.5, 1.5), 'rc_rear': (-0.5, 1.5), 'unsprung_kg': (0.0, 300.0)}
+DYN_ASSUMPTIONS = ('Quasi-static load transfer of a steady acceleration on the static suspension model: the pitch '
+                   'moment M·a_x·h and the roll moment M·a_y·h of the whole vehicle at its centre of gravity move load '
+                   'between the tyres; the unsprung masses\' share and the linkage\'s share (anti-dive, anti-lift, '
+                   'anti-squat as percentages of the axle\'s load transfer; the roll centres in a turn) bypass the '
+                   'springs. No dampers or transients (the first overshoot of a hard stop is larger), no tyre lateral '
+                   'compliance, no aerodynamic loads, no body flex; the rig moves rigidly with the body.')
+
+
+@dataclass
+class Dynamics:
+    """Inputs of the load transfer under braking, accelerating and cornering (typical defaults)."""
+    cg_height: float = 0.0                  # m, the empty (kerb) vehicle's centre of gravity above the road; 0 = estimate
+    anti_dive: float = TYP_ANTI['dive']     # % of the front axle's braking load transfer its linkage takes
+    anti_lift: float = TYP_ANTI['lift']     # % of the rear axle's braking load transfer its linkage takes
+    anti_squat: float = TYP_ANTI['squat']   # % of the driven axle's load transfer under acceleration its linkage takes
+    drive: str = 'front'                    # front | rear | awd (50/50)
+    rc_front: float = TYP_RC['front']       # m, roll-centre height
+    rc_rear: float = TYP_RC['rear']
+    unsprung_kg: float = TYP_UNSPRUNG_KG    # per corner
+
+    def to_dict(self):
+        return {'cg_height': self.cg_height, 'anti_dive': self.anti_dive, 'anti_lift': self.anti_lift,
+                'anti_squat': self.anti_squat, 'drive': self.drive, 'rc_front': self.rc_front,
+                'rc_rear': self.rc_rear, 'unsprung_kg': self.unsprung_kg}
+
+    @staticmethod
+    def from_dict(d) -> 'Dynamics':
+        out = Dynamics()
+        d = d if isinstance(d, dict) else {}
+        if str(d.get('drive', '')).strip().lower() in DRIVES:
+            out.drive = str(d['drive']).strip().lower()
+        for k, (lo, hi) in DYN_LIMITS.items():
+            if k in d:
+                try:
+                    v = float(d[k])
+                except (TypeError, ValueError):
+                    continue
+                if math.isfinite(v):
+                    setattr(out, k, min(max(v, lo), hi))
+        return out
+
+
+def cg_height_estimate(project) -> float:
+    """The empty vehicle's centre of gravity above the road, m: TYP_CG_FRACTION of the model's height (typical)."""
+    dims = vehicle_geometry(project)['dims']
+    h = dims.get('Height')
+    return round(TYP_CG_FRACTION * float(h), 3) if h and math.isfinite(float(h)) and h > 0.3 else TYP_CG_M
+
+
+def wheel_radius(project) -> float:
+    """The tyres' loaded radius, m: the wheel centres' height on the model, else typical."""
+    wc = project.vehicle.wheel_centres or {}
+    zs = [float(v[2]) for v in wc.values() if len(v) > 2 and math.isfinite(float(v[2])) and float(v[2]) > 0.1]
+    return float(np.mean(zs)) if zs else TYP_WHEEL_R
+
+
+def transfer(st: SuspensionSettings, xy: dict, loads, ax_g: float, ay_g: float, dyn: Dynamics,
+             cg_height: float | None = None, wheel_r: float = TYP_WHEEL_R) -> dict:
+    """The quasi-static load transfer of a longitudinal (ax_g, g, + accelerating, - braking) and lateral (ay_g, g, +
+    turning left, so the body rolls right side down) acceleration with the loads [(name, kg, x, y, z)] on board:
+    {'moment': (Mx, My) for solve, 'link': {corner: N} for solve, 'mass_kg', 'cog': (x, y, z) of the loaded vehicle,
+    'sprung_kg', 'sprung_cg_z', 'front_share' (of the sprung mass), 'axle_n' (load the front axle gains), 'anti':
+    (front, rear) shares the linkage takes, 'roll_axis_z' (under the sprung centre of gravity)}. cg_height: the empty
+    vehicle's (dyn.cg_height when set, else this, else typical)."""
+    h_k = dyn.cg_height if dyn.cg_height > 0 else (cg_height if cg_height and cg_height > 0 else TYP_CG_M)
+    X = {c: float(xy[c][0]) for c in CORNERS}
+    Y = {c: float(xy[c][1]) for c in CORNERS}
+    Mk = st.kerb_mass
+    xk = sum(st.corners[c].kerb_load * X[c] for c in CORNERS) / Mk if Mk > 0 else 0.0
+    yk = sum(st.corners[c].kerb_load * Y[c] for c in CORNERS) / Mk if Mk > 0 else 0.0
+    ld = [(float(m), float(x), float(y), float(z)) for _, m, x, y, z in loads
+          if math.isfinite(float(m)) and float(m) != 0.0]
+    M = Mk + sum(m for m, *_ in ld)
+    xf, xr = (X['FL'] + X['FR']) / 2, (X['RL'] + X['RR']) / 2
+    L = max(xf - xr, 0.5)
+    Tf, Tr = max(Y['FL'] - Y['FR'], 0.3), max(Y['RL'] - Y['RR'], 0.3)
+    if M <= 0:
+        return {'moment': (0.0, 0.0), 'link': {c: 0.0 for c in CORNERS}, 'mass_kg': 0.0, 'cog': (0.0, 0.0, 0.0),
+                'sprung_kg': 0.0, 'sprung_cg_z': 0.0, 'front_share': 0.5, 'axle_n': 0.0, 'anti': (0.0, 0.0),
+                'roll_axis_z': 0.0}
+    xc = (Mk * xk + sum(m * x for m, x, _, _ in ld)) / M
+    yc = (Mk * yk + sum(m * y for m, _, y, _ in ld)) / M
+    zc = (Mk * h_k + sum(m * z for m, _, _, z in ld)) / M
+    mu = min(max(dyn.unsprung_kg, 0.0), 0.2 * M)          # per corner; the sprung mass keeps at least 20 %
+    Mu = 4.0 * mu
+    ms = M - Mu
+    hu = max(float(wheel_r), 0.0)
+    hs = (M * zc - Mu * hu) / ms
+    xs = (M * xc - mu * sum(X.values())) / ms
+    fs = min(max((xs - xr) / L, 0.0), 1.0)
+    ax, ay = float(ax_g) * G, float(ay_g) * G             # m/s²
+    Mx, My = -M * ax * zc, -M * ay * zc                    # N·m: Σ tyre force × x (and × y) the transfer adds
+    dF = Mx / L                                            # the front axle gains, the rear loses
+    dFu = -Mu * ax * hu / L                                # of which the unsprung masses' share
+    dFs = dF - dFu
+    if ax_g < 0:
+        af, ar = dyn.anti_dive / 100.0, dyn.anti_lift / 100.0
+    elif ax_g > 0:
+        share = {'front': 1.0, 'rear': 0.0, 'awd': 0.5}.get(dyn.drive, 1.0)    # of the tractive force at the front
+        af, ar = dyn.anti_squat / 100.0 * share, dyn.anti_squat / 100.0 * (1.0 - share)
+    else:
+        af = ar = 0.0
+    link_f = dFu + af * dFs
+    link_r = -dFu - ar * dFs
+    lat_f = (2.0 * mu * hu + ms * fs * dyn.rc_front) * ay / Tf      # the right tyre gains, the left loses
+    lat_r = (2.0 * mu * hu + ms * (1.0 - fs) * dyn.rc_rear) * ay / Tr
+    link = {'FL': link_f / 2 - lat_f, 'FR': link_f / 2 + lat_f, 'RL': link_r / 2 - lat_r, 'RR': link_r / 2 + lat_r}
+    return {'moment': (Mx, My), 'link': link, 'mass_kg': M, 'cog': (xc, yc, zc), 'sprung_kg': ms,
+            'sprung_cg_z': hs, 'front_share': fs, 'axle_n': dF, 'anti': (af, ar),
+            'roll_axis_z': fs * dyn.rc_front + (1.0 - fs) * dyn.rc_rear}
+
+
+def dynamic_solve(st: SuspensionSettings, xy: dict, loads, ax_g: float, ay_g: float, dyn: Dynamics,
+                  cg_height: float | None = None, wheel_r: float = TYP_WHEEL_R) -> tuple[Statics, dict]:
+    """The body's attitude with the loads on board under a steady acceleration (ax_g, ay_g in g; see transfer):
+    (Statics from kerb, the transfer's figures)."""
+    tr = transfer(st, xy, loads, ax_g, ay_g, dyn, cg_height, wheel_r)
+    if not ax_g and not ay_g:
+        return solve(st, xy, loads), tr
+    return solve(st, xy, loads, moment=tr['moment'], link=tr['link']), tr
 
 
 # =========================================================================== cases

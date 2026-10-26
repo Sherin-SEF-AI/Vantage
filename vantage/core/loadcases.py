@@ -9,7 +9,9 @@ Two kinds of case go through evaluate():
 For each case the ground analysis is run again with the body moved (blind area, density), and two image figures say
 what a stitcher calibrated at the reference load does with the moved body: the ground shift (worst displacement of a
 ground point in the stitched view) and the seam ghost (worst disagreement of the two cameras at a seam). device_moves
-gives every camera's and sensor's move relative to the road (mm and degrees), which the calibration has to absorb.
+gives every camera's and sensor's move relative to the road (mm and degrees), which the calibration has to absorb, and
+horizon_moves how far the horizon moves in each camera's image (rows and degrees). The cases are evaluated on flat
+ground whatever road core.terrain sets for the coverage analysis: their figures are about the body's attitude.
 
 Pose convention: a body point p (vehicle frame at kerb) moves to R p + t. Drops are positive down. Pitch is positive
 nose down (right-hand about +y, as a camera's pitch), roll positive right side down (right-hand about +x, ISO 8855).
@@ -129,6 +131,68 @@ def device_moves(project, R, t, R0=None, t0=None, variant=None) -> list[dict]:
     return out
 
 
+def facing(R_cam) -> str:
+    """Which way a camera looks, from its optical axis's heading: forward (within 45° of +x), rear, left or right."""
+    d = np.asarray(R_cam, float)[:, 0]
+    az = math.degrees(math.atan2(d[1], d[0]))
+    if abs(az) <= 45.0:
+        return 'forward'
+    if abs(az) >= 135.0:
+        return 'rear'
+    return 'left' if az > 0 else 'right'
+
+
+def horizon_at(intr, W2O, delta_deg=2.0):
+    """Where the horizon (the level directions of the road plane) crosses a camera's image at its centre column:
+    {'v': row px, 'elev_deg': its angle above the optical axis in the image's vertical plane, 'tilt_deg': the slope of
+    the horizon there (positive = its right side lower in the image), 'in_view'}; None when the camera is rolled so
+    far that its image columns are level (the horizon then runs along the centre column). W2O: world -> optical."""
+    n = np.asarray(W2O, float) @ np.array([0.0, 0.0, 1.0])     # the world's up in the optical frame
+    o = np.array([0.0, n[2], -n[1]])                            # level (o·n = 0) and in the centre column (x = 0)
+    no = float(np.linalg.norm(o))
+    if no < 1e-9:
+        return None
+    o /= no
+    if o[2] < 0 or (o[2] == 0 and o[1] > 0):
+        o = -o                                                  # the one in front of the camera
+    u, v, _, ok = intr.project_dirs(o[None])
+    side = np.cross(n / max(float(np.linalg.norm(n)), 1e-12), o)
+    a = math.radians(delta_deg)
+    pts = np.stack([o * math.cos(a) + side * math.sin(a), o * math.cos(a) - side * math.sin(a)])
+    us, vs, _, _ = intr.project_dirs(pts)
+    if us[1] < us[0]:
+        us, vs = us[::-1], vs[::-1]
+    tilt = math.degrees(math.atan2(float(vs[1] - vs[0]), float(us[1] - us[0])))
+    return {'v': float(v[0]), 'elev_deg': math.degrees(math.atan2(-o[1], o[2])), 'tilt_deg': tilt,
+            'in_view': bool(ok[0])}
+
+
+def horizon_moves(project, R, R0=None, variant=None) -> list[dict]:
+    """How the horizon moves in every visible camera's image when the body turns from the reference attitude R0
+    (default level) to R (body -> world rotations; a heave or shift does not move the horizon): per camera 'uid',
+    'tag', 'slot', 'facing', 'v_ref'/'v' (row px), 'dv_px' (positive = down the image), 'd_deg' (positive = the horizon
+    rises in the view, as when the nose dips), 'd_tilt_deg' (the horizon's slope change), 'in_view' (at both)."""
+    from .lens import resolve
+    from .mathutil import BODY_TO_OPTICAL
+    v = variant or project.variant
+    R = np.asarray(R, float)
+    R0 = np.eye(3) if R0 is None else np.asarray(R0, float)
+    out = []
+    for c in v.cameras:
+        if not c.visible:
+            continue
+        intr = resolve(project.module_for(c), project.lens_for(c))
+        Rc = rot_zyx(c.yaw, c.pitch, c.roll)
+        a = horizon_at(intr, BODY_TO_OPTICAL @ (R0 @ Rc).T)
+        b = horizon_at(intr, BODY_TO_OPTICAL @ (R @ Rc).T)
+        if a is None or b is None:
+            continue
+        out.append({'uid': c.uid, 'tag': c.tag, 'slot': c.slot, 'facing': facing(Rc), 'v_ref': a['v'], 'v': b['v'],
+                    'dv_px': b['v'] - a['v'], 'elev_ref_deg': a['elev_deg'], 'd_deg': b['elev_deg'] - a['elev_deg'],
+                    'd_tilt_deg': wrap180(b['tilt_deg'] - a['tilt_deg']), 'in_view': a['in_view'] and b['in_view']})
+    return out
+
+
 def cases_of(project):
     lc = project.analysis.load_cases
     return [tuple(c) for c in lc] if lc else list(DEFAULT_CASES)
@@ -172,7 +236,7 @@ def evaluate(engine, project, cases=None, cell=None, progress=None, cancel=None)
     cases = cases or cases_of(project)
     wc = project.vehicle.wheel_centres
     wb = abs(wc['FL'][0] - wc['RL'][0]) if 'FL' in wc and 'RL' in wc else 2.6
-    base = engine.analyse(project, cell=cell)
+    base = engine.analyse(project, cell=cell, terrain=False)
     if base is None:
         return []
     cams = {c.uid: c for c in project.variant.cameras}
@@ -181,7 +245,7 @@ def evaluate(engine, project, cases=None, cell=None, progress=None, cancel=None)
     def reference(key):
         if key not in refs:
             R0, t0 = pose(*key)
-            ra = engine.analyse(project, cell=cell, body_pose=(R0, t0))
+            ra = engine.analyse(project, cell=cell, body_pose=(R0, t0), terrain=False)
             refs[key] = (ra, R0, t0, _samples(ra))
         return refs[key]
 
@@ -196,7 +260,7 @@ def evaluate(engine, project, cases=None, cell=None, progress=None, cancel=None)
             ref, R0, t0, (Pc, best, seam_pts) = reference(key)
             R, t = pose(case.heave_mm, case.pitch_deg, case.roll_deg)
             same = (case.heave_mm, case.pitch_deg, case.roll_deg) == (key or (0.0, 0.0, 0.0))
-            res = ref if same else engine.analyse(project, cell=cell, body_pose=(R, t))
+            res = ref if same else engine.analyse(project, cell=cell, body_pose=(R, t), terrain=False)
             dR, dt = relative(R, t, R0, t0)
             cam_pos = {u: R0 @ c.pos() + t0 for u, c in cams.items()}
             name, pitch = case.name, case.pitch_deg
@@ -210,7 +274,7 @@ def evaluate(engine, project, cases=None, cell=None, progress=None, cancel=None)
             f, r = float(f), float(r)
             ref, R0, t0, (Pc, best, seam_pts) = refs[None]
             R, t, pitch = body_pose(f, r, wb)
-            res = engine.analyse(project, cell=cell, body_pose=(R, t)) if (f or r) else base
+            res = engine.analyse(project, cell=cell, body_pose=(R, t), terrain=False) if (f or r) else base
             dR, dt = R, t
             cam_pos = {u: c.pos() for u, c in cams.items()}
             extra = dict(heave_mm=r, corners={'FL': f, 'FR': f, 'RL': r, 'RR': r})

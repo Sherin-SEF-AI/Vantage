@@ -14,7 +14,10 @@ OVERLAYS = [('frustums', 'Frustums', 'frustum', True), ('footprints', 'Footprint
             ('sensors', 'Lidar rings and radar fields', 'sensor', True),
             ('lidarpts', 'Lidar points', 'density', False),      # one simulated sweep per lidar
             ('gnsssky', 'GNSS sky', 'sun', False),               # the sky each antenna sees, as a dome over it
-            ('brackets', 'Mount brackets', 'bracket', True)]     # generated brackets on the vehicle
+            ('brackets', 'Mount brackets', 'bracket', True),     # generated brackets on the vehicle
+            ('critical', 'Critical targets', 'target', False),   # Analysis ▸ Critical targets, in the plan and 3D
+            ('harness', 'Cable harness', 'cable', False),        # the routed cables, in the plan and 3D
+            ('wipers', 'Wiper sweep', 'layers', False)]          # Analysis ▸ Materials: the wipers on the windscreen
 HEATMAPS = [('none', 'None'), ('coverage', 'Coverage'), ('density', 'Density'), ('redundancy', 'Redundancy'),
             ('stitched', 'Objects')]       # objects standing in the stitched bird's-eye view
 TOOLS = [('select', 'Select', 'select', 'V'), ('move', 'Move', 'move', 'G'), ('rotate', 'Rotate', 'rotate', 'R'),

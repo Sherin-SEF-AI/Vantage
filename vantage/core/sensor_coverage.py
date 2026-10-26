@@ -16,9 +16,10 @@ the object, at a distance within the lidar's range on a 10 % target and beyond i
 puts the object's angular width / h_res points on it. The lidar range of a class is the farthest range at which the
 points summed over all lidars reach the class's min_points.
 
-Radar: the object's centre lies in a radar zone at the zone's range scaled by (rcs / 10 m²)^¼, with nothing of the
-vehicle in between (hits within 0.15 m of the radar are the bumper fascia it sits behind). A class with rcs 0 is left
-to the other sensors.
+Radar: the object's centre lies in a radar zone at the zone's range scaled by (rcs / 10 m²)^¼ and by what the radar
+looks through (core.materials: (two-way transmission through the fascia and its paint)^¼ per zone, 1 for a radar in
+front of the body), with nothing of the vehicle in between (hits within 0.15 m of the radar are the bumper fascia it
+sits behind). A class with rcs 0 is left to the other sensors.
 
 The camera range of a class is the perception range of the class of the same name; the required range per sector is
 the perception range's, so all three are judged against one requirement: a sector is redundant when two or more
@@ -162,6 +163,7 @@ class RadarCoverage:
     sensor: object
     spec: object
     far: np.ndarray                 # (K, A) range per class from this radar alone, nan where it ignores the class
+    zone_scale: list | None = None  # range factor per zone through what it looks through (core.materials); None = 1
 
     @property
     def tag(self):
@@ -302,6 +304,11 @@ class _Lidar:
 
     def points(self, G, base, height, width) -> np.ndarray:
         """Points per frame on objects standing at ground points G (n, 2): base, height, width per object (or one)."""
+        return self.counts(G, base, height, width)[1]
+
+    def counts(self, G, base, height, width) -> tuple[np.ndarray, np.ndarray]:
+        """(scan lines, points per frame) on objects standing at ground points G (n, 2): the channels that cross the
+        object unblocked, and the points they put on it (its angular width / h_res each)."""
         m = self.m
         G = np.asarray(G, float).reshape(-1, 2)
         n = len(G)
@@ -335,7 +342,8 @@ class _Lidar:
             cnt[idx] -= nb
         gh = np.maximum(np.hypot(G[:, 0] - self.pos[0], G[:, 1] - self.pos[1]), 1e-6)
         wdeg = np.degrees(2.0 * np.arctan2(width / 2.0, gh))
-        return np.where(ok, np.maximum(cnt, 0.0) * wdeg / max(m.h_res, 1e-6), 0.0)
+        lines = np.where(ok, np.maximum(cnt, 0.0), 0.0)
+        return lines, lines * wdeg / max(m.h_res, 1e-6)
 
     def sees(self, P) -> np.ndarray:
         """Vehicle-frame points (n, 3) in the lidar's field and range with nothing of the vehicle in between."""
@@ -366,13 +374,14 @@ class _Lidar:
 
 
 class _Radar:
-    def __init__(self, s, m, cube):
+    def __init__(self, s, m, cube, zone_scale=None):
         self.s, self.m, self.cube = s, m, cube
+        self.zone_scale = zone_scale          # range factor per zone through what the radar looks through (materials)
         self.pos = s.pos().astype(float)
 
     def sees(self, P, rcs) -> np.ndarray:
         P = np.asarray(P, float).reshape(-1, 3)
-        ok = S.in_field(self.s, self.m, P, rcs)
+        ok = S.in_field(self.s, self.m, P, rcs, zone_scale=self.zone_scale)
         if self.cube is not None and ok.any():
             d = P[ok] - self.pos
             dist = np.linalg.norm(d, axis=1)
@@ -381,12 +390,248 @@ class _Radar:
         return ok
 
 
+def radar_zone_scale(project, sensor, vg=None) -> list | None:
+    """Per zone of a radar, the factor its range shrinks by through what it looks through (core.materials); None when
+    every factor is 1 (a radar in front of the body, or nothing known), so the datasheet's field is used as it is."""
+    from . import materials as MT
+    f = MT.radar_range_factors(project, sensor, vg)
+    return None if all(abs(x - 1.0) < 1e-12 for x in f) else [float(x) for x in f]
+
+
+def lidar_view(project, sensor, cube=None) -> _Lidar:
+    """A lidar as this study counts it: its traced beams and what the vehicle does to them (cube: the engine's
+    occlusion cube from its optical centre, None = nothing blocks). .points(ground_xy, base, height, width) per frame,
+    .ground() -> (points, ok), .weight (real points per traced beam), .sees(P)."""
+    return _Lidar(sensor, project.sensor_model_for(sensor), cube)
+
+
+def radar_view(project, sensor, cube=None, vg=None) -> _Radar:
+    """A radar as this study counts it: .sees(P, rcs) for object centres P (n, 3) — in a zone at its range for the
+    cross-section and what the radar looks through (vg: the vehicle geometry the materials study traces), nothing of
+    the vehicle in between (cube, None = nothing blocks)."""
+    return _Radar(sensor, project.sensor_model_for(sensor), cube, radar_zone_scale(project, sensor, vg))
+
+
 def object_points(project, engine, sensor, cls, ground_xy) -> np.ndarray:
     """Points per frame a lidar puts on objects of class cls (CoverageClass) standing at ground points (n, 2), with
     the vehicle's blocking."""
     vg = engine.vehicle_geom(project)
     L = _Lidar(sensor, project.sensor_model_for(sensor), engine.cube(sensor.pos(), vg) if vg is not None else None)
     return L.points(ground_xy, cls.base, cls.height, cls.width)
+
+
+# =========================================================================== camera–lidar fusion density
+FUSION_RANGES = (10.0, 20.0, 30.0, 50.0, 80.0)   # table ranges, m from the camera
+FUSION_SAMPLES = 48                               # ranges per bearing over the camera's whole view (log-spaced)
+FUSION_MAX_M = 150.0
+FUSION_GRID = (64, 48)                            # image samples (columns, rows) of the points-per-pixel map
+FUSION_BEARING_STEP = 1.0                         # degrees between bearings about the camera
+
+
+def _lidar_density(L: '_Lidar', P) -> np.ndarray:
+    """Lidar returns per steradian towards vehicle-frame points P (n, 3) from L: one point per (beam spacing × h_res)
+    in elevation and azimuth at the point's elevation (0 outside the field, past the range or hidden by the vehicle)."""
+    P = np.asarray(P, float).reshape(-1, 3)
+    out = np.zeros(len(P))
+    ok = L.sees(P)
+    if not ok.any():
+        return out
+    q = (P[ok] - L.pos) @ L.R
+    el = np.degrees(np.arctan2(q[:, 2], np.hypot(q[:, 0], q[:, 1])))
+    E = L.E
+    if len(E) > 1:
+        i = np.clip(np.searchsorted(E, el), 1, len(E) - 1)
+        de = np.maximum(E[i] - E[i - 1], 1e-3)
+    else:
+        de = np.full(len(el), max(L.m.v_step(), 1.0))
+    out[ok] = (180.0 / math.pi) ** 2 / (de * max(L.m.h_res, 1e-6))
+    return out
+
+
+def _runs_deg(mask, step) -> list:
+    """[(from, to)] bearings (degrees, vehicle frame) of the unbroken runs of True in a closed 360° mask."""
+    return [(float(r[0] * step), float((r[-1] + 1) * step) % 360.0) for r in _runs(np.asarray(mask, bool), True)] \
+        if np.asarray(mask).any() and not np.asarray(mask).all() else ([(0.0, 360.0)] if np.asarray(mask).all() else [])
+
+
+def _image_bands(unsup, inside) -> str:
+    """Words for where in the image the unsupported samples lie (thirds of the rows and columns)."""
+    nv, nu = unsup.shape
+    words = []
+    for name, sl in (('top third', np.s_[:nv // 3, :]), ('bottom third', np.s_[nv - nv // 3:, :]),
+                     ('left third', np.s_[:, :nu // 3]), ('right third', np.s_[:, nu - nu // 3:]),
+                     ('middle', np.s_[nv // 3:nv - nv // 3, nu // 3:nu - nu // 3])):
+        n = int(inside[sl].sum())
+        if n and unsup[sl].sum() / n >= 0.5:
+            words.append(f'the {name} ({100 * unsup[sl].sum() / n:.0f} % without)')
+    return ', '.join(words)
+
+
+def camera_fusion(project, engine, variant=None, settings: CoverageSettings | None = None, ranges=FUSION_RANGES,
+                  at_m=20.0, progress=None, cancel=None) -> list | None:
+    """Camera–lidar fusion density of a variant (the active one by default), per visible camera:
+    - per object class (the coverage classes; the perception range's minimum pixel height of the class of the same
+      name, 20 px for others): wherever the camera resolves it (in the image, its centre not hidden, at least min_px
+      high) out to the required range of the sector it stands in (the perception range's, from the vehicle centre),
+      the lidar points (summed over the lidars) and scan lines on it, the object's pixels per lidar point, the share of
+      those places where the points reach the class's min_points and where none lands, and the bearings without lidar
+      support; at each of ranges (from the camera) the same over the bearings it resolves it at;
+    - the image map: lidar points per camera pixel on a surface facing the camera at_m out (on the ground where it is
+      nearer), on a grid over the image: Σ lidars ρ_L cos / d_L² over ρ_C / d_C² (ρ: returns or pixels per
+      steradian), 0 where no lidar reaches, nan outside the lens circle or on the vehicle.
+    Returns None when cancelled."""
+    p = _project_for(project, variant)
+    v = p.variant
+    st = settings or CoverageSettings.from_dict(getattr(p.analysis, 'sensor_coverage', None))
+    classes = st.object_classes()
+    pst = PR.PerceptionSettings.from_dict(getattr(p.analysis, 'perception', None))
+    pcls = {c.name: c for c in pst.object_classes()}
+    vg = engine.vehicle_geom(p)
+    if vg is not None:
+        lo, hi = vg.bbox
+        centre = (float(lo[0] + hi[0]) / 2, float(lo[1] + hi[1]) / 2)
+        body = ((float(lo[0]), float(lo[1])), (float(hi[0]), float(hi[1])))
+    else:
+        centre, body = (0.0, 0.0), None
+
+    def finite(o):
+        return all(math.isfinite(float(getattr(o, k))) for k in ('x', 'y', 'z', 'yaw', 'pitch', 'roll'))
+    lids = [_Lidar(s, p.sensor_model_for(s), engine.cube(s.pos(), vg) if vg is not None else None)
+            for s in v.sensors if s.visible and s.kind == 'lidar' and finite(s)]
+    cams = [c for c in v.cameras if c.visible and finite(c)]
+    nb = int(round(360.0 / FUSION_BEARING_STEP))
+    bearings = np.arange(nb) * FUSION_BEARING_STEP
+    rr = np.geomspace(1.0, FUSION_MAX_M, FUSION_SAMPLES)
+    table = np.asarray(ranges, float)
+    allr = np.r_[rr, table]
+    cb, sb_ = np.cos(np.radians(bearings)), np.sin(np.radians(bearings))
+    out = []
+    steps = max(len(cams) * (len(classes) + 1), 1)
+    done = 0
+    for c in cams:
+        intr = resolve(p.module_for(c), p.lens_for(c))
+        cube = engine.cube(c.pos(), vg) if vg is not None else None
+        pos = c.pos().astype(float)
+        G = np.stack([pos[0] + cb[:, None] * allr[None, :], pos[1] + sb_[:, None] * allr[None, :]], -1).reshape(-1, 2)
+        ins = np.zeros(len(G), bool)
+        if body is not None:
+            (x0, y0), (x1, y1) = body
+            ins = (G[:, 0] > x0 - 0.05) & (G[:, 0] < x1 + 0.05) & (G[:, 1] > y0 - 0.05) & (G[:, 1] < y1 + 0.05)
+        dc = np.hypot(G[:, 0] - centre[0], G[:, 1] - centre[1])
+        sec = _sector_of(np.degrees(np.arctan2(G[:, 1] - centre[1], G[:, 0] - centre[0])))
+        req = np.array([float(pst.required.get(name, 0.0)) for name, _ in PR.SECTORS])[sec]
+        entry = {'uid': c.uid, 'tag': c.tag, 'slot': c.slot, 'lidars': [], 'classes': [], 'image': None,
+                 'findings': []}
+        reach = set()
+        for cl in classes:
+            if cancel is not None and cancel():
+                return None
+            pc = pcls.get(cl.name)
+            obj = PR.ObjectClass(cl.name, cl.height, cl.width, pc.min_px if pc is not None else 20.0, cl.base)
+            hpx, wpx, seen = PR.object_pixels(c, intr, G, obj, cube)
+            roi = seen & (hpx >= obj.min_px) & ~ins & (dc <= req)
+            lines = np.zeros(len(G))
+            pts = np.zeros(len(G))
+            for L in lids:
+                ln, pt = L.counts(G, cl.base, cl.height, cl.width)
+                lines += ln
+                pts += pt
+                if (roi & (pt > 0)).any():
+                    reach.add(L.s.tag)
+            area = hpx * wpx
+            with np.errstate(divide='ignore', invalid='ignore'):
+                ppp = np.where(pts > 0, area / pts, np.inf)        # pixels of the object per lidar point
+            R2 = roi.reshape(nb, -1)
+            dense = R2[:, :len(rr)]
+            P2 = pts.reshape(nb, -1)
+            zero_b = (dense & (P2[:, :len(rr)] <= 0)).sum(1) >= 0.5 * np.maximum(dense.sum(1), 1)
+            zero_b &= dense.any(1)
+            rows = []
+            for j, r in enumerate(table):
+                col = len(rr) + j
+                mk = R2[:, col]
+                pv = P2[mk, col]
+                lv = lines.reshape(nb, -1)[mk, col]
+                qv = ppp.reshape(nb, -1)[mk, col]
+                rows.append({'range_m': float(r), 'bearings_deg': float(mk.sum() * FUSION_BEARING_STEP),
+                             'points_median': float(np.median(pv)) if len(pv) else None,
+                             'points_min': float(pv.min()) if len(pv) else None,
+                             'lines_median': float(np.median(lv)) if len(lv) else None,
+                             'px_per_point_median': (float(np.median(qv[np.isfinite(qv)]))
+                                                     if np.isfinite(qv).any() else None),
+                             'supported_share': float(np.mean(pv >= cl.min_points)) if len(pv) else None})
+            d = roi.reshape(nb, -1)[:, :len(rr)]
+            pd_ = P2[:, :len(rr)][d]
+            entry['classes'].append({
+                'name': cl.name, 'min_points': cl.min_points, 'min_px': obj.min_px, 'roi_samples': int(d.sum()),
+                'roi_supported_share': float(np.mean(pd_ >= cl.min_points)) if len(pd_) else None,
+                'roi_zero_share': float(np.mean(pd_ <= 0)) if len(pd_) else None,
+                'points_median': float(np.median(pd_)) if len(pd_) else None,
+                'gaps': _runs_deg(zero_b, FUSION_BEARING_STEP), 'rows': rows})
+            done += 1
+            if progress is not None:
+                progress(done / steps)
+        entry['lidars'] = sorted(reach)
+        # ---- the image map
+        nu, nv = FUSION_GRID
+        U, V = np.meshgrid((np.arange(nu) + 0.5) * intr.width / nu, (np.arange(nv) + 0.5) * intr.height / nv)
+        d_opt, th = intr.unproject(U.ravel(), V.ravel())
+        _, W2O = camera_frames(c)
+        dw = d_opt @ W2O
+        inside = th <= intr.max_theta
+        with np.errstate(divide='ignore', invalid='ignore'):
+            tg = np.where(dw[:, 2] < -1e-9, -pos[2] / dw[:, 2], np.inf)
+        t = np.minimum(float(at_m), np.where(tg > 0, tg, np.inf))
+        if cube is not None:
+            depth = cube.lookup(dw)[0]
+            inside &= depth > t - (0.02 + 0.01 * t)
+        P = pos + dw * t[:, None]
+        rho_c = PR._angular_px(intr, th) ** 2                       # camera pixels per steradian
+        dens = np.zeros(len(P))
+        for L in lids:
+            rl = _lidar_density(L, P)
+            if not rl.any():
+                continue
+            vL = P - L.pos
+            dL = np.maximum(np.linalg.norm(vL, axis=1), 1e-6)
+            cosl = np.abs(np.sum(vL / dL[:, None] * dw, axis=1))
+            dens += rl * cosl / dL ** 2
+        ppx = np.where(inside, dens / np.maximum(rho_c / np.maximum(t, 1e-6) ** 2, 1e-12), np.nan)
+        A = ppx.reshape(nv, nu)
+        insd = np.isfinite(A)
+        sup = insd & (A > 0)
+        share = float(sup.sum() / max(insd.sum(), 1))
+        med = float(np.median(A[sup])) if sup.any() else 0.0
+        entry['image'] = {'at_m': float(at_m), 'grid': (nu, nv), 'points_per_px': A.astype(np.float32),
+                          'support_share': share, 'median_points_per_px': med,
+                          'median_px_per_point': (1.0 / med) if med > 0 else None,
+                          'unsupported': _image_bands(insd & ~sup, insd)}
+        # ---- findings
+        if not lids:
+            pass
+        elif share <= 0.0:
+            entry['findings'].append({'severity': 'warning', 'message': f'{c.tag}: no lidar point lands in its image '
+                                                                        f'(the scene {at_m:g} m out): fusion has '
+                                                                        'nothing for it.'})
+        elif share < 0.5:
+            entry['findings'].append({'severity': 'warning', 'message': f'{c.tag}: {100 * (1 - share):.0f} % of its '
+                                                                        f'image (the scene {at_m:g} m out) gets no '
+                                                                        'lidar point'
+                                      + (f': {entry["image"]["unsupported"]}.' if entry['image']['unsupported']
+                                         else '.')})
+        weak = [k for k in entry['classes'] if k['roi_supported_share'] is not None and k['roi_samples'] > 0]
+        if lids and weak:
+            k = min(weak, key=lambda k: k['roi_supported_share'])
+            if k['roi_supported_share'] < 0.5:
+                entry['findings'].append({'severity': 'warning', 'message': (
+                    f'{c.tag}: where it resolves a {k["name"].lower()} out to the required range, the lidars put '
+                    f'{k["min_points"]:g} points or more on it in only {100 * k["roi_supported_share"]:.0f} % of the '
+                    f'places (median {k["points_median"]:.0f}).')})
+        done += 1
+        if progress is not None:
+            progress(done / steps)
+        out.append(entry)
+    return out
 
 
 def _far_range(ok, ranges, test=None, iters=14):
@@ -483,7 +728,7 @@ def run(project, engine, variant=None, settings: CoverageSettings | None = None,
     sens = [s for s in v.sensors if s.visible]
     lids = [_Lidar(s, p.sensor_model_for(s), engine.cube(s.pos(), vg) if vg is not None else None)
             for s in sens if s.kind == 'lidar']
-    rads = [_Radar(s, p.sensor_model_for(s), engine.cube(s.pos(), vg) if vg is not None else None)
+    rads = [radar_view(p, s, engine.cube(s.pos(), vg) if vg is not None else None, vg)
             for s in sens if s.kind == 'radar']
     prog(0.05)
     if stop():
@@ -593,7 +838,7 @@ def run(project, engine, variant=None, settings: CoverageSettings | None = None,
 
     # ---- objects for the radars: the centre in a zone, nothing of the vehicle in between
     radar = np.full((K, A), np.nan)
-    rad_out = [RadarCoverage(R_.s, R_.m, np.full((K, A), np.nan)) for R_ in rads]
+    rad_out = [RadarCoverage(R_.s, R_.m, np.full((K, A), np.nan), R_.zone_scale) for R_ in rads]
     for k, cl in enumerate(classes):
         if stop():
             return None
@@ -799,8 +1044,10 @@ def to_doc(res: CoverageResult, project=None, L=None, A=None, origin=(0.0, 0.0))
                    for li in res.lidars],
         'radars': [{'tag': r.tag, 'model': r.spec.name, 'model_id': r.spec.id, 'position': pos(r.sensor),
                     'yaw': A(r.sensor.yaw), 'pitch': A(r.sensor.pitch), 'roll': A(r.sensor.roll),
-                    'zones': [{'range_on_car': L(z[0]), 'azimuth_half': A(z[1]), 'elevation_half': A(z[2])}
-                              for z in r.spec.zones],
+                    'zones': [{'range_on_car': L(z[0]), 'azimuth_half': A(z[1]), 'elevation_half': A(z[2]),
+                               'material_factor': round(r.zone_scale[i], 4) if r.zone_scale and i < len(r.zone_scale)
+                               else 1.0}
+                              for i, z in enumerate(r.spec.zones)],
                     'per_class': {c.name: [rng(v) for v in r.far[k]] for k, c in enumerate(res.classes) if c.rcs > 0}}
                    for r in res.radars],
         'ground_blind_from_body': [rng(v) for v in res.blind],
@@ -904,7 +1151,7 @@ def png(res: CoverageResult, size=900, k_sel=0, layer='density') -> bytes:
     if cl.rcs > 0:
         over = img.copy()
         for r_ in res.radars:
-            for w in S.radar_wedges(r_.sensor, r_.spec, cl.rcs):
+            for w in S.radar_wedges(r_.sensor, r_.spec, cl.rcs, zone_scale=r_.zone_scale):
                 cv2.fillPoly(over, [poly([world(x, y) for x, y in w])], bgr(MODALITY_COLORS['radar']), aa, 4)
         cv2.addWeighted(over, 0.12, img, 0.88, 0, img)
     tone = {'redundant': (12, 163, 12), 'single': (25, 178, 250), 'gap': (59, 59, 208)}     # good, warning, critical

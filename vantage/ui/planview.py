@@ -457,9 +457,13 @@ class PlanView(QWidget):
         if res is not None:
             self._legend_place = self._place_legend(res) if self.legend else None
             self._heat(p, res)
+        self._terrain(p)
         self._car(p)
         from .rigview import paint_plan as paint_rig
         paint_rig(self, p)
+        if self.ctx.overlays.get('harness'):            # View ▸ Overlays ▸ Cable harness
+            from .harnessview import paint_plan as paint_harness
+            paint_harness(self, p)
         if self.mode in ('coverage', 'targets', 'compare', 'footprints'):
             from .sensorview import paint_plan as paint_sensors
             paint_sensors(self, p, fields=self.ctx.overlays.get('sensors', True) and self.mode == 'coverage')
@@ -468,6 +472,10 @@ class PlanView(QWidget):
             self._stitched_marks(p, res)
         guides.paint_plan(self, p)
         self._targets(p)
+        if self.ctx.overlays.get('critical'):           # View ▸ Overlays ▸ Critical targets
+            from .workspaces import critical_ws as CW
+            if not isinstance(self, CW.CriticalPlan):  # the page's own plan draws them always
+                CW.paint_plan(self, p)
         self._obstacles(p)
         self._cameras(p, res)
         guides.paint_plan_hits(self, p)
@@ -722,6 +730,102 @@ class PlanView(QWidget):
         p.setPen(QPen(THEME.cam(slot), 1.4))
         p.drawPath(sp)
         p.setPen(Qt.PenStyle.NoPen)
+
+    # ------------------------------------------------------------------ the road (core.terrain)
+    def _terrain(self, p):
+        """The project's road over the map when it has one switched on: height contours (thin), each primitive's
+        edges (a kerb's face solid, the rest dashed, a crown line dash-dotted) and its name once at the view's edge."""
+        from ..core import terrain as TR
+        try:
+            ter = TR.active(self.project)
+        except Exception as ex:                    # a broken road must not cost the plan
+            print('terrain:', ex)
+            return
+        if ter is None or self.mode in ('delta', 'bev'):
+            return
+        W, H = self.width(), self.height()
+        x0, y1 = self.s2w(0, 0)
+        x1, y0 = self.s2w(W, H)
+        key = (ter.key, round(float(x0), 4), round(float(y0), 4), round(float(x1), 4), round(float(y1), 4), W, H)
+        if getattr(self, '_ter_key', None) != key:
+            self._ter_key = key
+            self._ter_layer = self._terrain_layer(ter, x0, y0, x1, y1)
+        segs, lines = self._ter_layer
+        p.save()
+        if len(segs):
+            p.setPen(QPen(THEME.color('ink', 0.22), 1.0))
+            s = self.w2s_np(segs)
+            p.drawLines([QLineF(a[0, 0], a[0, 1], a[1, 0], a[1, 1]) for a in s])
+        placed = [] if self._legend_place is None else [self._legend_place.adjusted(-6, -6, 6, 6)]
+        p.setFont(sans(10))
+        fm = p.fontMetrics()
+        for (a, b), style, text in lines:
+            qa, qb = self.w2s(*a), self.w2s(*b)
+            pen = QPen(THEME.color('ink', 0.75), 2.0 if style == 'face' else 1.2)
+            if style == 'dash':
+                pen.setStyle(Qt.PenStyle.CustomDashLine)
+                pen.setDashPattern([5, 4])
+            elif style == 'crown':
+                pen.setStyle(Qt.PenStyle.DashDotLine)
+            p.setPen(pen)
+            p.drawLine(qa, qb)
+            if not text:
+                continue
+            tw = fm.horizontalAdvance(text) + 10
+            vertical = abs(qa.x() - qb.x()) < 1
+            # across the road: named near the bottom (the legend sits in a top corner); along it: at the left
+            box = QRectF(qa.x() + 4, H - 64, tw, 16) if vertical else QRectF(10, qa.y() - 18, tw, 16)
+            for _ in range(4):
+                if not any(box.intersects(r) for r in placed):
+                    break
+                if vertical:
+                    box.translate(0, -18)
+                else:
+                    box.translate(tw + 6, 0)
+            placed.append(box)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(THEME.color('viewport', 0.85))
+            p.drawRoundedRect(box, 3, 3)
+            p.setPen(THEME.color('ink2'))
+            p.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
+        p.restore()
+
+    @staticmethod
+    def _terrain_layer(ter, x0, y0, x1, y1):
+        """Contour segments (world) every 2, 5, 10, 20 or 50 cm of height over the view (at most about a dozen
+        levels), and each primitive's edge lines [((a, b), style, label)]."""
+        from ..core.contour import iso_segments
+        n = 180
+        cell = max((x1 - x0), (y1 - y0)) / n
+        nx, ny = int((x1 - x0) / cell) + 2, int((y1 - y0) / cell) + 2
+        X, Y = np.meshgrid(x0 + (np.arange(nx) + 0.5) * cell, y0 + (np.arange(ny) + 0.5) * cell)
+        Hf = ter.height(X, Y)
+        lo, hi = float(Hf.min()), float(Hf.max())
+        segs = []
+        if hi - lo > 1e-3:
+            step = next((s for s in (0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0) if (hi - lo) / s <= 12), 5.0)
+            for lv in np.arange(math.ceil(lo / step) * step, hi, step):
+                if abs(lv) < 1e-9:
+                    continue                                  # the flat road's own level carries no line
+                s = iso_segments(Hf, float(lv), x0, y0, cell)
+                if len(s):
+                    segs.append(s)
+        segs = np.concatenate(segs) if segs else np.zeros((0, 2, 2))
+        lines = []
+        for f in ter.features:
+            name = {'bump': f'Bump {f.d.get("height", 0) * 1000:.0f} mm',
+                    'kerb': f'Kerb {f.d.get("height", 0) * 1000:.0f} mm'}.get(
+                f.kind, {'ramp': f'Ramp {f.d.get("grade", 0):+g} %', 'garage': f'Garage {f.d.get("grade", 0):+g} %',
+                         'crest': f'Crest R {f.d.get("radius", 0):g} m', 'crown': f'Crown {f.d.get("crown", 0):g} %'
+                         }.get(f.kind, f.kind))
+            for k, b in enumerate(f.breaks()):
+                c = f.origin + f.sign * b
+                style = 'crown' if f.abs else 'face' if (f.kind == 'kerb' and k == 0) else 'dash'
+                if f.kind == 'kerb' and k > 0:
+                    continue
+                seg = ((c, y0), (c, y1)) if f.axis == 0 else ((x0, c), (x1, c))
+                lines.append((seg, style, name if k == 0 else ''))
+        return segs, lines
 
     def _car(self, p):
         m = self.project.vehicle.mesh

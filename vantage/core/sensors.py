@@ -371,9 +371,10 @@ def angles(s, P):
     return r, az, el
 
 
-def in_field(s, model: SensorModel, P, rcs: float | None = None) -> np.ndarray:
+def in_field(s, model: SensorModel, P, rcs: float | None = None, zone_scale=None) -> np.ndarray:
     """Whether each vehicle-frame point (K, 3) lies in the sensor's field and range (no occlusion test). A radar takes
-    the target's cross-section (m², default the car the datasheet range is given for)."""
+    the target's cross-section (m², default the car the datasheet range is given for) and optionally a range factor
+    per zone (zone_scale: what it looks through, core.materials.radar_range_factors; None = the datasheet's)."""
     r, az, el = angles(s, P)
     if not model.has_field:
         return np.zeros(len(r), bool)
@@ -384,8 +385,9 @@ def in_field(s, model: SensorModel, P, rcs: float | None = None) -> np.ndarray:
         return ok if half >= 180.0 else ok & (np.abs(az) <= half + 1e-9)
     scale = radar_scale(rcs)
     ok = np.zeros(len(r), bool)
-    for rng, ah, eh in model.zones:
-        ok |= (np.abs(az) <= ah) & (np.abs(el) <= eh) & (r <= rng * scale) & (r >= model.range_min_m)
+    for k, (rng, ah, eh) in enumerate(model.zones):
+        f = zone_scale[k] if zone_scale is not None and k < len(zone_scale) else 1.0
+        ok |= (np.abs(az) <= ah) & (np.abs(el) <= eh) & (r <= rng * scale * f) & (r >= model.range_min_m)
     return ok
 
 
@@ -429,17 +431,17 @@ def ground_rings(s, model: SensorModel, az_step: float = 1.0, far: float | None 
     return out
 
 
-def radar_wedges(s, model: SensorModel, rcs: float | None = None, samples: int = 24) -> list:
+def radar_wedges(s, model: SensorModel, rcs: float | None = None, samples: int = 24, zone_scale=None) -> list:
     """Each radar zone's field in plan as a closed polygon (N, 2) in the vehicle frame: apex at the sensor, an arc at
-    the zone's range (for the target's cross-section) about the sensor's heading."""
+    the zone's range (for the target's cross-section, × zone_scale's factor when given) about the sensor's heading."""
     out = []
     k = radar_scale(rcs)
     R = rotation(s)
     fwd = R[:, 0]
     head = math.degrees(math.atan2(fwd[1], fwd[0]))
-    for rng, ah, _ in model.zones:
+    for i, (rng, ah, _) in enumerate(model.zones):
         a = np.radians(head + np.linspace(-ah, ah, samples))
-        r = rng * k
+        r = rng * k * (zone_scale[i] if zone_scale is not None and i < len(zone_scale) else 1.0)
         arc = np.c_[s.x + r * np.cos(a), s.y + r * np.sin(a)]
         out.append(np.vstack([[s.x, s.y], arc]))
     return out

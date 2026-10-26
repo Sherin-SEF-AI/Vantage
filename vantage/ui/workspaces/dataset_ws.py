@@ -12,11 +12,12 @@ import traceback
 from collections import OrderedDict
 
 from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
-from PyQt6.QtWidgets import (QApplication, QFileDialog, QGridLayout, QHBoxLayout, QLineEdit, QPlainTextEdit,
+from PyQt6.QtWidgets import (QApplication, QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QLineEdit, QPlainTextEdit,
                              QProgressBar, QScrollArea, QSlider, QSplitter, QVBoxLayout, QWidget)
 
 from ... import workdir
 from ...core import dataset as DSET
+from ...core import weather as WX
 from ...core.timing import plan_outline
 from ..datasetview import CameraGrid, TopView
 from ..theme import THEME, mono
@@ -165,6 +166,15 @@ class DatasetPage(QWidget):
                                       'dual carriageway with faster traffic')
                 self.scene.changed.connect(lambda k: self._set(f'{DSET.SCENE_LABEL[k].lower()} scene', scene=k))
                 ll.addWidget(self.scene)
+                self.weather = QComboBox()
+                self.weather.addItem('Weather as on the perception page', '')
+                for c in WX.PRESETS:
+                    self.weather.addItem(c.name, c.id)
+                self.weather.setToolTip('Fog, rain, snow or night in the images, lidar points and radar detections '
+                                        '(core.weather); each condition\'s figures are edited on the perception page')
+                self.weather.currentIndexChanged.connect(
+                    lambda i: self._set('weather ' + self.weather.itemText(i).lower(), weather=self.weather.itemData(i)))
+                ll.addWidget(self.weather)
             elif g == 'Output':
                 self.names = SegmentedControl([('tags', 'Rig tags'), ('nuscenes', 'nuScenes names')], 'tags')
                 self.names.setToolTip('nuScenes channel names. Rig tags: CAM_<TAG>, LIDAR_<TAG>, RADAR_<TAG> as '
@@ -372,6 +382,7 @@ class DatasetPage(QWidget):
             self.scene.set_value(st['scene'])
             self.rate.set_value(st['camera_rate'])
             self.names.set_value(st['channel_names'])
+            self.weather.setCurrentIndex(max(self.weather.findData(st.get('weather', '')), 0))
             for key, t in self.toggles.items():
                 t.blockSignals(True)
                 t.setChecked(bool(st[key]))

@@ -52,3 +52,17 @@ cp build/clips/*.mp4 build/clips/*.jpg build/stills/*.jpg site/media/    # after
 
 The poster is the frame at 72 % of a clip unless `POSTER_AT` in `clips.py` names the second. Recording runs at about
 real time, plus the web encode; the clips that generate a drive first take 15–30 s longer.
+
+The `automation` clip types `make test` as the command, approves it in the app's own dialog and runs a harmless
+standard-library script from the throw-away home (a Makefile written there in the set-up); the `materials` clip adds
+a windscreen camera (FW) for the glass and wiper part, as the materials tests do: the sample itself has none.
+
+## YouTube tour
+
+`demo/youtube/` produces the full narrated tour (about 70 minutes, 1920 × 1080, 30 fps, every feature in 38
+chapters): `python3 demo/youtube/produce.py` renders the voice lines (Kokoro, as above), records each chapter that is
+missing or changed in its own capped, offscreen process (the app captured at 2× through the EGL shader renderer on a
+full-size offscreen screen, `offscreen-screen.json`), then assembles the chapter and part cards, transitions,
+synthesised music, the voice mix at −14 LUFS, subtitles, YouTube chapter timestamps, a description and a thumbnail
+into `demo/out/youtube/`. `demo/youtube/AUTHORING.md` documents the chapter API (`demo/youtube/chapters/`), the
+stage set-ups and the review tools (`review.py`). Every narrated figure is checked against the app while recording.

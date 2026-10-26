@@ -330,6 +330,13 @@ class AnalysisSettings:
     housings: dict = field(default_factory=dict)      # sensor housings as camera occluders (core.housings)
     asbuilt: dict = field(default_factory=dict)       # as-built check against a recording (core.asbuilt)
     suspension: dict = field(default_factory=dict)    # suspension and loads for the load cases (core.suspension)
+    critical: dict = field(default_factory=dict)      # critical targets and mounting envelopes (core.critical)
+    terrain: dict = field(default_factory=dict)       # road geometry and body motion (core.terrain)
+    observability: dict = field(default_factory=dict)  # calibration observability and fusion (core.observability)
+    materials: dict = field(default_factory=dict)     # surface materials, radar through fascia (core.materials)
+    weather: dict = field(default_factory=dict)       # rain, fog, night (core.weather)
+    harness: dict = field(default_factory=dict)       # cable routing along the body (core.harness)
+    automation: dict = field(default_factory=dict)    # what to regenerate on a change (core.automation; never a command)
 
     def to_dict(self):
         return asdict(self)

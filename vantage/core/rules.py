@@ -13,7 +13,15 @@ EDGE_RULE_MM = 20.0
 FLOAT_TOL_MM = 15.0
 
 
-def route_length(project: Project, cam: Camera) -> float:
+def route_length(project: Project, cam: Camera, routed: bool = True) -> float:
+    """The camera's cable run, metres: routed along the body (core.harness) when Analysis ▸ Cable harness ▸ Use the
+    routed lengths is on, else the Manhattan estimate × the routing slack + the service loop + the camera's extra.
+    routed=False always gives the estimate (the optimiser's inner loop)."""
+    if routed:
+        from . import harness
+        r = harness.routed_length(project, cam)
+        if r is not None:
+            return r
     e = project.ecu
     manhattan = abs(cam.x - e.x) + abs(cam.y - e.y) + abs(cam.z - e.z)
     return float(manhattan * e.route_factor + e.service_loop_m + cam.route_extra_m)
@@ -22,6 +30,10 @@ def route_length(project: Project, cam: Camera) -> float:
 def route_text(project: Project, cam: Camera) -> str:
     if cam.route_note:
         return cam.route_note
+    from . import harness
+    routed = harness.route_text(project, cam)
+    if routed is not None:
+        return routed
     hops = [cam.tag]
     if abs(cam.y) > 0.5:
         hops.append('door sill' if cam.z < 0.8 else ('A-pillar' if cam.x > project.ecu.x else 'C-pillar'))
@@ -168,8 +180,9 @@ def collect_issues(project: Project, result, vg, mounts: dict | None = None) -> 
             out.append(Issue('warning', f'Camera sits {worst:.0f} mm from the body edge; the clearance rule is {EDGE_RULE_MM:.0f} mm.',
                              ', '.join(c.tag for c, _ in edge_cams), [c.uid for c, _ in edge_cams]))
     out += sensor_issues(project, vg)
-    from . import (asbuilt, exposure, fleet, gnss, housings, power, recording, requirements,   # they import
-                   suspension)                                                                # this module
+    from . import (asbuilt, automation, critical, exposure, fleet, gnss, harness,      # they import
+                   housings, materials, observability, power, recording,                # this module
+                   requirements, suspension, terrain, timing)
     out += housings.issues(project, vg)
     out += recording.issues(project)
     out += power.issues(project)
@@ -179,6 +192,13 @@ def collect_issues(project: Project, result, vg, mounts: dict | None = None) -> 
     out += requirements.issues(project)
     out += suspension.issues(project, vg)
     out += asbuilt.issues(project)
+    out += materials.issues(project, vg)          # radars through the fascia, cameras behind glass, the wipers
+    out += critical.issues(project, vg)           # critical targets no camera resolves, mounts tighter than the install
+    out += terrain.issues(project, vg)            # on the road: a wheel lifting, the body or a sensor touching it
+    out += harness.issues(project, vg)            # cables over their link's limit, GNSS RF margin, entry points
+    out += timing.issues(project, vg)             # stereo pairs and trigger lines split over two deserializers
+    out += observability.issues(project, vg, result)   # cameras the planned boards cannot pin, radars short of reflectors
+    out += automation.issues(project, vg)         # dropped automation settings, the last automated run failing
     out.sort(key=lambda i: SEVERITY_ORDER.get(i.severity, 9))
     return out
 

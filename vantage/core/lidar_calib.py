@@ -76,13 +76,16 @@ from .mathutil import BODY_TO_OPTICAL, euler_zyx, quat_from_matrix, rodrigues, r
 SCHEMA = 'vantage.lidar_camera_calibration/1'
 FRAME = 'vehicle (ISO 8855, rear axle)'
 OPTICAL = 'camera optical frame (OpenCV: x right, y down, z forward)'
+PLAN_CORNER_PX = 0.3           # predicted_sigma's corner noise, px 1σ: a sharp, evenly lit print found to sub-pixel
 ASSUMPTIONS = (
     'The camera\'s lens model (its unit calibration when it has one) is taken as exact and the camera stays where '
     'the variant puts it: the lidar is measured relative to that camera. Lidar points are taken from the lidar\'s '
     'origin at one instant (no motion during the sweep, no beam-origin offset). The board is flat and rigid with an equal margin '
     'all round; its stand is not modelled. A real lidar returns the board for a beam that only partly hits it, so the '
     'board can look a few millimetres larger, and some lidars range dark and bright surfaces differently: the edge and '
-    'checker brackets allow 4 mm, and the observability check relies on the board planes alone. The checker term needs '
+    'checker brackets allow 4 mm, and the observability check relies on the board planes alone. The plan\'s predicted '
+    f'1σ takes the camera\'s corners as found to {PLAN_CORNER_PX:g} px and the board planes alone (no edges, no '
+    'checker): a cautious figure. The checker term needs '
     'a print whose dark squares are dark at the lidar\'s wavelength (matte black toner usually is; some inks are not). '
     'Synthetic captures show what the plan can achieve with ideal hardware, not a measurement.')
 SCENES = ('plain', 'parking')
@@ -102,7 +105,10 @@ MAX_POINTS_PER_POSE = 2500     # lidar board points per pose in the solve (a ran
 # the tilts a planned board may take: yaw (about its vertical), pitch (top away +), roll (in its plane), degrees
 TILT_SET = tuple((y, p, r) for y in (-30.0, 0.0, 30.0) for p in (-20.0, 0.0, 20.0) for r in (-15.0, 0.0, 15.0))
 MIN_BOARD_GAP_M = 0.7          # planned boards stand at least this far apart
-PLAN_CAMERA_MM, PLAN_CAMERA_DEG = 1.0, 0.03     # the plan's allowance for the camera's measurement of a board plane
+# the pose plan's ranking takes the camera's measurement of a board plane as nearly exact (see plan_poses)
+PLAN_CAMERA_MM, PLAN_CAMERA_DEG = 1.0, 0.03
+MIN_BEAM_COS = 0.1             # the solve's range residual: a beam this oblique to the board counts as this
+FD_STEP = 1e-6                 # the solve's central-difference step (rad, m)
 OUTLIER_COST = 3.0             # a pose whose mean whitened residual² is this far above the others' is set aside
 REFLECT = {'board_dark': 6.0, 'board_white': 80.0, 'floor': 12.0, 'wall': 35.0, 'box': 25.0, 'cylinder': 30.0,
            'body': 40.0}                            # reflectivity, %, of the synthetic scan's surfaces
@@ -466,24 +472,67 @@ def _facing_many(centres, target, tilt) -> np.ndarray:
     return np.stack([u0, v0, n0], 2) @ (rot_y(y) @ rot_x(p) @ rot_z(r))
 
 
-def plane_information(centres, Rs, L, W, H, m, range_sigma):
+def camera_plane_cov(intr, W2O, C, centres, Rs, model, corner_px=PLAN_CORNER_PX) -> np.ndarray:
+    """Covariance (K, 3, 3) of each board's plane as the camera measures it from its corners: the plane's offset along
+    its normal at the board's centre (m), its tilt about the board's height axis and about minus its width axis (rad),
+    the parameters plane_information uses. The corners' pixel noise (corner_px, 1σ) goes through the lens model to the
+    board's pose (the inverse of the PnP information JᵀJ / σ², rotation about the board's centre and translation, in
+    the optical frame) and on to its plane. The camera finds a board's distance from its size in the image: at 4–8 m
+    through a wide lens that is good to centimetres, not the millimetre a fixed allowance assumed. centres (K, 3) and
+    Rs (K, 3, 3) in the vehicle frame, the camera at C with world -> optical rotation W2O; model: the board-frame
+    corners (model_corners)."""
+    centres, Rs = np.asarray(centres, float), np.asarray(Rs, float)
+    K, n = len(centres), len(model)
+    out = np.zeros((K, 3, 3))
+    h = 1e-5
+    E = np.eye(3)
+    for s0 in range(0, K, 2048):
+        Rb = np.einsum('ij,kjl->kil', W2O, Rs[s0:s0 + 2048])          # board -> optical
+        cb = (centres[s0:s0 + 2048] - C) @ W2O.T
+        Q = np.einsum('kij,nj->kni', Rb, model)                       # corners about the board's centre, optical
+        P = Q + cb[:, None, :]
+        dU = np.zeros(P.shape[:2] + (2, 3))                          # d pixel / d corner position
+        for j in range(3):
+            a = intr.project_dirs(P + h * E[j])
+            b = intr.project_dirs(P - h * E[j])
+            dU[..., 0, j] = (a[0] - b[0]) / (2 * h)
+            dU[..., 1, j] = (a[1] - b[1]) / (2 * h)
+        J = np.zeros(P.shape[:2] + (2, 6))
+        for j in range(3):                                            # a turn about the board's centre moves Q
+            J[..., j] = np.einsum('knab,knb->kna', dU, np.cross(E[j], Q))
+        J[..., 3:] = dU
+        J = J.reshape(len(P), 2 * n, 6)
+        info = np.einsum('kai,kaj->kij', J, J) / corner_px ** 2
+        info += np.eye(6) * 1e-9 * np.trace(info, axis1=1, axis2=2)[:, None, None]
+        cov = np.linalg.inv(info)
+        G = np.zeros((len(P), 3, 6))
+        G[:, 0, 3:] = Rb[:, :, 2]
+        G[:, 1, :3] = Rb[:, :, 1]
+        G[:, 2, :3] = -Rb[:, :, 0]
+        out[s0:s0 + 2048] = np.einsum('kai,kij,kbj->kab', G, cov, G)
+    return out
+
+
+def plane_information(centres, Rs, L, W, H, m, range_sigma, cam_cov=None):
     """Predicted information (K, 6, 6) about the lidar's pose, rotation (rad, about its origin) then position (m) in the
-    vehicle frame, from each board plane alone: the lidar points expected on it (its solid angle over the beam grid),
-    their range noise along the normal and their spread over the board give the plane's offset and two tilts as the
-    lidar measures them; a floor (PLAN_CAMERA_MM, PLAN_CAMERA_DEG) stands for the camera's own measurement of the
-    board."""
+    vehicle frame, from each board plane: the lidar points expected on it (its solid angle over the beam grid, at most
+    the MAX_POINTS_PER_POSE the solve keeps), their range noise along the normal and their spread over the board give
+    the plane's offset and two tilts as the lidar measures them; cam_cov (K, 3, 3, camera_plane_cov) is the camera's
+    own measurement of the same plane, which the lidar's is compared with (None: the camera's taken as exact)."""
     n = Rs[:, :, 2]
     rel = centres - L
     r = np.linalg.norm(rel, axis=1)
     cosi = np.abs(np.sum(n * rel, 1)) / np.maximum(r, 1e-9)
     cell = math.radians(max(m.h_res, 1e-3)) * math.radians(max(m.v_step(), 1e-3) if m.n_channels() > 1 else 1.0)
-    N = np.maximum(W * H * cosi / np.maximum(r, 0.1) ** 2 / cell, 3.0)
+    N = np.clip(W * H * cosi / np.maximum(r, 0.1) ** 2 / cell, 3.0, MAX_POINTS_PER_POSE)
     s2 = (max(range_sigma, 0.002) * np.maximum(cosi, 0.2)) ** 2
     K = len(centres)
     Sg = np.zeros((K, 3, 3))
-    Sg[:, 0, 0] = s2 / N + (PLAN_CAMERA_MM / 1000.0) ** 2
-    Sg[:, 1, 1] = s2 / (N * W * W / 12) + math.radians(PLAN_CAMERA_DEG) ** 2
-    Sg[:, 2, 2] = s2 / (N * H * H / 12) + math.radians(PLAN_CAMERA_DEG) ** 2
+    Sg[:, 0, 0] = s2 / N
+    Sg[:, 1, 1] = s2 / (N * W * W / 12)
+    Sg[:, 2, 2] = s2 / (N * H * H / 12)
+    if cam_cov is not None:
+        Sg = Sg + cam_cov
     J = np.zeros((K, 3, 6))
     J[:, 0, :3] = np.cross(rel, n)
     J[:, 0, 3:] = n
@@ -493,15 +542,20 @@ def plane_information(centres, Rs, L, W, H, m, range_sigma):
 
 
 def predicted_sigma(project, cam, lidar, poses, st: LidarCalibSettings) -> dict:
-    """1σ of the lidar's pose the board planes of a plan would give (x y z mm, roll pitch yaw deg, vehicle frame):
-    a prediction from the expected point counts and the range noise (plane_information), not a measurement; the
-    edges and the checker in the reflectivity improve on it."""
+    """1σ of the lidar's pose the board planes of a plan would give (x y z mm, roll pitch yaw deg, vehicle frame): each
+    plane as the lidar measures it (the expected point counts, the range noise) against the same plane as the camera
+    measures it (its corners at PLAN_CORNER_PX through its lens model: camera_plane_cov). A prediction, not a
+    measurement, and a cautious one: the edges and the checker in the reflectivity also pin each board within its
+    plane, which takes the camera's weak direction (its distance to a board) out of it."""
     if not poses:
         return {}
     m = project.sensor_model_for(lidar)
+    intr = resolve(project.module_for(cam), project.lens_for(cam))
     W, H = st.board_size()
-    I = plane_information(np.array([b.centre for b in poses]), np.array([b.R for b in poses]),
-                          lidar.pos().astype(float), W, H, m, st.range_sigma_mm / 1000.0).sum(0)
+    cc = np.array([b.centre for b in poses], float)
+    cR = np.array([b.R for b in poses], float)
+    cov_c = camera_plane_cov(intr, _w2o(cam), cam.pos().astype(float), cc, cR, model_corners(st))
+    I = plane_information(cc, cR, lidar.pos().astype(float), W, H, m, st.range_sigma_mm / 1000.0, cov_c).sum(0)
     cov = np.linalg.pinv(I + np.eye(6) * 1e-12)
     sd = np.sqrt(np.maximum(np.diag(cov), 0))
     return {'x_mm': sd[3] * 1e3, 'y_mm': sd[4] * 1e3, 'z_mm': sd[5] * 1e3, 'roll_deg': math.degrees(sd[0]),
@@ -511,8 +565,8 @@ def predicted_sigma(project, cam, lidar, poses, st: LidarCalibSettings) -> dict:
 def plan_poses(project, cam, lidar, st: LidarCalibSettings | None = None, engine=None, world=None):
     """([BoardPose], notes): st.poses boards both sensors see whole, near_m–far_m from the camera, chosen one at a time
     from every place and tilt (TILT_SET) for what their planes add to pinning the lidar's six degrees of freedom: the
-    predicted 1σ of its worst axis, in units of the tolerances (plane_information). Raises ValueError when no board
-    fits anywhere."""
+    predicted 1σ of its worst axis, in units of the tolerances (plane_information, the camera's plane taken as nearly
+    exact: see below). Raises ValueError when no board fits anywhere."""
     st = st or LidarCalibSettings()
     m = project.sensor_model_for(lidar)
     intr = resolve(project.module_for(cam), project.lens_for(cam))
@@ -560,7 +614,15 @@ def plan_poses(project, cam, lidar, st: LidarCalibSettings | None = None, engine
         notes.append(f'No board fits beyond {dist.max():.1f} m (the common field, {lidar.tag}\'s channels or the '
                      'scene): the poses stay nearer.')
     # the information each candidate adds, in units of the tolerances (rotation, position)
-    info = plane_information(cc, cR, L, W, H, m, st.range_sigma_mm / 1000.0)
+    # Ranked with the camera's plane as nearly exact (PLAN_CAMERA_MM, PLAN_CAMERA_DEG), not as its corners measure it
+    # (predicted_sigma): the calibration uses the board's edges and checker too, which pin each board within its
+    # plane, and then the camera's weak direction (how far away a board is) no longer limits it. Ranked by the planes
+    # and corners alone, the plan for F–L1 on the sample's data rig moves its boards from 3.8–8 m to 3.8–5.2 m and
+    # gains on that measure (z 16 → 12 mm) but loses on the calibration's own: z 1.9 → 3.9 mm (1σ, its synthetic
+    # captures, edges and checker in use).
+    floor = np.diag([(PLAN_CAMERA_MM / 1000.0) ** 2, math.radians(PLAN_CAMERA_DEG) ** 2,
+                     math.radians(PLAN_CAMERA_DEG) ** 2])
+    info = plane_information(cc, cR, L, W, H, m, st.range_sigma_mm / 1000.0, np.broadcast_to(floor, (len(cc), 3, 3)))
     sc = np.r_[[math.radians(st.ang_tol_deg)] * 3, [st.pos_tol_mm / 1000.0] * 3]
     info = info * sc[None, :, None] * sc[None, None, :]
     prior = np.eye(6) * 1e-6                     # a weak prior keeps the first boards' sums invertible
@@ -1785,7 +1847,6 @@ def _solve(intr, model, W, H, obs, T0, use_edges=True, seed=0, st=None, use_chec
     """Joint robust least squares over T_camera_lidar and the boards' poses. Returns a dict with the solution, the
     whitened Jacobian's information, the per-pose figures and the residual variance."""
     from scipy.optimize import least_squares
-    from scipy.sparse import lil_matrix
     rng = np.random.default_rng(seed)
     N = len(obs)
     R0, t0 = T0[:3, :3], T0[:3, 3]
@@ -1795,15 +1856,19 @@ def _solve(intr, model, W, H, obs, T0, use_edges=True, seed=0, st=None, use_chec
         if len(pts) > MAX_POINTS_PER_POSE:
             pts = pts[rng.choice(len(pts), MAX_POINTS_PER_POSE, replace=False)]
         s_px = max(o.cam.rms_px, 0.05)
-        s_r = max(o.lid.rms_m, 0.002)
+        # the range noise lies along each beam: its unit direction (from the lidar's origin) is exact, and the plane
+        # fit's RMS along the normal over the beams' cosine to it is the noise along them
+        dirs = pts / np.maximum(np.linalg.norm(pts, axis=1, keepdims=True), 1e-9)
+        cos_l = np.abs(dirs @ o.lid.normal) if len(pts) else np.ones(1)
+        s_r = max(o.lid.rms_m / max(float(np.sqrt(np.mean(cos_l ** 2))), MIN_BEAM_COS), 0.002)
         Ei = o.lid.edge_in if use_edges else np.zeros((0, 3))
         Eo = o.lid.edge_out if use_edges else np.zeros((0, 3))
         ck = use_checker and o.lid.ck_pts is not None and o.cam.phase >= 0
         Ck = o.lid.ck_pts if ck else np.zeros((0, 3))
         Cd = o.lid.ck_dark if ck else np.zeros(0, bool)
-        data.append((o.cam.R, o.cam.c, o.cam.uv, s_px, pts, s_r, Ei, Eo, Ck, Cd, o.cam.phase, o.cam.scale))
+        data.append((o.cam.R, o.cam.c, o.cam.uv, s_px, pts, s_r, Ei, Eo, Ck, Cd, o.cam.phase, o.cam.scale, dirs))
     rows = []                        # (pose, kind, count): 0 corners (2 per), 1 plane, 2 edge brackets, 3 checker
-    for k, (_, _, uv, _, pts, _, Ei, Eo, Ck, _, _, _) in enumerate(data):
+    for k, (_, _, uv, _, pts, _, Ei, Eo, Ck, _, _, _, _) in enumerate(data):
         rows += [(k, 0, 2 * len(uv)), (k, 1, len(pts)), (k, 2, len(Ei) + len(Eo)), (k, 3, len(Ck))]
 
     def unpack(x):
@@ -1819,40 +1884,61 @@ def _solve(intr, model, W, H, obs, T0, use_edges=True, seed=0, st=None, use_chec
     def residuals(x):
         R, t = unpack(x)
         out = []
-        for k, (_, _, uv, s_px, pts, s_r, Ei, Eo, Ck, Cd, ph, (sx, sy)) in enumerate(data):
+        for k, (_, _, uv, s_px, pts, s_r, Ei, Eo, Ck, Cd, ph, (sx, sy), dirs) in enumerate(data):
             Rb, cb = board(x, k)
             u, v, _, _ = intr.project_dirs(model @ Rb.T + cb)
             out.append(((np.c_[u * sx, v * sy] - uv) / s_px).ravel())
-            out.append(((pts @ R.T + t - cb) @ Rb[:, 2]) / s_r)
+            # each point's range error along its beam (its distance to the plane over the beam's cosine to the
+            # normal): the distance along the normal alone takes the noise's sideways part as signal, and the solve
+            # then favoured extrinsics that turn the boards edge-on to the beams (a bias of 0.7σ in x, 0.2σ in z on
+            # the data rig's F–L1 plan)
+            cs = (dirs @ R.T) @ Rb[:, 2]
+            cs = np.where(cs < 0, np.minimum(cs, -MIN_BEAM_COS), np.maximum(cs, MIN_BEAM_COS))
+            out.append(((pts @ R.T + t - cb) @ Rb[:, 2]) / cs / s_r)
             out.append(_brackets(Ei, Eo, R, t, Rb, cb, W, H) / EDGE_FLOOR_M)
             out.append(_checker_miss(Ck, Cd, R, t, Rb, cb, st, ph) / EDGE_FLOOR_M)
         return np.concatenate(out)
     n_par = 6 + 6 * N
     n_res = sum(c for _, _, c in rows)
-    Sp = lil_matrix((n_res, n_par), dtype=int)
     r0 = 0
     kinds = np.zeros(n_res, int)
     poses = np.zeros(n_res, int)
     for k, kind, cnt in rows:
-        if kind:
-            Sp[r0:r0 + cnt, :6] = 1
-        Sp[r0:r0 + cnt, 6 + 6 * k:12 + 6 * k] = 1
         kinds[r0:r0 + cnt] = kind
         poses[r0:r0 + cnt] = k
         r0 += cnt
+    sel = [poses == k for k in range(N)]
+
+    def jacobian(x):
+        # central differences, grouped: the extrinsic's six columns one at a time, then each of a board's six columns
+        # for every pose at once (a pose's rows depend on its own board only)
+        J = np.zeros((n_res, n_par))
+        for j in range(6):
+            d = np.zeros(n_par)
+            d[j] = FD_STEP
+            J[:, j] = (residuals(x + d) - residuals(x - d)) / (2 * FD_STEP)
+        for j in range(6):
+            d = np.zeros(n_par)
+            d[6 + j::6] = FD_STEP
+            g = (residuals(x + d) - residuals(x - d)) / (2 * FD_STEP)
+            for k in range(N):
+                J[sel[k], 6 + 6 * k + j] = g[sel[k]]
+        return J
+    # the trust-region steps solved exactly (dense Jacobian): an iterative solve (LSMR, for a sparse Jacobian) ran
+    # every noisy solve into max_nfev, about seven times slower for the same answer
     x0 = np.zeros(n_par)
-    sol = least_squares(residuals, x0, jac_sparsity=Sp, method='trf', loss='soft_l1', f_scale=3.0, x_scale='jac',
-                        ftol=1e-12, xtol=1e-12, gtol=1e-12, max_nfev=200)
+    sol = least_squares(residuals, x0, jac=jacobian, method='trf', tr_solver='exact', loss='soft_l1', f_scale=3.0,
+                        x_scale='jac', ftol=1e-12, xtol=1e-12, gtol=1e-12, max_nfev=200)
     x = sol.x
     r = residuals(x)
-    J = sol.jac.toarray() if hasattr(sol.jac, 'toarray') else np.asarray(sol.jac)
+    J = np.asarray(sol.jac)
     # the residual variance from the inliers (the robust loss let the others count less)
     inl = np.abs(r) < 4 * 3.0
     dof = max(int(inl.sum()) - n_par, 1)
     s2 = float(np.sum(r[inl] ** 2) / dof)
     R, t = unpack(x)
     per = []
-    for k, (Rb0, cb0, uv, s_px, pts, s_r, Ei, Eo, Ck, Cd, ph, (sx, sy)) in enumerate(data):
+    for k, (Rb0, cb0, uv, s_px, pts, s_r, Ei, Eo, Ck, Cd, ph, (sx, sy), _) in enumerate(data):
         Rb, cb = board(x, k)
         u, v, _, _ = intr.project_dirs(model @ Rb.T + cb)
         cr = np.linalg.norm(np.c_[u * sx, v * sy] - uv, axis=1)

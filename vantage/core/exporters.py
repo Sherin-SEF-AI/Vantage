@@ -141,6 +141,19 @@ def _view_cams(variant: Variant) -> list:
     return [c for c in variant.cameras if c.visible]
 
 
+def _observability_names(p, v):
+    from .observability import file_names
+    return [f'observability/{n}' for n in file_names(p, v)]
+
+
+def _terrain_names(p, v):
+    """The road profile (CSV, PNG) is written when the road is on and the vehicle has visible cameras."""
+    from . import terrain as TR
+    road = TR.settings_of(p).active and getattr(p.vehicle.mesh, 'n_tris', 0) > 0 and bool(_view_cams(v))
+    return ['terrain/terrain.json', 'terrain/terrain_motion.csv'] + (
+        ['terrain/terrain_profile.csv', 'terrain/terrain_profile.png'] if road else [])
+
+
 GROUPS = ['Documents', 'Extrinsics', 'Calibration and robotics', 'Datasets', 'Surround view', 'Images', 'Mount points']
 
 FORMATS: list[ExportFormat] = [
@@ -180,6 +193,25 @@ FORMATS: list[ExportFormat] = [
                  'text', multi=True),
     ExportFormat('fleet', 'Documents', 'Fleet', 'JSON, CSV, PNG',
                  lambda p, v: ['fleet/fleet.json', 'fleet/fleet.csv', 'fleet/fleet.png'], 'binary', multi=True),
+    ExportFormat('terrain', 'Documents', 'Road and body motion', 'JSON, CSV, PNG', _terrain_names, 'binary', multi=True),
+    ExportFormat('observability', 'Documents', 'Calibration observability', 'JSON, CSV, PNG', _observability_names,
+                 'binary', multi=True),
+    ExportFormat('harness', 'Documents', 'Cable harness', 'JSON, CSV, PNG',
+                 lambda p, v: ['harness/harness.json', 'harness/harness.csv', 'harness/harness.png'], 'binary',
+                 multi=True),
+    ExportFormat('critical_targets', 'Documents', 'Critical targets and mounting envelopes', 'JSON, CSV, PNG',
+                 lambda p, v: ['critical_targets/critical_targets.json', 'critical_targets/critical_targets.csv',
+                               'critical_targets/mounting_envelopes.csv', 'critical_targets/mounting_envelopes.png',
+                               'critical_targets/critical_targets.png'], 'binary', multi=True),
+    ExportFormat('materials', 'Documents', 'Materials, glass and wipers', 'JSON, CSV, PNG',
+                 lambda p, v: ['materials/materials.json', 'materials/materials_radars.csv',
+                               'materials/materials_glass.csv', 'materials/materials.png'], 'binary', multi=True),
+    ExportFormat('weather', 'Documents', 'Weather comparison', 'JSON, CSV, PNG',
+                 lambda p, v: ['weather/weather.json', 'weather/weather_conditions.csv', 'weather/weather_sensors.csv',
+                               'weather/weather.png'], 'binary', multi=True),
+    ExportFormat('ci_templates', 'Documents', 'CI templates (GitHub Actions, GitLab CI)', 'YAML, MD',
+                 lambda p, v: ['ci/github/vantage.yml', 'ci/gitlab/vantage.gitlab-ci.yml', 'ci/README.md'],
+                 'text', multi=True),
     ExportFormat('extrinsics_json', 'Extrinsics', 'Extrinsics', 'JSON', lambda p, v: 'extrinsics.json', 'text'),
     ExportFormat('extrinsics_yaml', 'Extrinsics', 'Extrinsics', 'YAML', lambda p, v: 'extrinsics.yaml', 'text'),
     ExportFormat('extrinsics_csv', 'Extrinsics', 'Extrinsics', 'CSV', lambda p, v: 'extrinsics.csv', 'text'),
@@ -2921,6 +2953,38 @@ def _render(fmt_id: str, ctx: _Ctx) -> list:
         from .analysis import Engine
         res = XP.run(ctx.project, ctx.opts.engine or Engine(), variant=ctx.variant)
         return [(f'exposure/{n}', d) for n, d in XP.files(res, ctx.project)]
+    if fmt_id == 'observability':
+        from . import observability as OB
+        from .analysis import Engine
+        res = OB.run(ctx.project, ctx.opts.engine or Engine(), variant=ctx.variant)
+        return [(f'observability/{n}', d) for n, d in OB.files(res, ctx.project)]
+    if fmt_id == 'harness':
+        from . import harness as HN
+        return [(f'harness/{n}', d) for n, d in HN.files(HN.run(ctx.project, ctx.opts.engine, variant=ctx.variant),
+                                                         ctx.project)]
+    if fmt_id == 'terrain':
+        from . import terrain as TR
+        from .analysis import Engine
+        res = TR.run(ctx.project, ctx.opts.engine or Engine(), variant=ctx.variant)
+        return [(f'terrain/{n}', d) for n, d in TR.files(res, ctx.project)]
+    if fmt_id == 'critical_targets':
+        from . import critical as CR
+        from .analysis import Engine
+        res = CR.run(ctx.project, ctx.opts.engine or Engine(), variant=ctx.variant)
+        return [(f'critical_targets/{n}', d) for n, d in CR.files(res, ctx.project)]
+    if fmt_id == 'materials':
+        from . import materials as MT
+        from .analysis import Engine
+        res = MT.run(ctx.project, ctx.opts.engine or Engine(), variant=ctx.variant)
+        return [(f'materials/{n}', d) for n, d in MT.files(res, ctx.project)]
+    if fmt_id == 'weather':
+        from . import weather as WX
+        from .analysis import Engine
+        res = WX.run(ctx.project, ctx.opts.engine or Engine(), variant=ctx.variant)
+        return [(f'weather/{n}', d) for n, d in WX.files(res, ctx.project)]
+    if fmt_id == 'ci_templates':
+        from . import automation as AU
+        return AU.ci_files(ctx.project, now=_now().timestamp())
     if fmt_id == 'gnss_imu':
         from . import gnss as GN
         return [(f'gnss_imu/{n}', d) for n, d in GN.files(GN.run(ctx.project, ctx.opts.engine, variant=ctx.variant),

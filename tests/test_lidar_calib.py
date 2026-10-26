@@ -198,8 +198,12 @@ def test_the_plan_is_whole_in_both_and_varied(rig, eng):
     N = np.array([b.R[:, 2] for b in poses])
     assert np.linalg.svd(N, compute_uv=False)[-1] > 0.1                     # the normals span three directions
     assert len({b.tilt for b in poses}) >= 4
+    # the planes alone, each as the lidar's points and as the camera's corners (0.3 px) measure it: the camera's
+    # distance to a board 4–8 m out limits z to about 16 mm (it took the camera as good to 1 mm and said 3.4 mm; the
+    # spread of the solve's answers is 16.6 mm, tests/test_calib_accuracy.py); the angles to a few tenths of a degree
     pr = LC.predicted_sigma(rig, cam, lid, poses, st)
-    assert max(pr['x_mm'], pr['y_mm'], pr['z_mm']) < 10 and max(pr['roll_deg'], pr['pitch_deg'], pr['yaw_deg']) < 0.3
+    assert max(pr['x_mm'], pr['y_mm']) < 10 and 10 < pr['z_mm'] < 25, pr
+    assert max(pr['roll_deg'], pr['pitch_deg'], pr['yaw_deg']) < 0.3, pr
     # a coarser lidar (2° between channels against 0.35°): the boards come nearer so that four channels still cross
     # them (camera F tilted up here: looking 40° down it sees too little above the horizon for any board to be
     # crossed by four of a VLP-16's channels, and the plan says so)

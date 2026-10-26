@@ -49,6 +49,9 @@ PAGE_CLASSES = {
     'brackets': ('brackets_ws', 'BracketsPage'), 'dataset': ('dataset_ws', 'DatasetPage'),
     'drivelog': ('drivelog_ws', 'DriveLogPage'), 'requirements': ('requirements_ws', 'RequirementsPage'),
     'lidar_calib': ('lidarcalib_ws', 'LidarCalibPage'), 'asbuilt': ('asbuilt_ws', 'AsBuiltPage'),
+    'critical': ('critical_ws', 'CriticalPage'), 'materials': ('materials_ws', 'MaterialsPage'),
+    'automation': ('automation_ws', 'AutomationPage'), 'terrain': ('terrain_ws', 'TerrainPage'),
+    'harness': ('harness_ws', 'HarnessPage'), 'observability': ('observability_ws', 'ObservabilityPage'),
 }
 
 
@@ -62,6 +65,8 @@ class MainWindow(QMainWindow):
         self.ctx.stitched = StitchedController(self.ctx)      # objects in the stitched view, kept up to date
         from .assistant import AssistantController
         self.ctx.assistant = AssistantController(self.ctx)    # the chat about the design (Preferences ▸ Assistant)
+        from .workspaces.automation_ws import AutomationController
+        self.ctx.automation = AutomationController(self.ctx)  # Export ▸ Automation: triggers work before the page opens
         self.actions_by_id: dict[str, QAction] = {}
         self.palette_extra = []
         self._photo_cache = {}
@@ -139,6 +144,12 @@ class MainWindow(QMainWindow):
         'requirements': (),
         'lidar_calib': (),
         'asbuilt': (),
+        'critical': (),
+        'materials': (),
+        'automation': (),
+        'terrain': (),
+        'harness': (),
+        'observability': (),
     }
 
     def set_page(self, name):
@@ -457,6 +468,10 @@ class MainWindow(QMainWindow):
         A('load_cases', 'Load cases…', self.load_cases, None, 'axle', category='Analysis',
           tip='Suspension, loads and load cases: corner drops, pitch and roll, every camera\'s move against the '
               'calibration load, and the ground figures')
+        A('terrain', 'Road and body motion…', lambda: self.set_page('terrain'), None, 'ground', category='Analysis',
+          tip='Put the car on a road (ramp, crest, garage ramp, speed bump, kerb, crowned road): what the cameras see on '
+              'it against flat ground, how far ahead the road stays in view, when a bump or kerb is first seen and '
+              'whether the body clears it; and brake dive, squat and cornering roll with each camera\'s horizon shift')
         A('blind_volume', 'Blind volume…', lambda: self.set_page('volume'), None, 'blind', category='Analysis',
           tip='Where around the vehicle something can stand unseen by every camera, in 3D')
         A('perception_range', 'Perception range…', lambda: self.set_page('perception'), None, 'target',
@@ -471,6 +486,9 @@ class MainWindow(QMainWindow):
         A('power_budget', 'Power budget…', lambda: self.set_page('power'), None, 'bolt', category='Analysis',
           tip='What every device draws, the DC-DC converter, fuses and power cables, the alternator margin and the '
               'engine-off runtime on the auxiliary battery')
+        A('cable_harness', 'Cable harness…', lambda: self.set_page('harness'), None, 'cable', category='Analysis',
+          tip='Every camera\'s and sensor\'s cable routed along the body to an entry point and the compute box: '
+              'lengths against each link\'s limit, GNSS cable loss, power-pair drop, and the harness sheet')
         A('gnss_imu', 'GNSS and IMU…', lambda: self.set_page('gnss'), None, 'axes', category='Analysis',
           tip='The sky each GNSS antenna sees, the dual-antenna heading baseline, the INS lever arms and how well each '
               'sensor\'s pose will be known')
@@ -480,6 +498,17 @@ class MainWindow(QMainWindow):
         A('mount_brackets', 'Mount brackets…', lambda: self.set_page('brackets'), None, 'bracket', category='Analysis',
           tip='A 3D-printable bracket per camera that holds it at its planned position and angles on the surface: '
               'STL, checks for the image, the walls and the lever arm')
+        A('critical_targets', 'Critical targets…', lambda: self.set_page('critical'), None, 'target', category='Analysis',
+          tip='Objects the rig must resolve at known places (a child in front of the bumper, a traffic light, a kerb, '
+              'a lane marking): which cameras resolve them, and how far each camera\'s mount may be off before they '
+              'are lost')
+        A('weather', 'Weather and night…', self.open_weather, None, 'weather', category='Analysis',
+          tip='Rain, fog, snow and night: how far each camera, lidar and radar still sees, every condition compared; '
+              'the sample dataset renders the same condition')
+        A('materials', 'Materials, glass and wipers…', lambda: self.set_page('materials'), None, 'layers',
+          category='Analysis',
+          tip='What each radar looks through (loss, range, multipath risk), the cameras behind glass (light, shift, '
+              'dashboard glare), the windscreen wipers\' sweep, and the material of every part')
         A('sample_dataset', 'Sample dataset…', lambda: self.set_page('dataset'), None, 'dataset', category='Export',
           tip='A short synthetic drive recorded by exactly this rig (cameras, lidars, radars, GNSS, IMU), written as a '
               'nuScenes version folder and a ROS 2 bag to test ingestion, labelling tools and loaders')
@@ -487,6 +516,9 @@ class MainWindow(QMainWindow):
           category='Analysis', tip='The programme\'s requirements as pass/fail checks on the studies: one verdict, '
                                    'the evidence behind each value, and the design-review pack (PDF)')
         A('an_settings', 'Settings…', self.preferences, None, 'gear', category='Analysis')
+        A('automation', 'Automation…', lambda: self.set_page('automation'), None, 'refresh', category='Export',
+          tip='Regenerate the exports and run your own checks when the design changes (on save, after changes or by '
+              'hand), with each run\'s output, exit code and changed files; GitHub Actions and GitLab CI templates')
         # calibrate
         A('targets', 'Target planner…', lambda: self.set_page('targets'), None, 'checker', category='Calibrate')
         for k, t in (('checkerboard', 'Checkerboard'), ('charuco', 'ChArUco'), ('aprilgrid', 'AprilGrid')):
@@ -494,6 +526,10 @@ class MainWindow(QMainWindow):
         A('target_auto', 'Auto-place targets', lambda: (self.set_page('targets'), self.inspector.pages['targets']._auto()), None, None, category='Calibrate')
         A('target_check', 'Check visibility', lambda: (self.set_page('targets'), self.inspector.pages['targets']._check()), None, None, category='Calibrate')
         A('target_export', 'Export target positions…', lambda: self.inspector.pages['targets']._export(), None, 'export', category='Calibrate')
+        A('observability', 'Calibration observability…', lambda: self.set_page('observability'), None, 'checker',
+          category='Calibrate', tip='How firmly the planned boards pin each camera\'s pose (1σ per axis, the weakest '
+                                    'direction, what moving or adding a board gains), the lidar–camera pairs and '
+                                    'radars, a Monte Carlo check, and the camera–lidar fusion density')
         A('install', 'Installation check…', lambda: self.set_page('install'), 'Ctrl+Shift+I', 'target', category='Calibrate')
         A('live_rig', 'Live rig…', lambda: self.set_page('rig'), None, 'camera-wide', category='Calibrate',
           tip='Every camera\'s stream at once: frame rate, drops, exposure, sharpness, sync and drift from the plan')
@@ -640,11 +676,11 @@ class MainWindow(QMainWindow):
         sub(an, 'Ground resolution', ['res_5', 'res_2', 'res_1'])
         sub(an, 'Obstacles', ['obs_ground', 'obs_pole05', 'obs_pole10', 'obs_child', '-', 'obs_add'])
         an.addSeparator()
-        an.addActions([a['thresholds'], a['tolerance'], a['sensitivity'], a['load_cases'], a['blind_volume'],
-                       a['perception_range']])
+        an.addActions([a['thresholds'], a['tolerance'], a['sensitivity'], a['load_cases'], a['terrain'],
+                       a['blind_volume'], a['perception_range'], a['weather'], a['critical_targets']])
         an.addSeparator()
         an.addActions([a['sensor_coverage'], a['sync_plan'], a['recording_budget'], a['power_budget'],
-                       a['gnss_imu'], a['sun_dirt'], a['mount_brackets']])
+                       a['cable_harness'], a['gnss_imu'], a['sun_dirt'], a['materials'], a['mount_brackets']])
         an.addSeparator()
         an.addAction(a['requirements'])
         an.addSeparator()
@@ -652,7 +688,7 @@ class MainWindow(QMainWindow):
         cb = menu('Calibrate')
         cb.addAction(a['targets'])
         sub(cb, 'Add target', ['target_checkerboard', 'target_charuco', 'target_aprilgrid'])
-        cb.addActions([a['target_auto'], a['target_check'], a['target_export']])
+        cb.addActions([a['target_auto'], a['target_check'], a['target_export'], a['observability']])
         cb.addSeparator()
         cb.addActions([a['lens_calib'], a['calib_import'], a['calib_export'], a['calib_clear']])
         cb.addSeparator()
@@ -667,6 +703,8 @@ class MainWindow(QMainWindow):
         sub(ex, 'Mount points', ['exp_dxf', 'exp_step'])
         ex.addSeparator()
         ex.addAction(a['sample_dataset'])
+        ex.addSeparator()
+        ex.addAction(a['automation'])
         w = menu('Window')
         self.win_menu = w
         w.aboutToShow.connect(self._fill_window_menu)
@@ -866,6 +904,14 @@ class MainWindow(QMainWindow):
         if bar is not None:
             bar.slider.setFocus()
 
+    def open_weather(self):
+        """Analysis ▸ Weather and night…: the perception range page with its weather comparison and the condition
+        picker focused."""
+        self.set_page('perception')
+        pg = self.page('perception')
+        pg.wtabs.setCurrentIndex(0)
+        pg.cond.setFocus()
+
     def _on_undo_index(self, *_):
         a = self.ctx.analysis
         if not sip.isdeleted(a.timer):          # at exit the stack can outlive the analysis' timer
@@ -963,6 +1009,7 @@ class MainWindow(QMainWindow):
                 return
         self.ctx.settings.setValue('window/state', self.saveState())
         self.cancel_jobs()
+        self.ctx.automation.shutdown()              # never leave the user's command running
         if 'install' in self._page_widgets:
             self._page_widgets['install'].stop_live()
         if 'rig' in self._page_widgets:
@@ -1836,6 +1883,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, 'Could not save', str(e))
             return False
         self.store.undo.setClean()
+        self.ctx.automation.on_saved(p.path)        # also a save of an unchanged project (deduplicated by saved time)
         self.add_recent(p.path)
         self.set_project_meta()
         self.msg(f'Saved {os.path.basename(p.path)}')

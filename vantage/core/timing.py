@@ -23,6 +23,15 @@ is that motion projected through the camera's real lens model (exact, fisheye sa
 speed times the exposure, the rolling-shutter skew between the first and the last row the image speed times the
 readout. Turning (yaw rate), pitching and the object's own motion are not modelled.
 
+Deserializers. Sub-millisecond sync between cameras needs them on one deserializer and one trigger line: each
+deserializer (GMSL ports 1-4 on A, 5-8 on B, as ECU.deserializer) starts its links' frames from its own frame-sync
+input. A stereo pair (two visible cameras of the same module and lens whose optical axes are within STEREO_AXIS_DEG,
+standing STEREO_BASELINE_M apart side by side: the baseline at least 45° off their mean axis) on different
+deserializers or trigger lines is a warning, with the port moves that fix it; so is a trigger line driving cameras on
+both deserializers when they would fit on one. A line with more cameras than one deserializer has links cannot, so
+that is a note: wire the line to the frame-sync input of both. Cameras without a port or a hardware trigger input are
+left out of the trigger lines.
+
 Times are in milliseconds after the sync pulse, modulo the reference lidar's period.
 """
 from __future__ import annotations
@@ -37,6 +46,7 @@ import numpy as np
 from . import sensors as SN
 from .analysis import camera_frames
 from .lens import model_fov, resolve
+from .mathutil import rot_zyx
 
 SCHEMA = 'vantage.sync_plan/1'
 AXIS_M = 20.0                    # a camera's view is located by a point this far along its optical axis
@@ -445,6 +455,134 @@ def suggested_phases(res: TimingResult) -> dict:
     return {d['uid']: round(d['suggested_phase_deg'], 2) % 360.0 for d in res.lidars}
 
 
+# =========================================================================== deserializers
+STEREO_AXIS_DEG = 10.0           # a stereo pair: optical axes this close ...
+STEREO_BASELINE_M = (0.05, 2.0)  # ... this far apart, side by side (the baseline at least 45° off the mean axis)
+LINKS_PER_DESER = 4              # GMSL ports 1-4 on deserializer A, 5-8 on B (project.ECU.deserializer)
+
+
+def deserializer_of(port) -> str:
+    """'A' for GMSL ports 1-4, 'B' for 5 and up (as ECU.deserializer); '' for an unassigned port."""
+    try:
+        port = int(port)
+    except (TypeError, ValueError):
+        return ''
+    return '' if port <= 0 else ('A' if port <= LINKS_PER_DESER else 'B')
+
+
+def _deser_ports(d, ecu) -> list:
+    n = max(int(getattr(ecu, 'ports', 8) or 8), 1)
+    return [p for p in range(1, n + 1) if deserializer_of(p) == d]
+
+
+def _cam_ok(c) -> bool:
+    return c.visible and all(isinstance(v, (int, float)) and math.isfinite(v)
+                             for v in (c.x, c.y, c.z, c.yaw, c.pitch, c.roll))
+
+
+def stereo_pairs(project, variant=None) -> list:
+    """Visible camera pairs taken as stereo: the same module and lens, optical axes within STEREO_AXIS_DEG and
+    STEREO_BASELINE_M apart, side by side (the baseline at least 45° off their mean axis, not one behind the other).
+    [(camera a, camera b, angle between the axes in degrees, baseline m)]."""
+    var = project.variant_by_uid(variant) if isinstance(variant, str) else variant
+    var = var or project.variant
+    cams = [c for c in var.cameras if _cam_ok(c)]
+    fwd = {c.uid: rot_zyx(c.yaw, c.pitch, c.roll)[:, 0] for c in cams}
+    out = []
+    for i, a in enumerate(cams):
+        for b in cams[i + 1:]:
+            if a.module_id != b.module_id or a.lens_id != b.lens_id:
+                continue
+            fa, fb = fwd[a.uid], fwd[b.uid]
+            ang = math.degrees(math.acos(float(np.clip(fa @ fb, -1.0, 1.0))))
+            base = b.pos() - a.pos()
+            L = float(np.linalg.norm(base))
+            if ang > STEREO_AXIS_DEG or not STEREO_BASELINE_M[0] <= L <= STEREO_BASELINE_M[1]:
+                continue
+            mean = fa + fb
+            mean /= max(float(np.linalg.norm(mean)), 1e-12)
+            if math.degrees(math.acos(min(abs(float(base @ mean)) / L, 1.0))) < 45.0:
+                continue
+            out.append((a, b, ang, L))
+    return out
+
+
+def _cap(t: str) -> str:
+    return t[:1].upper() + t[1:]
+
+
+def _free_ports(var, d, ecu, moving=()) -> list:
+    used = {c.port for c in var.cameras if c.port and c.uid not in moving}
+    return [p for p in _deser_ports(d, ecu) if p not in used]
+
+
+def deserializer_check(project, variant=None) -> list:
+    """Cameras that need sub-millisecond sync but sit on different deserializers or trigger lines: stereo pairs, and
+    trigger lines that drive cameras on both deserializers. [{'severity': 'warning' | 'note', 'kind': 'stereo' |
+    'trigger', 'message', 'tags', 'uids'}]; a note when a line has more cameras than one deserializer has links."""
+    var = project.variant_by_uid(variant) if isinstance(variant, str) else variant
+    var = var or project.variant
+    ecu = project.ecu
+    out = []
+    for a, b, ang, L in stereo_pairs(project, var):
+        da, db = deserializer_of(a.port), deserializer_of(b.port)
+        trig = bool(project.module_for(a).hw_sync)
+        la, lb = _letter(a), _letter(b)
+        why, fix = [], []
+        if da and db and da != db:
+            why.append(f'on different deserializers ({a.tag} on {da}, port {a.port}; {b.tag} on {db}, port {b.port})')
+            for keep, move in ((a, b), (b, a)):
+                free = _free_ports(var, deserializer_of(keep.port), ecu, {move.uid})
+                if free:
+                    fix.append(f'move {move.tag} to port {free[0]}')
+                    break
+            else:
+                fix.append(f'swap {b.tag} with a camera on deserializer {da}')
+        if trig and (not la or not lb or la != lb):
+            why.append('on different trigger lines' if la and lb else 'not both on a trigger line')
+            fix.append(f'put both on line {la or lb or "A"}')
+        if why:
+            out.append({'severity': 'warning', 'kind': 'stereo', 'tags': [a.tag, b.tag], 'uids': [a.uid, b.uid],
+                        'message': f'Stereo pair {a.tag}–{b.tag} ({L:.2f} m apart, axes {ang:.0f}° apart) is '
+                                   f'{" and ".join(why)}: sub-millisecond sync needs one deserializer and one trigger '
+                                   f'line. {_cap("; ".join(fix))}.'})
+    groups = {}
+    for c in var.cameras:
+        if _cam_ok(c) and _letter(c) and project.module_for(c).hw_sync and deserializer_of(c.port):
+            groups.setdefault(_letter(c), []).append(c)
+    for letter, cs in sorted(groups.items()):
+        ds = sorted({deserializer_of(c.port) for c in cs})
+        if len(ds) < 2:
+            continue
+        by = '; '.join(f'{d}: {" ".join(c.tag for c in cs if deserializer_of(c.port) == d)}' for d in ds)
+        tags, uids = [c.tag for c in cs], [c.uid for c in cs]
+        if len(cs) > LINKS_PER_DESER:
+            out.append({'severity': 'note', 'kind': 'trigger', 'tags': tags, 'uids': uids,
+                        'message': f"Trigger line {letter} drives {len(cs)} cameras, more than one deserializer's "
+                                   f'{LINKS_PER_DESER} links ({by}): wire the line to the frame-sync input of both '
+                                   f'deserializers so their frames start together.'})
+            continue
+        count = {d: sum(deserializer_of(c.port) == d for c in cs) for d in ds}
+        target = max(ds, key=lambda d: (count[d], d == 'A'))
+        movers = [c for c in cs if deserializer_of(c.port) != target]
+        free = _free_ports(var, target, ecu, {c.uid for c in movers})
+        fix = (' Move ' + ', '.join(f'{c.tag} to port {p}' for c, p in zip(movers, free)) + '.'
+               if len(free) >= len(movers) else
+               f" Swap ports so the line's cameras share deserializer {target}.")
+        out.append({'severity': 'warning', 'kind': 'trigger', 'tags': tags, 'uids': uids,
+                    'message': f'Trigger line {letter} drives cameras on both deserializers ({by}): sub-millisecond '
+                               f'sync needs them on one (or the line wired to the frame-sync input of both).{fix}'})
+    return out
+
+
+def issues(project, vg=None) -> list:
+    """The deserializer rule's warnings for the Issues list (cheap: no geometry). The rest of the timing plan stays
+    on its page."""
+    from .rules import Issue
+    return [Issue('warning', d['message'], ' · '.join(d['tags']), list(d['uids']))
+            for d in deserializer_check(project) if d['severity'] == 'warning']
+
+
 # =========================================================================== the plan
 def plan(project, variant=None, settings: TimingSettings | None = None) -> TimingResult:
     """The sync and timing plan of a variant (the active one by default; a Variant or its uid)."""
@@ -525,6 +663,7 @@ def plan(project, variant=None, settings: TimingSettings | None = None) -> Timin
     for d in res.lidars:
         if d['note']:
             notes.append(d['note'] + '.')
+    notes += [d['message'] for d in deserializer_check(project, var)]
     worst_blur = max(cams, key=lambda e: e['blur_worst_px'], default=None)
     exps = [e['max_exposure_ms'] for e in cams if e['max_exposure_ms'] is not None]
     res.metrics = {

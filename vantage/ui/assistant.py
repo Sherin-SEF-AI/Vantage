@@ -104,7 +104,9 @@ PAGES = {'viewports': '3D and top views', 'camviews': 'Camera views', 'tolerance
          'fleet': 'Fleet', 'brackets': 'Mount brackets',
          'dataset': 'Sample dataset', 'drivelog': 'Drive-log check',
          'requirements': 'Requirements scorecard', 'lidar_calib': 'Lidar–camera calibration',
-         'asbuilt': 'As-built check'}
+         'asbuilt': 'As-built check', 'critical': 'Critical targets', 'materials': 'Materials, glass and wipers',
+         'automation': 'Automation', 'terrain': 'Road and body motion', 'harness': 'Cable harness',
+         'observability': 'Calibration observability'}
 
 
 # ============================================================================================ controller

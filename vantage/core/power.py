@@ -278,8 +278,12 @@ def auto_fuse(steady_a: float, peak_a: float):
 
 
 def route_length(project, s) -> float:
-    """A device's power cable from the distribution next to the ECU: the Manhattan route like a camera's (× the
-    routing slack, + the service loop), metres."""
+    """A device's power cable from the distribution next to the ECU: routed along its data cable (core.harness) when
+    routing is on, else the Manhattan route like a camera's (× the routing slack, + the service loop), metres."""
+    from . import harness
+    r = harness.routed_length(project, s)
+    if r is not None:
+        return r
     e = project.ecu
     d = abs(s.x - e.x) + abs(s.y - e.y) + abs(s.z - e.z)
     d = d if math.isfinite(d) else 0.0

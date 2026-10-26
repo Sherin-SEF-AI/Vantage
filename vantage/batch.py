@@ -24,11 +24,23 @@
     vantage project.vantage --check review/
     vantage project.vantage --lidar-calib out/ --lidar-calib-pair F L1 --lidar-calib-folder boards/
     vantage project.vantage --fleet-import V3 install_report.json --fleet fleet/ --save project.vantage
+    vantage project.vantage --terrain road.json
+    vantage project.vantage --harness harness.json
+    vantage project.vantage --observability observability/ --verify 30
+    vantage project.vantage --critical-targets envelopes/
+    vantage project.vantage --materials materials.json
+    vantage project.vantage --weather weather.json
+    vantage project.vantage --perception-range night.json --condition night
+    vantage --watch project.vantage --on-change "make perception-test"
+    vantage project.vantage --ci-templates ci/
 
 The exit code is 0 when everything is fine, 2 when an analysis or export finds critical issues in the plan (or the
 recording budget finds the recorder or a sensor link cannot keep up, or the power budget finds the DC-DC converter or a
 fuse over its rating, the GNSS study finds an antenna with no sky, a camera cannot take a printed bracket as planned,
-a suspension load case lifts a wheel or exceeds the gross vehicle mass, or a camera sits inside a housing),
+a suspension load case lifts a wheel or exceeds the gross vehicle mass, a camera sits inside a housing, no camera
+resolves a critical target, a radar looks into metal over half its field, on the road the body or a sensor would
+touch it or no camera resolves a speed bump or kerb, or a routed cable is longer than its link allows, no module cable
+reaches or a GNSS cable has no RF margin, or with calibration targets planned a camera sees no board whole),
 3 when an installation check finds a camera that has to be re-mounted (or could not be solved), the rig health check
 finds a camera faulty (or without a stream), the fleet has a sensor to re-mount in its latest record or a drive log
 shows a fault or a lidar has to be re-mounted (or its pose is not determined by the board poses) or the as-built check
@@ -36,6 +48,8 @@ finds the plan's coverage does not hold, and 4 when a lens calibration fails, an
 camera, a fleet record, a drive log, an as-built check's recording, a suspension data file or a lidar calibration's
 captures cannot be read or the
 sample dataset cannot be written, and 5 when, with --check, a must requirement fails or cannot be evaluated.
+With --watch the exit code is the last run's: the command's own when it ran, else 5 when the requirements check fails,
+4 when the project could not be read or a format not written, 130 when stopped during the command.
 """
 from __future__ import annotations
 
@@ -326,11 +340,20 @@ def run(args) -> int:
     app = QApplication.instance() or QApplication(sys.argv[:1])
     from .ui.theme import load_fonts
     load_fonts()
+    if args.watch:
+        from .core import automation as AU
+        return AU.watch_cli(args)
+    if args.on_change:
+        raise SystemExit('--on-change runs with --watch PROJECT.vantage.')
+    if args.verify and args.observability is None:
+        raise SystemExit('--verify checks the predictions of --observability.')
     from .core import exporters as ex
     from .core.analysis import Engine
     from .core.install import InstallSettings
     project = load_project(args)
     pick_variant(project, args.variant)
+    if args.condition:                  # the weather the perception range, the sample dataset and --weather use
+        project.analysis.weather = dict(project.analysis.weather or {}, condition=args.condition)
     code = 0
     cal_docs = []
     if args.import_calib:
@@ -448,6 +471,82 @@ def run(args) -> int:
                 print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
         if any(f['severity'] == 'critical' for f in gr.findings):
             code = max(code, 2)
+    if args.observability is not None:
+        from .core import observability as OB
+        ores = OB.run(project, eng)
+        if args.verify:
+            OB.monte_carlo(ores, trials=args.verify)
+        dest = args.observability
+        if dest not in ('', '-') and not dest.lower().endswith('.json'):
+            for pth in OB.export(ores, project, dest):
+                print(f'wrote {pth}', file=sys.stderr)
+        else:
+            _out(OB.to_doc(ores, project), dest)
+        for c in ores.cameras:
+            print(f'  {c["tag"]:<4} {c["verdict"]:<8} ' + (f'worst {c["worst_axis"]} {c["ratio"]:.2f}× the requirement'
+                  if c['sigma'] else 'sees no board whole'), file=sys.stderr)
+        if ores.mc is not None:
+            print(f'  Monte Carlo: {"the predictions hold" if ores.mc["agree"] else "the spread differs"}',
+                  file=sys.stderr)
+        if project.targets and any(c['verdict'] == 'critical' for c in ores.cameras):
+            code = max(code, 2)
+    if args.harness is not None:
+        from .core import harness as HN
+        hn = HN.run(project, eng)
+        _out(HN.to_doc(hn, project), args.harness)
+        for f in hn.findings:
+            if f['severity'] != 'good':
+                print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
+        if any(f['kind'] in ('limit', 'rf', 'option') and f['severity'] == 'serious' for f in hn.findings):
+            code = max(code, 2)
+    if args.terrain is not None:
+        from .core import terrain as TR
+        tr = TR.run(project, eng)
+        _out(TR.to_doc(tr, project), args.terrain)
+        for f in tr.findings:
+            if f['severity'] not in ('good', 'note'):
+                print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
+        if any(f['kind'] in ('touch', 'device', 'unseen') and f['severity'] in ('serious', 'critical')
+               for f in tr.findings):
+            code = max(code, 2)
+    if args.critical_targets is not None:
+        from .core import critical as CR
+        cres = CR.run(project, eng)
+        dest = args.critical_targets
+        if dest not in ('', '-') and not dest.lower().endswith('.json'):
+            for pth in CR.export(cres, project, dest):
+                print(f'wrote {pth}', file=sys.stderr)
+        else:
+            _out(CR.to_doc(cres, project), dest)
+        if not cres.targets:
+            print('  no critical targets: place them in Analysis ▸ Critical targets', file=sys.stderr)
+        for r in cres.targets:
+            print(f'  {r.name:<40} ' + (f'resolved by {", ".join(r.met_by)}' if r.cameras_ok else 'NOT RESOLVED'),
+                  file=sys.stderr)
+        if any(not r.cameras_ok for r in cres.targets):
+            code = max(code, 2)
+    if args.materials is not None:
+        from .core import materials as MT
+        mres = MT.run(project, eng)
+        _out(MT.to_doc(mres, project), args.materials)
+        for r in MT.summary(mres)['radars']:
+            loss = r['two_way_loss_db']
+            print(f'  {r["tag"]:<4} {r["mount"]:<8} ' + (f'{r["looks_through"]}, ' if r['looks_through'] else '')
+                  + (f'{loss:.1f} dB two-way, ' if loss is not None else '')
+                  + 'range ' + ' / '.join('–' if x is None else f'{x:.0f}' for x in r['range_m'])
+                  + f' m on a car, multipath risk {r["multipath_risk"]}', file=sys.stderr)
+        for f in mres.findings:
+            if f['severity'] != 'good':
+                print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
+        if any(f['severity'] == 'critical' for f in mres.findings):
+            code = max(code, 2)
+    if args.weather is not None:
+        from .core import weather as WX
+        wres = WX.run(project, eng)
+        _out(WX.to_doc(wres, project), args.weather)
+        for f in wres.findings:
+            if f['severity'] not in ('good', 'note'):
+                print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
     if args.export:
         if args.formats:
             ids = [f.strip() for f in args.formats.split(',') if f.strip()]
@@ -604,6 +703,13 @@ def run(args) -> int:
                 print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
         if fr.flagged('re-mount'):
             code = max(code, 3)
+    if args.ci_templates:
+        from .core import automation as AU
+        try:
+            for pth in AU.write_ci(project, args.ci_templates):
+                print(pth)
+        except ValueError as e:
+            raise SystemExit(str(e))
     if args.save:
         project.save(args.save)
         print(f'saved {args.save}', file=sys.stderr)
@@ -691,6 +797,35 @@ def add_arguments(ap):
                    help='the camera and lidar tags (default: the Lidar-camera calibration page\'s, else the best pair)')
     g.add_argument('--lidar-calib-folder', metavar='DIR',
                    help='image + point-cloud pairs matched by name (pose01.png + pose01.pcd / .bin / .ply / .npy / .csv)')
+    g.add_argument('--observability', nargs='?', const='-', metavar='OUT.json|DIR',
+                   help='calibration observability (Calibrate ▸ Calibration observability): each camera\'s 1σ from '
+                        'the planned boards, the camera pairs, lidar–camera pairs, radars and the fusion density; a '
+                        'folder gets the JSON, CSV and PNGs; exit 2 when a camera sees no board whole')
+    g.add_argument('--verify', type=int, default=0, metavar='N',
+                   help='with --observability: check the predictions with N Monte Carlo trials (about 4 s each)')
+    g.add_argument('--harness', nargs='?', const='-', metavar='OUT.json',
+                   help='every cable routed along the body: lengths against each link\'s limit, GNSS cable loss, '
+                        'power-pair drop and the paths; exit 2 when a cable is longer than its link allows, no module '
+                        'cable reaches or a GNSS cable has no RF margin')
+    g.add_argument('--terrain', nargs='?', const='-', metavar='OUT.json',
+                   help='the road and body motion study (Analysis ▸ Road and body motion): coverage on the road '
+                        'against flat ground, how far the road ahead stays in view, when bumps and kerbs are first '
+                        'seen, clearance driving over them, and brake dive, squat and cornering roll with each '
+                        'camera\'s horizon shift; exit 2 when the body or a sensor would touch the road or a bump or '
+                        'kerb is never resolved')
+    g.add_argument('--critical-targets', nargs='?', const='-', metavar='OUT.json|DIR',
+                   help='critical targets (Analysis ▸ Critical targets): which cameras resolve each and every camera\'s '
+                        'mounting envelope (OUT.json or -: the JSON; a folder: the JSON, CSVs and PNGs); exit 2 when '
+                        'no camera resolves a target')
+    g.add_argument('--materials', nargs='?', const='-', metavar='OUT.json',
+                   help='what each radar looks through (two-way loss, derated range, multipath risk), the cameras '
+                        'behind glass and the wipers; exit 2 when a radar looks into metal over half its field')
+    g.add_argument('--weather', nargs='?', const='-', metavar='OUT.json',
+                   help='rain, fog, snow and night: every condition compared (range per object ahead, each camera, '
+                        'lidar and radar against clear)')
+    from .core.weather import IDS as WEATHER_IDS
+    g.add_argument('--condition', choices=WEATHER_IDS,
+                   help='the weather for --perception-range, --dataset and --weather (default: the project\'s)')
     g.add_argument('--export', metavar='DIR', help='export into DIR')
     g.add_argument('--formats', help='comma-separated export format ids (default: every non-image format)')
     g.add_argument('--variant', help='variant name or 1-based index (default: the active one)')
@@ -720,6 +855,8 @@ def add_arguments(ap):
     g.add_argument('--rig-health', nargs='+', metavar=('SECONDS', 'OUT.json'),
                    help='watch every camera\'s stream (set on the Live rig page) for SECONDS and report frame rate, '
                         'drops, exposure, sharpness and sync (default: stdout)')
+    from .core import automation as AU
+    AU.add_arguments(g)          # --watch, --on-change, --watch-runs, --watch-interval, --ci-templates
 
 
 def wanted(args) -> bool:
@@ -731,4 +868,6 @@ def wanted(args) -> bool:
                                                                'fleet_import', 'brackets', 'dataset',
                                                                'drive_log', 'as_built_check', 'check',
                                                                'suspension', 'suspension_data', 'housings',
-                                                               'lidar_calib'))
+                                                               'lidar_calib', 'observability', 'harness', 'terrain',
+                                                               'critical_targets', 'materials',
+                                                               'weather', 'watch', 'on_change', 'ci_templates'))

@@ -1,5 +1,8 @@
 """Coverage engine: ROI grid, per-camera visibility and pixel density, metrics and seams.
 
+The ground is flat unless the project has a road (core.terrain, analysis.terrain): then the ground points sit on it,
+the car stands on it and the road itself can hide ground from a camera; without one the analysis is unchanged.
+
 What blocks a camera: the vehicle body (simplified to the occluder), the rig parts that occlude, and the housings of
 the variant's sensors and other cameras (core.housings, composited into each camera's cube map by core.occlusion).
 The vehicle geometry the engine hands out for a variant carries that variant's housings; its version is the body and
@@ -290,6 +293,7 @@ class AnalysisResult:
     obstacles: dict = field(default_factory=dict)
     variant_uid: str = ''
     cell: float = 0.05
+    terrain: object = None      # core.terrain.Terrain the ground followed (None: flat ground)
 
     def cam_index(self, uid):
         for i, c in enumerate(self.cams):
@@ -411,8 +415,11 @@ class Engine:
 
     # --------------------------------------------------------------
     def analyse(self, project: Project, variant: Variant | None = None, cell=None, z: float | None = None,
-                cameras=None, progress=None, body_pose=None) -> AnalysisResult | None:
-        """body_pose = (R, t): the vehicle body (and its cameras) moved rigidly in the world, e.g. a load case."""
+                cameras=None, progress=None, body_pose=None, terrain=None) -> AnalysisResult | None:
+        """body_pose = (R, t): the vehicle body (and its cameras) moved rigidly in the world, e.g. a load case.
+        terrain: the road the ground follows (core.terrain.Terrain); None: the project's road when it has one switched
+        on (analysis.terrain), else flat ground; False: flat ground. On a road the ground points sit on it, the car
+        stands on it (its stance, after body_pose) and the road itself can hide the ground from a camera."""
         t0 = time.perf_counter()
         variant = variant or project.variant
         grid = self.roi_grid(project, cell, variant)
@@ -422,7 +429,17 @@ class Engine:
         if z is None:
             z = {'ground': 0.0, 'pole05': 0.5, 'pole10': 1.0, 'child': 0.9}.get(project.analysis.obstacle_mode, 0.0)
         cams = [c for c in (cameras if cameras is not None else variant.cameras) if c.visible]
+        ter = None
+        if terrain is not False:
+            from . import terrain as TR
+            ter = terrain if terrain is not None else TR.active(project)
         P = grid.points(z).reshape(-1, 3)
+        Pw = None
+        if ter is not None:
+            Pw = P.copy()
+            Pw[:, 2] += ter.height(Pw[:, 0], Pw[:, 1])                    # on the road
+            P = Pw
+            body_pose = ter.pose(body_pose)                              # the car standing on it
         if body_pose is not None:
             Rb, tb = body_pose
             P = (P - np.asarray(tb, float)) @ np.asarray(Rb, float)      # world ground -> body frame
@@ -434,6 +451,12 @@ class Engine:
             cube = self.cube(cam.pos(), vg)
             cubes[cam.uid] = cube
             vis, dens, focus, fld = eval_points(P, cam, intr, cube)
+            if ter is not None:                                          # the road itself in the way
+                C = cam.pos() if body_pose is None else \
+                    np.asarray(body_pose[0], float) @ cam.pos() + np.asarray(body_pose[1], float)
+                clear = ter.clear(C, Pw, on_surface=z <= 1e-9)
+                vis = vis & clear
+                fld = np.where(clear, fld, np.minimum(fld, -0.2)).astype(np.float32)
             vis = vis.reshape(shape) & ~grid.body
             dens = np.where(vis, dens.reshape(shape), 0).astype(np.float32)
             fld = fld.reshape(shape)
@@ -457,7 +480,8 @@ class Engine:
         res.ms = (time.perf_counter() - t0) * 1000
         res.variant_uid = variant.uid
         res.cell = grid.cell
-        res.obstacles = self.obstacle_visibility(project, cams, cubes, body_pose)
+        res.obstacles = self.obstacle_visibility(project, cams, cubes, body_pose, ter)
+        res.terrain = ter
         return res
 
     def _aggregate(self, project, variant, grid, evals, cams, z) -> AnalysisResult:
@@ -520,17 +544,26 @@ class Engine:
         return AnalysisResult(grid, evals, best, best_d, count, metrics, per, hist, seams, sector, blend, centre, 0.0, z)
 
     # --------------------------------------------------------------
-    def obstacle_visibility(self, project, cams, cubes, body_pose=None):
+    def obstacle_visibility(self, project, cams, cubes, body_pose=None, terrain=None):
+        """body_pose: the body's pose in the world (on a road: its stance included); terrain: the road the obstacles
+        stand on (core.terrain.Terrain; None: flat ground)."""
         out = {}
         for ob in project.obstacles:
             zs = np.linspace(0.05, ob.height, 8)
             P = np.stack([np.full_like(zs, ob.x), np.full_like(zs, ob.y), zs], 1)
+            if terrain is not None:
+                P[:, 2] += float(terrain.height(ob.x, ob.y))
+            Pw = P
             if body_pose is not None:       # obstacles stand in the world; the cameras and occluders are in the body frame
                 P = (P - np.asarray(body_pose[1], float)) @ np.asarray(body_pose[0], float)
             seen = {}
             for cam in cams:
                 intr = resolve(project.module_for(cam), project.lens_for(cam))
                 vis, dens, _, _ = eval_points(P, cam, intr, cubes[cam.uid])
+                if terrain is not None:
+                    C = cam.pos() if body_pose is None else \
+                        np.asarray(body_pose[0], float) @ cam.pos() + np.asarray(body_pose[1], float)
+                    vis = vis & terrain.clear(C, Pw, on_surface=False)
                 if vis.any():
                     seen[cam.uid] = (float(vis.mean()), float(dens[vis].max()))
             out[ob.uid] = seen

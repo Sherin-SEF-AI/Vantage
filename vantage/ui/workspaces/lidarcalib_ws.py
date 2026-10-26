@@ -690,8 +690,9 @@ class LidarCalibPage(QWidget):
             notes.insert(0, f'{len(plan.get("poses", []))} poses for {cam.tag} and {lid.tag}. Their planes alone would '
                             f'pin {lid.tag} to ±{pr["x_mm"]:.1f} / ±{pr["y_mm"]:.1f} / ±{pr["z_mm"]:.1f} mm (x / y / '
                             f'z) and ±{max(pr["roll_deg"], pr["pitch_deg"], pr["yaw_deg"]):.2f}° (predicted from '
-                            f'the points expected on each board at {st.range_sigma_mm:g} mm range noise; the edges '
-                            'and the checker narrow it further).')
+                            f'the points expected on each board at {st.range_sigma_mm:g} mm range noise and '
+                            f'{cam.tag}\'s corners at {LC.PLAN_CORNER_PX:g} px: the camera\'s distance to each board '
+                            'limits the planes; the edges and the checker narrow it a lot).')
         self.plan_note.setText(' '.join(notes))
         n = len(res.captures) if res is not None else len(plan.get('poses', []))
         self._pose_options(n)
