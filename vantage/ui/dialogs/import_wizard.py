@@ -15,7 +15,8 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLa
                              QSlider, QCheckBox, QLineEdit, QFileDialog, QPushButton, QMessageBox, QStyledItemDelegate, QStyle)
 
 from ...core import loaders
-from ...core.mesh import Mesh, Part, Zone, ROLE_MOUNTABLE, ROLE_GLASS, ROLE_WHEELS, ROLE_IGNORED, ROLES
+from ...core.mesh import (Mesh, Part, Zone, ROLE_MOUNTABLE, ROLE_GLASS, ROLE_WHEELS, ROLE_IGNORED, ROLES,
+                         body_width_points, is_mirror)
 from ...core.project import Vehicle
 from .. import icons
 from ..theme import THEME, mono, sans, STATUS
@@ -1042,10 +1043,14 @@ class ImportWizard(VDialog):
         m = self.world_mesh()
         if m is None:
             return {}
-        body = np.array([p.role not in (ROLE_IGNORED,) and p.name.lower() not in ('mirrors',) for p in m.parts])[m.face_part]
-        v = m.tri[body].reshape(-1, 3) if body.any() else m.tri.reshape(-1, 3)
+        keep = np.array([p.role != ROLE_IGNORED for p in m.parts])[m.face_part]
+        mirror = np.array([is_mirror(p.name) for p in m.parts])[m.face_part]
+        tri = m.tri[keep] if keep.any() else m.tri
+        mir = mirror[keep] if keep.any() else mirror
+        v = tri[~mir].reshape(-1, 3) if (~mir).any() else tri.reshape(-1, 3)
         lo, hi = v.min(axis=0), v.max(axis=0)
-        out = {'Length': hi[0] - lo[0], 'Width': hi[1] - lo[1], 'Height': hi[2] - max(lo[2], 0)}
+        w = body_width_points(tri, mir)                 # as datasheets give it: without the mirrors
+        out = {'Length': hi[0] - lo[0], 'Width': float(np.ptp(w[:, 1])), 'Height': hi[2] - max(lo[2], 0)}
         wc = self.wheels
         if 'FL' in wc and 'RL' in wc:
             out['Wheelbase'] = abs(wc['FL'][0] - wc['RL'][0])

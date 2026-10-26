@@ -27,6 +27,7 @@ import numpy as np
 
 from .analysis import camera_frames
 from .lens import resolve
+from .mesh import body_width_points, is_mirror
 
 SCHEMA = 'vantage.guidelines/1'
 COLORS = {'red': '#e5463a', 'yellow': '#f2c230', 'green': '#3cc55a', 'static': '#8fd3f4', 'swept': '#ff8a3d'}
@@ -148,18 +149,14 @@ def vehicle_outline(project) -> VehicleOutline:
     spec = veh.spec or {}
     if m is not None and m.n_tris:
         keep = np.array([p.role != 'ignored' for p in m.parts], bool)[m.face_part]
-        mirror = np.array(['mirror' in (p.name or '').lower() for p in m.parts], bool)[m.face_part]
+        mirror = np.array([is_mirror(p.name) for p in m.parts], bool)[m.face_part]
         tri = m.tri[keep] if keep.any() else m.tri
         mir = mirror[keep] if keep.any() else mirror
         V = tri.reshape(-1, 3)
         lo, hi = V.min(axis=0), V.max(axis=0)
-        body = tri[~mir].reshape(-1, 3) if (~mir).any() else V
         mirror_z = float(tri[mir][:, :, 2].min()) if mir.any() else None
-        if not mir.any():
-            # one-part meshes carry the mirrors in the body: take the width below the belt line
-            low = body[body[:, 2] <= lo[2] + 0.55 * (hi[2] - lo[2])]
-            if len(low) > 10:
-                body = low
+        # one-part meshes carry the mirrors in the body: then the width below the belt line
+        body = body_width_points(tri, mir)
         blo, bhi = body.min(axis=0), body.max(axis=0)
         half_w = float(bhi[1] - blo[1]) / 2
         cy = float(bhi[1] + blo[1]) / 2

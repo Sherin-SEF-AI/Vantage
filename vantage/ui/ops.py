@@ -47,6 +47,15 @@ def location_tag(project, pos, normal):
         return 'R', 'Rear', 'Rear, bumper top edge' if z < 0.75 else 'Rear, boot lid'
     if n[2] < -0.6:
         return 'M' + side, f'Mirror {sidew}', f'Under {sidew} mirror'
+    if n[2] > 0.6:                          # an upward surface: the roof, the bonnet or the boot lid
+        from ..core.rig import roof
+        rf, rr, _, top = roof(project.vehicle.mesh)
+        if z < top - 0.25:
+            return ('FT', 'Front top', 'Bonnet') if x > (xf + xr) / 2 else ('RT', 'Rear top', 'Boot lid, top')
+        where = 'front' if x >= (rf + rr) / 2 else 'rear'
+        if abs(y) < 0.2:
+            return 'T', 'Roof', f'Roof, {where} centre'
+        return 'T' + side, f'Roof {sidew}', f'Roof, {where} {sidew} edge'
     if x > xf - 0.45:
         return 'F' + side, f'Front {sidew}', f'Front bumper, {sidew} corner'
     if x < xr + 0.45:
@@ -59,6 +68,14 @@ def location_tag(project, pos, normal):
 def default_aim(project, pos, normal):
     n = np.asarray(normal, float)
     h = np.array([n[0], n[1], 0.0])
+    if n[2] > 0.6:
+        # an upward surface (roof, bonnet, boot lid): look out nearly level, to that side off the centre line, else
+        # ahead from the front half of the vehicle and back from the rear half
+        if abs(pos[1]) >= 0.2:
+            return (90.0 if pos[1] > 0 else -90.0), 15.0
+        meas = project.vehicle.measured()
+        mid = (meas.get('front_x', 3.0) + meas.get('rear_x', -0.8)) / 2
+        return (0.0 if pos[0] >= mid else 180.0), 15.0
     if np.linalg.norm(h) < 0.3:
         # downward-facing surface (mirror underside): look outward from the body centre line
         h = np.array([0.35, np.sign(pos[1]) or 1.0, 0.0])

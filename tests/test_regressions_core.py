@@ -458,3 +458,62 @@ def test_frustum_cache_survives_more_poses_than_it_keeps():
         cam.yaw = -80.0 + 0.1 * k
         rim, rays, axis = fc.get(p, cam)
         assert np.allclose(rays[0, 0], cam.pos()) and len(fc.d) <= 200
+
+
+def test_width_leaves_out_mirrors_whatever_they_are_called():
+    """The import wizard's spec check counted the mirrors in the width unless the mirror part was named exactly
+    'Mirrors' (2.036 m measured against the Tigor's 1.677 m: 'check scale')."""
+    from vantage.core import mesh as M
+    assert all(M.is_mirror(n) for n in ('Mirrors', 'mirror_left', 'Door mirror R', 'ORVM_L', 'rear-view mirror'))
+    assert not any(M.is_mirror(n) for n in ('Body', 'Glass', 'Wheels', 'Rear bumper', 'Roof rack'))
+    m = samples.tigor_sample_project().vehicle.mesh
+    keep = np.array([p.role != 'ignored' for p in m.parts])[m.face_part]
+    tri = m.tri[keep]
+    for names in (['Body', 'Glass', 'Wheels', 'Mirrors'], ['Body', 'Glass', 'Wheels', 'mirror_left']):
+        mir = np.array([M.is_mirror(n) for n in names])[m.face_part][keep]
+        assert np.ptp(M.body_width_points(tri, mir)[:, 1]) == pytest.approx(1.677, abs=0.01)
+    # one part, nothing named: the width below the belt line
+    assert np.ptp(M.body_width_points(tri, np.zeros(len(tri), bool))[:, 1]) == pytest.approx(1.677, abs=0.01)
+    assert np.ptp(tri.reshape(-1, 3)[:, 1]) > 2.0                       # with the mirrors
+
+
+def test_a_camera_on_the_roof_is_named_for_the_roof():
+    """Place on surface named a camera on the roof 'SR' (side right) and aimed it as under a mirror."""
+    from vantage.ui import ops
+    p = samples.tigor_sample_project()
+    up = (0.0, 0.0, 1.0)
+    assert ops.location_tag(p, (1.55, 0.0, 1.53), up) == ('T', 'Roof', 'Roof, front centre')
+    assert ops.default_aim(p, (1.55, 0.0, 1.53), up) == (0.0, 15.0)
+    assert ops.location_tag(p, (0.6, 0.0, 1.5), up)[2] == 'Roof, rear centre'
+    assert ops.default_aim(p, (0.6, 0.0, 1.5), up) == (180.0, 15.0)
+    assert ops.location_tag(p, (1.2, 0.5, 1.5), up)[:2] == ('TL', 'Roof left')
+    assert ops.location_tag(p, (1.2, -0.5, 1.5), up)[:2] == ('TR', 'Roof right')
+    assert ops.default_aim(p, (1.2, -0.5, 1.5), up) == (-90.0, 15.0)
+    assert ops.location_tag(p, (2.9, 0.0, 0.95), up)[2] == 'Bonnet'
+    assert ops.location_tag(p, (-0.6, 0.0, 1.0), up)[2] == 'Boot lid, top'
+    # the other surfaces are named as before
+    assert ops.location_tag(p, (3.23, 0.0, 0.62), (1.0, 0.0, 0.0))[0] == 'F'
+    assert ops.location_tag(p, (1.8, 0.95, 1.0), (0.0, 0.0, -1.0))[0] == 'ML'
+
+
+def test_a_radar_deep_in_the_nose_is_flagged():
+    """The depth of a radar was its distance to the nearest surface, so a radar deep in the nose beside a wheel arch
+    passed; it is how much vehicle lies ahead along its boresight."""
+    from vantage.core import rules
+    from vantage.core.analysis import Engine
+    p = samples.tigor_sample_project()
+    p.active_uid = next(v for v in p.variants if v.sensors).uid
+    vg = Engine().vehicle_geom(p)
+    rd = next(s for s in p.variant.sensors if s.tag == 'RD1')
+    x0 = rd.x
+
+    def depth_issue(back):
+        rd.x = x0 - back
+        return [i for i in rules.sensor_issues(p, vg) if i.uids == [rd.uid] and 'boresight' in i.message]
+    assert depth_issue(0.0) == [] and depth_issue(0.1) == []           # at or just behind the fascia
+    import re
+    for back in (0.25, 0.35, 0.5):                                     # 0.35 and 0.5 passed before
+        iss = depth_issue(back)
+        assert len(iss) == 1, back
+        # RD1's optical centre sits 19 mm behind the fascia's face: the depth grows with the move
+        assert float(re.search(r'sits (\d+) mm', iss[0].message).group(1)) == pytest.approx(back * 1000 - 19, abs=5)

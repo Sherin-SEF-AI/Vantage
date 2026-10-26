@@ -197,6 +197,22 @@ def _inside(mesh, p) -> bool:
 RADAR_FASCIA_M = 0.15             # a radar may sit this far behind the bumper fascia (it sees through the plastic)
 
 
+def _body_ahead(mesh, p, d, max_hits=32) -> float:
+    """How much vehicle lies ahead along the ray p + t d: the distance to the last surface it crosses (beyond it,
+    free space). A radar looks through what lies along its boresight, so this, not the nearest surface (a wheel arch
+    beside it), is how deep it sits."""
+    p, d = np.asarray(p, float), np.asarray(d, float) / max(float(np.linalg.norm(d)), 1e-12)
+    t_total, last = 0.0, 0.0
+    for _ in range(max_hits):
+        t, f = mesh.raycast((p + d * t_total)[None], d[None])
+        if f[0] < 0 or not np.isfinite(t[0]):
+            break
+        t_total += float(t[0])
+        last = t_total
+        t_total += 1e-4                 # step past the surface just crossed
+    return last
+
+
 def _noun(kind):
     from .sensors import KIND_NOUN
     return KIND_NOUN.get(kind, kind)
@@ -204,8 +220,8 @@ def _noun(kind):
 
 def sensor_issues(project: Project, vg) -> list[Issue]:
     """Lidars, radars, GNSS antennas and IMUs: a tag a camera uses too, a sensor below the ground, a lidar or a GNSS
-    antenna inside the body or a rig part, a radar deeper inside the body than behind a bumper fascia (an IMU belongs
-    inside)."""
+    antenna inside the body or a rig part, a radar with more of the vehicle ahead along its boresight than a bumper
+    fascia (an IMU belongs inside)."""
     out = []
     v = project.variant
     cam_tags = {c.tag.lower(): c for c in v.cameras}
@@ -234,11 +250,12 @@ def sensor_issues(project: Project, vg) -> list[Issue]:
                                          f'the vehicle. Raise it onto the surface (Inspector ▸ Optical centre Z).',
                              s.tag, [s.uid], where=(s.x, s.y)))
         else:
-            _, _, d = occ.closest_point(s.pos())
+            from .sensors import rotation
+            d = _body_ahead(occ, s.pos(), rotation(s)[:, 0])
             if d > RADAR_FASCIA_M:
-                out.append(Issue('warning', f'Radar {s.tag} is {d * 1000:.0f} mm inside the body: a radar sees through a '
-                                            f'plastic bumper fascia, not through the body.', s.tag, [s.uid],
-                                 where=(s.x, s.y)))
+                out.append(Issue('warning', f'Radar {s.tag} sits {d * 1000:.0f} mm behind the outer surface along its '
+                                            f'boresight: a radar sees through a plastic bumper fascia, not through the '
+                                            f'body.', s.tag, [s.uid], where=(s.x, s.y)))
     return out
 
 

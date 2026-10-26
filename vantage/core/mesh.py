@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -10,6 +11,25 @@ ROLE_MOUNTABLE = 'occluder · mountable'
 ROLE_GLASS = 'occluder · not mountable'
 ROLE_WHEELS = 'wheels'
 ROLE_IGNORED = 'ignored'
+# the exterior mirrors by part name: 'Mirrors', 'mirror_left', 'Door mirror R', 'ORVM' (outside rear-view mirror)
+MIRROR_NAME = re.compile(r'mirror|orvm|rear[\s_-]?view', re.I)
+
+
+def is_mirror(name) -> bool:
+    return bool(MIRROR_NAME.search(name or ''))
+
+
+def body_width_points(tri: np.ndarray, mirror: np.ndarray) -> np.ndarray:
+    """Vertices (V, 3) the vehicle's width is measured on, as datasheets give it (without the mirrors): the triangles
+    tri (M, 3, 3) less those flagged mirror (M,); a mesh with no mirror part named keeps them in the body, so then the
+    part below 55 % of its height (the mirrors sit higher, the widest body sides lower)."""
+    V = tri.reshape(-1, 3)
+    if mirror.any():
+        body = tri[~mirror].reshape(-1, 3)
+        return body if len(body) else V
+    lo, hi = V.min(axis=0), V.max(axis=0)
+    low = V[V[:, 2] <= lo[2] + 0.55 * (hi[2] - lo[2])]
+    return low if len(low) > 10 else V
 ROLES = (ROLE_MOUNTABLE, ROLE_GLASS, ROLE_WHEELS, ROLE_IGNORED)
 
 
