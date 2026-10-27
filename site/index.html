@@ -28,10 +28,12 @@
       <a href="#multisensor">Lidar &amp; radar</a>
       <a href="#build">Build</a>
       <a href="#studies">Studies</a>
+      <a href="#research">Research</a>
       <a href="#calibration">Calibrate</a>
       <a href="#assistant">Assistant</a>
       <a href="#export">Export</a>
       <a href="docs.html">Docs</a>
+      <a href="methods.html">Methods</a>
       <a href="#download">Download</a>
       <a href="https://github.com/Sherin-SEF-AI/Vantage">GitHub</a>
     </div>
@@ -94,8 +96,9 @@
         pairs and aim them; add lidars, radars, GNSS antennas and an IMU; watch what the rig sees update as you go.</p></div>
       <div class="step"><h3>Simulate the recording</h3><p>Simulated camera images, coverage on flat ground or a real
         road, pixel density, overlaps, the 3D blind volume, lidar and radar reach, weather and night, trigger timing, the
-        data and power budgets, the cable harness, the GNSS sky, sun glare and a whole synthetic drive, checked against
-        your requirements before anything is bought or drilled.</p></div>
+        data and power budgets, the cable harness, the GNSS sky, sun glare and a whole synthetic drive or one in the
+        CARLA simulator, checked against your requirements, with designed experiments for what drives each figure,
+        before anything is bought or drilled.</p></div>
       <div class="step"><h3>Fit, calibrate, verify</h3><p>Print the brackets, check that the planned boards pin every
         camera, calibrate each camera from its live stream and each lidar to a camera, check the installed rig and its
         first recordings against the plan, follow every vehicle of the fleet, and keep the calibration files in step
@@ -763,6 +766,7 @@
           <li><b>Placement optimiser:</b> an evolutionary search scored under tolerance, with a Pareto front.</li>
           <li><b>Variants</b> side by side with a difference map and a table of every figure.</li>
           <li><b>Load cases</b> from the suspension and the real loads, and <b>the road and body motion</b>: <a href="#loadcases">below</a>.</li>
+          <li><b>Designed experiments</b> with Sobol and Morris sensitivity and Monte Carlo uncertainty: <a href="#experiments">below</a>.</li>
         </ul>
       </div>
       <div class="media">
@@ -837,6 +841,171 @@
         <figcaption>The suspension behind the load cases, per corner: typical values until you enter or import yours.</figcaption>
       </figure>
     </div>
+
+    <div class="head" style="margin:72px 0 8px" id="research">
+      <div class="eyebrow">Research grade</div>
+      <h2>Every figure traceable, reproducible and checked.</h2>
+      <p>Vary the design over a designed experiment to see what drives each figure and how uncertain it is, record the
+        rig in an independent simulator, check every model against references that share none of its code, and run any
+        result again from the record it carries.</p>
+    </div>
+
+    <article class="feature" id="experiments">
+      <div class="text">
+        <div class="eyebrow">Designed experiments</div>
+        <h3>What drives each figure, and how sure it is</h3>
+        <p><b>Analysis ▸ Experiments</b> varies design inputs over a designed set of points and computes any figure of
+          the requirements scorecard at each: a camera's or sensor's pose, a lens, a sensor model, the mount height, the
+          ROI, a load case or the weather. It ranks what drives each figure, finds the best design and, from the inputs'
+          tolerances, says how uncertain the figures are.</p>
+        <ul>
+          <li>Full factorial, one at a time, Latin hypercube, Sobol (Saltelli), Morris screening and Monte Carlo, the
+            sampled designs seeded. On the sample, F's pitch from 25° to 45° × its two lenses is 6 points: with the
+            narrow lens 1.0 to 1.6 m² of the ROI is blind at every pitch, with the fisheye 0.01 to 0.135 m².</li>
+          <li>Sobol indices with bootstrap intervals: with F's and R's pitch each varying by 1° (1σ), as a mounting
+            tolerance, R's pitch has a total index of 0.76 [0.58, 0.95] on the blind ground and F's 0.23 [0.15, 0.32]:
+            512 points in about 10 s on four threads.</li>
+          <li>Morris μ* and σ, main effects with intervals, response surfaces over two factors, the Pareto front over
+            every response, and Monte Carlo uncertainty: mean, spread, percentiles and the share of builds meeting a
+            target (Wilson interval). <b>Add as variant</b> turns any point into a variant in one undo step.</li>
+          <li>The estimators are checked against the Ishigami function's analytic indices, every one inside its
+            interval and within 0.01. Points are cached, so a cancelled run resumes. Exported as JSON, CSV and PNG with
+            a spec that runs again; in batch mode with <code class="nowrap">--experiment</code>, which resumes from its
+            journal.</li>
+        </ul>
+        <p class="note">Each response is its study's own figure, so that study's assumptions apply; a load case moves the
+          body for the ground coverage only. Sobol indices assume the inputs are independent.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/experiments.jpg" aria-label="The experiments page on the sample: F's pitch and lens as factors, a full factorial of 6 points and its surface of blind ground per pitch and lens, then the lens removed and R's pitch added, a Sobol run of 512 points with the indices and their intervals, and the best point added as a variant">
+            <source src="media/experiments.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+          <span class="chip">Time-lapse ×5 while the Sobol design runs</span>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature flip" id="carla">
+      <div class="text">
+        <div class="eyebrow">Simulate in CARLA</div>
+        <h3>The planned rig on a CARLA car, recorded as a dataset</h3>
+        <p><b>Simulate ▸ CARLA</b> puts every camera, lidar, radar, GNSS antenna and IMU of the variant on the CARLA car
+          nearest the vehicle's size, at its planned pose, and records a drive through CARLA's town, traffic and weather
+          in the sample dataset's layout: a nuScenes folder and a ROS 2 bag. The server starts headless in its own
+          memory-capped scope, and the recording opens in the drive-log check.</p>
+        <ul>
+          <li>CARLA has only pinhole cameras, so each fisheye is rendered as cube faces from one optical centre and
+            remapped through its lens model, within 0.1 px (99 % within 0.068 px). On the sample's data rig: five views
+            per camera, 960 × 768 images, on an 80 Hz simulation step.</li>
+          <li>The roof lidar's 128 beams lie exactly on CARLA's channels, at the exact 0.352° azimuth step: 1.31 million
+            rays a second. Each radar zone becomes a CARLA radar: the front radar a 25° × 20° cone to 250 m and a
+            109° × 28° one to 70 m. The Audi A2 is the ego vehicle, within 3 % of the sample's size.</li>
+          <li>On CARLA 0.9.16 with an RTX 5080, the six fisheyes, the lidar and five radars record 6 s of driving in
+            28 s. The drive-log check finds every camera within 0.25° of its plan; lidar points fall on CARLA's depth
+            image within 0.33 mm, and each view is mounted within 0.03° of the plan.</li>
+          <li>Seamless fisheyes: the cube faces are feathered across their seams, and Unreal's vignette is taken out of
+            every pixel in linear light through CARLA's measured camera response.</li>
+          <li><b>Export rig…</b> writes the rig to run the bridge from CARLA's own Python; in batch mode with
+            <code class="nowrap">--carla-rig</code> and <code class="nowrap">--carla-run</code>.</li>
+        </ul>
+        <p class="note">Camera images need a GPU, even off-screen. CARLA's car is not your vehicle's body, so the
+          as-built check reports a CARLA drive as not checkable: the drive-log rotation check is the cross-check.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/carla.jpg" aria-label="The Simulate, CARLA page on the sample's data rig: the plan's tiles and the rig in CARLA table; Start, the server headless on the GPU, capped at 12 GB; Run, a 4 s drive through Town10HD at ClearNoon with 20 vehicles of traffic, as a time-lapse, and its report; then the drive-log check on the recording: the lidar's depth edges over the front fisheye image from CARLA, and all six cameras within 0.22 degrees of their plan">
+            <source src="media/carla.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+          <span class="chip">A real CARLA run · time-lapse ×7 while it records</span>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature" id="validation">
+      <div class="text">
+        <div class="eyebrow">Validation</div>
+        <h3>Every model checked against a reference that shares none of its code</h3>
+        <p><b>Help ▸ Validate the models</b> (or <code class="nowrap">vantage --validate</code>) runs 69 checks of 20
+          models against independent references and writes a report: for each check the quantity, the reference, the
+          error measured, the tolerance and the verdict. The <a href="methods.html">technical reference</a> documents
+          each model's equations, frames, assumptions and limits, with its sources.</p>
+        <ul>
+          <li>The lens models against OpenCV's own projections, within 2 × 10<sup>−12</sup> px; rain against ITU-R P.838-3's own
+            table, the headlamps against UN R112's test points, the sun against the SPA paper's worked example (0.003°),
+            the Sobol estimator against the Ishigami function.</li>
+          <li>The suite found, and this release fixes, the occlusion maps' depth: each texel held the distance to its
+            triangle's centre, 14.9 % off in the median. It now holds the exact depth, 0.15 % off.</li>
+          <li>Seeded and reproducible: about a minute on the sample, 30 s with <code class="nowrap">--validate-quick</code>.
+            It exits with 6 when a check fails, so CI can gate on it.</li>
+          <li>The <a href="validation/validation.html">published report</a> is the built-in sample's run, as HTML, JSON
+            and CSV with its figures.</li>
+        </ul>
+        <p class="note">The suite shows the models compute what their methods say. Whether a model describes your
+          vehicle, lens or sensor needs measurements of them: the as-built and drive-log checks.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <img src="media/validation.jpg" alt="Every check of the published validation report as its error divided by its tolerance, one row per model on a log scale: all 69 left of the tolerance line, the closest the rain table at 0.9998, and the cube-map depth check at 143 times its tolerance before this release and 0.19 times now" loading="lazy" width="1600" height="900">
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+        <p class="caption">The <a href="validation/validation.html">published report</a>, one dot per check: its error
+          divided by its tolerance. Drawn from the report's JSON.</p>
+      </div>
+    </article>
+
+    <article class="feature flip" id="provenance">
+      <div class="text">
+        <div class="eyebrow">Provenance</div>
+        <h3>Every result says where it came from, and runs again</h3>
+        <p>Every JSON Vantage writes, from an export, a study page, the automation or batch mode, ends with a
+          <code>provenance</code> block: the version and a hash of the code, the libraries, the project's content hash
+          and one per section, the variant, the study's settings with every default filled in, its seeds, the command
+          with each input file's SHA-256, and a hash of the result itself. It never holds a path, a user name or a
+          computer's name.</p>
+        <ul>
+          <li><code class="nowrap">--reproduce</code> runs the same study again and compares every number: a
+            perception range of the sample, all 12,076 numbers, came back exactly.</li>
+          <li>It says why a result does not reproduce: another version, other code or libraries, the part of the
+            project that differs, a changed input file, or a result edited after it was written. It exits with 6.</li>
+          <li><code class="nowrap">--tolerance</code> allows a difference per quantity
+            (<code class="nowrap">blind_m2=0.005</code>, <code class="nowrap">'*_pct=0.1%'</code>), for runs on
+            another computer, where the last digits can differ.</li>
+          <li>Every random number comes from a seeded generator, and a test reads the sources to keep it so. The
+            project format is documented with a JSON Schema, and <code>CITATION.cff</code> says how to cite Vantage.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="term" role="img" aria-label="A terminal: a perception range written by batch mode, its provenance block, the result reproduced exactly, then one number edited by hand and the result reported as changed after it was written, exit code 6">
+          <div class="bar"><i></i><i></i><i></i></div>
+<pre><span class="c"># every JSON Vantage writes ends with where it came from</span>
+<span class="p">$</span> vantage tigor.vantage --perception-range range.json
+analysed 6-cam · v3: 6 cameras in 0.6 s
+wrote range.json
+<span class="p">$</span> jq -c '.provenance | [.vantage.version, .project.sha256[:12],
+      .variant.name, .result_sha256[:12]]' range.json
+["0.3.0","87a7e88f9b1a","6-cam · v3","cf837a06e950"]
+<span class="p">$</span> vantage tigor.vantage --reproduce range.json report.json 2&gt;/dev/null
+<span class="p">$</span> echo $?; jq -r '.message, .reasons[]' report.json
+0
+<span class="g">Reproduces exactly: all 12076 numbers are the same and the reproduced
+result has the same SHA-256.</span>
+<span class="c"># the front car range raised to 80 m by hand</span>
+<span class="p">$</span> jq '.sectors[0].classes.Car.min = 80' range.json &gt; edited.json
+<span class="p">$</span> mv edited.json range.json
+<span class="p">$</span> vantage tigor.vantage --reproduce range.json report.json 2&gt;/dev/null
+<span class="p">$</span> echo $?; jq -r '.message, .reasons[]' report.json
+6
+<span class="w">Does not reproduce: 1 of 12076 numbers differ beyond their tolerance
+(largest: sectors[0].classes.Car.min, 80 then, 70.0819 now).
+the result file was changed after Vantage wrote it (its result hash
+does not match)</span></pre>
+        </div>
+        <p class="caption">A real session on the sample, in a throw-away folder. Long lines are wrapped.</p>
+      </div>
+    </article>
   </div>
 </section>
 
@@ -1064,7 +1233,7 @@
     <div class="head">
       <div class="eyebrow">Export</div>
       <h2>Hand the design to the people and machines that need it.</h2>
-      <p>Forty-three formats, each with a live preview. Units, angles and the coordinate frame are chosen per export, and
+      <p>Forty-five formats, each with a live preview. Units, angles and the coordinate frame are chosen per export, and
         every file says which convention it uses.</p>
     </div>
     <article class="feature flip" id="datasets" style="padding-top:0;border-top:0">
@@ -1148,10 +1317,10 @@
       </div>
     </article>
     <div class="grid3">
-      <div class="card"><h4>Datasets</h4><ul><li><span>nuScenes sensor calibration</span><span>JSON</span></li><li><span>KITTI calibration</span><span>TXT</span></li><li><span>ROS camera_info</span><span>YAML ×N</span></li><li><span>Kalibr camchain</span><span>YAML</span></li></ul></div>
+      <div class="card"><h4>Datasets</h4><ul><li><span>nuScenes sensor calibration</span><span>JSON</span></li><li><span>KITTI calibration</span><span>TXT</span></li><li><span>ROS camera_info</span><span>YAML ×N</span></li><li><span>Kalibr camchain</span><span>YAML</span></li><li><span>CARLA simulator rig</span><span>JSON, NPZ</span></li></ul></div>
       <div class="card"><h4>Calibration and robotics</h4><ul><li><span>OpenCV fisheye calibration</span><span>YAML ×N</span></li><li><span>ROS 2 URDF + static TF</span><span>URDF, PY</span></li><li><span>Jetson camera config</span><span>JSON</span></li><li><span>Extrinsics: every sensor's pose</span><span>JSON</span></li><li><span>Extrinsics: every sensor's pose</span><span>YAML</span></li><li><span>Extrinsics: every sensor's pose</span><span>CSV</span></li></ul></div>
       <div class="card"><h4>Documents</h4><ul><li><span>Mount sheet</span><span>PDF</span></li><li><span>Design report</span><span>HTML, PDF</span></li><li><span>Requirements and review pack</span><span>JSON, CSV, PDF</span></li><li><span>Fleet</span><span>JSON, CSV, PNG</span></li><li><span>CI templates (GitHub, GitLab)</span><span>YAML, MD</span></li></ul></div>
-      <div class="card"><h4>Studies</h4><ul><li><span>Blind volume</span><span>JSON, OBJ</span></li><li><span>Perception range</span><span>JSON, PNG</span></li><li><span>Weather comparison</span><span>JSON, CSV, PNG</span></li><li><span>Critical targets and envelopes</span><span>JSON, CSV, PNG</span></li><li><span>Lidar and radar coverage</span><span>JSON, PNG</span></li><li><span>Sync and timing plan</span><span>JSON, PNG</span></li><li><span>Recording budget</span><span>JSON, CSV</span></li><li><span>Power budget</span><span>JSON, CSV</span></li><li><span>Cable harness</span><span>JSON, CSV, PNG</span></li><li><span>GNSS and IMU</span><span>JSON, TXT, PNG</span></li><li><span>Sun glare and dirt</span><span>JSON, PNG</span></li><li><span>Materials, glass and wipers</span><span>JSON, CSV, PNG</span></li><li><span>Housings in view</span><span>JSON, CSV</span></li><li><span>Load cases (suspension)</span><span>JSON, CSV</span></li><li><span>Road and body motion</span><span>JSON, CSV, PNG</span></li><li><span>Calibration observability</span><span>JSON, CSV, PNG</span></li></ul></div>
+      <div class="card"><h4>Studies</h4><ul><li><span>Blind volume</span><span>JSON, OBJ</span></li><li><span>Perception range</span><span>JSON, PNG</span></li><li><span>Weather comparison</span><span>JSON, CSV, PNG</span></li><li><span>Critical targets and envelopes</span><span>JSON, CSV, PNG</span></li><li><span>Lidar and radar coverage</span><span>JSON, PNG</span></li><li><span>Sync and timing plan</span><span>JSON, PNG</span></li><li><span>Recording budget</span><span>JSON, CSV</span></li><li><span>Power budget</span><span>JSON, CSV</span></li><li><span>Cable harness</span><span>JSON, CSV, PNG</span></li><li><span>GNSS and IMU</span><span>JSON, TXT, PNG</span></li><li><span>Sun glare and dirt</span><span>JSON, PNG</span></li><li><span>Materials, glass and wipers</span><span>JSON, CSV, PNG</span></li><li><span>Housings in view</span><span>JSON, CSV</span></li><li><span>Load cases (suspension)</span><span>JSON, CSV</span></li><li><span>Road and body motion</span><span>JSON, CSV, PNG</span></li><li><span>Calibration observability</span><span>JSON, CSV, PNG</span></li><li><span>Designed experiment</span><span>JSON, CSV, PNG</span></li></ul></div>
       <div class="card"><h4>Surround view</h4><ul><li><span>Bird's-eye remap tables</span><span>NPZ, BIN</span></li><li><span>3D surround-view bowl</span><span>OBJ, NPZ, PNG</span></li><li><span>Parking guidelines</span><span>JSON, PNG ×N</span></li><li><span>Objects in the stitched view</span><span>JSON, PNG</span></li><li><span>Reference stitcher</span><span>C++, PY</span></li></ul></div>
       <div class="card"><h4>Images and CAD</h4><ul><li><span>Viewport</span><span>PNG</span></li><li><span>Bird's-eye view</span><span>PNG</span></li><li><span>All camera views</span><span>PNG ×N</span></li><li><span>Mount points</span><span>DXF</span></li><li><span>Mount points</span><span>STEP</span></li><li><span>Mount brackets</span><span>STL ×N</span></li></ul></div>
     </div>
@@ -1193,7 +1362,7 @@ saved built.vantage with variant 6-cam · v3 · as-built
 <section class="alt" id="download">
   <div class="wrap">
     <div class="head">
-      <div class="eyebrow">Download · version 0.2.0</div>
+      <div class="eyebrow">Download · version 0.3.0</div>
       <h2>Install Vantage.</h2>
       <p>Vantage is free software, licensed under the GPL-3.0-or-later. Downloads that need no Python are on the
         <a href="https://github.com/Sherin-SEF-AI/Vantage/releases/latest">latest release</a>, with SHA-256 checksums in <code>SHA256SUMS.txt</code>; or install from
@@ -1233,6 +1402,8 @@ vantage --sample</pre><p>Python 3.10 or later, any system. Add <code>[step]</cod
     </div>
     <div class="links">
       <a href="docs.html">Documentation</a>
+      <a href="methods.html">Technical reference</a>
+      <a href="validation/validation.html">Validation report</a>
       <a href="https://github.com/Sherin-SEF-AI/Vantage/releases/latest">Releases</a>
       <a href="docs.html#batch">Batch mode</a>
       <a href="docs.html#assistant">Assistant and privacy</a>

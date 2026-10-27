@@ -55,7 +55,13 @@ real time, plus the web encode; the clips that generate a drive first take 15–
 
 The `automation` clip types `make test` as the command, approves it in the app's own dialog and runs a harmless
 standard-library script from the throw-away home (a Makefile written there in the set-up); the `materials` clip adds
-a windscreen camera (FW) for the glass and wiper part, as the materials tests do: the sample itself has none.
+a windscreen camera (FW) for the glass and wiper part, as the materials tests do: the sample itself has none. The `carla`
+clip needs CARLA 0.9.16 and a GPU: it links the recording machine's CARLA folder and its client venv into the
+throw-away home as `~/carla` (removed at the end), starts the server from the page (headless, in its own scope capped
+at 12 GB), records a 4 s drive into the throw-away home (Town10HD, ClearNoon, 20 vehicles, seed 1, images at half size;
+about 25 s, shown as a time-lapse), runs the drive-log check on it and stops the server at the end, whatever happens.
+The `experiments` clip runs a 6-point factorial and a 512-point Sobol design live (about 10 s, shown as a time-lapse).
+The validation figure (`site/media/validation.jpg`) is drawn from the published report by `demo/validation_figure.py`.
 
 ## YouTube tour
 

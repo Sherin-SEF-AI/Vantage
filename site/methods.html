@@ -1,0 +1,1011 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Technical reference · Vantage</title>
+<meta name="description" content="The models behind Vantage, the sensor rig planner for autonomous-driving data collection: what each computes, its equations, frames and units, assumptions, typical parameters and their sources, how it is validated against independent references, its limits, and the literature and standards it follows.">
+<meta property="og:title" content="Vantage technical reference">
+<meta property="og:image" content="https://sherin-sef-ai.github.io/Vantage/media/hero.jpg">
+<meta name="theme-color" content="#0f0f0e">
+<link rel="icon" type="image/png" href="assets/img/favicon.png">
+<link rel="stylesheet" href="assets/css/site.css">
+<style>
+  .doc .eq { font: 400 15.5px/1.7 var(--sans); background: var(--panel); border: 1px solid var(--hair);
+    border-left: 3px solid var(--strong); border-radius: 8px; padding: 10px 16px; margin: 12px 0 16px;
+    overflow-x: auto; color: var(--ink); max-width: 78ch; }
+  .doc .eq i { font-style: italic; }
+  .doc .eq .w { color: var(--muted); font-size: 13.5px; display: block; margin-top: 2px; }
+  .doc dl.params { display: grid; grid-template-columns: minmax(150px, 230px) 1fr; gap: 6px 18px; max-width: 78ch;
+    margin: 12px 0 18px; font-size: 15px; }
+  .doc dl.params dt { color: var(--ink); }
+  .doc dl.params dd { margin: 0; color: var(--ink2); }
+  .doc .val caption { caption-side: top; text-align: left; color: var(--muted); font-size: 13.5px; padding: 0 0 6px; }
+  .doc .val td:nth-child(3), .doc .val td:nth-child(4) { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .doc .val .ok { color: var(--good); white-space: nowrap; }
+  .doc .val .no { color: var(--crit); white-space: nowrap; }
+  .doc h4 { font-size: 15px; margin: 22px 0 6px; color: var(--ink); letter-spacing: 0; }
+  .doc .refs li { font-size: 14.5px; }
+  @media (max-width: 760px) { .doc dl.params { grid-template-columns: 1fr; gap: 2px 0; } .doc dl.params dd { margin-bottom: 8px; } }
+</style>
+</head>
+<body>
+<a class="skip" href="#doc">Skip to content</a>
+<nav class="nav" aria-label="Main">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="assets/img/logo.png" alt="" width="26" height="26">Vantage</a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="nav-links">Menu</button>
+    <div class="nav-links" id="nav-links">
+      <a href="./#features">Features</a>
+      <a href="./#assistant">Assistant</a>
+      <a href="docs.html">Docs</a>
+      <a href="methods.html" aria-current="page">Methods</a>
+      <a href="./#download">Download</a>
+      <a href="https://github.com/Sherin-SEF-AI/Vantage">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<div class="docs">
+  <aside class="toc" aria-label="On this page">
+    <p>Start</p>
+    <a href="#overview">How to read this</a>
+    <a href="#conventions">Frames and conventions</a>
+    <a href="#validation">The validation suite</a>
+    <p>Cameras</p>
+    <a href="#lens">Lens models</a>
+    <a href="#coverage">Coverage and pixel density</a>
+    <a href="#occlusion">Occlusion by the body</a>
+    <a href="#perception">Perception range</a>
+    <a href="#critical">Critical targets and envelopes</a>
+    <p>Lidar and radar</p>
+    <a href="#lidar">Lidar beams and points</a>
+    <a href="#radar">Radar range and the fascia</a>
+    <a href="#glass">Cameras behind glass</a>
+    <p>Environment</p>
+    <a href="#weather">Weather and night</a>
+    <a href="#sun">Sun position</a>
+    <p>Vehicle</p>
+    <a href="#suspension">Suspension and loads</a>
+    <a href="#terrain">Road geometry and the horizon</a>
+    <p>Rig</p>
+    <a href="#timing">Sync, triggers and blur</a>
+    <a href="#gnss">GNSS and the pose budget</a>
+    <p>Calibration</p>
+    <a href="#calib">Unit lens calibration</a>
+    <a href="#joint">Installation check: joint solve</a>
+    <a href="#observability">Calibration observability</a>
+    <a href="#lidar-calib">Lidar–camera calibration</a>
+    <p>Data and studies</p>
+    <a href="#formats">Dataset calibration files</a>
+    <a href="#experiments">Designed experiments</a>
+    <p>Reference</p>
+    <a href="#datasheets">e-con lens datasheets</a>
+    <a href="#references">References</a>
+  </aside>
+
+  <main class="doc" id="doc">
+    <div class="eyebrow">Technical reference</div>
+    <h1>The models behind Vantage</h1>
+    <p class="intro">What each of Vantage's models computes and how: its equations, frames and units, the assumptions
+      it makes, the parameters it takes with their typical values and where they come from, how it is checked against
+      independent references, where it stops being right, and the papers and standards it follows. The
+      <a href="docs.html">documentation</a> says how to use the app; this page says what its numbers mean.</p>
+
+    <!-- ======================================================== start -->
+    <h2 id="overview">How to read this</h2>
+    <p>Every study in Vantage turns a design (the vehicle, the rig and its settings) into figures: a blind area in
+      square metres, a perception range in metres, a 1σ in degrees. For each model this page gives:</p>
+    <ul>
+      <li><b>What it computes</b> and from which inputs, in which frame and units.</li>
+      <li><b>The equations</b>, in the form the code evaluates them. Symbols are defined where they first appear.</li>
+      <li><b>Assumptions and parameters</b>: what is modelled and what is not; each parameter's typical value and its
+        source. A figure called <em>typical</em> is a representative value from the literature or a product class, not
+        a measurement of your hardware; the app says so wherever it uses one.</li>
+      <li><b>Validation</b>: the checks of the <a href="#validation">validation suite</a> that compare the model with
+        an independent reference, with the error measured and the tolerance. The table under each model is from the
+        run named in its caption; run the suite yourself to reproduce it.</li>
+      <li><b>Limits</b>: where the model is an approximation, how far off it can be, and what it leaves out.</li>
+    </ul>
+    <p>Every export carries the version of Vantage and the inputs that produced it, so a figure can be traced back to
+      the model described here. Where a model is a documented approximation (a fitted lens, a heuristic dirt score),
+      the study's own page and JSON state it next to the figure.</p>
+
+    <h2 id="conventions">Frames and conventions</h2>
+    <table>
+      <tr><th>Item</th><th>Convention</th></tr>
+      <tr><td>Vehicle frame</td><td>ISO 8855: <i>x</i> forward, <i>y</i> left, <i>z</i> up, metres. The origin is the
+        centre of the rear axle on the ground (the vehicle standing level at kerb). Exports can move the origin to the
+        front axle, the front bumper, the ground centre or a custom point; the axes stay ISO 8855.</td></tr>
+      <tr><td>Orientation</td><td>Intrinsic Z-Y-X: yaw ψ about <i>z</i>, then pitch θ about the new <i>y</i>, then
+        roll φ about the new <i>x</i>, degrees. Pitch is positive <b>down</b> (a right-handed rotation about +<i>y</i>
+        tilts +<i>x</i> towards −<i>z</i>); yaw positive to the left; roll right-handed about the forward axis.</td></tr>
+      <tr><td>Sensor body frame</td><td>The same axes as the vehicle: +<i>x</i> is a camera's optical axis, a lidar's
+        or radar's forward axis (ROS REP 103).</td></tr>
+      <tr><td>Camera optical frame</td><td>OpenCV's: <i>x</i> right in the image, <i>y</i> down, <i>z</i> along the
+        optical axis. From the body frame: <i>x</i><sub>o</sub> = −<i>y</i><sub>b</sub>,
+        <i>y</i><sub>o</sub> = −<i>z</i><sub>b</sub>, <i>z</i><sub>o</sub> = <i>x</i><sub>b</sub>.</td></tr>
+      <tr><td>Pixel coordinates</td><td>Inside the app, sensor coordinates with pixel centres at <i>i</i> + ½ (the
+        centre of a 1920-pixel row is 960). Exported and imported intrinsics use OpenCV's convention, centres on
+        integers (959.5).</td></tr>
+      <tr><td>Azimuth</td><td>Counter-clockwise from +<i>x</i> seen from above, degrees, unless a study says otherwise
+        (the sun's azimuth is clockwise from north, as in astronomy).</td></tr>
+      <tr><td>Units</td><td>SI throughout: metres, seconds, degrees for angles shown, radians inside formulas. Data
+        rates are decimal (1 MB = 10⁶ bytes).</td></tr>
+    </table>
+    <div class="eq">
+      <i>R</i> = <i>R</i><sub>z</sub>(ψ) · <i>R</i><sub>y</sub>(θ) · <i>R</i><sub>x</sub>(φ),&nbsp;&nbsp;
+      <i>R</i><sub>y</sub>(θ) = [[cos θ, 0, sin θ], [0, 1, 0], [−sin θ, 0, cos θ]]
+      <span class="w"><i>R</i> maps body coordinates to vehicle coordinates; the optical frame is
+        <i>B</i>·<i>R</i><sup>T</sup> with <i>B</i> = [[0, −1, 0], [0, 0, −1], [1, 0, 0]] (vehicle to optical).</span>
+    </div>
+    <p>The validation suite builds these rotations with scipy's <code>Rotation.from_euler('ZYX', …)</code> rather than
+      the app's own, and checks the coverage footprints against them (<code>coverage.oblique_footprint</code>).</p>
+
+    <h2 id="validation">The validation suite</h2>
+    <p>The suite runs every model against references that do not share its code, and writes a report: the quantity
+      compared, the reference, the error measured, the tolerance and the verdict for each check, the numbers behind
+      it, a figure where one helps, the references cited and the versions of everything that ran.</p>
+<pre><code>python -m vantage.validation report/                 # every check, the built-in sample
+python -m vantage.validation report/ --project rig.vantage   # occlusion and exports on your vehicle and rig
+python -m vantage.validation report/ --quick --models lens,weather
+python -m vantage.validation --list                  # the checks, their references and tolerances</code></pre>
+    <p>It writes <code>validation.html</code> (a standalone page with the figures), <code>validation.json</code>
+      (every number), <code>validation.csv</code> (a row per check) and <code>figures/*.svg</code>, and exits 0 when
+      every check passes and 6 when one fails, so it can gate a build. A full run takes about a minute;
+      <code>--quick</code> uses fewer Monte Carlo trials (same tolerances) for a smoke run.</p>
+    <p><b>Kinds of reference.</b> A closed form written out again in the check (not imported from the model); another
+      library's implementation of the same model (OpenCV's pinhole and fisheye projections, scipy's root finders,
+      rotations and binomial intervals); a published table or worked example (ITU-R P.838-3's Table 5, ITU-R P.1814's
+      tables, UN R112's test points, Meeus's and the SPA paper's examples); a measurement (e-con's stated fields of
+      view, a measured painted bumper plate); brute force (exact ray casting against every triangle, a dense march along
+      every line of sight, every lidar beam cast); or Monte Carlo with the machinery that solves real captures.</p>
+    <p><b>Statistics.</b> Monte Carlo checks compare an estimated spread with a prediction. A standard deviation
+      estimated from <i>n</i> trials scatters by about 1/√(2(<i>n</i> − 1)) in its logarithm, so these checks pass when
+      every axis's |log(empirical σ / predicted σ)| is within 4.5 such standard errors and every camera's mean squared
+      Mahalanobis distance lies within four standard deviations of its degrees of freedom. Every random draw comes from
+      the run's seed and the check's id, so a run reproduces bit for bit and one check's draws do not depend on which
+      others ran.</p>
+    <p><b>What it does not show.</b> That a model describes your vehicle, lens or sensor: that needs measurements of
+      them (the as-built check and the drive-log check compare a recording with the plan). The suite shows that each
+      model computes what this page says it computes, within the stated tolerance, for the cases it builds.</p>
+    <!-- validation:summary -->
+<table class="val"><caption>69 of 69 checks passed (Vantage 0.3.0, run 2026-10-27, seed 20261027); the full <a href="validation/validation.html">validation report</a>.</caption><tr><th>Model</th><th>Checks</th><th>Passed</th></tr><tr><td><a href="#lens">Lens projection</a></td><td>7</td><td>7</td></tr>
+<tr><td><a href="#coverage">Ground coverage and pixel density</a></td><td>3</td><td>3</td></tr>
+<tr><td><a href="#occlusion">Occlusion by the body</a></td><td>3</td><td>3</td></tr>
+<tr><td><a href="#perception">Perception range</a></td><td>3</td><td>3</td></tr>
+<tr><td><a href="#critical">Critical targets and mounting envelopes</a></td><td>2</td><td>2</td></tr>
+<tr><td><a href="#lidar">Lidar beams, rings and points</a></td><td>4</td><td>4</td></tr>
+<tr><td><a href="#radar">Radar range and the bumper fascia</a></td><td>6</td><td>6</td></tr>
+<tr><td><a href="#glass">Cameras behind glass</a></td><td>2</td><td>2</td></tr>
+<tr><td><a href="#weather">Weather and night</a></td><td>8</td><td>8</td></tr>
+<tr><td><a href="#sun">Sun position</a></td><td>2</td><td>2</td></tr>
+<tr><td><a href="#suspension">Suspension, loads and load transfer</a></td><td>3</td><td>3</td></tr>
+<tr><td><a href="#terrain">Road geometry and the horizon</a></td><td>4</td><td>4</td></tr>
+<tr><td><a href="#timing">Sync, triggers and motion blur</a></td><td>3</td><td>3</td></tr>
+<tr><td><a href="#gnss">GNSS sky view and the pose error budget</a></td><td>2</td><td>2</td></tr>
+<tr><td><a href="#calib">Unit lens calibration</a></td><td>1</td><td>1</td></tr>
+<tr><td><a href="#joint">Joint extrinsic solve</a></td><td>2</td><td>2</td></tr>
+<tr><td><a href="#observability">Calibration observability</a></td><td>4</td><td>4</td></tr>
+<tr><td><a href="#lidar-calib">Lidar–camera calibration</a></td><td>2</td><td>2</td></tr>
+<tr><td><a href="#formats">Dataset calibration files</a></td><td>4</td><td>4</td></tr>
+<tr><td><a href="#experiments">Designed experiments and sensitivity</a></td><td>4</td><td>4</td></tr>
+</table>
+<!-- /validation:summary -->
+
+    <!-- ======================================================== cameras -->
+    <h2 id="lens">Lens models</h2>
+    <p><b>What it computes.</b> The image height <i>r</i>(θ) (mm on the sensor) of a ray θ radians off the optical
+      axis, and from it a pixel for every direction and a direction for every pixel. Module: <code>core/lens.py</code>.</p>
+    <div class="eq">
+      rectilinear <i>r</i> = <i>f</i> tan θ ·
+      equidistant <i>r</i> = <i>f</i> θ ·
+      equisolid <i>r</i> = 2<i>f</i> sin(θ/2) ·
+      stereographic <i>r</i> = 2<i>f</i> tan(θ/2) ·
+      orthographic <i>r</i> = <i>f</i> sin θ
+      <span class="w">The classical projections (Miyamoto 1964).</span>
+    </div>
+    <div class="eq">
+      Kannala–Brandt: <i>r</i>(θ) = <i>f</i> θ (1 + <i>k</i><sub>1</sub>θ² + <i>k</i><sub>2</sub>θ⁴ +
+      <i>k</i><sub>3</sub>θ⁶ + <i>k</i><sub>4</sub>θ⁸)
+      <span class="w">The model of OpenCV's fisheye module (θ<sub>d</sub> = <i>r</i>/<i>f</i>); every built-in lens
+        and every unit calibration uses it.</span>
+    </div>
+    <div class="eq">
+      <i>u</i> = <i>c</i><sub>x</sub> + <i>x</i>/ρ · <i>r</i>(θ)/<i>p</i>,&nbsp;&nbsp;
+      <i>v</i> = <i>c</i><sub>y</sub> + <i>a</i> · <i>y</i>/ρ · <i>r</i>(θ)/<i>p</i>,&nbsp;&nbsp;
+      θ = atan2(ρ, <i>z</i>),&nbsp; ρ = √(<i>x</i>² + <i>y</i>²)
+      <span class="w">(<i>x</i>, <i>y</i>, <i>z</i>) a direction in the optical frame, <i>p</i> the pixel pitch (mm),
+        <i>a</i> = <i>f</i><sub>y</sub>/<i>f</i><sub>x</sub> the pixel aspect (1 for a library lens). A direction is in
+        the image when (<i>u</i>, <i>v</i>) lies on the sensor and θ ≤ θ<sub>max</sub>, the image circle. The inverse
+        solves <i>r</i>(θ) = <i>r</i> in closed form, or by Newton's method for Kannala–Brandt.</span>
+    </div>
+    <p><b>The built-in library.</b> e-con Systems' public pages state each lens's horizontal, vertical and diagonal
+      field of view but not its focal length or distortion. A built-in lens is therefore made from the stated FOV: the
+      base projection that alone best reproduces the stated (H, V, D) points gives the focal length (least squares of
+      <i>r</i> = <i>f</i>·<i>g</i>(θ) relative to each half size of the sensor), and <i>k</i><sub>1</sub>…<i>k</i><sub>4</sub>
+      are fitted to the stated points (weighted up to 50 : 1 against each sample of the base curve, less where so strong
+      a fit would fold back) together with the base curve sampled densely, so that <i>r</i>(θ) keeps rising out to the
+      field's edge. The stated FOV is a measurement e-con publishes; the curve
+      between the stated angles is a model. Where a stated diagonal cannot be the sensor diagonal's field (a 210° lens
+      on a sensor 196° wide), it is taken as the image circle and limits θ<sub>max</sub>. Otherwise
+      θ<sub>max</sub> = D/2 + 2° (at most 95°), or from the sensor diagonal when no FOV is given.</p>
+    <dl class="params">
+      <dt>Hyperfocal distance</dt><dd><i>H</i> = <i>f</i>²/(<i>N c</i>) + <i>f</i>, circle of confusion
+        <i>c</i> = 5 µm (typical for 3 µm pixels); not given when the aperture <i>N</i> is not stated.</dd>
+      <dt>Unit calibration</dt><dd>Replaces the library lens for that camera everywhere (see
+        <a href="#calib">Unit lens calibration</a>).</dd>
+    </dl>
+    <h4>Validation</h4>
+    <!-- validation:lens -->
+<table class="val"><caption>7 of 7 checks passed (Vantage 0.3.0, run 2026-10-27, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#lens">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<tr><td><a href="validation/validation.html#lens.inverse">Image height inverts back to the angle</a><br><code>lens.inverse</code></td><td>the identity: θ(r) is the inverse of r(θ) (closed form, or Newton&#x27;s method for Kannala–Brandt)</td><td>4.7e-13 degrees</td><td>1e-06 degrees</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#lens.derivative">Radial sampling dr/dθ</a><br><code>lens.derivative</code></td><td>a central difference of r(θ) with step 10⁻⁶ rad</td><td>1.9e-09 relative</td><td>1e-06 relative</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#lens.opencv_pinhole">Rectilinear lens against OpenCV&#x27;s pinhole projection</a><br><code>lens.opencv_pinhole</code></td><td>OpenCV cv2.projectPoints (no distortion); OpenCV pixel centres are at integers, Vantage&#x27;s at i + ½</td><td>5.1e-13 px</td><td>1e-06 px</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#lens.opencv_fisheye">Kannala–Brandt lenses against OpenCV&#x27;s fisheye model</a><br><code>lens.opencv_fisheye</code></td><td>OpenCV cv2.fisheye.projectPoints: θ_d = θ(1 + k1θ² + k2θ⁴ + k3θ⁶ + k4θ⁸), the same model</td><td>1.3e-12 px</td><td>1e-06 px</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#lens.opencv_undistort">Pixel to ray against OpenCV&#x27;s fisheye undistortion</a><br><code>lens.opencv_undistort</code></td><td>OpenCV cv2.fisheye.undistortPoints (iterated to 10⁻¹⁴)</td><td>1.5e-06 degrees</td><td>0.0001 degrees</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#lens.builtin_fov">Built-in lenses reproduce e-con&#x27;s stated field of view</a><br><code>lens.builtin_fov</code></td><td>the FOV e-con Systems publishes for each lens (H, V, D)</td><td>0.434 degrees</td><td>0.5 degrees</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#lens.density">Pixel density on a target facing the camera</a><br><code>lens.density</code></td><td>the projected area of a small square, by the shoelace formula</td><td>3.7e-06 relative</td><td>0.001 relative</td><td class="ok">✓ pass</td></tr>
+</table>
+<!-- /validation:lens -->
+    <p><b>Limits.</b> A built-in lens reproduces e-con's stated FOV within half a degree (H05R2: 0.43°, H03R2: 0.30°;
+      the others within 0.03°), but its distortion between those angles, its centre resolution and its image circle
+      are fitted, not measured: two lenses with the same stated FOV can differ by several pixels in between. A unit
+      calibration of your camera removes this. Directions 90° or more off the axis cannot be represented by
+      pinhole-based export formats (see <a href="#formats">Dataset calibration files</a>).</p>
+
+    <h2 id="coverage">Coverage and pixel density</h2>
+    <p><b>What it computes.</b> For every cell of a ground grid around the vehicle (the region of interest, ROI), which
+      cameras see it and at what pixel density, and from those the coverage, blind area, redundancy and the stitching
+      seams. Module: <code>core/analysis.py</code>.</p>
+    <div class="eq">
+      seen(<i>P</i>) ⇔ (<i>u</i>, <i>v</i>) on the sensor ∧ θ ≤ θ<sub>max</sub> ∧ <i>D</i><sub>cube</sub>(<i>P</i> − <i>C</i>)
+      &gt; |<i>P</i> − <i>C</i>| − (0.02 + 0.01·|<i>P</i> − <i>C</i>|)
+      <span class="w"><i>C</i> the lens's position, <i>D</i><sub>cube</sub> the occlusion cube map's depth in that
+        direction (<a href="#occlusion">Occlusion</a>); the allowance of 2 cm + 1 % of the distance keeps a point on a
+        surface from hiding itself.</span>
+    </div>
+    <div class="eq">
+      ρ<sub>px/cm</sub>(θ, <i>R</i>) = √( <i>r</i>′(θ) · <i>r</i>(θ)/sin θ · <i>a</i> ) / <i>p</i> / (100 <i>R</i>)
+      <span class="w">The pixel density on a target facing the camera at range <i>R</i> (m): the geometric mean of the
+        radial (d<i>r</i>/dθ) and tangential (<i>r</i>/sin θ) sampling in pixels per radian, divided by the range. Its
+        square is the number of pixels a square centimetre facing the camera covers. For a pinhole it is
+        <i>f</i>/(<i>p</i> cos<sup>1.5</sup>θ)/(100 <i>R</i>).</span>
+    </div>
+    <dl class="params">
+      <dt>Grid</dt><dd>Cells of 0.05 m (setting) within an offset (default 2 m) of the body's outline or bounding box, or a
+        polygon; cells under the body left out. A cell is evaluated at its centre, at the ground or at an obstacle
+        height.</dd>
+      <dt>Figures</dt><dd>Coverage % (cells seen by any camera), blind area (m²), multi-coverage %, the lowest density
+        over the covered cells, the shares above the minimum (default 3 px/cm) and target (default 5 px/cm) densities,
+        and per camera the area only it sees and what removing it would cost.</dd>
+      <dt>Seams</dt><dd>Between cameras adjacent in azimuth about the body centre: the direction that keeps the most
+        cells seen by both with the higher of the two densities, unless set by hand; a linear blend of
+        <code>blend_m</code> across it.</dd>
+    </dl>
+    <h4>Validation</h4>
+    <!-- validation:coverage -->
+<table class="val"><caption>3 of 3 checks passed (Vantage 0.3.0, run 2026-10-27, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#coverage">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<tr><td><a href="validation/validation.html#coverage.nadir_pyramid">A rectilinear camera looking straight down at a plate</a><br><code>coverage.nadir_pyramid</code></td><td>the pyramid of a pinhole camera cut by a plane, written out in the check</td><td>5.4e-08 relative</td><td>0.001 relative</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#coverage.oblique_footprint">An aimed and rolled camera&#x27;s footprint on a plate</a><br><code>coverage.oblique_footprint</code></td><td>the image corners&#x27; rays intersected with the plane, written out in the check</td><td>5.9e-08 relative</td><td>0.001 relative</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#coverage.fisheye_cone">A fisheye&#x27;s image circle on a plate is a disc</a><br><code>coverage.fisheye_cone</code></td><td>the cone of the image circle cut by the plane, written out in the check</td><td>5.9e-08 relative</td><td>0.001 relative</td><td class="ok">✓ pass</td></tr>
+</table>
+<!-- /validation:coverage -->
+    <p><b>Limits.</b> The ground is flat unless a road is set (<a href="#terrain">Road geometry</a>); a cell is seen or
+      not by its centre (5 cm cells: an edge is placed to ±2.5 cm); density is geometric (the lens's sampling), not
+      image quality: blur, the lens's MTF, exposure and noise are not part of it.</p>
+
+    <h2 id="occlusion">Occlusion by the body</h2>
+    <p><b>What it computes.</b> For every direction from a camera's (or sensor's) position, how far away the vehicle body,
+      the rig and the other sensors' housings are: a cube map of depths. Every study that asks "is this point hidden"
+      looks it up. Module: <code>core/occlusion.py</code>, housings <code>core/housings.py</code>.</p>
+    <p>The body (simplified to about 8000 triangles) and the rig parts are rasterised onto the six faces of a cube
+      around the position, 256 × 256 texels per face (about 0.35° at a face's centre), far triangles first by the
+      distance of each triangle's nearest point (the painter's algorithm), each in a colour that encodes its index.
+      A texel then holds the exact distance along its centre ray to the plane of the triangle drawn there (metres,
+      32-bit float), never more than that triangle's farthest corner. Sensor and camera housings are composited in
+      exactly: a ray test of the housing's solid (its library box or
+      cylinder) at every texel inside its footprint, the body kept in front where a triangle lies nearer or less than
+      3 cm behind the housing's face. A map depends on the position only, so turning a camera reuses it (environment
+      mapping, Greene 1986).</p>
+    <div class="eq">
+      texel of a direction <i>d</i>: face = the axis of max |<i>d</i><sub>i</sub>| and its sign;&nbsp;
+      (<i>s</i>, <i>t</i>) = (<i>d</i>·<i>right</i>, <i>d</i>·<i>up</i>)/(<i>d</i>·<i>forward</i>) ∈ [−1, 1]²;&nbsp;
+      depth <i>t</i> = <i>n</i>·(<i>v</i><sub>0</sub> − <i>p</i>) / (<i>n</i>·<i>d</i><sub>c</sub>)
+      <span class="w"><i>n</i> the drawn triangle's unit normal, <i>v</i><sub>0</sub> a corner, <i>p</i> the position,
+        <i>d</i><sub>c</sub> the texel's centre ray</span>
+    </div>
+    <h4>Validation</h4>
+    <!-- validation:occlusion -->
+<table class="val"><caption>3 of 3 checks passed (Vantage 0.3.0, run 2026-10-27, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#occlusion">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<tr><td><a href="validation/validation.html#occlusion.cube_vs_rays">Cube maps against exact ray casting</a><br><code>occlusion.cube_vs_rays</code></td><td>Möller–Trumbore ray–triangle intersection against every occluder triangle, written for the check</td><td>0.00196 share of directions</td><td>0.005 share of directions</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#occlusion.cube_depth">Cube-map depth against exact ray casting</a><br><code>occlusion.cube_depth</code></td><td>Möller–Trumbore ray–triangle intersection against every occluder triangle, written for the check</td><td>0.00094 share of texels</td><td>0.005 share of texels</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#occlusion.ground_visibility">Which ground points a camera sees past the body</a><br><code>occlusion.ground_visibility</code></td><td>Möller–Trumbore ray–triangle intersection along the line of sight, written for the check</td><td>0.00079 share of points</td><td>0.005 share of points</td><td class="ok">✓ pass</td></tr>
+</table>
+<!-- /validation:occlusion -->
+    <p><b>Limits.</b> Hidden or not is decided to the texel: the cube's silhouettes lie within about 0.6° of the exact
+      ones (measured above), and 0.2 % of random directions and 0.08 % of the ROI's ground points fall either side.
+      The depth is exact up to the texel's size: through a texel's centre it matches exact ray casting to float
+      precision, except where the triangle drawn there covers the texel but not its centre (a silhouette or a crease,
+      about 1 % of texels; the depth is then that of a surface within one texel); a direction off the centre differs
+      by what the surface's slope makes of up to half a texel (0.15 % in the median, 1.4 % at the 95th percentile on
+      the sample). Until 0.2.0 a texel held the drawn triangle's centroid distance, 15 % off in the median and over 3×
+      in 5 % of directions. Transparent parts (glass) block like the body.</p>
+
+    <h2 id="perception">Perception range</h2>
+    <p><b>What it computes.</b> How far out, in each direction around the vehicle, the rig resolves the objects a
+      driving dataset needs, judged by their height in pixels. Module: <code>core/perception.py</code>.</p>
+    <div class="eq">
+      <i>h</i><sub>px</sub> = ‖π(<i>G</i> + <i>z</i><sub>top</sub>) − π(<i>G</i> + <i>z</i><sub>bottom</sub>)‖,&nbsp;&nbsp;
+      <i>w</i><sub>px</sub> = ‖π(<i>G</i> + ½<i>w</i><i>n</i>) − π(<i>G</i> − ½<i>w</i><i>n</i>)‖
+      <span class="w">π the camera's full projection (lens model, pose); <i>G</i> the object's ground point,
+        <i>n</i> square to the line of sight; exact through the lens, no small-angle approximation. For a pinhole,
+        <i>h</i><sub>px</sub> = <i>f</i>·<i>H</i>/<i>Z</i> with <i>Z</i> the depth along the axis.</span>
+    </div>
+    <p>An object is resolved by a camera when both ends are in the image and the lens circle, its centre is not hidden
+      (the cube map) and <i>h</i><sub>px</sub> ≥ min<sub>px</sub>. Along each of 360 azimuths about the vehicle's
+      centre, ranges from 1 m to 250 m are sampled (log-spaced) and the far range is the last resolved one, refined
+      between it and the next sample by interpolating 1/<i>h</i><sub>px</sub> linearly in range (exact for a pinhole).
+      The rig's range is the best camera's; eight 45° sectors are judged against required ranges.</p>
+    <table>
+      <tr><th>Class (typical)</th><th>Height</th><th>Width</th><th>min px</th><th>Base</th></tr>
+      <tr><td>Car</td><td>1.5 m</td><td>1.8 m</td><td>20</td><td>0</td></tr>
+      <tr><td>Pedestrian</td><td>1.7 m</td><td>0.5 m</td><td>24</td><td>0</td></tr>
+      <tr><td>Cyclist</td><td>1.7 m</td><td>0.6 m</td><td>24</td><td>0</td></tr>
+      <tr><td>Traffic sign</td><td>0.6 m</td><td>0.6 m</td><td>12</td><td>2.0 m</td></tr>
+    </table>
+    <p>The minimum pixel heights are typical of modern detectors' small-object limits, in the tradition of Johnson's
+      criteria (1958); set your detector's own. Required ranges by sector default to 80 m ahead, 40 m at the front and
+      rear corners and behind, 25 m to the sides. Stereo pairs report a depth error <i>z</i>²·Δ<i>d</i>/(<i>f B</i>)
+      with a disparity error Δ<i>d</i> = 0.25 px (typical). Under a weather condition other than clear, each object
+      must also keep its contrast and, at night, enough light (<a href="#weather">Weather and night</a>).</p>
+    <h4>Validation</h4>
+    <!-- validation:perception -->
+<table class="val"><caption>3 of 3 checks passed (Vantage 0.3.0, run 2026-10-27, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#perception">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<tr><td><a href="validation/validation.html#perception.pinhole_pixels">Object pixels through a pinhole lens</a><br><code>perception.pinhole_pixels</code></td><td>the pinhole projection of a fronto-parallel segment, f·H/Z with Z the depth along the axis</td><td>0 relative</td><td>1e-09 relative</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#perception.fisheye_pixels">Object pixels through a fisheye follow its local sampling</a><br><code>perception.fisheye_pixels</code></td><td>the first-order local magnification of the lens at the object&#x27;s direction</td><td>0.00103 relative</td><td>0.02 relative</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#perception.far_range">Perception range of a pinhole camera</a><br><code>perception.far_range</code></td><td>the pinhole relation f·H/Z = min_px solved for Z</td><td>5.6e-16 relative</td><td>0.001 relative</td><td class="ok">✓ pass</td></tr>
+</table>
+<!-- /validation:perception -->
+    <p><b>Limits.</b> Pixels on target are a proxy for detection, not a detector's performance; the object is a
+      rectangle square to the line of sight standing on flat ground; only the object's centre is tested for
+      occlusion.</p>
+
+    <h2 id="critical">Critical targets and mounting envelopes</h2>
+    <p><b>What it computes.</b> Whether the rig resolves objects at places it must (a child 2 m ahead of the bumper, a
+      kerb by the front wheel, a traffic light at a junction), and how far each camera's mount may be off before it
+      stops resolving them. Module: <code>core/critical.py</code>.</p>
+    <p>A standing target is a vertical rectangle square to the line of sight; a kerb a vertical face along a line; a
+      lane marking a painted strip, straight or curved. Each is sampled as stations (columns across a target, points
+      along a kerb) with nodes along the span its requirement measures. A node is seen when it projects inside the image
+      and the lens circle and the straight line to it meets no body, rig or housing triangle (tested exactly, ray
+      against triangle and solid, not through the cube maps, since the envelopes move the camera). A station's pixels
+      are the summed projected length of its seen segments; a target is met when at least <code>min_share</code> of it
+      is seen, its pixels reach <code>min_px</code> and its distance lies in the lens's focus range.</p>
+    <p><b>Envelopes.</b> For every camera and each target it meets, one pose axis at a time is moved both ways (yaw,
+      pitch, roll in 0.25° steps; x, y, z in steps growing from 0.5 mm) until the target is lost, and that step bisected
+      to 0.01° or 0.1 mm. The joint check tries all six axes at once on the 3⁶ = 729-pose grid of (−, 0, +) offsets.</p>
+    <h4>Validation</h4>
+    <!-- validation:critical -->
+<table class="val"><caption>2 of 2 checks passed (Vantage 0.3.0, run 2026-10-27, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#critical">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<tr><td><a href="validation/validation.html#critical.pinhole_pixels">Critical-target pixels through a pinhole lens</a><br><code>critical.pinhole_pixels</code></td><td>the pinhole projection, written out in the check</td><td>1.3e-15 relative</td><td>1e-06 relative</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#critical.pinhole_envelope">Mounting envelopes of a pinhole camera</a><br><code>critical.pinhole_envelope</code></td><td>the angles of the target&#x27;s edges against the half field, and f·h / min_px, written out in the check</td><td>0.00656 degrees</td><td>0.02 degrees</td><td class="ok">✓ pass</td></tr>
+</table>
+<!-- /validation:critical -->
+    <p><b>Limits.</b> Single-axis limits do not add up to a joint tolerance (the joint grid checks the corners, not the
+      whole box); the targets' typical sizes are stated where they are set (presets), and every figure is editable.</p>
+
+    <!-- ======================================================== lidar and radar -->
+    <h2 id="lidar">Lidar beams and points</h2>
+    <p><b>What it computes.</b> Where each lidar channel meets the ground, what of the beams lands on the own vehicle,
+      the ground point density, and how many points per frame fall on an object at a given place, hence each lidar's
+      range on each object class. Modules: <code>core/sensors.py</code>, <code>core/sensor_coverage.py</code>.</p>
+    <div class="eq">
+      <i>d</i>(ε, α) = <i>R</i><sub>s</sub> · (cos ε cos α, cos ε sin α, sin ε),&nbsp;&nbsp;
+      ground ring of a level lidar: <i>r</i> = <i>h</i> / tan|ε|
+      <span class="w">ε a channel's elevation (the datasheet's, or the measured beam table when loaded), α the azimuth
+        counter-clockwise from the sensor's +<i>x</i>, <i>R</i><sub>s</sub> the sensor's rotation (REP 103 axes),
+        <i>h</i> its height.</span>
+    </div>
+    <div class="eq">
+      points on an object ≈ Σ<sub>channels crossing it</sub> (angular width / Δα),&nbsp;&nbsp;
+      angular width = 2 atan(<i>w</i>/2<i>d</i>)
+      <span class="w">Δα the azimuth step (h_res) at the frame rate. A channel crosses the object when its elevation in
+        the lidar's own frame at that azimuth lies between the object's bottom and top, its beam is not blocked by the
+        vehicle before it, and the distance is within the range on a 10 % target and beyond the minimum range.</span>
+    </div>
+    <p>Beams are traced against the same cube map as the cameras from the lidar's optical centre; a hit within 5 cm is
+      its own mount and ignored. Each traced beam (every 0.25° of azimuth) stands for 0.25°/Δα real points, which gives
+      the ground density map (points per m² per frame). The lidar range of a class is the farthest range at which the
+      points summed over all lidars reach the class's minimum (typical: 20 points on a car, 8 on a pedestrian, 10 on a
+      cyclist, 5 on a sign).</p>
+    <dl class="params">
+      <dt>Range figures</dt><dd>The datasheet range on a dark (10 %) target; brighter targets reach further as
+        √(ρ/0.10) (the lidar equation for an extended target), capped at the rated maximum (sample dataset).</dd>
+      <dt>Library</dt><dd>Nominal datasheet figures of named products (Ouster, Hesai, Velodyne, Livox), each with its
+        source in its note.</dd>
+    </dl>
+    <h4>Validation</h4>
+    <!-- validation:lidar -->
+<table class="val"><caption>4 of 4 checks passed (Vantage 0.3.0, run 2026-10-27, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#lidar">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<tr><td><a href="validation/validation.html#lidar.ring_radii">Ground rings of a level lidar</a><br><code>lidar.ring_radii</code></td><td>the cone of a beam at elevation ε cut by the ground plane, written out in the check</td><td>4.7e-16 relative</td><td>1e-09 relative</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#lidar.ground_points">Points a level lidar puts on the ground</a><br><code>lidar.ground_points</code></td><td>the beam count: channels reaching the ground within range × columns per revolution</td><td>6.4e-08 relative</td><td>1e-06 relative</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#lidar.points_level">Lidar points on an object: a level lidar</a><br><code>lidar.points_level</code></td><td>every beam (channel elevation × column azimuth, through the lidar&#x27;s rotation) intersected with a vertical rectangle square to the line of sight, written for the check</td><td>0.00985 relative</td><td>0.02 relative</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#lidar.points_tilted">Lidar points on an object: a lidar pitched 5° down</a><br><code>lidar.points_tilted</code></td><td>every beam (channel elevation × column azimuth, through the lidar&#x27;s rotation) intersected with a vertical rectangle square to the line of sight, written for the check</td><td>0.0769 relative</td><td>0.1 relative</td><td class="ok">✓ pass</td></tr>
+</table>
+<!-- /validation:lidar -->
+    <p><b>Limits.</b> For a pitched lidar the count gives every crossing channel the full angular width; a channel
+      crossing the object's top or bottom edge off the lidar's axis meets only part of it, so the count runs high by up
+      to about 8 % (measured above; 1 % for a level lidar). Beam divergence, multiple returns, intensity and the
+      target's own reflectivity per class are not modelled; the ring layout is the stated (or loaded) elevations.</p>
+
+    <h2 id="radar">Radar range and the bumper fascia</h2>
+    <p><b>What it computes.</b> Whether a radar detects an object at a place, from its zones (a range on a car and the
+      half-angles of its field), the object's radar cross-section and what the radar looks through. Modules:
+      <code>core/sensors.py</code>, <code>core/sensor_coverage.py</code>, <code>core/materials.py</code>.</p>
+    <div class="eq">
+      detected ⇔ |α| ≤ α<sub>zone</sub> ∧ |ε| ≤ ε<sub>zone</sub> ∧
+      <i>R</i> ≤ <i>R</i><sub>zone</sub> · (σ / 10 m²)<sup>¼</sup> · (<i>T</i>²)<sup>¼</sup>
+      <span class="w">The radar equation: received power ∝ σ/<i>R</i>⁴, so at a fixed detection threshold the range
+        scales with σ<sup>¼</sup> and with the fourth root of the two-way power transmission <i>T</i>² of the fascia
+        and its paint (Skolnik). Nothing of the vehicle may lie between, beyond 0.15 m from the radar (the fascia it
+        sits behind, for a radar the materials study finds inside the body behind a cover; for one outside the body or
+        behind metal every surface counts).</span>
+    </div>
+    <p><b>The fascia.</b> A planar multilayer: the bumper's substrate and the paint (primer, basecoat, clear coat), each
+      layer a complex permittivity ε′(1 − j tan δ) and a thickness, solved with the characteristic-matrix method for TE
+      and TM at the ray's incidence (Macleod, ch. 2; Born &amp; Wolf §1.6), the two polarisations' powers averaged.</p>
+    <div class="eq">
+      <i>M</i><sub>j</sub> = [[cos δ<sub>j</sub>, i sin δ<sub>j</sub>/η<sub>j</sub>], [i η<sub>j</sub> sin δ<sub>j</sub>,
+      cos δ<sub>j</sub>]],&nbsp; δ<sub>j</sub> = <i>k</i><sub>0</sub> <i>N</i><sub>j</sub> <i>d</i><sub>j</sub> cos θ<sub>j</sub>,&nbsp;
+      η<sub>j</sub> = <i>N</i><sub>j</sub> cos θ<sub>j</sub> (TE), <i>N</i><sub>j</sub>/cos θ<sub>j</sub> (TM)
+      <span class="w">[<i>B</i>, <i>C</i>]<sup>T</sup> = Π<i>M</i><sub>j</sub> · [1, η<sub>0</sub>]<sup>T</sup>;
+        <i>r</i> = (η<sub>0</sub><i>B</i> − <i>C</i>)/(η<sub>0</sub><i>B</i> + <i>C</i>), <i>t</i> = 2η<sub>0</sub>/(η<sub>0</sub><i>B</i> + <i>C</i>);
+        <i>T</i> = |<i>t</i>|². Each zone is derated by the mean two-way transmission over its unblocked rays. The
+        cavity between the radar's face (taken as metal, the worst case) and the fascia builds up as
+        1/|1 + <i>r</i> e<sup>−j2<i>kg</i> cos θ</sup>|²: the multipath risk.</span>
+    </div>
+    <dl class="params">
+      <dt>Cross-sections (typical)</dt><dd>Car 10 m² (the datasheet ranges are on a car), pedestrian 0.5 m², cyclist 1 m²;
+        traffic signs left to the other sensors (σ = 0).</dd>
+      <dt>Radars</dt><dd>Typical classes, not products: long range 250 m within ±9° (±7° in elevation) with a 70 m, ±45° near zone; corner 100 m within ±75° (±10°).</dd>
+      <dt>Materials</dt><dd>Permittivities and loss tangents of the bumper compounds (PP/EPDM, PC, PC/ABS) and paint layers
+        at 76–81 GHz are typical values from published measurements (Emilsson 2017 for the paints; each class names its
+        source in the app); glass's conductivity follows ITU-R P.2040 (σ = 0.0036 <i>f</i><sup>1.3394</sup> S/m,
+        <i>f</i> in GHz).</dd>
+      <dt>Corner reflectors</dt><dd>A triangular trihedral of edge <i>a</i>: σ = 4π<i>a</i>⁴/(3λ²) (Knott et al.).</dd>
+    </dl>
+    <h4>Validation</h4>
+    <!-- validation:radar -->
+<table class="val"><caption>6 of 6 checks passed (Vantage 0.3.0, run 2026-10-27, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#radar">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<tr><td><a href="validation/validation.html#radar.cross_section">Radar range against the cross-section</a><br><code>radar.cross_section</code></td><td>the radar equation: received power ∝ σ / R⁴, so the range at a fixed threshold ∝ σ^¼</td><td>1e-05 relative</td><td>0.0001 relative</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#radar.slab">One fascia layer against the sum of its reflections</a><br><code>radar.slab</code></td><td>the Airy summation of the slab&#x27;s multiple reflections with the Fresnel interface coefficients, written for the check</td><td>3.3e-16 power ratio</td><td>1e-09 power ratio</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#radar.thin_film">Layer identities: half wave, quarter wave, Brewster, energy</a><br><code>radar.thin_film</code></td><td>thin-film closed forms (Macleod; Born &amp; Wolf)</td><td>6.7e-16 power ratio</td><td>1e-09 power ratio</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#radar.painted_plate">A painted bumper plate against a measurement</a><br><code>radar.painted_plate</code></td><td>Emilsson&#x27;s measured S21 and S11 of the painted plate (sample 11)</td><td>0.182 dB</td><td>0.4 dB</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#radar.fascia_range">A radar behind the bumper fascia loses range by the radar equation</a><br><code>radar.fascia_range</code></td><td>the radar equation (range ∝ (two-way power transmission)^¼) applied to the materials study&#x27;s loss, the geometry written out in the check</td><td>1.9e-07 relative</td><td>0.001 relative</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#radar.corner_reflector">Cross-section of a trihedral corner reflector</a><br><code>radar.corner_reflector</code></td><td>the peak RCS of a triangular trihedral (Knott et al.)</td><td>2e-16 relative</td><td>1e-09 relative</td><td class="ok">✓ pass</td></tr>
+</table>
+<!-- /validation:radar -->
+    <p><b>Limits.</b> One detection per object; no multipath off the road, no clutter, no wet fascia; the paint
+      stack is typical unless set. The painted-plate check matches one published measurement; real bumpers vary with
+      paint, repairs and thickness.</p>
+
+    <h2 id="glass">Cameras behind glass</h2>
+    <p><b>What it computes.</b> For a camera inside the body looking through a windscreen or side glass: how the glass
+      shifts its rays, how much light it passes and how much of the dashboard it reflects into the image. Module:
+      <code>core/materials.py</code>.</p>
+    <div class="eq">
+      shift = Σ<sub>j</sub> <i>d</i><sub>j</sub> (sin θ − cos θ tan θ<sub>j</sub>),&nbsp; sin θ<sub>j</sub> = sin θ / <i>n</i><sub>j</sub>
+      <span class="w">The sideways displacement of a ray through plane-parallel layers (one plate:
+        <i>d</i> sin θ (1 − cos θ/√(<i>n</i>² − sin²θ)), Hecht). It turns no ray; fitting one translation to all of a
+        camera's rays gives its apparent centre, and what is left is the error for near objects.</span>
+    </div>
+    <p>Transmission and reflection are the incoherent slab formulas with Fresnel's equations at the two air–glass faces
+      (s and p averaged) and the glass's absorption, calibrated so the slab passes its stated visible transmission at
+      normal incidence.</p>
+    <h4>Validation</h4>
+    <!-- validation:glass -->
+<table class="val"><caption>2 of 2 checks passed (Vantage 0.3.0, run 2026-10-27, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#glass">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<tr><td><a href="validation/validation.html#glass.plate_shift">A ray through a glass plate shifts by the plate formula</a><br><code>glass.plate_shift</code></td><td>the textbook lateral displacement of a plane-parallel plate (Hecht)</td><td>3.1e-16 relative</td><td>1e-09 relative</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#glass.energy">Glass transmission and reflection conserve energy</a><br><code>glass.energy</code></td><td>energy conservation, and the class&#x27;s own t_vis</td><td>3.7e-15 power ratio</td><td>1e-09 power ratio</td><td class="ok">✓ pass</td></tr>
+</table>
+<!-- /validation:glass -->
+    <p><b>Limits.</b> Flat glass (the windscreen's curvature is taken as its mean plane), no dispersion, no ghost
+      images from the inner face beyond the dashboard reflection.</p>
+
+    <!-- ======================================================== environment -->
+    <h2 id="weather">Weather and night</h2>
+    <p><b>What it computes.</b> How fog, rain, snow and night change what each sensor records: the cameras' contrast
+      and light, the lidars' range and false returns, the radars' range. Module: <code>core/weather.py</code>. A
+      condition is a set of figures (daylight or night with low or high beam, the ambient illuminance on a vertical
+      surface, the fog's meteorological optical range <i>V</i>, a rain rate and a snowfall rate); 'Clear' is the
+      reference and runs no weather model at all.</p>
+    <h4>Cameras</h4>
+    <div class="eq">
+      <i>C</i>(<i>d</i>) = <i>C</i><sub>0</sub> e<sup>−σ<i>d</i></sup> ≥ ε,&nbsp;&nbsp;
+      σ<sub>fog</sub> = −ln 0.05 / <i>V</i> = 2.996 / <i>V</i>
+      <span class="w">Koschmieder's law: an object of inherent contrast <i>C</i><sub>0</sub> is resolved while its
+        apparent contrast stays above the detector's threshold ε (typical 0.05, the WMO threshold behind the MOR), so
+        out to <i>d</i> = ln(<i>C</i><sub>0</sub>/ε)/σ.</span>
+    </div>
+    <div class="eq">
+      γ<sub>rain</sub> = 1.076 <i>R</i><sup>0.67</sup> dB/km,&nbsp;&nbsp;
+      γ<sub>snow</sub> = <i>a</i>(λ) <i>S</i><sup><i>b</i></sup> dB/km,&nbsp; σ [1/m] = γ / 4343
+      <span class="w">ITU-R P.1814 (Table 2, Carbonneau's coefficients for France; Table 3: dry snow
+        <i>a</i> = 5.42·10⁻⁵ λ + 5.50, <i>b</i> = 1.38; wet <i>a</i> = 1.02·10⁻⁴ λ + 3.79, <i>b</i> = 0.72, λ in nm,
+        <i>S</i> in mm/h of water). Drops much larger than the wavelength: the same for light and the lidar. Fog, rain
+        and snow add.</span>
+    </div>
+    <p><b>Light at night.</b> The object's luminance <i>L</i> = ρ<i>E</i>/π (Lambertian, reflectance ρ) under the
+      ambient light plus the two headlamps, <i>E</i> = Σ <i>I</i>(<i>h</i>, <i>v</i>) e<sup>−σ<i>d</i></sup>/<i>d</i>²
+      (times the cosine on a surface). The lamp pattern <i>I</i>(<i>h</i>, <i>v</i>) is a typical one shaped after UN
+      R112's class B passing beam (cut-off 0.7° below the horizon on the oncoming side, rising at 15° on the kerb side,
+      a hot spot of 18 000 cd per lamp, a wide foreground spread; high beam adds a 60 000 cd spot) and meets R112's
+      minimum and maximum intensities at its test points. The camera resolves the object while enough of its height
+      reaches the camera's minimum luminance:</p>
+    <div class="eq">
+      <i>S</i> = π <i>T</i> <i>L</i> / (4<i>N</i>²) · <i>t</i> · Φ · <i>A</i> · QE electrons,&nbsp;&nbsp;
+      <i>L</i><sub>min</sub>: <i>S</i>/√(<i>S</i> + σ<sub>read</sub>²) = SNR<sub>min</sub>
+      <span class="w"><i>N</i> the f-number, <i>T</i> the lens transmission, <i>t</i> the exposure (≤ 1/fps and the
+        night limit), Φ ≈ 10¹⁶ photons per lux·s·m² of white light, <i>A</i> the pixel area, QE an effective quantum
+        efficiency with the colour filter. QE, read noise and SNR<sub>min</sub> are typical figures, not the sensor's
+        datasheet (photon transfer, Janesick 2007).</span>
+    </div>
+    <h4>Lidar</h4>
+    <div class="eq">
+      <i>R</i> e<sup>α<i>R</i></sup> = <i>R</i><sub>c</sub> ⇒ <i>R</i> = <i>W</i>(α<i>R</i><sub>c</sub>)/α,&nbsp;&nbsp;
+      α = 3.0/<i>V</i> · (λ/550 nm)<sup>−<i>q</i>(<i>V</i>)</sup> + rain + snow
+      <span class="w">The lidar equation for an extended Lambertian target, received power ∝ ρ e<sup>−2α<i>R</i></sup>/<i>R</i>²,
+        with the clear-air range <i>R</i><sub>c</sub>; <i>W</i> is Lambert's function (Corless et al.); Kim's wavelength
+        exponent <i>q</i> = 1.6 (<i>V</i> &gt; 50 km), 1.3 (6–50 km), 0.16<i>V</i> + 0.34 (1–6 km), <i>V</i> − 0.5
+        (0.5–1 km), 0 below. False near returns from droplets and flakes: a heuristic share
+        1 − e<sup>−(α<sub>fog</sub> + α<sub>rain</sub> + 3α<sub>snow</sub>)·6 m</sup>.</span>
+    </div>
+    <h4>Radar</h4>
+    <div class="eq">
+      γ<sub>R</sub> = <i>k</i> <i>R</i><sup>α</sup> dB/km (ITU-R P.838-3),&nbsp;
+      γ<sub>fog</sub> = <i>K</i><sub>l</sub>(<i>f</i>, <i>T</i>) · LWC,&nbsp;
+      LWC from σ = 144.7 LWC<sup>0.88</sup> km⁻¹ (Kunkel)
+      <span class="w">P.838-3's curve fits for <i>k</i> and α at the radar's frequency, the mean of horizontal and
+        vertical (the polarisation is not known); P.840's double-Debye coefficient of liquid water. Range:
+        <i>R</i>⁴ e<sup>2<i>aR</i></sup> = <i>R</i><sub>c</sub>⁴ ⇒ <i>R</i> = <i>W</i>(<i>aR</i><sub>c</sub>/2)/(<i>a</i>/2),
+        <i>a</i> = γ/4343 m⁻¹. Wet snow is taken as rain of the same water rate (an upper-end assumption); dry snow is
+        lossless at 77 GHz.</span>
+    </div>
+    <table>
+      <tr><th>Preset</th><th>Figures</th></tr>
+      <tr><td>Overcast</td><td>5000 lx, haze <i>V</i> = 10 km</td></tr>
+      <tr><td>Night, unlit road / street lights</td><td>0.1 lx / 10 lx ambient, low beam</td></tr>
+      <tr><td>Light rain / heavy rain</td><td>2.5 / 25 mm/h</td></tr>
+      <tr><td>Fog</td><td><i>V</i> = 150 m</td></tr>
+      <tr><td>Snow</td><td>2 mm/h of water, dry</td></tr>
+    </table>
+    <h4>Validation</h4>
+    <!-- validation:weather -->
+<table class="val"><caption>8 of 8 checks passed (Vantage 0.3.0, run 2026-10-27, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#weather">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<tr><td><a href="validation/validation.html#weather.p838_table">Rain attenuation coefficients against ITU-R P.838-3</a><br><code>weather.p838_table</code></td><td>Recommendation ITU-R P.838-3, Table 5, as printed</td><td>0.9998 half last digits</td><td>1 half last digits</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#weather.p840_water">Fog attenuation at radar frequencies (ITU-R P.840)</a><br><code>weather.p840_water</code></td><td>Rayleigh absorption by drops much smaller than the wavelength, from the same Debye permittivity, written out in the check</td><td>0.00024 relative</td><td>0.002 relative</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#weather.p1814_coefficients">Optical rain and snow attenuation against ITU-R P.1814</a><br><code>weather.p1814_coefficients</code></td><td>Recommendation ITU-R P.1814, Tables 2 and 3</td><td>0 relative</td><td>0.005 relative</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#weather.koschmieder">Contrast extinction (Koschmieder) and the meteorological optical range</a><br><code>weather.koschmieder</code></td><td>Koschmieder&#x27;s law with WMO&#x27;s 5 % contrast threshold; Kim et al.&#x27;s q(V)</td><td>2.8e-16 relative</td><td>1e-09 relative</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#weather.range_equations">Lidar and radar range in extinction (Lambert W)</a><br><code>weather.range_equations</code></td><td>scipy.optimize.brentq on the defining equations</td><td>2.8e-16 relative</td><td>1e-09 relative</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#weather.headlamps_r112">The headlamp pattern meets UN R112</a><br><code>weather.headlamps_r112</code></td><td>UN Regulation No. 112, class B photometric requirements</td><td>0 share of the requirement</td><td>0 share of the requirement</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#weather.photon_budget">The camera&#x27;s minimum luminance from its photon budget</a><br><code>weather.photon_budget</code></td><td>the photon budget of a pixel behind a lens of f-number N (Janesick), written out in the check</td><td>1.8e-16 relative</td><td>1e-09 relative</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#weather.illuminance">Headlamp illuminance: inverse square, cosine and extinction</a><br><code>weather.illuminance</code></td><td>the photometric inverse-square law with Lambert&#x27;s cosine and Beer–Lambert extinction</td><td>0 relative</td><td>1e-06 relative</td><td class="ok">✓ pass</td></tr>
+</table>
+<!-- /validation:weather -->
+    <p><b>Limits.</b> Typical models, not measurements. Not modelled: veiling light from the own headlamps in fog,
+      oncoming glare, wet-road reflections, spray from other vehicles, a wet radar fascia, rain clutter, street lights
+      as visible sources. Lens drops and lidar false returns are heuristics. The snow constants are P.1814's as it
+      prints them (until 0.2.0 the code carried 5.4958776, 1.023·10⁻⁴ and 3.7855466 from later papers, 0.1 % off).</p>
+
+    <h2 id="sun">Sun position</h2>
+    <p><b>What it computes.</b> The sun's azimuth and elevation for a place and UTC instants, so the glare study can tell
+      which cameras will have the sun in their image while driving. Module: <code>core/exposure.py</code>.</p>
+    <p>NOAA's solar position algorithm: Meeus's low-accuracy solar coordinates (the sun's mean longitude and anomaly,
+      the equation of centre, the apparent longitude with nutation and aberration, the obliquity), the equation of
+      time and the hour angle, with NOAA's refraction formula on the elevation. A sample of (time, heading) puts the
+      sun in the vehicle frame, then in each camera's optical frame; it is in the image when the lens model maps it
+      onto the sensor inside the image circle and the body does not hide it.</p>
+    <h4>Validation</h4>
+    <!-- validation:sun -->
+<table class="val"><caption>2 of 2 checks passed (Vantage 0.3.0, run 2026-10-27, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#sun">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<tr><td><a href="validation/validation.html#sun.spa_example">Sun position against the SPA paper&#x27;s worked example</a><br><code>sun.spa_example</code></td><td>I. Reda and A. Andreas, NREL Solar Position Algorithm, worked example</td><td>0.00298 degrees</td><td>0.01 degrees</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#sun.meeus_examples">Solar coordinates against Meeus&#x27;s worked examples</a><br><code>sun.meeus_examples</code></td><td>J. Meeus, Astronomical Algorithms, examples 25.a and 28.b; spherical astronomy at solar noon</td><td>0.0002 degrees</td><td>0.002 degrees</td><td class="ok">✓ pass</td></tr>
+</table>
+<!-- /validation:sun -->
+    <p><b>Limits.</b> About 0.01° (ΔT ignored); the vehicle is level and drives straight on each heading; terrain,
+      buildings and trees are not modelled. The dirt and spray score of the same study is an empirical heuristic, not a
+      flow simulation.</p>
+
+    <!-- ======================================================== vehicle -->
+    <h2 id="suspension">Suspension and loads</h2>
+    <p><b>What it computes.</b> How far each corner of the body drops under a load case (people, luggage, the rig), and
+      so how the body heaves, pitches and rolls and every camera and sensor moves from where it was calibrated; and the
+      same under steady braking, acceleration and cornering. Modules: <code>core/suspension.py</code>,
+      <code>core/loadcases.py</code>.</p>
+    <div class="eq">
+      <i>k</i><sub>wheel</sub> = <i>k</i><sub>spring</sub> · MR²,&nbsp;&nbsp;
+      corner: spring (and bump stop) in series with the tyre,&nbsp;
+      <i>s</i> = <i>F</i>/<i>k</i><sub>wheel</sub>, <i>t</i> = <i>F</i>/<i>k</i><sub>tyre</sub>
+      <span class="w">MR the motion ratio (spring travel per wheel travel). A measured wheel-load vs travel curve replaces
+        the spring and bump stop at its corner. An anti-roll bar adds <i>F</i> = <i>k</i><sub>bar</sub>(<i>s</i><sub>L</sub> −
+        <i>s</i><sub>R</sub>)/2 per wheel against a left–right travel difference.</span>
+    </div>
+    <div class="eq">
+      Σ<i>F</i><sub>i</sub> = Σ<i>W</i>,&nbsp; Σ<i>F</i><sub>i</sub><i>x</i><sub>i</sub> = Σ<i>W x</i>,&nbsp;
+      Σ<i>F</i><sub>i</sub><i>y</i><sub>i</sub> = Σ<i>W y</i>,&nbsp;
+      drop<sub>i</sub> = <i>w</i> + <i>b x</i><sub>i</sub> + <i>c y</i><sub>i</sub> = <i>s</i><sub>i</sub> + <i>t</i><sub>i</sub>
+      <span class="w">The body is rigid on four supports: the four drops lie on one plane (heave <i>w</i>, slopes
+        <i>b</i>, <i>c</i>), with force and moment balance of the added weights: seven equations in seven unknowns,
+        solved by Newton's method with a line search (one step for linear springs). Pitch = atan(<i>b</i>) nose down
+        positive, roll right side down positive.</span>
+    </div>
+    <div class="eq">
+      Δ<i>F</i><sub>axle</sub> = <i>M a h</i> / <i>L</i>,&nbsp; the linkage takes the anti-dive (anti-lift, anti-squat)
+      share,&nbsp; lateral: <i>M</i>/2 · <i>a</i><sub>y</sub> · <i>h</i><sub>rc</sub>/<i>T</i> through the links per axle,
+      the rest on the springs and bars
+      <span class="w">Quasi-static load transfer of a steady acceleration (Gillespie; Milliken &amp; Milliken), applied
+        as moments to the same solve, the linkage's share bypassing the springs.</span>
+    </div>
+    <dl class="params">
+      <dt>Typical figures</dt><dd>Ride frequencies 1.25 Hz front, 1.5 Hz rear; tyre rate 200 N/mm; anti-roll bars
+        12 / 8 N/mm at the wheel; bump stops 70 / 60 mm from kerb; kerb mass about 120 kg per m³ of the body's bounding
+        box, 60 % on the front axle; centre of gravity at 37 % of the height; anti-dive 20 %, anti-lift 10 %,
+        anti-squat 15 %; roll centres 0.08 m front, 0.20 m rear; occupants 75 kg (EU Regulation 1230/2012). Replace them
+        with the vehicle's own (K&amp;C test, CAD) where known.</dd>
+    </dl>
+    <h4>Validation</h4>
+    <!-- validation:suspension -->
+<table class="val"><caption>3 of 3 checks passed (Vantage 0.3.0, run 2026-10-27, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#suspension">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<tr><td><a href="validation/validation.html#suspension.static_hand">Static loads against hand calculations</a><br><code>suspension.static_hand</code></td><td>springs in series, force and moment balance, written out in the check</td><td>1.3e-15 relative</td><td>1e-09 relative</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#suspension.balance">The static solve balances force and moments</a><br><code>suspension.balance</code></td><td>static equilibrium of a rigid body on four supports</td><td>3.1e-15 relative</td><td>1e-06 relative</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#suspension.load_transfer">Brake dive and cornering roll against hand calculations</a><br><code>suspension.load_transfer</code></td><td>quasi-static load transfer with anti-dive and roll centres (Gillespie; Milliken), written out in the check</td><td>6.5e-16 relative</td><td>1e-06 relative</td><td class="ok">✓ pass</td></tr>
+</table>
+<!-- /validation:suspension -->
+    <p><b>Limits.</b> Static loads and steady accelerations only: no dampers or transients, no kinematic arcs (the
+      wheel travels vertically), no chassis torsion, bushing compliance or friction (a real car settles a few
+      millimetres either side of the friction-free position), no tyre pressure or fuel level changes. A wheel that
+      would lift is reported, not solved.</p>
+
+    <h2 id="terrain">Road geometry and the horizon</h2>
+    <p><b>What it computes.</b> What the cameras see on a real road instead of flat ground (a ramp, a crest, a garage
+      ramp, a speed bump, kerbs, a crowned road), the car standing on it, and where the horizon sits in each camera's
+      image as the body moves. Modules: <code>core/terrain.py</code>, <code>core/loadcases.py</code>.</p>
+    <div class="eq">
+      crest/sag: <i>h</i>(<i>s</i>) = ±<i>s</i>²/(2<i>R</i>) up to <i>s</i> = <i>R</i>|<i>g</i>|, then the grade
+      <i>g</i>;&nbsp; bump: <i>h</i> = <i>H</i> sin²(π<i>s</i>/<i>L</i>);&nbsp; crown: −<i>c</i>|<i>y</i> − <i>y</i><sub>0</sub>|
+      <span class="w">A height field <i>z</i> = <i>h</i>(<i>x</i>, <i>y</i>), the sum of primitives each a profile
+        across one direction; a vertical curve is the parabola of a grade changing linearly with distance (AASHTO).
+        A ground point is seen when it is in the image, the body does not hide it, it faces the camera, and a ray march
+        through the height field finds the road nowhere above the line of sight.</span>
+    </div>
+    <div class="eq">
+      horizon row: <i>v</i> = <i>c</i><sub>y</sub> − <i>f</i><sub>px</sub> tan(θ<sub>camera</sub> + θ<sub>body</sub>) (pinhole)
+      <span class="w">In general, where the level directions in the camera's centre column project through the lens.</span>
+    </div>
+    <h4>Validation</h4>
+    <!-- validation:terrain -->
+<table class="val"><caption>4 of 4 checks passed (Vantage 0.3.0, run 2026-10-27, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#terrain">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<tr><td><a href="validation/validation.html#terrain.primitives">Road primitives against their definitions</a><br><code>terrain.primitives</code></td><td>each primitive&#x27;s closed form (a vertical curve is the parabola of a grade changing linearly with distance) and a central difference with step 10⁻⁵ m</td><td>5.3e-10 m (height) and m/m (gradient)</td><td>1e-06 m (height) and m/m (gradient)</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#terrain.line_of_sight">Seeing the road past its own crests and kerbs</a><br><code>terrain.line_of_sight</code></td><td>a brute-force march along every line of sight, written for the check</td><td>0.00025 share of points</td><td>0.001 share of points</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#terrain.crest_tangent">The road hidden beyond a crest</a><br><code>terrain.crest_tangent</code></td><td>the tangent from the camera to the vertical curve, written out in the check</td><td>0.111 m</td><td>0.3 m</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#terrain.horizon">The horizon in a rectilinear camera</a><br><code>terrain.horizon</code></td><td>the vanishing line of the ground plane in a pinhole camera, written out in the check</td><td>1.1e-13 px</td><td>1e-06 px</td><td class="ok">✓ pass</td></tr>
+</table>
+<!-- /validation:terrain -->
+    <p><b>Limits.</b> Primitives, not a surveyed road; a ray that grazes the road within the 2 mm + 0.1 % allowance can
+      land either side of it.</p>
+
+    <!-- ======================================================== rig -->
+    <h2 id="timing">Sync, triggers and motion blur</h2>
+    <p><b>What it computes.</b> When each camera should fire so it sees what the spinning lidar sees, which cameras can
+      share a hardware trigger line, and how far the image moves during the exposure and the rolling-shutter readout.
+      Module: <code>core/timing.py</code>.</p>
+    <div class="eq">
+      head azimuth: α(<i>t</i>) = φ ∓ 360° · <i>f</i> · <i>t</i>&nbsp; (clockwise −, counter-clockwise +),&nbsp;&nbsp;
+      trigger = <i>t</i><sub>cross</sub> − <i>t</i><sub>readout</sub>/2 − <i>t</i><sub>exposure</sub>/2
+      <span class="w">A lidar phase-locked to the sync (PTP, IEEE 1588) faces sensor azimuth α at <i>t</i> ms after each
+        pulse; it crosses a camera's view when it faces a point 20 m along the camera's axis, seen from the lidar's own
+        position (parallax counts). A rolling-shutter camera's middle row is exposed around
+        trigger + readout/2 + exposure/2 (Liang et al.), so that instant is put on the crossing. Cameras on one trigger
+        line share the trigger that keeps their worst misalignment smallest; a camera at <i>n</i> times the lidar rate is
+        matched by its nearest frame.</span>
+    </div>
+    <div class="eq">
+      image speed: <i>v</i> sin β / <i>d</i> rad/s through the lens,&nbsp; blur = speed × exposure,&nbsp;
+      skew = speed × readout
+      <span class="w">A static object <i>d</i> from the camera while the vehicle drives straight at <i>v</i>, β its bearing
+        from the direction of travel; for a pinhole <i>f</i>·<i>v</i>/(<i>d</i> cos α) px/s off the axis.</span>
+    </div>
+    <h4>Validation</h4>
+    <!-- validation:timing -->
+<table class="val"><caption>3 of 3 checks passed (Vantage 0.3.0, run 2026-10-27, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#timing">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<tr><td><a href="validation/validation.html#timing.sweep">When the lidar sweep crosses each camera</a><br><code>timing.sweep</code></td><td>the head&#x27;s azimuth phase ∓ 360°·f·t written out in the check; the image&#x27;s half field atan(2.88 mm / 6 mm)</td><td>1.4e-14 ms</td><td>1e-06 ms</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#timing.trigger">Triggers centre the middle row&#x27;s exposure on the sweep</a><br><code>timing.trigger</code></td><td>a rolling shutter&#x27;s middle row is exposed around trigger + readout/2 + exposure/2 (Liang et al.)</td><td>0 ms</td><td>1e-09 ms</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#timing.motion_blur">Motion blur and rolling-shutter skew through the lens</a><br><code>timing.motion_blur</code></td><td>the angular rate v·sin β / d of a static point seen from a moving camera, through the lens, written out in the check</td><td>4.7e-14 relative</td><td>0.0001 relative</td><td class="ok">✓ pass</td></tr>
+</table>
+<!-- /validation:timing -->
+    <p><b>Limits.</b> Straight driving; turning, pitching and the object's own motion are not in the blur; capture times
+      on a real rig are the deserializers' and the recorder's, which the drive-log check measures.</p>
+
+    <h2 id="gnss">GNSS sky view and the pose budget</h2>
+    <p><b>What it computes.</b> How much of the sky each GNSS antenna sees past the vehicle and the rig, the dual-antenna
+      heading baseline, the lever arms the INS needs, and how well every sensor's pose in the world will be known.
+      Module: <code>core/gnss.py</code>.</p>
+    <div class="eq">
+      visible share = Σ<sub>open cells</sub> Δα (sin ε<sub>1</sub> − sin ε<sub>0</sub>) / (2π (1 − sin ε<sub>mask</sub>))
+      <span class="w">Rays over the sky in cells of Δα × Δε (default 2° × 1°) from the antenna's phase centre, traced
+        against the body, the rig parts and the other housings; each cell weighted by its solid angle (cos ε integrated
+        over the cell). Expected satellites = <i>n</i> × visible share assumes a uniform sky: an indicator, not a
+        prediction.</span>
+    </div>
+    <div class="eq">
+      σ<sub>p</sub>² = σ<sub>INS</sub>² + (δθ × <i>L</i>)² + 2σ<sub>lever</sub>²,&nbsp;&nbsp;
+      σ<sub>heading</sub>(<i>B</i>) = σ<sub>datasheet</sub> · <i>B</i><sub>datasheet</sub> / <i>B</i>
+      <span class="w">Per vehicle axis: the INS position error, the attitude error acting on the lever arm <i>L</i> from
+        the IMU (roll, pitch and heading errors independent, small angles), and the measurement errors of the antenna's
+        and the sensor's lever arms (Groves 2013). The heading error of a dual-antenna INS scales inversely with the
+        baseline.</span>
+    </div>
+    <h4>Validation</h4>
+    <!-- validation:gnss -->
+<table class="val"><caption>2 of 2 checks passed (Vantage 0.3.0, run 2026-10-27, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#gnss">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<tr><td><a href="validation/validation.html#gnss.sky_solid_angle">Sky blocked by a wall against its solid angle</a><br><code>gnss.sky_solid_angle</code></td><td>the solid angle of a rectangle seen from a point, integrated with scipy.integrate.quad</td><td>0.00667 relative</td><td>0.02 relative</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#gnss.pose_budget">The pose error budget against a hand calculation and Monte Carlo</a><br><code>gnss.pose_budget</code></td><td>small-angle error propagation δp = δθ × L (Groves), by hand and by Monte Carlo</td><td>0.00223 relative</td><td>0.01 relative</td><td class="ok">✓ pass</td></tr>
+</table>
+<!-- /validation:gnss -->
+    <p><b>Limits.</b> Only the vehicle, its rig and its sensors block the sky: buildings, trees and bridges are not
+      modelled, and the satellites are taken as spread evenly over the sky, so no dilution of precision (DOP) is
+      computed; the sensors' own extrinsic calibration errors are not part of the budget.</p>
+
+    <!-- ======================================================== calibration -->
+    <h2 id="calib">Unit lens calibration</h2>
+    <p><b>What it computes.</b> One camera's own intrinsics (focal lengths, principal point, Kannala–Brandt
+      <i>k</i><sub>1</sub>…<i>k</i><sub>4</sub>) from checkerboard images, or read from a calibration file made
+      elsewhere (OpenCV, ROS camera_info, Kalibr). It replaces the library lens for that camera everywhere. Module:
+      <code>core/calib.py</code>.</p>
+    <p>The board's corners are found in the raw image or, near the edges where a fisheye distorts them too much, in
+      rectified pinhole views cut out through the nominal lens; the model is OpenCV's fisheye calibration (Zhang's
+      method generalised to Kannala–Brandt), started from the nominal lens. Records use OpenCV pixel coordinates at the
+      resolution of the images; the app converts them to the sensor's full resolution and its own pixel convention.</p>
+    <h4>Validation</h4>
+    <!-- validation:calib -->
+<table class="val"><caption>1 of 1 checks passed (Vantage 0.3.0, run 2026-10-27, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#calib">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<tr><td><a href="validation/validation.html#calib.unit_recovery">A unit calibration recovers a simulated unit&#x27;s lens</a><br><code>calib.unit_recovery</code></td><td>the simulated unit&#x27;s own intrinsics (the images are rendered from them)</td><td>0.698 px</td><td>1 px</td><td class="ok">✓ pass</td></tr>
+</table>
+<!-- /validation:calib -->
+    <p><b>Limits.</b> As good as the views: boards must cover the field, out to the edges where a fisheye matters. A
+      calibration at a lower resolution is scaled, not re-measured.</p>
+
+    <h2 id="joint">Installation check: the joint solve</h2>
+    <p><b>What it computes.</b> Where every camera actually sits (its six pose parameters) and where each floor
+      calibration board actually lies (x, y and yaw), from one image per camera, in one least-squares problem; and the
+      seam consistency of the stitched view. Modules: <code>core/install.py</code>, <code>core/joint.py</code>.</p>
+    <div class="eq">
+      min Σ ρ<sub>H</sub>( (π<sub>i</sub>(<i>R</i><sub>i</sub>, <i>p</i><sub>i</sub>; <i>X</i><sub>b,k</sub>) − <i>u</i><sub>i,b,k</sub>) / σ<sub>px</sub> )
+      + Σ ρ<sub>H</sub>( Δ<sub>b</sub> / σ<sub>board</sub> )
+      <span class="w">π<sub>i</sub> camera <i>i</i>'s projection through its lens model; <i>X</i><sub>b,k</sub> the
+        corners of board <i>b</i> moved by its (Δ<i>x</i>, Δ<i>y</i>, Δψ) about its planned place; ρ<sub>H</sub> the
+        Huber loss (scale 3 σ, Huber 1964); σ<sub>px</sub> = 0.5 px, σ<sub>board</sub> = 20 mm and 1° (the placement
+        tolerance, a setting). Started from each camera's own PnP; solved with scipy's least squares to its tolerances.
+        A board observation that no placement explains (a mis-detected grid) is set aside.</span>
+    </div>
+    <p>Seam consistency does not depend on the plan: each corner seen by two or more cameras is intersected with the floor
+      along each camera's ray; the spread of those points is what a viewer of the stitched image sees as a doubled or
+      broken line.</p>
+    <h4>Validation</h4>
+    <!-- validation:joint -->
+<table class="val"><caption>2 of 2 checks passed (Vantage 0.3.0, run 2026-10-27, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#joint">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<tr><td><a href="validation/validation.html#joint.reference_optimum">The joint solve reaches the optimum of its least-squares problem</a><br><code>joint.reference_optimum</code></td><td>the same problem written out from scratch (own parameterisation, IRLS Gauss–Newton, central differences), solved to convergence</td><td>4.5e-07 σ</td><td>0.01 σ</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#joint.exact_recovery">The joint solve recovers known poses from exact corners</a><br><code>joint.exact_recovery</code></td><td>the injected poses the corners were rendered from</td><td>6.5e-10 degrees or mm</td><td>0.001 degrees or mm</td><td class="ok">✓ pass</td></tr>
+</table>
+<!-- /validation:joint -->
+    <p><b>Limits.</b> The floor is flat and the boards lie on it; the lens models are the cameras' (library or unit
+      calibration): an uncalibrated lens's error goes into the poses.</p>
+
+    <h2 id="observability">Calibration observability</h2>
+    <p><b>What it computes.</b> Before anything is captured, how firmly the planned calibration pins every sensor's pose:
+      the 1σ of each camera's yaw, pitch, roll and position, the weak directions and why, what moving a board would
+      gain; the same for each lidar–camera pair and for radars against corner reflectors. Module:
+      <code>core/observability.py</code>.</p>
+    <div class="eq">
+      <i>H</i> = <i>J</i><sup>T</sup><i>W</i><sub>solve</sub><i>J</i> + priors,&nbsp;
+      <i>M</i> = <i>J</i><sup>T</sup><i>W</i><sub>solve</sub> Σ<sub>noise</sub> <i>W</i><sub>solve</sub><i>J</i>,&nbsp;
+      Cov = <i>H</i>⁻¹ <i>M H</i>⁻¹
+      <span class="w"><i>J</i> the Jacobian of every counted corner's two pixel coordinates (through the lens model)
+        with respect to each camera's pose (three small rotations about its own axes, three shifts) and each board's
+        placement. The joint solve weights a corner as 0.5 px whatever the real noise, so the covariance is the
+        sandwich of that estimator (Huber 1967); it is the inverse Fisher information (the Cramér–Rao bound, Kay 1993)
+        when the weight equals the noise.</span>
+    </div>
+    <p>A corner counts when it lies in the image and the lens circle, nothing hides it and its squares are at least
+      <code>min_square_px</code> wide (foreshortened). Lidar–camera pairs add every lidar beam that meets each planned
+      board (range noise along the beam) with the boards marginalised; radars measure each reflector's range and
+      azimuth, which fix x, y and yaw (σ<sub>range</sub> 0.1 m, σ<sub>azimuth</sub> 0.3°, typical). The prediction is
+      verified by Monte Carlo with the machinery that solves real captures.</p>
+    <h4>Validation</h4>
+    <!-- validation:observability -->
+<table class="val"><caption>4 of 4 checks passed (Vantage 0.3.0, run 2026-10-27, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#observability">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<tr><td><a href="validation/validation.html#observability.cameras">Predicted camera σ against the joint solve&#x27;s spread</a><br><code>observability.cameras</code></td><td>Monte Carlo solves with core.joint.joint_solve, the machinery that solves real captures</td><td>0.163 log ratio</td><td>0.226 log ratio</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#observability.boards_placed">Predicted σ with boards laid by hand</a><br><code>observability.boards_placed</code></td><td>Monte Carlo solves with core.joint.joint_solve</td><td>0.179 log ratio</td><td>0.32 log ratio</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#observability.radar">Radar pose σ from corner reflectors</a><br><code>observability.radar</code></td><td>the Fisher information of range and azimuth measurements, written out in the check; Monte Carlo</td><td>2.9e-09 relative</td><td>0.0001 relative</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#observability.lidar_pair">Predicted lidar–camera σ against the calibration&#x27;s spread</a><br><code>observability.lidar_pair</code></td><td>Monte Carlo solves with core.lidar_calib._solve</td><td>0.16 log ratio</td><td>0.414 log ratio</td><td class="ok">✓ pass</td></tr>
+</table>
+<!-- /validation:observability -->
+    <p><b>Limits.</b> Linearised at the plan; detections are taken as independent with equal noise; a board's corners
+      either count or not (no partial detections beyond ChArUco and AprilGrid's per-tag counting).</p>
+
+    <h2 id="lidar-calib">Lidar–camera calibration</h2>
+    <p><b>What it computes.</b> The transform <i>T</i><sub>camera←lidar</sub> from a checkerboard held up at several
+      poses that both sensors see, and from it the lidar's pose in the vehicle. Module:
+      <code>core/lidar_calib.py</code>.</p>
+    <div class="eq">
+      min Σ ρ( reprojection<sub>camera</sub> / σ<sub>px</sub> ) + Σ ρ( <i>n</i><sub>b</sub>·(<i>T</i> <i>q</i> − <i>c</i><sub>b</sub>) / σ<sub>range</sub> )
+      + edge and checker brackets
+      <span class="w">One robust (soft-L1) least-squares problem over the extrinsic and every board's pose: the camera's
+        corner reprojection errors, the lidar's board points' distances to the board plane, and brackets where a beam
+        leaves the board's outline or crosses a square's edge in the reflectivity (each holds the board in its plane
+        like a vernier). Started from the plan or the closed-form alignment of the board planes (Zhang &amp; Pless 2004;
+        Unnikrishnan &amp; Hebert 2005).</span>
+    </div>
+    <h4>Validation</h4>
+    <!-- validation:lidar_calib -->
+<table class="val"><caption>2 of 2 checks passed (Vantage 0.3.0, run 2026-10-27, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#lidar_calib">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<tr><td><a href="validation/validation.html#lidar_calib.closed_form">Plane-to-plane alignment recovers a known transform</a><br><code>lidar_calib.closed_form</code></td><td>the transform the planes were generated with</td><td>3.3e-15 matrix element</td><td>1e-09 matrix element</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#lidar_calib.recovery">An injected lidar mounting error is recovered</a><br><code>lidar_calib.recovery</code></td><td>the injected mounting error the captures were simulated with</td><td>0.835 mm</td><td>3 mm</td><td class="ok">✓ pass</td></tr>
+</table>
+<!-- /validation:lidar_calib -->
+    <p><b>Limits.</b> Boards tilted all the same way leave a direction undetermined (the study names it); a board that
+      moved between the camera and lidar captures is set aside, not corrected.</p>
+
+    <!-- ======================================================== data and studies -->
+    <h2 id="formats">Dataset calibration files</h2>
+    <p><b>What it computes.</b> The rig's calibration in the formats dataset tools read: nuScenes'
+      <code>calibrated_sensor</code> rows, KITTI's <code>calib_cam_to_cam.txt</code> and
+      <code>calib_cams_to_vehicle.txt</code>, ROS <code>camera_info</code> YAML and Kalibr's
+      <code>camchain.yaml</code>. Module: <code>core/exporters.py</code>.</p>
+    <table>
+      <tr><th>Format</th><th>How a point reaches a pixel</th></tr>
+      <tr><td>nuScenes</td><td>sensor = <i>R</i>(<i>q</i>)<sup>T</sup>(<i>P</i><sub>ego</sub> − <i>t</i>), the
+        quaternion <i>q</i> w-first, sensor to ego; <code>camera_intrinsic</code> <i>K</i>; Kannala–Brandt
+        coefficients in <code>vantage_distortion</code> (cv2.fisheye)</td></tr>
+      <tr><td>KITTI</td><td>vehicle → camera 00 by Tr_cam_00_to_vehicle⁻¹, camera 00 → <i>n</i> by <i>R</i><sub>n</sub>,
+        <i>T</i><sub>n</sub>; <i>K</i><sub>n</sub>, <i>D</i><sub>n</sub> by <code>DISTORTION_MODEL</code>;
+        <i>P</i><sub>rect</sub> = <i>K</i>[<i>R</i> | <i>T</i>], <i>R</i><sub>rect</sub> = <i>I</i></td></tr>
+      <tr><td>ROS camera_info</td><td>optical frame (REP 103); <i>K</i>, <i>D</i> by <code>distortion_model</code>
+        (equidistant or plumb_bob); <i>P</i> = [<i>K</i> | 0], rectification <i>I</i></td></tr>
+      <tr><td>Kalibr</td><td>pinhole-equi (exact for a Kannala–Brandt lens) or pinhole-radtan; for a lens past 90° the
+        best of omni (Mei &amp; Rives), double sphere (Usenko et al.) and extended unified (Khomutenko et al.) fitted to
+        the lens, its error stated in the file; <i>T</i><sub>cn←cn−1</sub> chains the cameras</td></tr>
+    </table>
+    <h4>Validation</h4>
+    <!-- validation:formats -->
+<table class="val"><caption>4 of 4 checks passed (Vantage 0.3.0, run 2026-10-27, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#formats">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<tr><td><a href="validation/validation.html#formats.nuscenes">nuScenes calibrated_sensor rows</a><br><code>formats.nuscenes</code></td><td>the nuScenes devkit&#x27;s convention (points into the sensor frame by −translation, then the rotation transposed); OpenCV&#x27;s fisheye projection</td><td>7.5e-07 px</td><td>0.05 px</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#formats.kitti">KITTI calib_cam_to_cam and calib_cams_to_vehicle</a><br><code>formats.kitti</code></td><td>the KITTI raw devkit&#x27;s (and pykitti&#x27;s) reading of the files</td><td>0.00064 px</td><td>0.05 px</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#formats.ros_camera_info">ROS camera_info files</a><br><code>formats.ros_camera_info</code></td><td>sensor_msgs/CameraInfo and the camera_calibration_parsers YAML layout; OpenCV</td><td>6.5e-07 px</td><td>0.05 px</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#formats.kalibr">Kalibr camchain</a><br><code>formats.kalibr</code></td><td>the Kalibr camera models&#x27; equations (Mei &amp; Rives; Usenko et al.; Khomutenko et al.; Kannala–Brandt) and Kalibr&#x27;s camchain.yaml conventions</td><td>6.2e-07 px</td><td>0.05 px</td><td class="ok">✓ pass</td></tr>
+</table>
+<!-- /validation:formats -->
+    <p><b>Limits.</b> Pinhole-based formats cannot represent rays 90° or more off the axis: a wider fisheye is written
+      with a fitted model and its error stated (the KITTI and nuScenes files carry Kannala–Brandt, exact within 90°).</p>
+
+    <h2 id="experiments">Designed experiments, sensitivity and uncertainty</h2>
+    <p><b>What it computes.</b> Many designs of the rig evaluated automatically (factorial, one at a time, Latin
+      hypercube, Sobol/Saltelli, Morris, Monte Carlo), what drives each figure and how uncertain the figures are.
+      Module: <code>core/experiments.py</code>.</p>
+    <div class="eq">
+      <i>S</i><sub>i</sub> = mean( <i>f</i>(<i>B</i>)(<i>f</i>(<i>A</i><sub>B</sub><sup>(i)</sup>) − <i>f</i>(<i>A</i>)) ) / <i>V</i>,&nbsp;&nbsp;
+      <i>S</i><sub>Ti</sub> = mean( (<i>f</i>(<i>A</i>) − <i>f</i>(<i>A</i><sub>B</sub><sup>(i)</sup>))² ) / (2<i>V</i>)
+      <span class="w">First-order (Saltelli et al. 2010) and total (Jansen 1999) Sobol indices from the matrices
+        <i>A</i>, <i>B</i> and <i>A</i><sub>B</sub><sup>(i)</sup> of a scrambled Sobol sequence (Saltelli 2002),
+        <i>V</i> the variance of <i>f</i>(<i>A</i>) and <i>f</i>(<i>B</i>) together; percentile bootstrap intervals
+        (Efron &amp; Tibshirani). Morris screening: μ, μ* (Campolongo et al. 2007) and σ of the elementary effects of
+        <i>r</i> trajectories (Morris 1991). Latin hypercube after McKay et al. (1979). Shares meeting a target with
+        Wilson's interval (1927).</span>
+    </div>
+    <h4>Validation</h4>
+    <!-- validation:experiments -->
+<table class="val"><caption>4 of 4 checks passed (Vantage 0.3.0, run 2026-10-27, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#experiments">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<tr><td><a href="validation/validation.html#experiments.sobol_ishigami">Sobol indices of the Ishigami function</a><br><code>experiments.sobol_ishigami</code></td><td>the analytic Sobol indices of the Ishigami function</td><td>0.00049 index</td><td>0.02 index</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#experiments.morris_linear">Morris elementary effects of a linear function</a><br><code>experiments.morris_linear</code></td><td>the elementary effects of a linear function, which are its coefficients exactly</td><td>7.9e-16 response per range</td><td>1e-09 response per range</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#experiments.wilson">Wilson&#x27;s interval for a share</a><br><code>experiments.wilson</code></td><td>scipy.stats.binomtest(k, n).proportion_ci(method=&#x27;wilson&#x27;)</td><td>1.1e-16 share</td><td>1e-09 share</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#experiments.uncertainty_linear">Uncertainty propagated through a linear function</a><br><code>experiments.uncertainty_linear</code></td><td>the variance of a linear combination of independent normals, written out in the check</td><td>0.00388 relative</td><td>0.0225 relative</td><td class="ok">✓ pass</td></tr>
+</table>
+<!-- /validation:experiments -->
+    <p><b>Limits.</b> Each response is the study's own figure, with that study's limits; Sobol indices need enough base
+      samples to settle (their intervals say when).</p>
+
+    <!-- ======================================================== reference -->
+    <h2 id="datasheets">e-con lens datasheets</h2>
+    <p>e-con Systems' STURDeCAM31 lens datasheet (Rev 1.2, August 2024) and module datasheet (Rev 1.4, June 2024), the
+      documents listed for download on the camera's product page, carry no confidentiality marking. They state the two
+      lenses' focal lengths (H05R2 2.62 mm, H03R2 5.5 mm), apertures (F2.0), fields of view (the figures the library
+      already uses) and focus ranges (0.35 m and 1.28 m to infinity), but no measured image height against field angle.
+      The built-in H05R2 and H03R2 therefore stay fitted to the stated field of view (see <a href="#lens">Lens models</a>);
+      a measured distortion table from e-con, or a unit calibration, would replace the fit.</p>
+
+    <h2 id="references">References</h2>
+    <ol class="refs">
+      <!-- validation:references -->
+<li id="ref-iso8855"><b>[iso8855]</b> ISO 8855:2011, Road vehicles — Vehicle dynamics and road-holding ability — Vocabulary.</li>
+<li id="ref-rep103"><b>[rep103]</b> ROS REP 103, Standard Units of Measure and Coordinate Conventions (T. Foote, M. Purvis, 2010).</li>
+<li id="ref-hartley2004"><b>[hartley2004]</b> R. Hartley and A. Zisserman, Multiple View Geometry in Computer Vision, 2nd ed., Cambridge University Press, 2004.</li>
+<li id="ref-kannala2006"><b>[kannala2006]</b> J. Kannala and S. S. Brandt, &quot;A generic camera model and calibration method for conventional, wide-angle, and fish-eye lenses&quot;, IEEE Trans. Pattern Analysis and Machine Intelligence 28(8), 1335–1340, 2006.</li>
+<li id="ref-miyamoto1964"><b>[miyamoto1964]</b> K. Miyamoto, &quot;Fish eye lens&quot;, Journal of the Optical Society of America 54(8), 1060–1061, 1964.</li>
+<li id="ref-opencv"><b>[opencv]</b> OpenCV, Camera Calibration and 3D Reconstruction (calib3d) and its fisheye module (cv::fisheye), https://docs.opencv.org/.</li>
+<li id="ref-econ"><b>[econ]</b> e-con Systems, product pages and lens datasheets of the camera modules in the built-in library (each lens names its page), https://www.e-consystems.com.</li>
+<li id="ref-zhang2000"><b>[zhang2000]</b> Z. Zhang, &quot;A flexible new technique for camera calibration&quot;, IEEE Trans. Pattern Analysis and Machine Intelligence 22(11), 1330–1334, 2000.</li>
+<li id="ref-greene1986"><b>[greene1986]</b> N. Greene, &quot;Environment mapping and other applications of world projections&quot;, IEEE Computer Graphics and Applications 6(11), 21–29, 1986.</li>
+<li id="ref-moller1997"><b>[moller1997]</b> T. Möller and B. Trumbore, &quot;Fast, minimum storage ray–triangle intersection&quot;, Journal of Graphics Tools 2(1), 21–28, 1997.</li>
+<li id="ref-johnson1958"><b>[johnson1958]</b> J. Johnson, &quot;Analysis of image forming systems&quot;, Image Intensifier Symposium, Fort Belvoir, 1958 (the pixels-on-target criteria for detection and recognition).</li>
+<li id="ref-skolnik2001"><b>[skolnik2001]</b> M. I. Skolnik, Introduction to Radar Systems, 3rd ed., McGraw-Hill, 2001 (the radar equation).</li>
+<li id="ref-knott2004"><b>[knott2004]</b> E. F. Knott, J. F. Shaeffer and M. T. Tuley, Radar Cross Section, 2nd ed., SciTech, 2004 (the trihedral corner reflector, σ = 4πa⁴ / 3λ²).</li>
+<li id="ref-macleod2010"><b>[macleod2010]</b> H. A. Macleod, Thin-Film Optical Filters, 4th ed., CRC Press, 2010, ch. 2 (the characteristic matrix of a multilayer).</li>
+<li id="ref-bornwolf1999"><b>[bornwolf1999]</b> M. Born and E. Wolf, Principles of Optics, 7th ed., Cambridge University Press, 1999, §1.5–1.6 (Fresnel equations, stratified media).</li>
+<li id="ref-emilsson2017"><b>[emilsson2017]</b> E. Emilsson, Radar Transparency and Paint Compatibility: A Study of Automobile Bumper and Bumper-Skin Complex Permittivities for 77 GHz Microwaves, master&#x27;s thesis, Chalmers University of Technology, 2017 (sample 11: measured S21 and S11 of a painted plate).</li>
+<li id="ref-itu_p2040"><b>[itu_p2040]</b> Recommendation ITU-R P.2040-3, Effects of building materials and structures on radiowave propagation above about 100 MHz, 2023.</li>
+<li id="ref-hecht2017"><b>[hecht2017]</b> E. Hecht, Optics, 5th ed., Pearson, 2017 (the lateral shift of a ray through a plane-parallel plate).</li>
+<li id="ref-koschmieder1924"><b>[koschmieder1924]</b> H. Koschmieder, &quot;Theorie der horizontalen Sichtweite&quot;, Beiträge zur Physik der freien Atmosphäre 12, 33–55 and 171–181, 1924.</li>
+<li id="ref-wmo8"><b>[wmo8]</b> WMO-No. 8, Guide to Instruments and Methods of Observation, World Meteorological Organization (meteorological optical range: the distance at which the contrast of a black object falls to 5 %).</li>
+<li id="ref-itu_p1814"><b>[itu_p1814]</b> Recommendation ITU-R P.1814, Prediction methods required for the design of terrestrial free-space optical links, 2007 (rain and snow attenuation).</li>
+<li id="ref-kim2001"><b>[kim2001]</b> I. I. Kim, B. McArthur and E. Korevaar, &quot;Comparison of laser beam propagation at 785 nm and 1550 nm in fog and haze for optical wireless communications&quot;, Proc. SPIE 4214, 26–37, 2001.</li>
+<li id="ref-itu_p838"><b>[itu_p838]</b> Recommendation ITU-R P.838-3, Specific attenuation model for rain for use in prediction methods, 2005.</li>
+<li id="ref-itu_p840"><b>[itu_p840]</b> Recommendation ITU-R P.840, Attenuation due to clouds and fog (the double-Debye permittivity of liquid water and the Rayleigh absorption coefficient K_l).</li>
+<li id="ref-kunkel1984"><b>[kunkel1984]</b> B. A. Kunkel, &quot;Parameterization of droplet terminal velocity and extinction coefficient in fog models&quot;, Journal of Climate and Applied Meteorology 23, 34–41, 1984.</li>
+<li id="ref-corless1996"><b>[corless1996]</b> R. M. Corless, G. H. Gonnet, D. E. G. Hare, D. J. Jeffrey and D. E. Knuth, &quot;On the Lambert W function&quot;, Advances in Computational Mathematics 5, 329–359, 1996.</li>
+<li id="ref-unr112"><b>[unr112]</b> UN Regulation No. 112, Uniform provisions concerning the approval of motor vehicle headlamps emitting an asymmetrical passing beam or a driving beam or both (class B photometric test points).</li>
+<li id="ref-janesick2007"><b>[janesick2007]</b> J. R. Janesick, Photon Transfer, SPIE Press, 2007 (signal, shot noise and read noise of an image sensor).</li>
+<li id="ref-reda2004"><b>[reda2004]</b> I. Reda and A. Andreas, &quot;Solar position algorithm for solar radiation applications&quot;, Solar Energy 76(5), 577–589, 2004 (NREL SPA; its worked example).</li>
+<li id="ref-meeus1998"><b>[meeus1998]</b> J. Meeus, Astronomical Algorithms, 2nd ed., Willmann-Bell, 1998 (ch. 25 solar coordinates, ch. 28 the equation of time).</li>
+<li id="ref-noaa"><b>[noaa]</b> NOAA Global Monitoring Laboratory, General Solar Position Calculations and the NOAA Solar Calculator.</li>
+<li id="ref-gillespie1992"><b>[gillespie1992]</b> T. D. Gillespie, Fundamentals of Vehicle Dynamics, SAE International, 1992 (ride rates, load transfer, anti-dive and anti-squat, roll centres).</li>
+<li id="ref-milliken1995"><b>[milliken1995]</b> W. F. Milliken and D. L. Milliken, Race Car Vehicle Dynamics, SAE International, 1995 (wheel rate, motion ratio, roll stiffness and lateral load transfer).</li>
+<li id="ref-aashto2018"><b>[aashto2018]</b> AASHTO, A Policy on Geometric Design of Highways and Streets (the Green Book), 7th ed., 2018 (crest and sag vertical curves).</li>
+<li id="ref-liang2008"><b>[liang2008]</b> C.-K. Liang, L.-W. Chang and H. H. Chen, &quot;Analysis and compensation of rolling shutter effect&quot;, IEEE Trans. Image Processing 17(8), 1323–1330, 2008.</li>
+<li id="ref-ieee1588"><b>[ieee1588]</b> IEEE 1588-2019, Standard for a Precision Clock Synchronization Protocol for Networked Measurement and Control Systems (PTP).</li>
+<li id="ref-groves2013"><b>[groves2013]</b> P. D. Groves, Principles of GNSS, Inertial, and Multisensor Integrated Navigation Systems, 2nd ed., Artech House, 2013 (lever arms, attitude error propagation).</li>
+<li id="ref-triggs2000"><b>[triggs2000]</b> B. Triggs, P. F. McLauchlan, R. I. Hartley and A. W. Fitzgibbon, &quot;Bundle adjustment — a modern synthesis&quot;, Vision Algorithms: Theory and Practice, LNCS 1883, 298–372, 2000.</li>
+<li id="ref-huber1964"><b>[huber1964]</b> P. J. Huber, &quot;Robust estimation of a location parameter&quot;, Annals of Mathematical Statistics 35(1), 73–101, 1964.</li>
+<li id="ref-huber1967"><b>[huber1967]</b> P. J. Huber, &quot;The behavior of maximum likelihood estimates under nonstandard conditions&quot;, Proc. Fifth Berkeley Symposium on Mathematical Statistics and Probability 1, 221–233, 1967 (the sandwich covariance).</li>
+<li id="ref-kay1993"><b>[kay1993]</b> S. M. Kay, Fundamentals of Statistical Signal Processing, Volume I: Estimation Theory, Prentice Hall, 1993 (Fisher information and the Cramér–Rao bound).</li>
+<li id="ref-zhang2004"><b>[zhang2004]</b> Q. Zhang and R. Pless, &quot;Extrinsic calibration of a camera and laser range finder (improves camera calibration)&quot;, Proc. IEEE/RSJ IROS, 2301–2306, 2004.</li>
+<li id="ref-unnikrishnan2005"><b>[unnikrishnan2005]</b> R. Unnikrishnan and M. Hebert, Fast extrinsic calibration of a laser rangefinder to a camera, Carnegie Mellon University, CMU-RI-TR-05-09, 2005.</li>
+<li id="ref-nuscenes2020"><b>[nuscenes2020]</b> H. Caesar et al., &quot;nuScenes: A multimodal dataset for autonomous driving&quot;, Proc. IEEE/CVF CVPR, 11621–11631, 2020; the nuScenes devkit and its schema.</li>
+<li id="ref-kitti2013"><b>[kitti2013]</b> A. Geiger, P. Lenz, C. Stiller and R. Urtasun, &quot;Vision meets robotics: The KITTI dataset&quot;, International Journal of Robotics Research 32(11), 1231–1237, 2013; the KITTI raw data devkit.</li>
+<li id="ref-kalibr2013"><b>[kalibr2013]</b> P. Furgale, J. Rehder and R. Siegwart, &quot;Unified temporal and spatial calibration for multi-sensor systems&quot;, Proc. IEEE/RSJ IROS, 1280–1286, 2013; Kalibr&#x27;s camchain.yaml format.</li>
+<li id="ref-ros_camera_info"><b>[ros_camera_info]</b> ROS sensor_msgs/CameraInfo message definition and the camera_calibration_parsers YAML format.</li>
+<li id="ref-saltelli2010"><b>[saltelli2010]</b> A. Saltelli, P. Annoni, I. Azzini, F. Campolongo, M. Ratto and S. Tarantola, &quot;Variance based sensitivity analysis of model output. Design and estimator for the total sensitivity index&quot;, Computer Physics Communications 181(2), 259–270, 2010.</li>
+<li id="ref-sobol2001"><b>[sobol2001]</b> I. M. Sobol&#x27;, &quot;Global sensitivity indices for nonlinear mathematical models and their Monte Carlo estimates&quot;, Mathematics and Computers in Simulation 55(1–3), 271–280, 2001.</li>
+<li id="ref-saltelli2002"><b>[saltelli2002]</b> A. Saltelli, &quot;Making best use of model evaluations to compute sensitivity indices&quot;, Computer Physics Communications 145(2), 280–297, 2002.</li>
+<li id="ref-jansen1999"><b>[jansen1999]</b> M. J. W. Jansen, &quot;Analysis of variance designs for model output&quot;, Computer Physics Communications 117(1–2), 35–43, 1999.</li>
+<li id="ref-ishigami1990"><b>[ishigami1990]</b> T. Ishigami and T. Homma, &quot;An importance quantification technique in uncertainty analysis for computer models&quot;, Proc. ISUMA &#x27;90, 398–403, 1990.</li>
+<li id="ref-morris1991"><b>[morris1991]</b> M. D. Morris, &quot;Factorial sampling plans for preliminary computational experiments&quot;, Technometrics 33(2), 161–174, 1991.</li>
+<li id="ref-campolongo2007"><b>[campolongo2007]</b> F. Campolongo, J. Cariboni and A. Saltelli, &quot;An effective screening design for sensitivity analysis of large models&quot;, Environmental Modelling &amp; Software 22(10), 1509–1518, 2007.</li>
+<li id="ref-mckay1979"><b>[mckay1979]</b> M. D. McKay, R. J. Beckman and W. J. Conover, &quot;A comparison of three methods for selecting values of input variables in the analysis of output from a computer code&quot;, Technometrics 21(2), 239–245, 1979.</li>
+<li id="ref-efron1993"><b>[efron1993]</b> B. Efron and R. J. Tibshirani, An Introduction to the Bootstrap, Chapman &amp; Hall, 1993.</li>
+<li id="ref-wilson1927"><b>[wilson1927]</b> E. B. Wilson, &quot;Probable inference, the law of succession, and statistical inference&quot;, Journal of the American Statistical Association 22(158), 209–212, 1927.</li>
+<!-- /validation:references -->
+    </ol>
+    <p>Standards and recommendations are cited by number and the edition the model follows; the ITU-R recommendations
+      are free to download from the ITU.</p>
+  </main>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <a class="brand" href="./"><img src="assets/img/logo.png" alt="" width="22" height="22">Vantage</a>
+      <p class="fine">Free software under the GNU General Public License, version 3 or later
+        (<a href="docs.html#licence">GPL-3.0-or-later</a>).</p>
+    </div>
+    <div class="links">
+      <a href="./">Home</a>
+      <a href="docs.html">Docs</a>
+      <a href="./#download">Download</a>
+      <a href="https://github.com/Sherin-SEF-AI/Vantage">GitHub</a>
+    </div>
+  </div>
+</footer>
+<script src="assets/js/site.js"></script>
+</body>
+</html>

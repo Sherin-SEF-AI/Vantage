@@ -1,0 +1,5668 @@
+{
+ "schema": "vantage.validation/1",
+ "project": "sample (built in)",
+ "variant": "6-cam · v3",
+ "created_utc": "2026-10-27T08:18:01Z",
+ "seconds": 54.87,
+ "settings": {
+  "models": [],
+  "quick": false,
+  "seed": 20261027
+ },
+ "environment": {
+  "vantage": "0.3.0",
+  "python": "3.14.4",
+  "numpy": "2.3.5",
+  "scipy": "1.16.3",
+  "platform": "Linux x86_64",
+  "opencv": "4.13.0",
+  "qt": "6.11.0"
+ },
+ "frame": "vehicle (ISO 8855, rear axle): x forward, y left, z up, metres; each check states its error's unit",
+ "limits": "The suite checks the models against references for the cases it builds; it does not show that a model describes a real vehicle, lens or sensor. Monte Carlo checks are statistical: their tolerance is 4.5 standard errors of the estimated spread, at a fixed seed.",
+ "cancelled": false,
+ "summary": {
+  "checks": 69,
+  "passed": 69,
+  "failed": [],
+  "ok": true
+ },
+ "models": [
+  {
+   "id": "lens",
+   "title": "Lens projection",
+   "modules": "vantage.core.lens",
+   "methods_anchor": "lens",
+   "passed": 7,
+   "checks": [
+    {
+     "id": "lens.inverse",
+     "model": "lens",
+     "title": "Image height inverts back to the angle",
+     "quantity": "largest |θ − θ(r(θ))| over each projection's field, every base projection and every built-in lens's Kannala–Brandt curve",
+     "reference": "the identity: θ(r) is the inverse of r(θ) (closed form, or Newton's method for Kannala–Brandt)",
+     "references": [
+      "kannala2006",
+      "miyamoto1964"
+     ],
+     "error": 4.707220928566004e-13,
+     "tolerance": 1e-06,
+     "unit": "degrees",
+     "passed": true,
+     "seconds": 0.006,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "per_model_deg": {
+       "rectilinear": 6.3611093629270335e-15,
+       "equidistant": 2.5444437451708134e-14,
+       "equisolid": 3.562221243239139e-13,
+       "stereographic": 1.2722218725854067e-14,
+       "orthographic": 4.707220928566004e-13,
+       "h05r2": 2.5444437451708134e-14,
+       "h03r2": 1.2722218725854067e-14,
+       "sturdecam31fsh_heated": 2.5444437451708134e-14,
+       "sturdecam34_h01r1": 1.2722218725854067e-14,
+       "sturdecam39_option1": 3.81666561775622e-14,
+       "sturdecam39_option2": 3.81666561775622e-14,
+       "sturdecam25_std": 2.5444437451708134e-14,
+       "sturdecam29_std": 7.63333123551244e-14,
+       "sturdecam57_std": 3.81666561775622e-14,
+       "sturdecam81_std": 1.90833280887811e-14,
+       "sturdecam88_h02r1": 2.5444437451708134e-14,
+       "sturdecam88_h04r1": 2.5444437451708134e-14,
+       "sturdecam20_std": 1.2722218725854067e-14,
+       "sturdecam21_std": 1.90833280887811e-14,
+       "nilecam81_std": 1.2722218725854067e-14,
+       "nilecam85_std": 1.2722218725854067e-14,
+       "nilecam130_std": 3.180554681463517e-14,
+       "nilecam210_std": 2.5444437451708134e-14,
+       "neducam25_std": 2.5444437451708134e-14,
+       "nedu4cam57_std": 3.81666561775622e-14
+      },
+      "samples": 2000
+     },
+     "figure": null
+    },
+    {
+     "id": "lens.derivative",
+     "model": "lens",
+     "title": "Radial sampling dr/dθ",
+     "quantity": "largest relative difference of dr/dθ from a central finite difference of r(θ), every base projection and built-in lens",
+     "reference": "a central difference of r(θ) with step 10⁻⁶ rad",
+     "references": [
+      "kannala2006"
+     ],
+     "error": 1.88565398593599e-09,
+     "tolerance": 1e-06,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.002,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "per_model": {
+       "rectilinear": 1.1835997885183987e-10,
+       "equidistant": 4.358374400221477e-10,
+       "equisolid": 1.88565398593599e-09,
+       "stereographic": 2.436896243826505e-10,
+       "orthographic": 1.4902689203411971e-09,
+       "h05r2": 2.7840676460925786e-10,
+       "h03r2": 1.2194176750977904e-10,
+       "sturdecam31fsh_heated": 3.7659025849418884e-10,
+       "sturdecam34_h01r1": 8.849061557792524e-11,
+       "sturdecam39_option1": 3.1320913364159466e-10,
+       "sturdecam39_option2": 2.919632283491768e-10,
+       "sturdecam25_std": 1.7565049539994595e-10,
+       "sturdecam29_std": 7.875576322303107e-10,
+       "sturdecam57_std": 2.483753808472148e-10,
+       "sturdecam81_std": 2.831218990368777e-10,
+       "sturdecam88_h02r1": 1.823118319332761e-10,
+       "sturdecam88_h04r1": 2.9746737430313326e-10,
+       "sturdecam20_std": 2.0324500407782902e-10,
+       "sturdecam21_std": 1.8481463899375435e-10,
+       "nilecam81_std": 1.9755965053387726e-10,
+       "nilecam85_std": 1.853037935919934e-10,
+       "nilecam130_std": 1.7857118290591645e-10,
+       "nilecam210_std": 2.3169524980690363e-10,
+       "neducam25_std": 2.37694262306297e-10,
+       "nedu4cam57_std": 2.483753808472148e-10
+      }
+     },
+     "figure": null
+    },
+    {
+     "id": "lens.opencv_pinhole",
+     "model": "lens",
+     "title": "Rectilinear lens against OpenCV's pinhole projection",
+     "quantity": "largest pixel distance between Intrinsics.project_dirs and cv2.projectPoints for directions over the image, with a pixel aspect of 1.004 and an offset principal point",
+     "reference": "OpenCV cv2.projectPoints (no distortion); OpenCV pixel centres are at integers, Vantage's at i + ½",
+     "references": [
+      "opencv",
+      "hartley2004"
+     ],
+     "error": 5.084229945850415e-13,
+     "tolerance": 1e-06,
+     "unit": "px",
+     "passed": true,
+     "seconds": 0.023,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "points": 3176,
+      "f_px": 1333.3333333333333,
+      "aspect": 1.004,
+      "principal_point_px": [
+       972.3,
+       760.1
+      ]
+     },
+     "figure": null
+    },
+    {
+     "id": "lens.opencv_fisheye",
+     "model": "lens",
+     "title": "Kannala–Brandt lenses against OpenCV's fisheye model",
+     "quantity": "largest pixel distance between Intrinsics.project_dirs and cv2.fisheye.projectPoints (D = k1…k4) for every built-in lens, directions up to 88° off the axis",
+     "reference": "OpenCV cv2.fisheye.projectPoints: θ_d = θ(1 + k1θ² + k2θ⁴ + k3θ⁶ + k4θ⁸), the same model",
+     "references": [
+      "opencv",
+      "kannala2006"
+     ],
+     "error": 1.2862197421537486e-12,
+     "tolerance": 1e-06,
+     "unit": "px",
+     "passed": true,
+     "seconds": 0.007,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "per_lens_px": {
+       "h05r2": 6.821210263296962e-13,
+       "h03r2": 6.629024818318272e-13,
+       "sturdecam31fsh_heated": 6.431098710768743e-13,
+       "sturdecam34_h01r1": 6.431098710768743e-13,
+       "sturdecam39_option1": 6.431098710768743e-13,
+       "sturdecam39_option2": 6.431098710768743e-13,
+       "sturdecam25_std": 5.684341886080801e-13,
+       "sturdecam29_std": 4.687428401686771e-13,
+       "sturdecam57_std": 1.016845989170083e-12,
+       "sturdecam81_std": 1.016845989170083e-12,
+       "sturdecam88_h02r1": 1.224444715065716e-12,
+       "sturdecam88_h04r1": 1.016845989170083e-12,
+       "sturdecam20_std": 6.12222357532858e-13,
+       "sturdecam21_std": 5.084229945850415e-13,
+       "nilecam81_std": 1.016845989170083e-12,
+       "nilecam85_std": 1.2862197421537486e-12,
+       "nilecam130_std": 1.2862197421537486e-12,
+       "nilecam210_std": 5.084229945850415e-13,
+       "neducam25_std": 5.084229945850415e-13,
+       "nedu4cam57_std": 1.1368683772161603e-12
+      }
+     },
+     "figure": null
+    },
+    {
+     "id": "lens.opencv_undistort",
+     "model": "lens",
+     "title": "Pixel to ray against OpenCV's fisheye undistortion",
+     "quantity": "largest angle between Intrinsics.unproject's ray and the ray cv2.fisheye.undistortPoints gives for the same pixel, every built-in lens, pixels up to 75° off the axis",
+     "reference": "OpenCV cv2.fisheye.undistortPoints (iterated to 10⁻¹⁴)",
+     "references": [
+      "opencv",
+      "kannala2006"
+     ],
+     "error": 1.4787793334710982e-06,
+     "tolerance": 0.0001,
+     "unit": "degrees",
+     "passed": true,
+     "seconds": 0.011,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "per_lens_deg": {
+       "h05r2": 1.2074182697257333e-06,
+       "h03r2": 1.2074182697257333e-06,
+       "sturdecam31fsh_heated": 1.2074182697257333e-06,
+       "sturdecam34_h01r1": 1.2074182697257333e-06,
+       "sturdecam39_option1": 1.4787793334710982e-06,
+       "sturdecam39_option2": 1.2074182697257333e-06,
+       "sturdecam25_std": 1.2074182697257333e-06,
+       "sturdecam29_std": 1.2074182697257333e-06,
+       "sturdecam57_std": 1.2074182697257333e-06,
+       "sturdecam81_std": 1.2074182697257333e-06,
+       "sturdecam88_h02r1": 1.2074182697257333e-06,
+       "sturdecam88_h04r1": 1.2074182697257333e-06,
+       "sturdecam20_std": 1.2074182697257333e-06,
+       "sturdecam21_std": 1.2074182697257333e-06,
+       "nilecam81_std": 1.2074182697257333e-06,
+       "nilecam85_std": 1.2074182697257333e-06,
+       "nilecam130_std": 1.2074182697257333e-06,
+       "nilecam210_std": 1.2074182697257333e-06,
+       "neducam25_std": 1.2074182697257333e-06,
+       "nedu4cam57_std": 1.4787793334710982e-06
+      }
+     },
+     "figure": null
+    },
+    {
+     "id": "lens.builtin_fov",
+     "model": "lens",
+     "title": "Built-in lenses reproduce e-con's stated field of view",
+     "quantity": "largest difference between a built-in lens model's horizontal, vertical and diagonal field (limited by its image circle) and the field e-con states for it",
+     "reference": "the FOV e-con Systems publishes for each lens (H, V, D)",
+     "references": [
+      "econ"
+     ],
+     "error": 0.4342,
+     "tolerance": 0.5,
+     "unit": "degrees",
+     "passed": true,
+     "seconds": 0.008,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "per_lens": {
+       "h05r2": {
+        "model_deg": [
+         128.922,
+         99.134,
+         170.148
+        ],
+        "stated_deg": [
+         128.7,
+         98.7,
+         170.1
+        ],
+        "diff_deg": {
+         "H": 0.2217,
+         "V": 0.4342,
+         "D": 0.0479
+        }
+       },
+       "h03r2": {
+        "model_deg": [
+         53.825,
+         43.156,
+         70.206
+        ],
+        "stated_deg": [
+         54.04,
+         42.86,
+         70.17
+        ],
+        "diff_deg": {
+         "H": -0.2153,
+         "V": 0.296,
+         "D": 0.0361
+        }
+       },
+       "sturdecam31fsh_heated": {
+        "model_deg": [
+         196.0,
+         155.002,
+         210.0
+        ],
+        "stated_deg": [
+         196.0,
+         155.0,
+         210.0
+        ],
+        "diff_deg": {
+         "H": -0.0005,
+         "V": 0.0018,
+         "D": 0.0
+        }
+       },
+       "sturdecam34_h01r1": {
+        "model_deg": [
+         64.616,
+         51.285,
+         83.5
+        ],
+        "stated_deg": [
+         64.62,
+         51.28,
+         83.5
+        ],
+        "diff_deg": {
+         "H": -0.0037,
+         "V": 0.0049,
+         "D": 0.0003
+        }
+       },
+       "sturdecam39_option1": {
+        "model_deg": [
+         196.699,
+         155.102,
+         200.0
+        ],
+        "stated_deg": [
+         196.7,
+         155.1,
+         200.0
+        ],
+        "diff_deg": {
+         "H": -0.0007,
+         "V": 0.0021,
+         "D": 0.0
+        }
+       },
+       "sturdecam39_option2": {
+        "model_deg": [
+         121.005,
+         96.696,
+         164.499
+        ],
+        "stated_deg": [
+         121.0,
+         96.7,
+         164.5
+        ],
+        "diff_deg": {
+         "H": 0.005,
+         "V": -0.0041,
+         "D": -0.0006
+        }
+       },
+       "sturdecam25_std": {
+        "model_deg": [
+         111.1,
+         68.298,
+         132.801
+        ],
+        "stated_deg": [
+         111.1,
+         68.3,
+         132.8
+        ],
+        "diff_deg": {
+         "H": 0.0004,
+         "V": -0.0017,
+         "D": 0.0005
+        }
+       },
+       "sturdecam29_std": {
+        "model_deg": [
+         92.998,
+         74.009,
+         130.992
+        ],
+        "stated_deg": [
+         93.0,
+         74.0,
+         131.0
+        ],
+        "diff_deg": {
+         "H": -0.0022,
+         "V": 0.0094,
+         "D": -0.0084
+        }
+       },
+       "sturdecam57_std": {
+        "model_deg": [
+         114.763,
+         85.916,
+         148.321
+        ],
+        "stated_deg": [
+         114.76,
+         85.92,
+         148.32
+        ],
+        "diff_deg": {
+         "H": 0.0032,
+         "V": -0.0038,
+         "D": 0.0006
+        }
+       },
+       "sturdecam81_std": {
+        "model_deg": [
+         106.299,
+         57.103,
+         122.6
+        ],
+        "stated_deg": [
+         106.3,
+         57.1,
+         122.6
+        ],
+        "diff_deg": {
+         "H": -0.0014,
+         "V": 0.0027,
+         "D": -0.0003
+        }
+       },
+       "sturdecam88_h02r1": {
+        "model_deg": [
+         68.242,
+         38.805,
+         80.214
+        ],
+        "stated_deg": [
+         68.23,
+         38.83,
+         80.22
+        ],
+        "diff_deg": {
+         "H": 0.0123,
+         "V": -0.0255,
+         "D": -0.0064
+        }
+       },
+       "sturdecam88_h04r1": {
+        "model_deg": [
+         120.119,
+         67.041,
+         137.36
+        ],
+        "stated_deg": [
+         120.12,
+         67.04,
+         137.36
+        ],
+        "diff_deg": {
+         "H": -0.0006,
+         "V": 0.0008,
+         "D": -0.0001
+        }
+       },
+       "sturdecam20_std": {
+        "model_deg": [
+         98.501,
+         53.505,
+         116.498
+        ],
+        "stated_deg": [
+         98.5,
+         53.5,
+         116.5
+        ],
+        "diff_deg": {
+         "H": 0.0005,
+         "V": 0.005,
+         "D": -0.0015
+        }
+       },
+       "sturdecam21_std": {
+        "model_deg": [
+         98.217,
+         50.355,
+         113.828
+        ],
+        "stated_deg": [
+         98.22,
+         50.34,
+         113.83
+        ],
+        "diff_deg": {
+         "H": -0.003,
+         "V": 0.0149,
+         "D": -0.0016
+        }
+       },
+       "nilecam81_std": {
+        "model_deg": [
+         104.8,
+         58.7,
+         120.0
+        ],
+        "stated_deg": [
+         104.8,
+         58.7,
+         120.0
+        ],
+        "diff_deg": {
+         "H": -0.0003,
+         "V": 0.0004,
+         "D": -0.0
+        }
+       },
+       "nilecam85_std": {
+        "model_deg": [
+         112.999,
+         61.002,
+         131.0
+        ],
+        "stated_deg": [
+         113.0,
+         61.0,
+         131.0
+        ],
+        "diff_deg": {
+         "H": -0.001,
+         "V": 0.0015,
+         "D": -0.0003
+        }
+       },
+       "nilecam130_std": {
+        "model_deg": [
+         86.003,
+         63.997,
+         110.0
+        ],
+        "stated_deg": [
+         86.0,
+         64.0,
+         110.0
+        ],
+        "diff_deg": {
+         "H": 0.0031,
+         "V": -0.0028,
+         "D": 0.0004
+        }
+       },
+       "nilecam210_std": {
+        "model_deg": [
+         112.999,
+         61.002,
+         131.999
+        ],
+        "stated_deg": [
+         113.0,
+         61.0,
+         132.0
+        ],
+        "diff_deg": {
+         "H": -0.0005,
+         "V": 0.0024,
+         "D": -0.0006
+        }
+       },
+       "neducam25_std": {
+        "model_deg": [
+         104.598,
+         61.609,
+         128.197
+        ],
+        "stated_deg": [
+         104.6,
+         61.6,
+         128.2
+        ],
+        "diff_deg": {
+         "H": -0.0021,
+         "V": 0.0089,
+         "D": -0.0029
+        }
+       },
+       "nedu4cam57_std": {
+        "model_deg": [
+         114.763,
+         85.916,
+         148.321
+        ],
+        "stated_deg": [
+         114.76,
+         85.92,
+         148.32
+        ],
+        "diff_deg": {
+         "H": 0.0032,
+         "V": -0.0038,
+         "D": 0.0006
+        }
+       }
+      }
+     },
+     "figure": {
+      "kind": "bars",
+      "title": "Largest FOV difference per built-in lens",
+      "xlabel": "lens",
+      "ylabel": "model − stated, |°|",
+      "series": [
+       {
+        "label": "largest |difference|",
+        "kind": "bar",
+        "x": [
+         0.0,
+         1.0,
+         2.0,
+         3.0,
+         4.0,
+         5.0,
+         6.0,
+         7.0,
+         8.0,
+         9.0,
+         10.0,
+         11.0,
+         12.0,
+         13.0,
+         14.0,
+         15.0,
+         16.0,
+         17.0,
+         18.0,
+         19.0
+        ],
+        "y": [
+         0.4342,
+         0.296,
+         0.0018,
+         0.0049,
+         0.0021,
+         0.005,
+         0.0017,
+         0.0094,
+         0.0038,
+         0.0027,
+         0.0255,
+         0.0008,
+         0.005,
+         0.0149,
+         0.0004,
+         0.0015,
+         0.0031,
+         0.0024,
+         0.0089,
+         0.0038
+        ]
+       }
+      ],
+      "logy": false,
+      "hline": 0.5,
+      "hline_label": "tolerance 0.5°",
+      "diag": false,
+      "categories": [
+       "H05R2",
+       "H03R2",
+       "Heated fisheye",
+       "H01R1",
+       "Lens option 1",
+       "Lens option 2",
+       "133° DFOV",
+       "131° DFOV",
+       "148° DFOV",
+       "123° DFOV",
+       "H02R1",
+       "H04R1",
+       "117° DFOV",
+       "114° DFOV",
+       "120° DFOV",
+       "nilecam85_std",
+       "110° DFOV",
+       "132° DFOV",
+       "128° DFOV",
+       "nedu4cam57_std"
+      ]
+     }
+    },
+    {
+     "id": "lens.density",
+     "model": "lens",
+     "title": "Pixel density on a target facing the camera",
+     "quantity": "largest relative difference between Intrinsics.density_px_per_cm and the square root of the pixel area a 1 mm square facing the camera at 1 m covers (its corners projected through the lens), from the axis to the edge of each lens's field",
+     "reference": "the projected area of a small square, by the shoelace formula",
+     "references": [
+      "kannala2006",
+      "johnson1958"
+     ],
+     "error": 3.739805595564206e-06,
+     "tolerance": 0.001,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.014,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "per_lens": {
+       "h05r2": 1.917547763448049e-06,
+       "h03r2": 3.739805595564206e-06,
+       "sturdecam31fsh_heated": 2.4879898555756254e-07,
+       "sturdecam34_h01r1": 4.722188350287392e-07,
+       "rectilinear 4 mm, aspect 1.004": 2.2007118788219305e-07,
+       "equidistant 1.5 mm": 2.42690980159229e-07
+      }
+     },
+     "figure": {
+      "kind": "xy",
+      "title": "Pixel density at 1 m against the angle off the axis",
+      "xlabel": "angle off the optical axis, °",
+      "ylabel": "px/cm at 1 m",
+      "series": [
+       {
+        "label": "h05r2",
+        "kind": "line",
+        "x": [
+         0.5,
+         4.0854167,
+         7.6708333,
+         11.25625,
+         14.841667,
+         18.427083,
+         22.0125,
+         25.597917,
+         29.183333,
+         32.76875,
+         36.354167,
+         39.939583,
+         43.525,
+         47.110417,
+         50.695833,
+         54.28125,
+         57.866667,
+         61.452083,
+         65.0375,
+         68.622917,
+         72.208333,
+         75.79375,
+         79.379167,
+         82.964583,
+         86.55
+        ],
+        "y": [
+         8.7333981,
+         8.7377455,
+         8.749667,
+         8.7710347,
+         8.8043566,
+         8.852104,
+         8.9158631,
+         8.9953905,
+         9.0876795,
+         9.1861578,
+         9.280139,
+         9.354653,
+         9.390797,
+         9.3668063,
+         9.2601785,
+         9.0514691,
+         8.7309395,
+         8.3103523,
+         7.8439762,
+         7.4630511,
+         7.4134755,
+         8.0369518,
+         9.6413277,
+         12.42236,
+         16.598104
+        ]
+       },
+       {
+        "label": "h03r2",
+        "kind": "line",
+        "x": [
+         0.5,
+         2.0035417,
+         3.5070833,
+         5.010625,
+         6.5141667,
+         8.0177083,
+         9.52125,
+         11.024792,
+         12.528333,
+         14.031875,
+         15.535417,
+         17.038958,
+         18.5425,
+         20.046042,
+         21.549583,
+         23.053125,
+         24.556667,
+         26.060208,
+         27.56375,
+         29.067292,
+         30.570833,
+         32.074375,
+         33.577917,
+         35.081458,
+         36.585
+        ],
+        "y": [
+         18.337529,
+         18.400271,
+         18.535505,
+         18.736891,
+         18.994928,
+         19.297305,
+         19.629324,
+         19.974375,
+         20.314455,
+         20.630759,
+         20.904347,
+         21.116958,
+         21.252025,
+         21.295969,
+         21.2399,
+         21.081857,
+         20.829785,
+         20.505458,
+         20.149491,
+         19.827268,
+         19.634745,
+         19.701487,
+         20.186712,
+         21.265495,
+         23.109766
+        ]
+       },
+       {
+        "label": "sturdecam31fsh_heated",
+        "kind": "line",
+        "x": [
+         0.5,
+         4.8333333,
+         9.1666667,
+         13.5,
+         17.833333,
+         22.166667,
+         26.5,
+         30.833333,
+         35.166667,
+         39.5,
+         43.833333,
+         48.166667,
+         52.5,
+         56.833333,
+         61.166667,
+         65.5,
+         69.833333,
+         74.166667,
+         78.5,
+         82.833333,
+         87.166667,
+         91.5,
+         95.833333,
+         100.16667,
+         104.5
+        ],
+        "y": [
+         5.6433545,
+         5.6453387,
+         5.6507915,
+         5.6603496,
+         5.6749823,
+         5.6959044,
+         5.7244604,
+         5.7619821,
+         5.8096286,
+         5.8682147,
+         5.9380437,
+         6.0187546,
+         6.1092026,
+         6.2073896,
+         6.3104633,
+         6.4148128,
+         6.5162941,
+         6.6106393,
+         6.6941311,
+         6.7646663,
+         6.8233928,
+         6.8771697,
+         6.9421349,
+         7.0485307,
+         7.2463788
+        ]
+       },
+       {
+        "label": "sturdecam34_h01r1",
+        "kind": "line",
+        "x": [
+         0.5,
+         2.28125,
+         4.0625,
+         5.84375,
+         7.625,
+         9.40625,
+         11.1875,
+         12.96875,
+         14.75,
+         16.53125,
+         18.3125,
+         20.09375,
+         21.875,
+         23.65625,
+         25.4375,
+         27.21875,
+         29.0,
+         30.78125,
+         32.5625,
+         34.34375,
+         36.125,
+         37.90625,
+         39.6875,
+         41.46875,
+         43.25
+        ],
+        "y": [
+         17.271551,
+         17.273942,
+         17.279207,
+         17.286905,
+         17.29636,
+         17.306676,
+         17.316767,
+         17.325389,
+         17.331194,
+         17.3328,
+         17.328879,
+         17.318284,
+         17.300203,
+         17.274364,
+         17.241292,
+         17.202631,
+         17.161551,
+         17.123231,
+         17.095445,
+         17.089235,
+         17.119651,
+         17.206506,
+         17.375063,
+         17.656519,
+         18.08817
+        ]
+       }
+      ],
+      "logy": false,
+      "hline": null,
+      "hline_label": "",
+      "diag": false,
+      "categories": null
+     }
+    }
+   ]
+  },
+  {
+   "id": "coverage",
+   "title": "Ground coverage and pixel density",
+   "modules": "vantage.core.analysis",
+   "methods_anchor": "coverage",
+   "passed": 3,
+   "checks": [
+    {
+     "id": "coverage.nadir_pyramid",
+     "model": "coverage",
+     "title": "A rectilinear camera looking straight down at a plate",
+     "quantity": "share of footprint cells the analysis marks differently from the rectangle the image casts on the plate (4h²·tan α_h·tan α_v); the largest relative difference of a seen cell's pixel density from f / (p·cos^1.5 θ) / R; cells differing away from the rectangle's edges must be none",
+     "reference": "the pyramid of a pinhole camera cut by a plane, written out in the check",
+     "references": [
+      "hartley2004"
+     ],
+     "error": 5.353969247670883e-08,
+     "tolerance": 0.001,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.129,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "cells_seen": 37328,
+      "cells_in_the_footprint": 37328,
+      "cells_differing": 0,
+      "cells_differing_away_from_the_edges": 0,
+      "cell_share_differing": 0.0,
+      "density_rel_error": 5.353969247670883e-08,
+      "cell_m": 0.02,
+      "area_m2": 14.9312,
+      "footprint_area_m2": 14.929920000000008,
+      "corners_on_the_plate_m": [
+       [
+        5.021,
+        2.5708
+       ],
+       [
+        6.284,
+        -1.5604
+       ],
+       [
+        2.979,
+        -2.5708
+       ],
+       [
+        1.716,
+        1.5604
+       ]
+      ],
+      "pose": {
+       "x": 4.0,
+       "y": 0.0,
+       "z": 3.0,
+       "yaw": 17.0,
+       "pitch": 90.0,
+       "roll": 0.0
+      },
+      "closed_form_area_m2": 14.929920000000001
+     },
+     "figure": null
+    },
+    {
+     "id": "coverage.oblique_footprint",
+     "model": "coverage",
+     "title": "An aimed and rolled camera's footprint on a plate",
+     "quantity": "share of footprint cells the analysis marks differently from the quadrilateral the image corners of a rectilinear camera at yaw 30°, pitch 50° down and roll 8° cast on the plate (rays built from the documented ISO 8855 Z-Y-X convention with scipy, not the app's rotations); the largest relative density difference as for the downward camera; cells differing away from the edges must be none",
+     "reference": "the image corners' rays intersected with the plane, written out in the check",
+     "references": [
+      "iso8855",
+      "hartley2004"
+     ],
+     "error": 5.900271013308491e-08,
+     "tolerance": 0.001,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.288,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "cells_seen": 99994,
+      "cells_in_the_footprint": 99994,
+      "cells_differing": 0,
+      "cells_differing_away_from_the_edges": 0,
+      "cell_share_differing": 0.0,
+      "density_rel_error": 5.900271013308491e-08,
+      "cell_m": 0.02,
+      "area_m2": 39.9976,
+      "footprint_area_m2": 39.97233760369495,
+      "corners_on_the_plate_m": [
+       [
+        7.1131,
+        8.9054
+       ],
+       [
+        8.8195,
+        -0.4994
+       ],
+       [
+        2.8942,
+        -0.5097
+       ],
+       [
+        1.6447,
+        2.4382
+       ]
+      ],
+      "pose": {
+       "x": 2.0,
+       "y": 0.5,
+       "z": 2.5,
+       "yaw": 30.0,
+       "pitch": 50.0,
+       "roll": 8.0
+      }
+     },
+     "figure": null
+    },
+    {
+     "id": "coverage.fisheye_cone",
+     "model": "coverage",
+     "title": "A fisheye's image circle on a plate is a disc",
+     "quantity": "share of cells the analysis marks differently from the disc of radius h·tan θ_max a downward equidistant lens's image circle (inside the sensor) casts; the largest relative difference of a seen cell's density from (f/p)·√(θ / sin θ) / R",
+     "reference": "the cone of the image circle cut by the plane, written out in the check",
+     "references": [
+      "miyamoto1964"
+     ],
+     "error": 5.9441679146504206e-08,
+     "tolerance": 0.001,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.077,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "cells_seen": 94249,
+      "cells_in_the_disc": 94249,
+      "cells_differing": 0,
+      "cells_differing_away_from_the_edge": 0,
+      "area_m2": 84.8241,
+      "disc_area_m2": 84.82300164692437,
+      "radius_m": 5.19615242270663,
+      "density_rel_error": 5.9441679146504206e-08,
+      "cell_m": 0.03
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "occlusion",
+   "title": "Occlusion by the body",
+   "modules": "vantage.core.occlusion",
+   "methods_anchor": "occlusion",
+   "passed": 3,
+   "checks": [
+    {
+     "id": "occlusion.cube_vs_rays",
+     "model": "occlusion",
+     "title": "Cube maps against exact ray casting",
+     "quantity": "share of random directions from each camera of the project in which the occlusion cube map (body and rig, 256 × 256 texels per face) and an exact ray cast against the same triangles disagree on whether the body is hit; every disagreement must lie within 1° of the exact silhouette",
+     "reference": "Möller–Trumbore ray–triangle intersection against every occluder triangle, written for the check",
+     "references": [
+      "greene1986",
+      "moller1997"
+     ],
+     "error": 0.001958333333333333,
+     "tolerance": 0.005,
+     "unit": "share of directions",
+     "passed": true,
+     "seconds": 3.973,
+     "note": "A cube map texel stores the exact distance along its centre ray to the plane of the triangle drawn there (painted far to near by each triangle's nearest point): the depth error left is the texel's size (a random direction lies up to half a texel off the centre ray; most at grazing angles and silhouettes), see the median and 95th percentile here. Until 0.2.0 it stored the triangle centroid's distance: 15 % off in the median, over 3× at the 95th percentile. What the analysis decides from it is checked in occlusion.ground_visibility.",
+     "exception": "",
+     "detail": {
+      "project": "tigor-ev-svm",
+      "cameras": {
+       "F": {
+        "directions": 4000,
+        "disagree": 5,
+        "hit_share": 0.398,
+        "farthest_from_silhouette_deg": 0.45
+       },
+       "R": {
+        "directions": 4000,
+        "disagree": 3,
+        "hit_share": 0.3985,
+        "farthest_from_silhouette_deg": 0.45
+       },
+       "ML": {
+        "directions": 4000,
+        "disagree": 7,
+        "hit_share": 0.684,
+        "farthest_from_silhouette_deg": 0.3
+       },
+       "MR": {
+        "directions": 4000,
+        "disagree": 10,
+        "hit_share": 0.6707,
+        "farthest_from_silhouette_deg": 0.3
+       },
+       "QL": {
+        "directions": 4000,
+        "disagree": 13,
+        "hit_share": 0.4315,
+        "farthest_from_silhouette_deg": 0.45
+       },
+       "QR": {
+        "directions": 4000,
+        "disagree": 9,
+        "hit_share": 0.454,
+        "farthest_from_silhouette_deg": 0.6
+       }
+      },
+      "directions": 24000,
+      "disagree": 47,
+      "farthest_from_silhouette_deg": 0.6,
+      "silhouette_band_deg": 1.0,
+      "depth_rel_error_median": 0.001545572790678814,
+      "depth_rel_error_p95": 0.014184105954725043,
+      "triangles": 6040
+     },
+     "figure": {
+      "kind": "bars",
+      "title": "How far from the exact silhouette the directions that disagree lie",
+      "xlabel": "angle to the exact silhouette",
+      "ylabel": "directions that disagree",
+      "series": [
+       {
+        "label": "disagreements",
+        "kind": "bar",
+        "x": [
+         0.0,
+         1.0,
+         2.0,
+         3.0,
+         4.0,
+         5.0,
+         6.0,
+         7.0,
+         8.0,
+         9.0
+        ],
+        "y": [
+         20.0,
+         14.0,
+         9.0,
+         3.0,
+         1.0,
+         0.0,
+         0.0,
+         0.0,
+         0.0,
+         0.0
+        ]
+       }
+      ],
+      "logy": false,
+      "hline": null,
+      "hline_label": "",
+      "diag": false,
+      "categories": [
+       "≤ 0.1°",
+       "≤ 0.2°",
+       "≤ 0.3°",
+       "≤ 0.45°",
+       "≤ 0.6°",
+       "≤ 0.8°",
+       "≤ 1°",
+       "≤ 1.5°",
+       "≤ 2°",
+       "> 2°"
+      ]
+     }
+    },
+    {
+     "id": "occlusion.cube_depth",
+     "model": "occlusion",
+     "title": "Cube-map depth against exact ray casting",
+     "quantity": "share of the texels where a camera's cube map (body and rig, 256 × 256 texels per face) is hit whose stored depth is more than 0.1 % off the exact first hit along the texel's centre ray and more than 5 % off every exact hit within one texel of it (rays through the neighbouring texels' centres and the texel's edges): the depth must be exact but for the texel's own size",
+     "reference": "Möller–Trumbore ray–triangle intersection against every occluder triangle, written for the check",
+     "references": [
+      "greene1986",
+      "moller1997"
+     ],
+     "error": 0.0009444444444444445,
+     "tolerance": 0.005,
+     "unit": "share of texels",
+     "passed": true,
+     "seconds": 3.302,
+     "note": "The texels off by more than 0.1 % lie at a silhouette or a crease: the triangle drawn there covers part of the texel but not its centre (a polygon's one-pixel outline), so the depth is of a surface within one texel of the centre ray.",
+     "exception": "",
+     "detail": {
+      "project": "tigor-ev-svm",
+      "cameras": {
+       "F": {
+        "texels": 3000,
+        "off_by_more_than_0_1pct": 8,
+        "no_surface_within_one_texel": 0
+       },
+       "R": {
+        "texels": 3000,
+        "off_by_more_than_0_1pct": 13,
+        "no_surface_within_one_texel": 0
+       },
+       "ML": {
+        "texels": 3000,
+        "off_by_more_than_0_1pct": 55,
+        "no_surface_within_one_texel": 11
+       },
+       "MR": {
+        "texels": 3000,
+        "off_by_more_than_0_1pct": 45,
+        "no_surface_within_one_texel": 6
+       },
+       "QL": {
+        "texels": 3000,
+        "off_by_more_than_0_1pct": 54,
+        "no_surface_within_one_texel": 0
+       },
+       "QR": {
+        "texels": 3000,
+        "off_by_more_than_0_1pct": 59,
+        "no_surface_within_one_texel": 0
+       }
+      },
+      "texels": 18000,
+      "off_by_more_than_0_1pct": 234,
+      "no_surface_within_one_texel": 17,
+      "centre_rel_error_median": 2.1024640751319358e-08,
+      "centre_rel_error_p99": 0.0008994800432575444,
+      "triangles": 6040
+     },
+     "figure": {
+      "kind": "bars",
+      "title": "Stored depth against the exact hit along the texel's centre ray",
+      "xlabel": "relative difference",
+      "ylabel": "texels",
+      "series": [
+       {
+        "label": "texels",
+        "kind": "bar",
+        "x": [
+         0.0,
+         1.0,
+         2.0,
+         3.0,
+         4.0,
+         5.0
+        ],
+        "y": [
+         17725.0,
+         41.0,
+         70.0,
+         70.0,
+         38.0,
+         56.0
+        ]
+       }
+      ],
+      "logy": false,
+      "hline": null,
+      "hline_label": "",
+      "diag": false,
+      "categories": [
+       "≤ 1e-6",
+       "≤ 0.1 %",
+       "≤ 1 %",
+       "≤ 5 %",
+       "> 5 %",
+       "exact ray misses"
+      ]
+     }
+    },
+    {
+     "id": "occlusion.ground_visibility",
+     "model": "occlusion",
+     "title": "Which ground points a camera sees past the body",
+     "quantity": "share of ground points of the region of interest in each camera's image whose visibility (analysis.eval_points with the cube map) differs from an exact test of the straight line from the lens to the point against every occluder triangle (with the same 2 cm + 1 % distance allowance); every disagreement must lie within 1° of the exact silhouette",
+     "reference": "Möller–Trumbore ray–triangle intersection along the line of sight, written for the check",
+     "references": [
+      "greene1986",
+      "moller1997"
+     ],
+     "error": 0.0007850018470631695,
+     "tolerance": 0.005,
+     "unit": "share of points",
+     "passed": true,
+     "seconds": 2.949,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "project": "tigor-ev-svm",
+      "cameras": {
+       "F": {
+        "points": 2919,
+        "hidden_share": 0.0134,
+        "disagree": 1,
+        "farthest_from_silhouette_deg": 0.3
+       },
+       "R": {
+        "points": 2783,
+        "hidden_share": 0.0057,
+        "disagree": 0,
+        "farthest_from_silhouette_deg": 0.0
+       },
+       "ML": {
+        "points": 3997,
+        "hidden_share": 0.062,
+        "disagree": 5,
+        "farthest_from_silhouette_deg": 0.1
+       },
+       "MR": {
+        "points": 3957,
+        "hidden_share": 0.0632,
+        "disagree": 4,
+        "farthest_from_silhouette_deg": 0.1
+       },
+       "QL": {
+        "points": 4000,
+        "hidden_share": 0.056,
+        "disagree": 2,
+        "farthest_from_silhouette_deg": 0.2
+       },
+       "QR": {
+        "points": 4000,
+        "hidden_share": 0.0548,
+        "disagree": 5,
+        "farthest_from_silhouette_deg": 0.3
+       }
+      },
+      "points": 21656,
+      "disagree": 17,
+      "farthest_from_silhouette_deg": 0.3,
+      "silhouette_band_deg": 1.0
+     },
+     "figure": {
+      "kind": "bars",
+      "title": "How far from the exact silhouette the points that disagree lie",
+      "xlabel": "angle to the exact silhouette",
+      "ylabel": "points that disagree",
+      "series": [
+       {
+        "label": "disagreements",
+        "kind": "bar",
+        "x": [
+         0.0,
+         1.0,
+         2.0,
+         3.0,
+         4.0,
+         5.0,
+         6.0,
+         7.0,
+         8.0,
+         9.0
+        ],
+        "y": [
+         12.0,
+         3.0,
+         2.0,
+         0.0,
+         0.0,
+         0.0,
+         0.0,
+         0.0,
+         0.0,
+         0.0
+        ]
+       }
+      ],
+      "logy": false,
+      "hline": null,
+      "hline_label": "",
+      "diag": false,
+      "categories": [
+       "≤ 0.1°",
+       "≤ 0.2°",
+       "≤ 0.3°",
+       "≤ 0.45°",
+       "≤ 0.6°",
+       "≤ 0.8°",
+       "≤ 1°",
+       "≤ 1.5°",
+       "≤ 2°",
+       "> 2°"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "perception",
+   "title": "Perception range",
+   "modules": "vantage.core.perception",
+   "methods_anchor": "perception",
+   "passed": 3,
+   "checks": [
+    {
+     "id": "perception.pinhole_pixels",
+     "model": "perception",
+     "title": "Object pixels through a pinhole lens",
+     "quantity": "largest relative difference of an object's pixel height and width (perception.object_pixels) from f·H/Z and f·W/Z for a level 6 mm pinhole camera, objects on and off the axis and a sign on a post",
+     "reference": "the pinhole projection of a fronto-parallel segment, f·H/Z with Z the depth along the axis",
+     "references": [
+      "hartley2004",
+      "johnson1958"
+     ],
+     "error": 0.0,
+     "tolerance": 1e-09,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.003,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "f_px": 2000.0,
+      "heights_px": [
+       600.0,
+       300.0,
+       75.0,
+       30.0
+      ],
+      "widths_px": [
+       720.0,
+       360.0,
+       90.0,
+       36.0
+      ]
+     },
+     "figure": null
+    },
+    {
+     "id": "perception.fisheye_pixels",
+     "model": "perception",
+     "title": "Object pixels through a fisheye follow its local sampling",
+     "quantity": "largest relative difference of an object's pixel height and width through the built-in H05R2 lens, 30 m out on the axis and 55° off it, from its size over the distance times the lens's local sampling (radial dr/dθ, tangential r/sin θ)",
+     "reference": "the first-order local magnification of the lens at the object's direction",
+     "references": [
+      "kannala2006"
+     ],
+     "error": 0.0010318477235599214,
+     "tolerance": 0.02,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.002,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "pixels": [
+       43.6578,
+       52.3846,
+       51.6321,
+       46.9632
+      ],
+      "local_sampling_estimate": [
+       43.6667,
+       52.4,
+       51.6457,
+       47.0117
+      ]
+     },
+     "figure": null
+    },
+    {
+     "id": "perception.far_range",
+     "model": "perception",
+     "title": "Perception range of a pinhole camera",
+     "quantity": "relative difference of the far range ahead the study finds for a car with a level 6 mm rectilinear camera on the sample's front bumper from the range where the car is exactly min_px tall, f·H / min_px (measured from the vehicle centre), for min_px 20 and 33",
+     "reference": "the pinhole relation f·H/Z = min_px solved for Z",
+     "references": [
+      "hartley2004",
+      "johnson1958"
+     ],
+     "error": 5.609123539417216e-16,
+     "tolerance": 0.001,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.107,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "20 px": {
+       "far_m": 152.0115000000001,
+       "closed_form_m": 152.0115
+      },
+      "33 px": {
+       "far_m": 92.92059090909089,
+       "closed_form_m": 92.9205909090909
+      }
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "critical",
+   "title": "Critical targets and mounting envelopes",
+   "modules": "vantage.core.critical",
+   "methods_anchor": "critical",
+   "passed": 2,
+   "checks": [
+    {
+     "id": "critical.pinhole_pixels",
+     "model": "critical",
+     "title": "Critical-target pixels through a pinhole lens",
+     "quantity": "largest relative difference of a 1.7 m × 0.5 m pedestrian's pixel height and width 10 m ahead of a level 4 mm pinhole camera, and of its distance, from f·h/Z, f·w/Z and the straight-line distance",
+     "reference": "the pinhole projection, written out in the check",
+     "references": [
+      "hartley2004"
+     ],
+     "error": 1.2789769243681805e-15,
+     "tolerance": 1e-06,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.011,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "got": [
+       226.66666666666663,
+       66.66666666666674,
+       10.006123125366788
+      ],
+      "closed_form": [
+       226.66666666666666,
+       66.66666666666666,
+       10.006123125366788
+      ],
+      "seen": 1.0
+     },
+     "figure": null
+    },
+    {
+     "id": "critical.pinhole_envelope",
+     "model": "critical",
+     "title": "Mounting envelopes of a pinhole camera",
+     "quantity": "largest difference of the single-axis pitch and yaw limits the envelope search finds from where the target's top, feet or outer columns leave the image (half the field minus their angle), and of the backward x limit from where its height falls to min_px (in metres × 100, so 0.02 is 0.2 mm)",
+     "reference": "the angles of the target's edges against the half field, and f·h / min_px, written out in the check",
+     "references": [
+      "hartley2004"
+     ],
+     "error": 0.006561916261645706,
+     "tolerance": 0.02,
+     "unit": "degrees",
+     "passed": true,
+     "seconds": 0.142,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "pitch down (top leaves)": {
+       "found": 27.078125,
+       "closed_form": 27.07953730416122
+      },
+      "pitch up (feet leave)": {
+       "found": 23.09375,
+       "closed_form": 23.099169117642028
+      },
+      "yaw (outer column leaves)": {
+       "found": 34.6015625,
+       "closed_form": 34.608124416261646
+      },
+      "x back, ×100 m (pixels run out)": {
+       "found": 50.0,
+       "closed_form": 50.0
+      }
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "lidar",
+   "title": "Lidar beams, rings and points",
+   "modules": "vantage.core.sensors, vantage.core.sensor_coverage",
+   "methods_anchor": "lidar",
+   "passed": 4,
+   "checks": [
+    {
+     "id": "lidar.ring_radii",
+     "model": "lidar",
+     "title": "Ground rings of a level lidar",
+     "quantity": "largest relative difference of each channel's ground ring radius (sensors.ground_rings) from h / tan|ε| for every downward channel of the OS1-128 2 m above the ground; the front of a ring of a lidar pitched 5° down must lie at h / tan(|ε| + 5°) (to the 1° azimuth sampling)",
+     "reference": "the cone of a beam at elevation ε cut by the ground plane, written out in the check",
+     "references": [
+      "rep103"
+     ],
+     "error": 4.668412692674904e-16,
+     "tolerance": 1e-09,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.006,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "channels_on_the_ground": 60,
+      "height_m": 2.0,
+      "tilted_front_m": 7.413139644989869,
+      "tilted_closed_form_m": 7.41313964498987,
+      "tilted_rel_error": 1.1981137038210198e-16
+     },
+     "figure": {
+      "kind": "xy",
+      "title": "Ground ring radius per channel, OS1-128 at 2 m",
+      "xlabel": "beam elevation, °",
+      "ylabel": "ring radius, m",
+      "series": [
+       {
+        "label": "h / tan|ε|",
+        "kind": "line",
+        "x": [
+         -22.5,
+         -22.145669,
+         -21.791339,
+         -21.437008,
+         -21.082677,
+         -20.728346,
+         -20.374016,
+         -20.019685,
+         -19.665354,
+         -19.311024,
+         -18.956693,
+         -18.602362,
+         -18.248031,
+         -17.893701,
+         -17.53937,
+         -17.185039,
+         -16.830709,
+         -16.476378,
+         -16.122047,
+         -15.767717,
+         -15.413386,
+         -15.059055,
+         -14.704724,
+         -14.350394,
+         -13.996063,
+         -13.641732,
+         -13.287402,
+         -12.933071,
+         -12.57874,
+         -12.224409,
+         -11.870079,
+         -11.515748,
+         -11.161417,
+         -10.807087,
+         -10.452756,
+         -10.098425,
+         -9.7440945,
+         -9.3897638,
+         -9.0354331,
+         -8.6811024,
+         -8.3267717,
+         -7.9724409,
+         -7.6181102,
+         -7.2637795,
+         -6.9094488,
+         -6.5551181,
+         -6.2007874,
+         -5.8464567,
+         -5.492126,
+         -5.1377953,
+         -4.7834646,
+         -4.4291339,
+         -4.0748031,
+         -3.7204724,
+         -3.3661417,
+         -3.011811,
+         -2.6574803,
+         -2.3031496,
+         -1.9488189,
+         -1.5944882
+        ],
+        "y": [
+         4.8284271,
+         4.9141655,
+         5.0025498,
+         5.0937114,
+         5.1877906,
+         5.2849374,
+         5.3853121,
+         5.4890863,
+         5.5964441,
+         5.7075829,
+         5.8227152,
+         5.9420693,
+         6.0658916,
+         6.1944476,
+         6.3280245,
+         6.4669333,
+         6.6115108,
+         6.7621232,
+         6.9191686,
+         7.0830809,
+         7.254334,
+         7.4334463,
+         7.6209863,
+         7.8175785,
+         8.0239107,
+         8.240742,
+         8.4689127,
+         8.7093551,
+         8.9631065,
+         9.2313245,
+         9.5153048,
+         9.8165027,
+         10.136558,
+         10.477327,
+         10.840914,
+         11.229724,
+         11.646507,
+         12.09443,
+         12.577158,
+         13.098952,
+         13.6648,
+         14.280576,
+         14.953247,
+         15.69114,
+         16.504288,
+         17.404896,
+         18.407957,
+         19.532099,
+         20.800757,
+         22.243831,
+         23.900082,
+         25.820672,
+         28.074558,
+         30.756969,
+         34.003229,
+         38.012343,
+         43.089454,
+         49.727482,
+         58.77784,
+         71.848745
+        ]
+       },
+       {
+        "label": "sensors.ground_rings",
+        "kind": "points",
+        "x": [
+         -22.5,
+         -22.145669,
+         -21.791339,
+         -21.437008,
+         -21.082677,
+         -20.728346,
+         -20.374016,
+         -20.019685,
+         -19.665354,
+         -19.311024,
+         -18.956693,
+         -18.602362,
+         -18.248031,
+         -17.893701,
+         -17.53937,
+         -17.185039,
+         -16.830709,
+         -16.476378,
+         -16.122047,
+         -15.767717,
+         -15.413386,
+         -15.059055,
+         -14.704724,
+         -14.350394,
+         -13.996063,
+         -13.641732,
+         -13.287402,
+         -12.933071,
+         -12.57874,
+         -12.224409,
+         -11.870079,
+         -11.515748,
+         -11.161417,
+         -10.807087,
+         -10.452756,
+         -10.098425,
+         -9.7440945,
+         -9.3897638,
+         -9.0354331,
+         -8.6811024,
+         -8.3267717,
+         -7.9724409,
+         -7.6181102,
+         -7.2637795,
+         -6.9094488,
+         -6.5551181,
+         -6.2007874,
+         -5.8464567,
+         -5.492126,
+         -5.1377953,
+         -4.7834646,
+         -4.4291339,
+         -4.0748031,
+         -3.7204724,
+         -3.3661417,
+         -3.011811,
+         -2.6574803,
+         -2.3031496,
+         -1.9488189,
+         -1.5944882
+        ],
+        "y": [
+         4.8284271,
+         4.9141655,
+         5.0025498,
+         5.0937114,
+         5.1877906,
+         5.2849374,
+         5.3853121,
+         5.4890863,
+         5.5964441,
+         5.7075829,
+         5.8227152,
+         5.9420693,
+         6.0658916,
+         6.1944476,
+         6.3280245,
+         6.4669333,
+         6.6115108,
+         6.7621232,
+         6.9191686,
+         7.0830809,
+         7.254334,
+         7.4334463,
+         7.6209863,
+         7.8175785,
+         8.0239107,
+         8.240742,
+         8.4689127,
+         8.7093551,
+         8.9631065,
+         9.2313245,
+         9.5153048,
+         9.8165027,
+         10.136558,
+         10.477327,
+         10.840914,
+         11.229724,
+         11.646507,
+         12.09443,
+         12.577158,
+         13.098952,
+         13.6648,
+         14.280576,
+         14.953247,
+         15.69114,
+         16.504288,
+         17.404896,
+         18.407957,
+         19.532099,
+         20.800757,
+         22.243831,
+         23.900082,
+         25.820672,
+         28.074558,
+         30.756969,
+         34.003229,
+         38.012343,
+         43.089454,
+         49.727482,
+         58.77784,
+         71.848745
+        ]
+       }
+      ],
+      "logy": false,
+      "hline": null,
+      "hline_label": "",
+      "diag": false,
+      "categories": null
+     }
+    },
+    {
+     "id": "lidar.ground_points",
+     "model": "lidar",
+     "title": "Points a level lidar puts on the ground",
+     "quantity": "relative difference of the points per frame summed over the ground density map (lidar and radar coverage) from every downward channel within range times the columns per revolution, a level OS1-128 2 m up with nothing in the way and a map that holds every ring; the nearest ground point in every direction must be the lowest ring",
+     "reference": "the beam count: channels reaching the ground within range × columns per revolution",
+     "references": [
+      "rep103"
+     ],
+     "error": 6.357828776041667e-08,
+     "tolerance": 1e-06,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.032,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "points_per_frame_on_the_ground": 61440.00390625,
+      "beam_count": 61440,
+      "rings_in_range": 60,
+      "columns": 1024,
+      "nearest_ground_rel_error": 2.3798226482483497e-06,
+      "lowest_ring_m": 4.82842712474619
+     },
+     "figure": null
+    },
+    {
+     "id": "lidar.points_level",
+     "model": "lidar",
+     "title": "Lidar points on an object: a level lidar",
+     "quantity": "largest relative difference between the points per frame the coverage study counts on a car (1.5 m × 1.8 m) 8–60 m from an OS1-128 2 m up, ahead and 35° to the side, and the beams that meet the car's face when every beam of a revolution is cast, averaged over 16 phases of the scan's azimuths (one phase differs by up to a point per channel); the channels crossing the car must agree within one",
+     "reference": "every beam (channel elevation × column azimuth, through the lidar's rotation) intersected with a vertical rectangle square to the line of sight, written for the check",
+     "references": [
+      "rep103"
+     ],
+     "error": 0.009848464143850051,
+     "tolerance": 0.02,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.335,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "cases": [
+       {
+        "range_m": 8.0,
+        "azimuth_deg": 0.0,
+        "counted": 1095.47,
+        "cast_mean": 1085.5,
+        "cast_range": [
+         1069,
+         1098
+        ],
+        "channels_counted": 30,
+        "channels_cast": [
+         30
+        ],
+        "rel_difference": 0.0092
+       },
+       {
+        "range_m": 8.0,
+        "azimuth_deg": 35.0,
+        "counted": 1095.47,
+        "cast_mean": 1085.5,
+        "cast_range": [
+         1069,
+         1098
+        ],
+        "channels_counted": 30,
+        "channels_cast": [
+         30
+        ],
+        "rel_difference": 0.0092
+       },
+       {
+        "range_m": 20.0,
+        "azimuth_deg": 0.0,
+        "counted": 175.89,
+        "cast_mean": 176.25,
+        "cast_range": [
+         168,
+         180
+        ],
+        "channels_counted": 12,
+        "channels_cast": [
+         12
+        ],
+        "rel_difference": 0.002
+       },
+       {
+        "range_m": 20.0,
+        "azimuth_deg": 35.0,
+        "counted": 175.89,
+        "cast_mean": 176.25,
+        "cast_range": [
+         168,
+         180
+        ],
+        "channels_counted": 12,
+        "channels_cast": [
+         12
+        ],
+        "rel_difference": 0.002
+       },
+       {
+        "range_m": 35.0,
+        "azimuth_deg": 0.0,
+        "counted": 58.66,
+        "cast_mean": 59.06,
+        "cast_range": [
+         56,
+         63
+        ],
+        "channels_counted": 7,
+        "channels_cast": [
+         7
+        ],
+        "rel_difference": 0.0068
+       },
+       {
+        "range_m": 35.0,
+        "azimuth_deg": 35.0,
+        "counted": 58.66,
+        "cast_mean": 58.62,
+        "cast_range": [
+         56,
+         63
+        ],
+        "channels_counted": 7,
+        "channels_cast": [
+         7
+        ],
+        "rel_difference": 0.0006
+       },
+       {
+        "range_m": 60.0,
+        "azimuth_deg": 0.0,
+        "counted": 19.56,
+        "cast_mean": 19.75,
+        "cast_range": [
+         16,
+         20
+        ],
+        "channels_counted": 4,
+        "channels_cast": [
+         4
+        ],
+        "rel_difference": 0.0098
+       },
+       {
+        "range_m": 60.0,
+        "azimuth_deg": 35.0,
+        "counted": 19.56,
+        "cast_mean": 19.5,
+        "cast_range": [
+         16,
+         20
+        ],
+        "channels_counted": 4,
+        "channels_cast": [
+         4
+        ],
+        "rel_difference": 0.0028
+       }
+      ],
+      "phases": 16
+     },
+     "figure": null
+    },
+    {
+     "id": "lidar.points_tilted",
+     "model": "lidar",
+     "title": "Lidar points on an object: a lidar pitched 5° down",
+     "quantity": "largest relative difference between the points per frame the coverage study counts on a car (1.5 m × 1.8 m) 8–60 m from an OS1-128 2 m up, ahead and 35° to the side, and the beams that meet the car's face when every beam of a revolution is cast, averaged over 16 phases of the scan's azimuths (one phase differs by up to a point per channel); the lidar pitched 5° down",
+     "reference": "every beam (channel elevation × column azimuth, through the lidar's rotation) intersected with a vertical rectangle square to the line of sight, written for the check",
+     "references": [
+      "rep103"
+     ],
+     "error": 0.0769441251081651,
+     "tolerance": 0.1,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.334,
+     "note": "The study gives every channel that crosses the object its full angular width / h_res. A pitched lidar's channel that crosses the top or bottom edge off its axis meets the face over part of the width only (the edge is tilted in the lidar's frame), so the count runs high there (and the channels it counts can differ by two from those cast): up to about 8 % in these cases, against 1 % for a level lidar.",
+     "exception": "",
+     "detail": {
+      "cases": [
+       {
+        "range_m": 8.0,
+        "azimuth_deg": 0.0,
+        "counted": 1095.47,
+        "cast_mean": 1053.5,
+        "cast_range": [
+         1048,
+         1066
+        ],
+        "channels_counted": 30,
+        "channels_cast": [
+         30
+        ],
+        "rel_difference": 0.0398
+       },
+       {
+        "range_m": 8.0,
+        "azimuth_deg": 35.0,
+        "counted": 1058.96,
+        "cast_mean": 1067.12,
+        "cast_range": [
+         1066,
+         1070
+        ],
+        "channels_counted": 29,
+        "channels_cast": [
+         31
+        ],
+        "rel_difference": 0.0077
+       },
+       {
+        "range_m": 20.0,
+        "azimuth_deg": 0.0,
+        "counted": 175.89,
+        "cast_mean": 175.62,
+        "cast_range": [
+         168,
+         180
+        ],
+        "channels_counted": 12,
+        "channels_cast": [
+         12
+        ],
+        "rel_difference": 0.0015
+       },
+       {
+        "range_m": 20.0,
+        "azimuth_deg": 35.0,
+        "counted": 190.55,
+        "cast_mean": 176.94,
+        "cast_range": [
+         174,
+         182
+        ],
+        "channels_counted": 13,
+        "channels_cast": [
+         13
+        ],
+        "rel_difference": 0.0769
+       },
+       {
+        "range_m": 35.0,
+        "azimuth_deg": 0.0,
+        "counted": 58.66,
+        "cast_mean": 58.94,
+        "cast_range": [
+         56,
+         63
+        ],
+        "channels_counted": 7,
+        "channels_cast": [
+         7
+        ],
+        "rel_difference": 0.0047
+       },
+       {
+        "range_m": 35.0,
+        "azimuth_deg": 35.0,
+        "counted": 58.66,
+        "cast_mean": 57.88,
+        "cast_range": [
+         55,
+         62
+        ],
+        "channels_counted": 7,
+        "channels_cast": [
+         7
+        ],
+        "rel_difference": 0.0135
+       },
+       {
+        "range_m": 60.0,
+        "azimuth_deg": 0.0,
+        "counted": 19.56,
+        "cast_mean": 19.75,
+        "cast_range": [
+         16,
+         20
+        ],
+        "channels_counted": 4,
+        "channels_cast": [
+         4
+        ],
+        "rel_difference": 0.0098
+       },
+       {
+        "range_m": 60.0,
+        "azimuth_deg": 35.0,
+        "counted": 19.56,
+        "cast_mean": 19.62,
+        "cast_range": [
+         18,
+         20
+        ],
+        "channels_counted": 4,
+        "channels_cast": [
+         4
+        ],
+        "rel_difference": 0.0035
+       }
+      ],
+      "phases": 16
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "radar",
+   "title": "Radar range and the bumper fascia",
+   "modules": "vantage.core.sensor_coverage, vantage.core.materials",
+   "methods_anchor": "radar",
+   "passed": 6,
+   "checks": [
+    {
+     "id": "radar.cross_section",
+     "model": "radar",
+     "title": "Radar range against the cross-section",
+     "quantity": "largest relative difference of the pedestrian's and cyclist's radar range from the car's scaled by (σ / σ_car)^¼, and of the car's from the zone's 100 m (slant to its centre), a corner radar with nothing in the way",
+     "reference": "the radar equation: received power ∝ σ / R⁴, so the range at a fixed threshold ∝ σ^¼",
+     "references": [
+      "skolnik2001"
+     ],
+     "error": 1.0455967620448536e-05,
+     "tolerance": 0.0001,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.013,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "errors": {
+       "car": 2.8628998120439063e-06,
+       "pedestrian": 1.0455967620448536e-05,
+       "cyclist": 8.669564899199678e-06
+      },
+      "ranges_m": {
+       "Car": 99.99940120953052,
+       "Pedestrian": 47.28575170912665,
+       "Cyclist": 56.232928843110116,
+       "Traffic sign": null
+      }
+     },
+     "figure": null
+    },
+    {
+     "id": "radar.slab",
+     "model": "radar",
+     "title": "One fascia layer against the sum of its reflections",
+     "quantity": "largest difference of the power reflectance and transmittance of a single dielectric slab (materials.stack_rt, the characteristic-matrix method) from the sum of its internal bounces, TE and TM, lossless and lossy, normal to 75° incidence at 76.5 GHz",
+     "reference": "the Airy summation of the slab's multiple reflections with the Fresnel interface coefficients, written for the check",
+     "references": [
+      "macleod2010",
+      "bornwolf1999"
+     ],
+     "error": 3.3306690738754696e-16,
+     "tolerance": 1e-09,
+     "unit": "power ratio",
+     "passed": true,
+     "seconds": 0.002,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "cases": [
+       {
+        "eps": 2.75,
+        "tan_delta": 0.005,
+        "mm": 3.0,
+        "incidence_deg": 0.0,
+        "pol": "TE",
+        "R": 0.207871,
+        "T": 0.757606,
+        "difference": 3.3306690738754696e-16
+       },
+       {
+        "eps": 2.75,
+        "tan_delta": 0.005,
+        "mm": 3.0,
+        "incidence_deg": 0.0,
+        "pol": "TM",
+        "R": 0.207871,
+        "T": 0.757606,
+        "difference": 3.3306690738754696e-16
+       },
+       {
+        "eps": 2.75,
+        "tan_delta": 0.005,
+        "mm": 3.0,
+        "incidence_deg": 35.0,
+        "pol": "TE",
+        "R": 0.280071,
+        "T": 0.68319,
+        "difference": 3.3306690738754696e-16
+       },
+       {
+        "eps": 2.75,
+        "tan_delta": 0.005,
+        "mm": 3.0,
+        "incidence_deg": 35.0,
+        "pol": "TM",
+        "R": 0.106383,
+        "T": 0.853577,
+        "difference": 2.220446049250313e-16
+       },
+       {
+        "eps": 6.31,
+        "tan_delta": 0.045,
+        "mm": 2.1,
+        "incidence_deg": 60.0,
+        "pol": "TE",
+        "R": 0.714496,
+        "T": 0.136055,
+        "difference": 3.3306690738754696e-16
+       },
+       {
+        "eps": 6.31,
+        "tan_delta": 0.045,
+        "mm": 2.1,
+        "incidence_deg": 60.0,
+        "pol": "TM",
+        "R": 0.056517,
+        "T": 0.622454,
+        "difference": 1.457167719820518e-16
+       },
+       {
+        "eps": 3.2,
+        "tan_delta": 0.02,
+        "mm": 1.7,
+        "incidence_deg": 75.0,
+        "pol": "TE",
+        "R": 0.794997,
+        "T": 0.147321,
+        "difference": 2.7755575615628914e-17
+       },
+       {
+        "eps": 3.2,
+        "tan_delta": 0.02,
+        "mm": 1.7,
+        "incidence_deg": 75.0,
+        "pol": "TM",
+        "R": 0.192588,
+        "T": 0.70786,
+        "difference": 2.220446049250313e-16
+       },
+       {
+        "eps": 2.3,
+        "tan_delta": 0.0,
+        "mm": 2.5,
+        "incidence_deg": 20.0,
+        "pol": "TE",
+        "R": 0.026602,
+        "T": 0.973398,
+        "difference": 2.220446049250313e-16
+       },
+       {
+        "eps": 2.3,
+        "tan_delta": 0.0,
+        "mm": 2.5,
+        "incidence_deg": 20.0,
+        "pol": "TM",
+        "R": 0.018574,
+        "T": 0.981426,
+        "difference": 2.220446049250313e-16
+       }
+      ]
+     },
+     "figure": null
+    },
+    {
+     "id": "radar.thin_film",
+     "model": "radar",
+     "title": "Layer identities: half wave, quarter wave, Brewster, energy",
+     "quantity": "largest deviation from the closed forms: a lossless half-wave layer transmits everything; a quarter-wave layer reflects ((n²−1)/(n²+1))²; TM at Brewster's angle tan θ_B = n is not reflected; a lossless four-layer stack (substrate, primer, basecoat, clear coat) keeps R + T = 1 from 0° to 85°",
+     "reference": "thin-film closed forms (Macleod; Born & Wolf)",
+     "references": [
+      "macleod2010",
+      "bornwolf1999"
+     ],
+     "error": 6.661338147750939e-16,
+     "tolerance": 1e-09,
+     "unit": "power ratio",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "half wave: 1 − T": 0.0,
+      "quarter wave: R": 5.551115123125783e-17,
+      "Brewster TM |r|, 0.7 mm": 0.0,
+      "Brewster TM |r|, 2.3 mm": 0.0,
+      "Brewster TM |r|, 5.1 mm": 0.0,
+      "lossless stack: |R + T − 1|": 6.661338147750939e-16
+     },
+     "figure": null
+    },
+    {
+     "id": "radar.painted_plate",
+     "model": "radar",
+     "title": "A painted bumper plate against a measurement",
+     "quantity": "distance of the modelled 77 GHz one-way transmission |S21| of a 3.416 mm talc-filled PP plate with the library's primer, a metallic basecoat (ε = 48.94, 15 µm) and a 40 µm clear coat, for substrate ε 2.9–3.1, from the range of Emilsson's two measurements of the plate (−2.34 and −1.98 dB); |S11| must lie within 0.9 dB of its measured range (−5.75 to −4.86 dB)",
+     "reference": "Emilsson's measured S21 and S11 of the painted plate (sample 11)",
+     "references": [
+      "emilsson2017"
+     ],
+     "error": 0.18233177460095362,
+     "tolerance": 0.4,
+     "unit": "dB",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "model_s21_db": [
+       -1.906,
+       -2.229,
+       -2.522
+      ],
+      "model_s11_db": [
+       -6.004,
+       -5.185,
+       -4.591
+      ],
+      "measured_s21_db": [
+       -2.34,
+       -1.98
+      ],
+      "measured_s11_db": [
+       -5.75,
+       -4.86
+      ],
+      "s11_distance_db": 0.2687343078693969,
+      "unpainted_s21_db": -0.49808697390483925
+     },
+     "figure": null
+    },
+    {
+     "id": "radar.fascia_range",
+     "model": "radar",
+     "title": "A radar behind the bumper fascia loses range by the radar equation",
+     "quantity": "relative difference of the long-range radar RD1's range on a car straight ahead (from the vehicle centre), moved 8 cm behind the sample's front bumper fascia, from where the car's centre lies 250 m × 10^(−L/40) from the radar, L the two-way loss the materials study gives for that zone",
+     "reference": "the radar equation (range ∝ (two-way power transmission)^¼) applied to the materials study's loss, the geometry written out in the check",
+     "references": [
+      "skolnik2001",
+      "macleod2010"
+     ],
+     "error": 1.881403686874255e-07,
+     "tolerance": 0.001,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.708,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "zone_range_m": 250.0,
+      "two_way_loss_db": 2.383289426132987,
+      "factor": 0.8718018059837298,
+      "range_from_centre_m": 219.86676674885047,
+      "radar_equation_m": 219.8668081146728,
+      "mount": "behind"
+     },
+     "figure": null
+    },
+    {
+     "id": "radar.corner_reflector",
+     "model": "radar",
+     "title": "Cross-section of a trihedral corner reflector",
+     "quantity": "relative difference of observability.reflector_rcs from 4πa⁴ / 3λ² at 77 GHz for edges of 50–300 mm",
+     "reference": "the peak RCS of a triangular trihedral (Knott et al.)",
+     "references": [
+      "knott2004"
+     ],
+     "error": 2.0316856124012538e-16,
+     "tolerance": 1e-09,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.003,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "edge_mm": [
+       50.0,
+       100.0,
+       150.0,
+       300.0
+      ],
+      "rcs_m2": [
+       1.7271,
+       27.633,
+       139.8923,
+       2238.2762
+      ]
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "glass",
+   "title": "Cameras behind glass",
+   "modules": "vantage.core.materials",
+   "methods_anchor": "glass",
+   "passed": 2,
+   "checks": [
+    {
+     "id": "glass.plate_shift",
+     "model": "glass",
+     "title": "A ray through a glass plate shifts by the plate formula",
+     "quantity": "largest relative difference of the sideways shift materials.glass_optics gives for 3.5 mm side glass (n 1.52) from d·sin θ·(1 − cos θ / √(n² − sin²θ)), 0–75° incidence, and of the windscreen's slide along its surface from Σ d_j (tan θ − sin θ_j / cos θ_j)",
+     "reference": "the textbook lateral displacement of a plane-parallel plate (Hecht)",
+     "references": [
+      "hecht2017"
+     ],
+     "error": 3.123724855272947e-16,
+     "tolerance": 1e-09,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "side_glass_shift_mm": [
+       0.10479,
+       0.69417,
+       1.81784,
+       2.63518
+      ],
+      "windscreen_slide_mm_at_60deg": 5.130762666040205
+     },
+     "figure": null
+    },
+    {
+     "id": "glass.energy",
+     "model": "glass",
+     "title": "Glass transmission and reflection conserve energy",
+     "quantity": "largest |R + T − 1| of a non-absorbing glass (n 1.5) from 0° to 85° (incoherent slab, Fresnel at both faces), and the difference of a class's transmission at normal incidence from its stated visible transmission",
+     "reference": "energy conservation, and the class's own t_vis",
+     "references": [
+      "bornwolf1999",
+      "hecht2017"
+     ],
+     "error": 3.6637359812630166e-15,
+     "tolerance": 1e-09,
+     "unit": "power ratio",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "energy_error": 2.220446049250313e-16,
+      "normal_incidence_error": 3.6637359812630166e-15
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "weather",
+   "title": "Weather and night",
+   "modules": "vantage.core.weather",
+   "methods_anchor": "weather",
+   "passed": 8,
+   "checks": [
+    {
+     "id": "weather.p838_table",
+     "model": "weather",
+     "title": "Rain attenuation coefficients against ITU-R P.838-3",
+     "quantity": "largest difference of weather.p838's k_H, α_H, k_V and α_V (the recommendation's curve fits, eqs. 2–3 and Tables 1–4) from its Table 5 at 16 frequencies from 1 to 1000 GHz, in units of half the last printed digit",
+     "reference": "Recommendation ITU-R P.838-3, Table 5, as printed",
+     "references": [
+      "itu_p838"
+     ],
+     "error": 0.99979334265754,
+     "tolerance": 1.0,
+     "unit": "half last digits",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "model": {
+       "1 GHz": {
+        "kH": 2.6e-05,
+        "aH": 0.969074,
+        "kV": 3.1e-05,
+        "aV": 0.859221
+       },
+       "5 GHz": {
+        "kH": 0.000216,
+        "aH": 1.696927,
+        "kV": 0.000243,
+        "aV": 1.531732
+       },
+       "10 GHz": {
+        "kH": 0.012167,
+        "aH": 1.257097,
+        "kV": 0.011292,
+        "aV": 1.215645
+       },
+       "20 GHz": {
+        "kH": 0.091643,
+        "aH": 1.056781,
+        "kV": 0.096111,
+        "aV": 0.98469
+       },
+       "24 GHz": {
+        "kH": 0.142496,
+        "aH": 1.01011,
+        "kV": 0.14044,
+        "aV": 0.956086
+       },
+       "35 GHz": {
+        "kH": 0.337387,
+        "aH": 0.904713,
+        "kV": 0.322376,
+        "aV": 0.876142
+       },
+       "60 GHz": {
+        "kH": 0.860613,
+        "aH": 0.765632,
+        "kV": 0.85152,
+        "aV": 0.748565
+       },
+       "76 GHz": {
+        "kH": 1.118545,
+        "aH": 0.719868,
+        "kV": 1.113948,
+        "aV": 0.709142
+       },
+       "77 GHz": {
+        "kH": 1.131968,
+        "aH": 0.717681,
+        "kV": 1.127619,
+        "aV": 0.707295
+       },
+       "79 GHz": {
+        "kH": 1.157913,
+        "aH": 0.713496,
+        "kV": 1.154056,
+        "aV": 0.703764
+       },
+       "80 GHz": {
+        "kH": 1.170445,
+        "aH": 0.711495,
+        "kV": 1.166831,
+        "aV": 0.702076
+       },
+       "94 GHz": {
+        "kH": 1.31786,
+        "aH": 0.688771,
+        "kV": 1.317504,
+        "aV": 0.682845
+       },
+       "100 GHz": {
+        "kH": 1.367108,
+        "aH": 0.68145,
+        "kV": 1.368047,
+        "aV": 0.676541
+       },
+       "150 GHz": {
+        "kH": 1.582345,
+        "aH": 0.649418,
+        "kV": 1.589612,
+        "aV": 0.646569
+       },
+       "300 GHz": {
+        "kH": 1.628576,
+        "aH": 0.629646,
+        "kV": 1.628594,
+        "aV": 0.626234
+       },
+       "1000 GHz": {
+        "kH": 1.379513,
+        "aH": 0.639619,
+        "kV": 1.382153,
+        "aV": 0.636486
+       }
+      },
+      "rain_77ghz_25mm_h_db_km": 11.19510891415139
+     },
+     "figure": null
+    },
+    {
+     "id": "weather.p840_water",
+     "model": "weather",
+     "title": "Fog attenuation at radar frequencies (ITU-R P.840)",
+     "quantity": "largest relative difference of weather.liquid_water_coefficient (P.840's K_l from its double-Debye permittivity) from the Rayleigh absorption of small water drops computed from the complex permittivity directly, (6π/λ)·Im(−(ε−1)/(ε+2)), at 24, 77 and 100 GHz and 0–20 °C",
+     "reference": "Rayleigh absorption by drops much smaller than the wavelength, from the same Debye permittivity, written out in the check",
+     "references": [
+      "itu_p840",
+      "kunkel1984"
+     ],
+     "error": 0.0002350304158666923,
+     "tolerance": 0.002,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "cases": {
+       "24 GHz 0 °C": {
+        "model": 0.5085982816464909,
+        "rayleigh": 0.5087178458133512
+       },
+       "77 GHz 10 °C": {
+        "model": 3.1472569985137206,
+        "rayleigh": 3.147996873528051
+       },
+       "100 GHz 20 °C": {
+        "model": 4.170339375461091,
+        "rayleigh": 4.171319762479577
+       },
+       "77 GHz 0 °C": {
+        "model": 3.5373531568206307,
+        "rayleigh": 3.5381847378509783
+       }
+      },
+      "kunkel_round_trip_per_km": 3.552713678800501e-15
+     },
+     "figure": null
+    },
+    {
+     "id": "weather.p1814_coefficients",
+     "model": "weather",
+     "title": "Optical rain and snow attenuation against ITU-R P.1814",
+     "quantity": "largest relative difference of the optical rain attenuation (1–100 mm/h) and the wet and dry snow attenuation (0.5–10 mm/h at 550, 905 and 1550 nm) from P.1814's Table 2 (France: k 1.076, α 0.67) and Table 3 as printed",
+     "reference": "Recommendation ITU-R P.1814, Tables 2 and 3",
+     "references": [
+      "itu_p1814"
+     ],
+     "error": 0.0,
+     "tolerance": 0.005,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "weather.py uses the snow constants as P.1814 prints them (5.42e-5·λ + 5.50, 1.02e-4·λ + 3.79); until 0.2.0 it carried 5.4958776 and 1.023e-4·λ + 3.7855466, 0.1 % off them.",
+     "exception": "",
+     "detail": {
+      "rain": 0.0,
+      "wet snow 550 nm": 0.0,
+      "wet snow 905 nm": 0.0,
+      "wet snow 1550 nm": 0.0,
+      "dry snow 550 nm": 0.0,
+      "dry snow 905 nm": 0.0,
+      "dry snow 1550 nm": 0.0
+     },
+     "figure": null
+    },
+    {
+     "id": "weather.koschmieder",
+     "model": "weather",
+     "title": "Contrast extinction (Koschmieder) and the meteorological optical range",
+     "quantity": "largest relative difference of the visible extinction for fog of MOR 50 m–10 km from −ln 0.05 / MOR, of the distance at which contrast C0 falls to ε from ln(C0/ε)/σ (residual of C0·e^(−σd) = ε), and of the extinction away from 550 nm from Kim's (λ / 550 nm)^−q",
+     "reference": "Koschmieder's law with WMO's 5 % contrast threshold; Kim et al.'s q(V)",
+     "references": [
+      "koschmieder1924",
+      "wmo8",
+      "kim2001"
+     ],
+     "error": 2.7755575615628914e-16,
+     "tolerance": 1e-09,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "extinction": 0.0,
+      "contrast range": 2.7755575615628914e-16,
+      "Kim q": 5.551115123125783e-17,
+      "905 nm in haze": 0.0
+     },
+     "figure": {
+      "kind": "xy",
+      "title": "Contrast of a black object in fog of 150 m MOR",
+      "xlabel": "distance, m",
+      "ylabel": "apparent contrast",
+      "series": [
+       {
+        "label": "C0·exp(−σd), σ = −ln 0.05 / 150 m",
+        "kind": "line",
+        "x": [
+         0.0,
+         5.0,
+         10.0,
+         15.0,
+         20.0,
+         25.0,
+         30.0,
+         35.0,
+         40.0,
+         45.0,
+         50.0,
+         55.0,
+         60.0,
+         65.0,
+         70.0,
+         75.0,
+         80.0,
+         85.0,
+         90.0,
+         95.0,
+         100.0,
+         105.0,
+         110.0,
+         115.0,
+         120.0,
+         125.0,
+         130.0,
+         135.0,
+         140.0,
+         145.0,
+         150.0,
+         155.0,
+         160.0,
+         165.0,
+         170.0,
+         175.0,
+         180.0,
+         185.0,
+         190.0,
+         195.0,
+         200.0,
+         205.0,
+         210.0,
+         215.0,
+         220.0,
+         225.0,
+         230.0,
+         235.0,
+         240.0,
+         245.0,
+         250.0,
+         255.0,
+         260.0,
+         265.0,
+         270.0,
+         275.0,
+         280.0,
+         285.0,
+         290.0,
+         295.0,
+         300.0
+        ],
+        "y": [
+         1.0,
+         0.90496615,
+         0.81896373,
+         0.74113445,
+         0.67070159,
+         0.60696223,
+         0.54928027,
+         0.49708005,
+         0.44984062,
+         0.40709053,
+         0.36840315,
+         0.33339238,
+         0.30170882,
+         0.27303627,
+         0.24708858,
+         0.2236068,
+         0.20235658,
+         0.18312586,
+         0.1657227,
+         0.14997343,
+         0.13572088,
+         0.1228228,
+         0.11115048,
+         0.10058742,
+         0.09102821,
+         0.082377449,
+         0.074548802,
+         0.067464142,
+         0.061052765,
+         0.055250686,
+         0.05,
+         0.045248307,
+         0.040948186,
+         0.037056722,
+         0.033535079,
+         0.030348112,
+         0.027464014,
+         0.024854003,
+         0.022492031,
+         0.020354527,
+         0.018420157,
+         0.016669619,
+         0.015085441,
+         0.013651813,
+         0.012354429,
+         0.01118034,
+         0.010117829,
+         0.0091562928,
+         0.008286135,
+         0.0074986717,
+         0.006786044,
+         0.0061411401,
+         0.0055575239,
+         0.005029371,
+         0.0045514105,
+         0.0041188724,
+         0.0037274401,
+         0.0033732071,
+         0.0030526383,
+         0.0027625343,
+         0.0025
+        ]
+       }
+      ],
+      "logy": false,
+      "hline": 0.05,
+      "hline_label": "5 % (WMO)",
+      "diag": false,
+      "categories": null
+     }
+    },
+    {
+     "id": "weather.range_equations",
+     "model": "weather",
+     "title": "Lidar and radar range in extinction (Lambert W)",
+     "quantity": "largest relative difference of weather.lidar_range (R·e^(αR) = R_c, solved with Lambert's W) and weather.radar_range (R⁴·e^(2aR) = R_c⁴) from a bracketing root finder on the same equations",
+     "reference": "scipy.optimize.brentq on the defining equations",
+     "references": [
+      "corless1996",
+      "skolnik2001"
+     ],
+     "error": 2.8435916734772007e-16,
+     "tolerance": 1e-09,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.021,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "cases": 7
+     },
+     "figure": {
+      "kind": "xy",
+      "title": "Lidar range in fog (λ 905 nm) against the clear-air range",
+      "xlabel": "clear-air range, m",
+      "ylabel": "range, m",
+      "series": [
+       {
+        "label": "MOR 500 m",
+        "kind": "line",
+        "x": [
+         5.0,
+         10.0,
+         15.0,
+         20.0,
+         25.0,
+         30.0,
+         35.0,
+         40.0,
+         45.0,
+         50.0,
+         55.0,
+         60.0,
+         65.0,
+         70.0,
+         75.0,
+         80.0,
+         85.0,
+         90.0,
+         95.0,
+         100.0,
+         105.0,
+         110.0,
+         115.0,
+         120.0,
+         125.0,
+         130.0,
+         135.0,
+         140.0,
+         145.0,
+         150.0,
+         155.0,
+         160.0,
+         165.0,
+         170.0,
+         175.0,
+         180.0,
+         185.0,
+         190.0,
+         195.0,
+         200.0
+        ],
+        "y": [
+         4.8566055,
+         9.4495619,
+         13.808917,
+         17.959651,
+         21.92278,
+         25.716167,
+         29.355143,
+         32.852967,
+         36.221196,
+         39.469968,
+         42.608232,
+         45.643928,
+         48.584139,
+         51.435212,
+         54.202857,
+         56.892233,
+         59.508019,
+         62.054468,
+         64.535466,
+         66.954566,
+         69.315032,
+         71.619865,
+         73.871836,
+         76.073505,
+         78.227244,
+         80.335258,
+         82.399595,
+         84.422167,
+         86.404755,
+         88.34903,
+         90.256552,
+         92.128787,
+         93.967112,
+         95.772823,
+         97.54714,
+         99.291212,
+         101.00613,
+         102.69291,
+         104.35254,
+         105.98593
+        ]
+       },
+       {
+        "label": "MOR 150 m",
+        "kind": "line",
+        "x": [
+         5.0,
+         10.0,
+         15.0,
+         20.0,
+         25.0,
+         30.0,
+         35.0,
+         40.0,
+         45.0,
+         50.0,
+         55.0,
+         60.0,
+         65.0,
+         70.0,
+         75.0,
+         80.0,
+         85.0,
+         90.0,
+         95.0,
+         100.0,
+         105.0,
+         110.0,
+         115.0,
+         120.0,
+         125.0,
+         130.0,
+         135.0,
+         140.0,
+         145.0,
+         150.0,
+         155.0,
+         160.0,
+         165.0,
+         170.0,
+         175.0,
+         180.0,
+         185.0,
+         190.0,
+         195.0,
+         200.0
+        ],
+        "y": [
+         4.5643695,
+         8.4475354,
+         11.840991,
+         14.863232,
+         17.593199,
+         20.08637,
+         22.383358,
+         24.514865,
+         26.504709,
+         28.371773,
+         30.131299,
+         31.79578,
+         33.375595,
+         34.879466,
+         36.314799,
+         37.687939,
+         39.004368,
+         40.268854,
+         41.485574,
+         42.658208,
+         43.790018,
+         44.883905,
+         45.942468,
+         46.968037,
+         47.962718,
+         48.928413,
+         49.866853,
+         50.779612,
+         51.668131,
+         52.533728,
+         53.377616,
+         54.20091,
+         55.004642,
+         55.789765,
+         56.557163,
+         57.307656,
+         58.042009,
+         58.760934,
+         59.465096,
+         60.155118
+        ]
+       },
+       {
+        "label": "MOR 60 m",
+        "kind": "line",
+        "x": [
+         5.0,
+         10.0,
+         15.0,
+         20.0,
+         25.0,
+         30.0,
+         35.0,
+         40.0,
+         45.0,
+         50.0,
+         55.0,
+         60.0,
+         65.0,
+         70.0,
+         75.0,
+         80.0,
+         85.0,
+         90.0,
+         95.0,
+         100.0,
+         105.0,
+         110.0,
+         115.0,
+         120.0,
+         125.0,
+         130.0,
+         135.0,
+         140.0,
+         145.0,
+         150.0,
+         155.0,
+         160.0,
+         165.0,
+         170.0,
+         175.0,
+         180.0,
+         185.0,
+         190.0,
+         195.0,
+         200.0
+        ],
+        "y": [
+         4.0787499,
+         7.0372796,
+         9.3872693,
+         11.348709,
+         13.038277,
+         14.52592,
+         15.857132,
+         17.063283,
+         18.16698,
+         19.185087,
+         20.13054,
+         21.013491,
+         21.842064,
+         22.622865,
+         23.361343,
+         24.062047,
+         24.728818,
+         25.364928,
+         25.97319,
+         26.556038,
+         27.115598,
+         27.653733,
+         28.172087,
+         28.672119,
+         29.155131,
+         29.622288,
+         30.074636,
+         30.51312,
+         30.938597,
+         31.351844,
+         31.753571,
+         32.144424,
+         32.524999,
+         32.895841,
+         33.257453,
+         33.610299,
+         33.95481,
+         34.291382,
+         34.620387,
+         34.942168
+        ]
+       },
+       {
+        "label": "clear",
+        "kind": "line",
+        "x": [
+         5.0,
+         10.0,
+         15.0,
+         20.0,
+         25.0,
+         30.0,
+         35.0,
+         40.0,
+         45.0,
+         50.0,
+         55.0,
+         60.0,
+         65.0,
+         70.0,
+         75.0,
+         80.0,
+         85.0,
+         90.0,
+         95.0,
+         100.0,
+         105.0,
+         110.0,
+         115.0,
+         120.0,
+         125.0,
+         130.0,
+         135.0,
+         140.0,
+         145.0,
+         150.0,
+         155.0,
+         160.0,
+         165.0,
+         170.0,
+         175.0,
+         180.0,
+         185.0,
+         190.0,
+         195.0,
+         200.0
+        ],
+        "y": [
+         5.0,
+         10.0,
+         15.0,
+         20.0,
+         25.0,
+         30.0,
+         35.0,
+         40.0,
+         45.0,
+         50.0,
+         55.0,
+         60.0,
+         65.0,
+         70.0,
+         75.0,
+         80.0,
+         85.0,
+         90.0,
+         95.0,
+         100.0,
+         105.0,
+         110.0,
+         115.0,
+         120.0,
+         125.0,
+         130.0,
+         135.0,
+         140.0,
+         145.0,
+         150.0,
+         155.0,
+         160.0,
+         165.0,
+         170.0,
+         175.0,
+         180.0,
+         185.0,
+         190.0,
+         195.0,
+         200.0
+        ]
+       }
+      ],
+      "logy": false,
+      "hline": null,
+      "hline_label": "",
+      "diag": false,
+      "categories": null
+     }
+    },
+    {
+     "id": "weather.headlamps_r112",
+     "model": "weather",
+     "title": "The headlamp pattern meets UN R112",
+     "quantity": "largest shortfall, as a share of the requirement, of the typical low-beam pattern's intensity at R112's class B test points (minimums 75R, 50R, 50V, 25L, 25R and zone IV; maximums 50L, 75L, B50L, BR and zone I below twice the 50R/75R), and of the high beam (I_max 40 500–215 000 cd, ±2.5° and ±5°)",
+     "reference": "UN Regulation No. 112, class B photometric requirements",
+     "references": [
+      "unr112"
+     ],
+     "error": 0.0,
+     "tolerance": 0.0,
+     "unit": "share of the requirement",
+     "passed": true,
+     "seconds": 0.006,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "shortfall": {
+       "75R": 0.0,
+       "50R": 0.0,
+       "50V": 0.0,
+       "25L": 0.0,
+       "25R": 0.0,
+       "50L": 0.0,
+       "75L": 0.0,
+       "B50L": 0.0,
+       "BR": 0.0,
+       "zone IV ≥ 2500": 0.0,
+       "zone I < 2 × 50R": 0.0,
+       "high beam I_max": 0.0,
+       "high 2.5° L": 0.0,
+       "high 2.5° R": 0.0,
+       "high 5° L": 0.0,
+       "high 5° R": 0.0
+      },
+      "points_cd": {
+       "75R": 22085.7,
+       "50R": 21762.3,
+       "50V": 20937.8,
+       "25L": 4347.2,
+       "25R": 4733.5,
+       "50L": 12532.8,
+       "75L": 4373.4,
+       "B50L": 199.0,
+       "BR": 203.3
+      }
+     },
+     "figure": {
+      "kind": "xy",
+      "title": "Low-beam intensity along the horizontal through 50R (0.86° down)",
+      "xlabel": "h, ° (left +)",
+      "ylabel": "intensity per lamp, cd",
+      "series": [
+       {
+        "label": "low beam, 0.86° down",
+        "kind": "line",
+        "x": [
+         -15.0,
+         -14.75,
+         -14.5,
+         -14.25,
+         -14.0,
+         -13.75,
+         -13.5,
+         -13.25,
+         -13.0,
+         -12.75,
+         -12.5,
+         -12.25,
+         -12.0,
+         -11.75,
+         -11.5,
+         -11.25,
+         -11.0,
+         -10.75,
+         -10.5,
+         -10.25,
+         -10.0,
+         -9.75,
+         -9.5,
+         -9.25,
+         -9.0,
+         -8.75,
+         -8.5,
+         -8.25,
+         -8.0,
+         -7.75,
+         -7.5,
+         -7.25,
+         -7.0,
+         -6.75,
+         -6.5,
+         -6.25,
+         -6.0,
+         -5.75,
+         -5.5,
+         -5.25,
+         -5.0,
+         -4.75,
+         -4.5,
+         -4.25,
+         -4.0,
+         -3.75,
+         -3.5,
+         -3.25,
+         -3.0,
+         -2.75,
+         -2.5,
+         -2.25,
+         -2.0,
+         -1.75,
+         -1.5,
+         -1.25,
+         -1.0,
+         -0.75,
+         -0.5,
+         -0.25,
+         0.0,
+         0.25,
+         0.5,
+         0.75,
+         1.0,
+         1.25,
+         1.5,
+         1.75,
+         2.0,
+         2.25,
+         2.5,
+         2.75,
+         3.0,
+         3.25,
+         3.5,
+         3.75,
+         4.0,
+         4.25,
+         4.5,
+         4.75,
+         5.0,
+         5.25,
+         5.5,
+         5.75,
+         6.0,
+         6.25,
+         6.5,
+         6.75,
+         7.0,
+         7.25,
+         7.5,
+         7.75,
+         8.0,
+         8.25,
+         8.5,
+         8.75,
+         9.0,
+         9.25,
+         9.5,
+         9.75,
+         10.0,
+         10.25,
+         10.5,
+         10.75,
+         11.0,
+         11.25,
+         11.5,
+         11.75,
+         12.0,
+         12.25,
+         12.5,
+         12.75,
+         13.0,
+         13.25,
+         13.5,
+         13.75,
+         14.0,
+         14.25,
+         14.5,
+         14.75,
+         15.0
+        ],
+        "y": [
+         3323.9168,
+         3357.377,
+         3392.4144,
+         3429.3415,
+         3468.5149,
+         3510.3394,
+         3555.2712,
+         3603.8208,
+         3656.5559,
+         3714.1022,
+         3777.1453,
+         3846.4295,
+         3922.7568,
+         4006.9835,
+         4100.0155,
+         4202.8012,
+         4316.3233,
+         4441.5871,
+         4579.6077,
+         4731.3941,
+         4897.9314,
+         5080.1604,
+         5278.9556,
+         5495.1015,
+         5729.2666,
+         5981.9779,
+         6253.5935,
+         6544.2762,
+         6853.9679,
+         7182.3652,
+         7528.8977,
+         7892.7093,
+         8272.6433,
+         8667.2325,
+         9074.6943,
+         9579.4751,
+         10257.552,
+         10973.597,
+         11723.557,
+         12502.324,
+         13303.75,
+         14120.682,
+         14945.042,
+         15767.935,
+         16579.792,
+         17370.54,
+         18129.809,
+         18847.149,
+         19512.267,
+         20115.276,
+         20646.94,
+         21098.909,
+         21463.941,
+         21736.097,
+         21910.903,
+         21985.477,
+         21958.708,
+         21831.162,
+         21605.148,
+         21301.944,
+         20937.845,
+         20516.945,
+         20043.894,
+         19523.812,
+         18962.196,
+         18364.828,
+         17737.669,
+         17086.768,
+         16418.16,
+         15737.779,
+         15051.373,
+         14364.423,
+         13682.083,
+         13009.114,
+         12349.846,
+         11708.139,
+         11087.36,
+         10490.371,
+         9919.5266,
+         9376.6828,
+         8863.2111,
+         8380.0238,
+         7927.6036,
+         7506.0385,
+         7115.0611,
+         6754.09,
+         6422.2721,
+         6118.5263,
+         5841.5854,
+         5590.0371,
+         5362.3624,
+         5156.9712,
+         4972.2349,
+         4806.5151,
+         4658.1888,
+         4525.67,
+         4407.4273,
+         4301.9978,
+         4207.9986,
+         4124.1342,
+         4049.2012,
+         3982.0918,
+         3921.7934,
+         3867.3875,
+         3818.0474,
+         3773.0336,
+         3731.6896,
+         3693.436,
+         3657.7651,
+         3624.2349,
+         3592.4628,
+         3562.1198,
+         3532.925,
+         3504.6398,
+         3477.063,
+         3450.0262,
+         3423.3893,
+         3397.0368,
+         3370.8739,
+         3344.8238,
+         3318.8249
+        ]
+       },
+       {
+        "label": "low beam, 0.57° up",
+        "kind": "line",
+        "x": [
+         -15.0,
+         -14.75,
+         -14.5,
+         -14.25,
+         -14.0,
+         -13.75,
+         -13.5,
+         -13.25,
+         -13.0,
+         -12.75,
+         -12.5,
+         -12.25,
+         -12.0,
+         -11.75,
+         -11.5,
+         -11.25,
+         -11.0,
+         -10.75,
+         -10.5,
+         -10.25,
+         -10.0,
+         -9.75,
+         -9.5,
+         -9.25,
+         -9.0,
+         -8.75,
+         -8.5,
+         -8.25,
+         -8.0,
+         -7.75,
+         -7.5,
+         -7.25,
+         -7.0,
+         -6.75,
+         -6.5,
+         -6.25,
+         -6.0,
+         -5.75,
+         -5.5,
+         -5.25,
+         -5.0,
+         -4.75,
+         -4.5,
+         -4.25,
+         -4.0,
+         -3.75,
+         -3.5,
+         -3.25,
+         -3.0,
+         -2.75,
+         -2.5,
+         -2.25,
+         -2.0,
+         -1.75,
+         -1.5,
+         -1.25,
+         -1.0,
+         -0.75,
+         -0.5,
+         -0.25,
+         0.0,
+         0.25,
+         0.5,
+         0.75,
+         1.0,
+         1.25,
+         1.5,
+         1.75,
+         2.0,
+         2.25,
+         2.5,
+         2.75,
+         3.0,
+         3.25,
+         3.5,
+         3.75,
+         4.0,
+         4.25,
+         4.5,
+         4.75,
+         5.0,
+         5.25,
+         5.5,
+         5.75,
+         6.0,
+         6.25,
+         6.5,
+         6.75,
+         7.0,
+         7.25,
+         7.5,
+         7.75,
+         8.0,
+         8.25,
+         8.5,
+         8.75,
+         9.0,
+         9.25,
+         9.5,
+         9.75,
+         10.0,
+         10.25,
+         10.5,
+         10.75,
+         11.0,
+         11.25,
+         11.5,
+         11.75,
+         12.0,
+         12.25,
+         12.5,
+         12.75,
+         13.0,
+         13.25,
+         13.5,
+         13.75,
+         14.0,
+         14.25,
+         14.5,
+         14.75,
+         15.0
+        ],
+        "y": [
+         3375.5019,
+         3414.4591,
+         3456.0831,
+         3500.8793,
+         3549.4241,
+         3602.3714,
+         3660.4571,
+         3724.5045,
+         3795.428,
+         3874.2358,
+         3962.0312,
+         4060.0123,
+         4169.4692,
+         4291.7792,
+         4428.3989,
+         4580.8535,
+         4750.7225,
+         4939.6219,
+         5149.1834,
+         5381.0288,
+         5636.7413,
+         5917.8333,
+         6225.7109,
+         6561.6355,
+         6926.6828,
+         7321.7014,
+         7747.269,
+         8203.6503,
+         8690.7557,
+         9208.1022,
+         9754.7785,
+         10329.416,
+         10930.162,
+         11554.669,
+         12200.081,
+         12873.332,
+         13568.547,
+         14259.467,
+         14952.382,
+         15644.792,
+         16331.212,
+         17005.891,
+         10424.114,
+         6261.8558,
+         3783.77,
+         2312.439,
+         1441.3457,
+         927.14215,
+         624.53583,
+         447.01563,
+         343.21646,
+         282.73023,
+         247.60963,
+         227.29453,
+         215.59099,
+         208.8776,
+         205.04392,
+         202.86409,
+         201.6284,
+         200.92733,
+         200.52539,
+         200.50778,
+         200.47497,
+         200.42708,
+         200.36426,
+         200.28667,
+         200.19448,
+         200.08784,
+         199.96694,
+         199.83195,
+         199.68303,
+         199.52036,
+         199.34409,
+         199.15437,
+         198.95136,
+         198.73518,
+         198.50597,
+         198.26385,
+         198.00891,
+         197.74125,
+         197.46097,
+         197.16814,
+         196.86284,
+         196.54511,
+         196.21503,
+         195.87263,
+         195.51798,
+         195.15111,
+         194.77206,
+         194.38087,
+         193.97759,
+         193.56225,
+         193.1349,
+         192.69559,
+         192.24435,
+         191.78124,
+         191.30631,
+         190.81963,
+         190.32125,
+         189.81125,
+         189.28969,
+         188.75664,
+         188.2122,
+         187.65645,
+         187.08947,
+         186.51136,
+         185.92222,
+         185.32215,
+         184.71126,
+         184.08965,
+         183.45744,
+         182.81474,
+         182.16168,
+         181.49836,
+         180.82493,
+         180.1415,
+         179.4482,
+         178.74517,
+         178.03253,
+         177.31043,
+         176.57899
+        ]
+       }
+      ],
+      "logy": false,
+      "hline": null,
+      "hline_label": "",
+      "diag": false,
+      "categories": null
+     }
+    },
+    {
+     "id": "weather.photon_budget",
+     "model": "weather",
+     "title": "The camera's minimum luminance from its photon budget",
+     "quantity": "relative difference of the electrons per cd/m² weather.camera_floor gives from π·T/(4N²)·t·Φ·A·QE, and of the signal-to-noise ratio at its L_min from snr_min (S / √(S + read noise²)), STURDeCAM31 with H05R2",
+     "reference": "the photon budget of a pixel behind a lens of f-number N (Janesick), written out in the check",
+     "references": [
+      "janesick2007"
+     ],
+     "error": 1.7763568394002506e-16,
+     "tolerance": 1e-09,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.002,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "electrons per cd/m²": 0.0,
+      "SNR at L_min": 1.7763568394002506e-16,
+      "l_min_cd_m2": 0.3045848079420196
+     },
+     "figure": null
+    },
+    {
+     "id": "weather.illuminance",
+     "model": "weather",
+     "title": "Headlamp illuminance: inverse square, cosine and extinction",
+     "quantity": "largest relative difference of weather.illuminance at a point 20 m ahead from I/d², from I·cos(i)/d² on a surface tilted 60° away, and from E_ambient + I·e^(−σd)/d² in fog",
+     "reference": "the photometric inverse-square law with Lambert's cosine and Beer–Lambert extinction",
+     "references": [
+      "unr112",
+      "koschmieder1924"
+     ],
+     "error": 0.0,
+     "tolerance": 1e-06,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "lux_clear": 52.328668694468,
+      "lux_fog": 30.740482183984064
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "sun",
+   "title": "Sun position",
+   "modules": "vantage.core.exposure",
+   "methods_anchor": "sun",
+   "passed": 2,
+   "checks": [
+    {
+     "id": "sun.spa_example",
+     "model": "sun",
+     "title": "Sun position against the SPA paper's worked example",
+     "quantity": "largest difference of the topocentric zenith angle and azimuth exposure.sun_at gives for Golden, Colorado, 2003-10-17 12:30:30 local time (UTC−7), from Reda & Andreas' 50.11162° and 194.34024°",
+     "reference": "I. Reda and A. Andreas, NREL Solar Position Algorithm, worked example",
+     "references": [
+      "reda2004",
+      "noaa"
+     ],
+     "error": 0.002982144296737488,
+     "tolerance": 0.01,
+     "unit": "degrees",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "zenith": 0.002982144296737488,
+      "azimuth": 0.002342852079777913,
+      "zenith_deg": 50.108637855703265,
+      "azimuth_deg": 194.34258285207977
+     },
+     "figure": null
+    },
+    {
+     "id": "sun.meeus_examples",
+     "model": "sun",
+     "title": "Solar coordinates against Meeus's worked examples",
+     "quantity": "largest difference of the sun's declination, right ascension and apparent longitude (degrees), distance (AU × 100) and equation of time (minutes / 10) at 1992 October 13.0 from Meeus's examples 25.a and 28.b; and of the noon elevation 90° − |φ − δ| (no refraction) at two latitudes",
+     "reference": "J. Meeus, Astronomical Algorithms, examples 25.a and 28.b; spherical astronomy at solar noon",
+     "references": [
+      "meeus1998",
+      "noaa"
+     ],
+     "error": 0.0001950005629303142,
+     "tolerance": 0.002,
+     "unit": "degrees",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "declination": 2.0397613997857889e-07,
+      "right ascension": 4.78762672173616e-06,
+      "apparent longitude": 8.139647263760708e-06,
+      "distance ×100": 0.0001950005629303142,
+      "equation of time /10": 8.865582022501428e-05,
+      "noon elevation at -36.85°": 2.0467577854788033e-07,
+      "noon elevation at 52°": 2.0367352959738128e-07
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "suspension",
+   "title": "Suspension, loads and load transfer",
+   "modules": "vantage.core.suspension",
+   "methods_anchor": "suspension",
+   "passed": 3,
+   "checks": [
+    {
+     "id": "suspension.static_hand",
+     "model": "suspension",
+     "title": "Static loads against hand calculations",
+     "quantity": "largest relative difference of the corner drops, the tyre forces, the pitch and the roll the static solve gives from hand calculations: a load over the front axle (each front corner W/2 on its spring and tyre in series, pitch atan(drop / L)); a load to the left, with and without an anti-roll bar (heave W/4 on the series rate, ±W·y/(2T) per wheel on the wheel rate plus the bar, roll atan(2a / T)); a bump stop beyond its gap (gap + (F − k·gap)/(k + k_bump))",
+     "reference": "springs in series, force and moment balance, written out in the check",
+     "references": [
+      "gillespie1992",
+      "milliken1995"
+     ],
+     "error": 1.288092351410251e-15,
+     "tolerance": 1e-09,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.005,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "front load: front drop": 1.8938783582616067e-16,
+      "front load: rear drop (mm/drop)": 8.978386291017987e-17,
+      "front load: pitch": 1.2912849327575698e-16,
+      "left load, bar 0: FL drop": 2.236271443420575e-16,
+      "left load, bar 0: FL force": 3.2202308785256274e-16,
+      "left load, bar 0: RL drop": 2.236271443420575e-16,
+      "left load, bar 0: RL force": 3.2202308785256274e-16,
+      "left load, bar 0: FR drop": 0.0,
+      "left load, bar 0: FR force": 8.050577196314068e-17,
+      "left load, bar 0: RR drop": 0.0,
+      "left load, bar 0: RR force": 1.0868279215023991e-15,
+      "left load, bar 0: roll": 3.659167551144152e-16,
+      "left load, bar 15: FL drop": 3.833608188720985e-16,
+      "left load, bar 15: FL force": 3.2202308785256274e-16,
+      "left load, bar 15: RL drop": 2.5557387924806565e-16,
+      "left load, bar 15: RL force": 1.288092351410251e-15,
+      "left load, bar 15: FR drop": 1.2778693962403282e-16,
+      "left load, bar 15: FR force": 8.050577196314068e-17,
+      "left load, bar 15: RR drop": 0.0,
+      "left load, bar 15: RR force": 5.635404037419848e-16,
+      "left load, bar 15: roll": 5.48868719520186e-16,
+      "bump stop: travel": 0.0
+     },
+     "figure": null
+    },
+    {
+     "id": "suspension.balance",
+     "model": "suspension",
+     "title": "The static solve balances force and moments",
+     "quantity": "largest relative residual of the vertical force and of the moments about x and y (Σ tyre forces against Σ weights) and of the four corners' drops from one plane, for 12 random sets of loads on typical corners with a measured load–travel curve at one corner",
+     "reference": "static equilibrium of a rigid body on four supports",
+     "references": [
+      "gillespie1992"
+     ],
+     "error": 3.098417621228159e-15,
+     "tolerance": 1e-06,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.003,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "cases": 12
+     },
+     "figure": null
+    },
+    {
+     "id": "suspension.load_transfer",
+     "model": "suspension",
+     "title": "Brake dive and cornering roll against hand calculations",
+     "quantity": "largest relative difference of the corner drops and the pitch under 0.8 g braking (with 0, 30/10 and 100 % anti-dive/anti-lift: the linkage takes its share of ΔF = M·a·h/L off the springs) and of the drops and the roll at 0.5 g lateral (roll centres 0 and 0.2 m, anti-roll bar 0 and 12 N/mm: the geometric share M/2·a·rc/T through the links, the elastic share on the springs and bar), unsprung masses zero",
+     "reference": "quasi-static load transfer with anti-dive and roll centres (Gillespie; Milliken), written out in the check",
+     "references": [
+      "gillespie1992",
+      "milliken1995"
+     ],
+     "error": 6.488524904491934e-16,
+     "tolerance": 1e-06,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.001,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "braking 0/0 %: front drop": 1.5247305296049372e-16,
+      "braking 0/0 %: rear rise": 1.5247305296049372e-16,
+      "braking 0/0 %: pitch": 2.0799915823967704e-16,
+      "braking 30/10 %: front drop": 2.0791779949158234e-16,
+      "braking 30/10 %: rear rise": 5.020454182845523e-16,
+      "braking 30/10 %: pitch": 1.2646701176358861e-16,
+      "braking 100/100 %: front drop": 0.0,
+      "braking 100/100 %: rear rise": 0.0,
+      "braking 100/100 %: pitch": 0.0,
+      "cornering bar 0, rc 0: drop": 1.4637413084207393e-16,
+      "cornering bar 0, rc 0: roll": 4.796763616641281e-16,
+      "cornering bar 12, rc 0: drop": 0.0,
+      "cornering bar 12, rc 0: roll": 1.68378163500588e-16,
+      "cornering bar 0, rc 0.2: drop": 6.488524904491934e-16,
+      "cornering bar 0, rc 0.2: roll": 5.311805382776001e-16
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "terrain",
+   "title": "Road geometry and the horizon",
+   "modules": "vantage.core.terrain, vantage.core.loadcases",
+   "methods_anchor": "terrain",
+   "passed": 4,
+   "checks": [
+    {
+     "id": "terrain.primitives",
+     "model": "terrain",
+     "title": "Road primitives against their definitions",
+     "quantity": "largest difference of the road height (ramp, crest and sag vertical curves, garage ramp, speed bump, kerbs, crowned road) from its definition written out again, and of its gradient from central differences away from the kinks, at 400 random points per primitive",
+     "reference": "each primitive's closed form (a vertical curve is the parabola of a grade changing linearly with distance) and a central difference with step 10⁻⁵ m",
+     "references": [
+      "aashto2018"
+     ],
+     "error": 5.316238560482134e-10,
+     "tolerance": 1e-06,
+     "unit": "m (height) and m/m (gradient)",
+     "passed": true,
+     "seconds": 0.004,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "primitives": {
+       "ramp 0": {
+        "height_m": 0.0,
+        "gradient": 7.564004977922423e-12,
+        "smooth_points": 400
+       },
+       "crest 1": {
+        "height_m": 0.0,
+        "gradient": 1.4065346110037069e-11,
+        "smooth_points": 400
+       },
+       "crest 2": {
+        "height_m": 0.0,
+        "gradient": 6.98888863448488e-12,
+        "smooth_points": 400
+       },
+       "garage 3": {
+        "height_m": 0.0,
+        "gradient": 1.7603557500578404e-11,
+        "smooth_points": 400
+       },
+       "bump 4": {
+        "height_m": 0.0,
+        "gradient": 5.316238560482134e-10,
+        "smooth_points": 400
+       },
+       "kerb 5": {
+        "height_m": 0.0,
+        "gradient": 0.0,
+        "smooth_points": 400
+       },
+       "kerb 6": {
+        "height_m": 0.0,
+        "gradient": 0.0,
+        "smooth_points": 399
+       },
+       "kerb 7": {
+        "height_m": 0.0,
+        "gradient": 0.0,
+        "smooth_points": 400
+       },
+       "crown 8": {
+        "height_m": 0.0,
+        "gradient": 2.0566708058833427e-12,
+        "smooth_points": 400
+       }
+      },
+      "superposition_m": 0.0
+     },
+     "figure": null
+    },
+    {
+     "id": "terrain.line_of_sight",
+     "model": "terrain",
+     "title": "Seeing the road past its own crests and kerbs",
+     "quantity": "share of road points (3000 per camera position, four positions, the primitives together) whose visibility the ray march (terrain.clear) decides differently from a dense brute-force march of 4000 samples per line of sight",
+     "reference": "a brute-force march along every line of sight, written for the check",
+     "references": [
+      "aashto2018"
+     ],
+     "error": 0.00025,
+     "tolerance": 0.001,
+     "unit": "share of points",
+     "passed": true,
+     "seconds": 1.703,
+     "note": "A ray that grazes the road within the allowance may land either side of it.",
+     "exception": "",
+     "detail": {
+      "cameras": {
+       "(3.2, 0.0, 0.62)": {
+        "hidden": 107,
+        "differ": 2
+       },
+       "(-0.9, 0.3, 0.55)": {
+        "hidden": 1303,
+        "differ": 0
+       },
+       "(1.9, 0.95, 0.95)": {
+        "hidden": 47,
+        "differ": 0
+       },
+       "(1.0, -1.0, 0.3)": {
+        "hidden": 1574,
+        "differ": 1
+       }
+      },
+      "points": 12000
+     },
+     "figure": null
+    },
+    {
+     "id": "terrain.crest_tangent",
+     "model": "terrain",
+     "title": "The road hidden beyond a crest",
+     "quantity": "difference of where the sample's front camera loses sight of the road beyond a crest (radius 250 m, falling to −10 %, 6 m ahead of the bumper; terrain.profile) from where the line from the lens tangent to the crest's parabola meets it (s² + 2as − 2Rz = 0)",
+     "reference": "the tangent from the camera to the vertical curve, written out in the check",
+     "references": [
+      "aashto2018"
+     ],
+     "error": 0.1112422279341132,
+     "tolerance": 0.3,
+     "unit": "m",
+     "passed": true,
+     "seconds": 0.437,
+     "note": "The profile samples the road every 0.25 m beyond 10 m.",
+     "exception": "",
+     "detail": {
+      "seen_to_m": 18.5,
+      "tangent_m": 18.611242227934113,
+      "camera_height_m": 0.62,
+      "profile_step_m": 0.25
+     },
+     "figure": null
+    },
+    {
+     "id": "terrain.horizon",
+     "model": "terrain",
+     "title": "The horizon in a rectilinear camera",
+     "quantity": "largest difference of the horizon row loadcases.horizon_at gives from c_y − f·tan(pitch) for camera and body pitches between −2° and 35°, and of its tilt from the roll (rolls ±2–3°)",
+     "reference": "the vanishing line of the ground plane in a pinhole camera, written out in the check",
+     "references": [
+      "hartley2004"
+     ],
+     "error": 1.1368683772161603e-13,
+     "tolerance": 1e-06,
+     "unit": "px",
+     "passed": true,
+     "seconds": 0.001,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "cases": 20
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "timing",
+   "title": "Sync, triggers and motion blur",
+   "modules": "vantage.core.timing",
+   "methods_anchor": "timing",
+   "passed": 3,
+   "checks": [
+    {
+     "id": "timing.sweep",
+     "model": "timing",
+     "title": "When the lidar sweep crosses each camera",
+     "quantity": "largest difference, in milliseconds, of the sweep's crossing, entry and duration over the image from the geometry of a 10 Hz lidar (clockwise and counter-clockwise, phase 0° and 90°, turned round), level 6 mm pinhole cameras ahead, left and right, and one 2 m ahead looking left (parallax: it is crossed when the lidar faces atan(20 m / 2 m))",
+     "reference": "the head's azimuth phase ∓ 360°·f·t written out in the check; the image's half field atan(2.88 mm / 6 mm)",
+     "references": [
+      "ieee1588"
+     ],
+     "error": 1.4210854715202004e-14,
+     "tolerance": 1e-06,
+     "unit": "ms",
+     "passed": true,
+     "seconds": 0.015,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "cw F crossing": 0.0,
+      "cw L crossing": 1.4210854715202004e-14,
+      "cw R crossing": 3.552713678800501e-15,
+      "image sweep duration": 1.7763568394002505e-15,
+      "image entry": 1.4210854715202004e-14,
+      "ccw L crossing": 3.552713678800501e-15,
+      "ccw R crossing": 1.4210854715202004e-14,
+      "phase 90°: L crossing": 0.0,
+      "phase 90°: F crossing": 3.552713678800501e-15,
+      "parallax crossing": 1.4210854715202004e-14,
+      "turned round: F crossing": 7.105427357601002e-15
+     },
+     "figure": null
+    },
+    {
+     "id": "timing.trigger",
+     "model": "timing",
+     "title": "Triggers centre the middle row's exposure on the sweep",
+     "quantity": "largest difference of each camera's ideal trigger from its crossing − readout/2 − exposure/2 (modulo the period) and of its misalignment from zero, cameras alone on their lines, three readout and exposure times",
+     "reference": "a rolling shutter's middle row is exposed around trigger + readout/2 + exposure/2 (Liang et al.)",
+     "references": [
+      "liang2008"
+     ],
+     "error": 0.0,
+     "tolerance": 1e-09,
+     "unit": "ms",
+     "passed": true,
+     "seconds": 0.008,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "cases": 9
+     },
+     "figure": null
+    },
+    {
+     "id": "timing.motion_blur",
+     "model": "timing",
+     "title": "Motion blur and rolling-shutter skew through the lens",
+     "quantity": "largest relative difference of the image speed of a static object 5 m to the side at 36 km/h (level 6 mm pinhole) from f·v/d at the image centre and f·v/(d·cos α) in the corner, of the blur over a 2 ms exposure and the skew over a 20 ms readout from speed × time; and of a fisheye pitched down from v·sin(pitch)/d × its centre sampling (to 1 %)",
+     "reference": "the angular rate v·sin β / d of a static point seen from a moving camera, through the lens, written out in the check",
+     "references": [
+      "liang2008"
+     ],
+     "error": 4.7271149784401094e-14,
+     "tolerance": 0.0001,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.047,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "centre rate": 0.0,
+      "centre blur": 0.0,
+      "centre skew": 0.0,
+      "corner rate": 4.7271149784401094e-14,
+      "corner skew": 4.7222716229294125e-14,
+      "fisheye_centre_rate": 8.718946936010416e-07
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "gnss",
+   "title": "GNSS sky view and the pose error budget",
+   "modules": "vantage.core.gnss",
+   "methods_anchor": "gnss",
+   "passed": 2,
+   "checks": [
+    {
+     "id": "gnss.sky_solid_angle",
+     "model": "gnss",
+     "title": "Sky blocked by a wall against its solid angle",
+     "quantity": "largest relative difference of the share of the sky above the 10° mask a wall in front of a roof antenna hides (sky view on 0.5° × 0.5° cells) from the wall face's solid angle, four walls; the cells of an open roof must add up to the hemisphere and see all of it",
+     "reference": "the solid angle of a rectangle seen from a point, integrated with scipy.integrate.quad",
+     "references": [
+      "groves2013"
+     ],
+     "error": 0.006667010276292919,
+     "tolerance": 0.02,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.061,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "walls": {
+       "d 1 m, w 1.2 m, h 0.8 m": {
+        "blocked": 0.08929372739531627,
+        "solid_angle_share": 0.08989304525177713
+       },
+       "d 0.6 m, w 1.2 m, h 0.8 m": {
+        "blocked": 0.17988494995391635,
+        "solid_angle_share": 0.17907178995866418
+       },
+       "d 1 m, w 0.6 m, h 0.6 m": {
+        "blocked": 0.03781291235911377,
+        "solid_angle_share": 0.03766176533000075
+       },
+       "d 0.5 m, w 1.5 m, h 1 m": {
+        "blocked": 0.257359134739074,
+        "solid_angle_share": 0.2575781748973365
+       }
+      },
+      "hemisphere_rel_error": 0.0
+     },
+     "figure": null
+    },
+    {
+     "id": "gnss.pose_budget",
+     "model": "gnss",
+     "title": "The pose error budget against a hand calculation and Monte Carlo",
+     "quantity": "largest relative difference of a camera's position σ (3 m, 1 m and 1 m lever arm from the IMU) from the hand calculation INS σ ⊕ (δθ × L) ⊕ lever-arm σ, and of its attitude part from the spread of 400 000 sampled attitude errors crossed with the lever arm",
+     "reference": "small-angle error propagation δp = δθ × L (Groves), by hand and by Monte Carlo",
+     "references": [
+      "groves2013"
+     ],
+     "error": 0.0022326176533992124,
+     "tolerance": 0.01,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.04,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "rotation vs hand": 1.6092475225817656e-16,
+      "total vs hand": 0.0,
+      "rotation vs Monte Carlo": 0.0022326176533992124,
+      "rotation_mm": [
+       3.598088428726442,
+       10.508273629511267,
+       2.7596078516100286
+      ],
+      "sigma_mm": [
+       21.516185543467856,
+       23.673272158125542,
+       40.71382364129741
+      ],
+      "samples": 400000
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "calib",
+   "title": "Unit lens calibration",
+   "modules": "vantage.core.calib",
+   "methods_anchor": "calib",
+   "passed": 1,
+   "checks": [
+    {
+     "id": "calib.unit_recovery",
+     "model": "calib",
+     "title": "A unit calibration recovers a simulated unit's lens",
+     "quantity": "RMS pixel distance, over the field out to 65° off the axis, between the lens fitted by calib.calibrate from 16 synthetic board views (rendered through a unit 1.5 % off the library focal length with an offset principal point, 2 grey levels of noise, half resolution) and that unit's true lens; the library lens must be at least 5 times further off, the focal length within 0.3 %",
+     "reference": "the simulated unit's own intrinsics (the images are rendered from them)",
+     "references": [
+      "zhang2000",
+      "kannala2006",
+      "opencv"
+     ],
+     "error": 0.6975175821981523,
+     "tolerance": 1.0,
+     "unit": "px",
+     "passed": true,
+     "seconds": 3.953,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "fit_rms_px": 0.6975175821981523,
+      "fit_max_px": 1.0171391238529397,
+      "library_rms_px": 12.661605675874865,
+      "reprojection_rms_px": 0.08244259007223574,
+      "fx_rel_error": 0.0005543560728774508,
+      "fx_true_px": 862.4773415124963,
+      "views": 16
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "joint",
+   "title": "Joint extrinsic solve",
+   "modules": "vantage.core.joint",
+   "methods_anchor": "joint",
+   "passed": 2,
+   "checks": [
+    {
+     "id": "joint.reference_optimum",
+     "model": "joint",
+     "title": "The joint solve reaches the optimum of its least-squares problem",
+     "quantity": "largest difference, in units of each parameter's 1σ, between the installation check's joint solve (joint.joint_solve from each camera's own PnP) and an independent Gauss–Newton solve of the same Huber problem, for simulated captures of the sample's six cameras and eight floor boards (corners with 0.5 px noise, boards laid off their plan by the placement prior, cameras off theirs by up to 1° and 10 mm); the Huber cost must not be higher than the reference's",
+     "reference": "the same problem written out from scratch (own parameterisation, IRLS Gauss–Newton, central differences), solved to convergence",
+     "references": [
+      "triggs2000",
+      "huber1964"
+     ],
+     "error": 4.502680839354896e-07,
+     "tolerance": 0.01,
+     "unit": "σ",
+     "passed": true,
+     "seconds": 1.828,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "trials": [
+       {
+        "max_sigma": 4.502680839354896e-07,
+        "cost_above_reference": 1.1596057447604835e-11,
+        "rejected": 0
+       },
+       {
+        "max_sigma": 3.1471262292352186e-08,
+        "cost_above_reference": -1.4097167877480388e-11,
+        "rejected": 0
+       },
+       {
+        "max_sigma": 2.721413613903326e-07,
+        "cost_above_reference": -1.2278178473934531e-11,
+        "rejected": 0
+       }
+      ],
+      "cameras": 6,
+      "boards": 8,
+      "observations": 14
+     },
+     "figure": null
+    },
+    {
+     "id": "joint.exact_recovery",
+     "model": "joint",
+     "title": "The joint solve recovers known poses from exact corners",
+     "quantity": "largest error of the camera poses the joint solve gives from noise-free corners of the sample's boards, boards where planned, every camera mounted off its plan by up to 1° and 10 mm, in degrees (rotation) and millimetres (position)",
+     "reference": "the injected poses the corners were rendered from",
+     "references": [
+      "triggs2000"
+     ],
+     "error": 6.516084312865469e-10,
+     "tolerance": 0.001,
+     "unit": "degrees or mm",
+     "passed": true,
+     "seconds": 0.49,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "rotation_error_deg": [
+       0.0,
+       0.0,
+       0.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "position_error_mm": [
+       0.0,
+       0.0,
+       0.0,
+       1e-09,
+       0.0,
+       0.0
+      ]
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "observability",
+   "title": "Calibration observability",
+   "modules": "vantage.core.observability",
+   "methods_anchor": "observability",
+   "passed": 4,
+   "checks": [
+    {
+     "id": "observability.cameras",
+     "model": "observability",
+     "title": "Predicted camera σ against the joint solve's spread",
+     "quantity": "largest |log(empirical σ / predicted σ)| over every camera's and camera pair's six axes, the predicted σ of the observability study (Fisher information through the lens model) against the spread of the joint solve's answers to 200 simulated captures (the sample's six cameras, boards exact, 0.4 px corner noise); the tolerance is 4.5 standard errors of a σ estimated from the trials, and each camera's and pair's mean squared Mahalanobis distance must lie within 4 standard deviations of its degrees of freedom",
+     "reference": "Monte Carlo solves with core.joint.joint_solve, the machinery that solves real captures",
+     "references": [
+      "kay1993",
+      "huber1967"
+     ],
+     "error": 0.16303281328924282,
+     "tolerance": 0.22556461820268847,
+     "unit": "log ratio",
+     "passed": true,
+     "seconds": 14.046,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "trials": 200,
+      "solved": 200,
+      "stalled": 0,
+      "median_ratio": 0.9694309659526923,
+      "min_ratio": 0.8495633109905641,
+      "max_ratio": 1.120909442282928,
+      "band_log": 0.22556461820268847,
+      "mahalanobis_worst_in_bands": 0.4761952640082489,
+      "module_agreement": true,
+      "cameras": {
+       "F": {
+        "mahalanobis2_per_dof": 1.061422892758886
+       },
+       "R": {
+        "mahalanobis2_per_dof": 0.9971348481711709
+       },
+       "ML": {
+        "mahalanobis2_per_dof": 0.9650556015190758
+       },
+       "MR": {
+        "mahalanobis2_per_dof": 0.9705543501678847
+       },
+       "QL": {
+        "mahalanobis2_per_dof": 1.0045270104615094
+       },
+       "QR": {
+        "mahalanobis2_per_dof": 1.0777623609833422
+       }
+      }
+     },
+     "figure": {
+      "kind": "xy",
+      "title": "Camera pose 1σ: Monte Carlo against the prediction",
+      "xlabel": "predicted 1σ (deg or mm)",
+      "ylabel": "Monte Carlo 1σ (deg or mm)",
+      "series": [
+       {
+        "label": "axes",
+        "kind": "points",
+        "x": [
+         0.015523477,
+         0.013457908,
+         0.011004773,
+         0.18284199,
+         0.37241104,
+         0.21319802,
+         0.010048527,
+         0.03066168,
+         0.0069390022,
+         0.33648966,
+         0.27185225,
+         0.63442862,
+         0.043580419,
+         0.055607593,
+         0.030556979,
+         1.3835245,
+         1.1014701,
+         1.0323868,
+         0.043580419,
+         0.055607593,
+         0.030556979,
+         1.3835245,
+         1.1014701,
+         1.0323868,
+         0.05676267,
+         0.059530281,
+         0.041375257,
+         1.9426389,
+         1.1089846,
+         1.2305439,
+         0.05676267,
+         0.059530281,
+         0.041375257,
+         1.9426389,
+         1.1089846,
+         1.2305439,
+         0.027874774,
+         0.074864524,
+         0.051900939,
+         1.7292089,
+         2.4749386,
+         2.5476212,
+         0.027874774,
+         0.074864524,
+         0.051900939,
+         1.7292089,
+         2.4749386,
+         2.5476212,
+         0.047665779,
+         0.040588907,
+         0.045924538,
+         1.6200227,
+         1.1736927,
+         2.0205404,
+         0.047665779,
+         0.040588907,
+         0.045924538,
+         1.6200227,
+         1.1736927,
+         2.0205404,
+         0.040571378,
+         0.035065567,
+         0.039059242,
+         0.92285587,
+         1.2660674,
+         1.581478,
+         0.040571378,
+         0.035065567,
+         0.039059242,
+         0.92285587,
+         1.2660674,
+         1.581478
+        ],
+        "y": [
+         0.015247471,
+         0.013077732,
+         0.010809182,
+         0.16925512,
+         0.36004624,
+         0.22252699,
+         0.009916848,
+         0.028761043,
+         0.0068135678,
+         0.29114668,
+         0.27975632,
+         0.60690025,
+         0.045588635,
+         0.050888873,
+         0.032141859,
+         1.4553361,
+         0.9965925,
+         0.99210914,
+         0.039391339,
+         0.051962138,
+         0.027795397,
+         1.2947831,
+         0.93576854,
+         0.99096239,
+         0.054666054,
+         0.058088705,
+         0.039888015,
+         1.8819681,
+         1.0803975,
+         1.1826442,
+         0.056319409,
+         0.065635375,
+         0.042626684,
+         1.8911677,
+         1.1456822,
+         1.3793283,
+         0.027459686,
+         0.068261186,
+         0.051807534,
+         1.7590649,
+         2.4644842,
+         2.3351274,
+         0.029864349,
+         0.074501904,
+         0.04966198,
+         1.7235708,
+         2.2702852,
+         2.448043,
+         0.046596878,
+         0.038285058,
+         0.045155737,
+         1.5637941,
+         1.1699928,
+         1.929452,
+         0.053359198,
+         0.038562641,
+         0.047713431,
+         1.540844,
+         1.2283262,
+         2.0326362,
+         0.038345641,
+         0.035211028,
+         0.03439665,
+         0.92277387,
+         1.1309219,
+         1.6039009,
+         0.039358011,
+         0.033286005,
+         0.033906109,
+         0.83847778,
+         1.0858966,
+         1.5006701
+        ]
+       }
+      ],
+      "logy": false,
+      "hline": null,
+      "hline_label": "",
+      "diag": true,
+      "categories": null
+     }
+    },
+    {
+     "id": "observability.boards_placed",
+     "model": "observability",
+     "title": "Predicted σ with boards laid by hand",
+     "quantity": "largest |log(empirical σ / predicted σ)| over cameras F and ML and their pair, boards laid off their plan by draws of the placement σ (the joint solve's answers carried to the optimum of its least squares), 100 trials, tolerance 4.5 standard errors",
+     "reference": "Monte Carlo solves with core.joint.joint_solve",
+     "references": [
+      "kay1993",
+      "huber1967"
+     ],
+     "error": 0.17899300271785468,
+     "tolerance": 0.31980107453341566,
+     "unit": "log ratio",
+     "passed": true,
+     "seconds": 4.999,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "trials": 100,
+      "solved": 100,
+      "median_ratio": 0.9770422146412918,
+      "band_log": 0.31980107453341566,
+      "mahalanobis_worst_in_bands": 0.381730503523054,
+      "module_agreement": true
+     },
+     "figure": {
+      "kind": "xy",
+      "title": "Boards laid by hand: Monte Carlo against the prediction",
+      "xlabel": "predicted 1σ (deg or mm)",
+      "ylabel": "Monte Carlo 1σ (deg or mm)",
+      "series": [
+       {
+        "label": "axes",
+        "kind": "points",
+        "x": [
+         0.27057443,
+         0.023363596,
+         0.015541546,
+         10.382983,
+         10.079164,
+         0.49946708,
+         0.27148178,
+         0.046708829,
+         0.026080255,
+         10.26926,
+         12.278509,
+         1.1870226,
+         0.049575757,
+         0.034512845,
+         0.063675118,
+         2.0189378,
+         2.7073913,
+         1.5016739
+        ],
+        "y": [
+         0.27248355,
+         0.022643571,
+         0.015796109,
+         9.5631485,
+         10.028222,
+         0.47976452,
+         0.27711061,
+         0.047095131,
+         0.023295317,
+         8.5862486,
+         11.806074,
+         1.2077693,
+         0.050699816,
+         0.034706541,
+         0.059655062,
+         1.8592966,
+         2.5509537,
+         1.4790026
+        ]
+       }
+      ],
+      "logy": false,
+      "hline": null,
+      "hline_label": "",
+      "diag": true,
+      "categories": null
+     }
+    },
+    {
+     "id": "observability.radar",
+     "model": "observability",
+     "title": "Radar pose σ from corner reflectors",
+     "quantity": "relative difference of the radar's x σ from σ_r / √n and of its (y, yaw) covariance from the inverse of the range–azimuth Fisher information Σ [[1/r², 1/r], [1/r, 1]] / σ_az² for three reflectors straight ahead; the Monte Carlo spread of a least-squares solve must agree (ratios 0.8–1.25 over 200 trials)",
+     "reference": "the Fisher information of range and azimuth measurements, written out in the check; Monte Carlo",
+     "references": [
+      "kay1993",
+      "knott2004"
+     ],
+     "error": 2.913226077855212e-09,
+     "tolerance": 0.0001,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 1.025,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "x_sigma_m": 0.057735026910892495,
+      "mc_ratios": [
+       0.98,
+       1.054,
+       1.027
+      ],
+      "module_agreement": true
+     },
+     "figure": null
+    },
+    {
+     "id": "observability.lidar_pair",
+     "model": "observability",
+     "title": "Predicted lidar–camera σ against the calibration's spread",
+     "quantity": "largest |log(empirical σ / predicted σ)| over the six axes of the data rig's camera F – lidar L1 pair, the study's prediction against the spread of the lidar–camera calibration's own solve on simulated noisy corners and lidar points of the planned board poses, 60 trials, tolerance 4.5 standard errors",
+     "reference": "Monte Carlo solves with core.lidar_calib._solve",
+     "references": [
+      "kay1993",
+      "zhang2004"
+     ],
+     "error": 0.16005221601459357,
+     "tolerance": 0.41425857805424554,
+     "unit": "log ratio",
+     "passed": true,
+     "seconds": 6.84,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "trials": 60,
+      "ratios": [
+       1.06,
+       1.045,
+       1.032,
+       0.985,
+       1.174,
+       0.999
+      ],
+      "band_log": 0.41425857805424554,
+      "mahalanobis_worst_in_bands": 0.13117595277678767,
+      "module_agreement": true,
+      "predicted": {
+       "yaw_deg": 0.08988870711441069,
+       "pitch_deg": 0.12812533446742627,
+       "roll_deg": 0.17942873641120724,
+       "x_mm": 4.245971101213136,
+       "y_mm": 6.284239015996885,
+       "z_mm": 16.409025823267005
+      }
+     },
+     "figure": {
+      "kind": "xy",
+      "title": "Lidar–camera 1σ: Monte Carlo against the prediction",
+      "xlabel": "predicted 1σ (deg or mm)",
+      "ylabel": "Monte Carlo 1σ (deg or mm)",
+      "series": [
+       {
+        "label": "axes",
+        "kind": "points",
+        "x": [
+         0.089888707,
+         0.12812533,
+         0.17942874,
+         4.2459711,
+         6.284239,
+         16.409026
+        ],
+        "y": [
+         0.095252111,
+         0.13384603,
+         0.18519532,
+         4.1835109,
+         7.3750079,
+         16.389492
+        ]
+       }
+      ],
+      "logy": false,
+      "hline": null,
+      "hline_label": "",
+      "diag": true,
+      "categories": null
+     }
+    }
+   ]
+  },
+  {
+   "id": "lidar_calib",
+   "title": "Lidar–camera calibration",
+   "modules": "vantage.core.lidar_calib",
+   "methods_anchor": "lidar-calib",
+   "passed": 2,
+   "checks": [
+    {
+     "id": "lidar_calib.closed_form",
+     "model": "lidar_calib",
+     "title": "Plane-to-plane alignment recovers a known transform",
+     "quantity": "largest element difference between the transform the closed-form plane alignment gives for four exact board planes (seen by the camera and, through a known T_camera_lidar, by the lidar) and that T; two planes must not fix it",
+     "reference": "the transform the planes were generated with",
+     "references": [
+      "unnikrishnan2005",
+      "zhang2004"
+     ],
+     "error": 3.3306690738754696e-15,
+     "tolerance": 1e-09,
+     "unit": "matrix element",
+     "passed": true,
+     "seconds": 0.001,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "planes": 4
+     },
+     "figure": null
+    },
+    {
+     "id": "lidar_calib.recovery",
+     "model": "lidar_calib",
+     "title": "An injected lidar mounting error is recovered",
+     "quantity": "position error (mm) of the lidar L1 the lidar–camera calibration recovers from synthetic captures (camera images through the real lens, lidar scans with range noise) of its six planned board poses with camera F, L1 mounted 15, −10, 8 mm and 0.6°, −0.4°, 0.3° off its plan; the rotation error must be under 0.08° and the error within 3 of the solve's own 1σ",
+     "reference": "the injected mounting error the captures were simulated with",
+     "references": [
+      "zhang2004",
+      "unnikrishnan2005"
+     ],
+     "error": 0.8348703631552501,
+     "tolerance": 3.0,
+     "unit": "mm",
+     "passed": true,
+     "seconds": 5.705,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "position_error_mm": 0.8348703631552501,
+      "rotation_error_deg": 0.01411122380841493,
+      "sigma_position_mm": 1.6527015351958394,
+      "sigma_angle_deg": 0.015011213566459352,
+      "poses_used": 6
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "formats",
+   "title": "Dataset calibration files",
+   "modules": "vantage.core.exporters",
+   "methods_anchor": "formats",
+   "passed": 4,
+   "checks": [
+    {
+     "id": "formats.nuscenes",
+     "model": "formats",
+     "title": "nuScenes calibrated_sensor rows",
+     "quantity": "largest pixel distance between where a point lands through a camera's calibrated_sensor row (translation, the w-first sensor-to-ego quaternion transposed, camera_intrinsic and the Kannala–Brandt coefficients through cv2.fisheye) and where Vantage's lens model puts it, every camera, custom export origin",
+     "reference": "the nuScenes devkit's convention (points into the sensor frame by −translation, then the rotation transposed); OpenCV's fisheye projection",
+     "references": [
+      "nuscenes2020",
+      "opencv",
+      "rep103"
+     ],
+     "error": 7.544181409097247e-07,
+     "tolerance": 0.05,
+     "unit": "px",
+     "passed": true,
+     "seconds": 0.545,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "reference rig": {
+       "F": 0.0,
+       "R": 1e-06,
+       "ML": 0.0,
+       "MR": 0.0,
+       "QL": 0.0,
+       "QR": 0.0
+      }
+     },
+     "figure": null
+    },
+    {
+     "id": "formats.kitti",
+     "model": "formats",
+     "title": "KITTI calib_cam_to_cam and calib_cams_to_vehicle",
+     "quantity": "largest pixel distance between where a point lands through KITTI's files (vehicle → camera 00 by the inverse of Tr_cam_00_to_vehicle, camera 00 → camera n by R_n, T_n, then K_n and D_n by the stated distortion model) and where Vantage's lens model puts it; P_rect_n must equal K_n [R_n | T_n]",
+     "reference": "the KITTI raw devkit's (and pykitti's) reading of the files",
+     "references": [
+      "kitti2013",
+      "opencv"
+     ],
+     "error": 0.0006401930335642436,
+     "tolerance": 0.05,
+     "unit": "px",
+     "passed": true,
+     "seconds": 0.002,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "reference rig": {
+       "F": 0.000308,
+       "R": 0.00064,
+       "ML": 0.000232,
+       "MR": 0.000167,
+       "QL": 0.000285,
+       "QR": 0.000212
+      },
+      "p_rect_rel_difference": 7.441860462379516e-07
+     },
+     "figure": null
+    },
+    {
+     "id": "formats.ros_camera_info",
+     "model": "formats",
+     "title": "ROS camera_info files",
+     "quantity": "largest pixel distance between where a point (in the camera's optical frame, REP 103) lands through camera_matrix and distortion_coefficients by the stated distortion_model (equidistant through cv2.fisheye, plumb_bob through the pinhole) and where Vantage's lens model puts it; the projection matrix must be [K | 0] and the rectification the identity",
+     "reference": "sensor_msgs/CameraInfo and the camera_calibration_parsers YAML layout; OpenCV",
+     "references": [
+      "ros_camera_info",
+      "rep103",
+      "opencv"
+     ],
+     "error": 6.53796033095052e-07,
+     "tolerance": 0.05,
+     "unit": "px",
+     "passed": true,
+     "seconds": 0.008,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "reference rig": {
+       "F": 0.0,
+       "R": 1e-06,
+       "ML": 1e-06,
+       "MR": 0.0,
+       "QL": 0.0,
+       "QR": 1e-06
+      }
+     },
+     "figure": null
+    },
+    {
+     "id": "formats.kalibr",
+     "model": "formats",
+     "title": "Kalibr camchain",
+     "quantity": "largest pixel distance between where a point lands through each camera's Kalibr model (projected by the model's published equations, written for the check) and where Vantage's lens model puts it, for pinhole models; for a fitted wide-angle model (omni, double sphere, extended unified) the largest distance must not exceed the fit error the file states for it, and a fit outside the export's limits (0.25 px RMS, 1 px max) must carry its warning; T_cn_cnm1 must carry the previous camera's coordinates into this one (to 1 µm)",
+     "reference": "the Kalibr camera models' equations (Mei & Rives; Usenko et al.; Khomutenko et al.; Kannala–Brandt) and Kalibr's camchain.yaml conventions",
+     "references": [
+      "kalibr2013",
+      "kannala2006"
+     ],
+     "error": 6.179981722771224e-07,
+     "tolerance": 0.05,
+     "unit": "px",
+     "passed": true,
+     "seconds": 0.005,
+     "note": "A wide-angle Kalibr model is a fit to the lens, not the lens: the check holds it to the error the file states for it.",
+     "exception": "",
+     "detail": {
+      "reference rig": {
+       "F": 0.0,
+       "R": 1e-06,
+       "ML": 0.0,
+       "QL": 0.0,
+       "QR": 0.0
+      },
+      "chain_error_m": 1.6347989628684445e-09,
+      "wide_models": {
+       "MR": {
+        "model": "ds",
+        "max_px": 0.8802,
+        "stated_rms_px": 0.534,
+        "stated_max_px": 2.591,
+        "warned": true
+       }
+      }
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "experiments",
+   "title": "Designed experiments and sensitivity",
+   "modules": "vantage.core.experiments",
+   "methods_anchor": "experiments",
+   "passed": 4,
+   "checks": [
+    {
+     "id": "experiments.sobol_ishigami",
+     "model": "experiments",
+     "title": "Sobol indices of the Ishigami function",
+     "quantity": "largest difference of the first-order (Saltelli et al. 2010) and total (Jansen 1999) indices experiments.sobol_indices estimates from a scrambled Sobol sequence (8192 base samples, A, B and AB_i matrices) from the Ishigami function's analytic indices (a = 7, b = 0.1); every analytic index must lie in its 95 % bootstrap interval (a margin of 0.01 allowed for the bootstrap's own spread)",
+     "reference": "the analytic Sobol indices of the Ishigami function",
+     "references": [
+      "sobol2001",
+      "saltelli2010",
+      "jansen1999",
+      "ishigami1990",
+      "efron1993"
+     ],
+     "error": 0.000489209738462313,
+     "tolerance": 0.02,
+     "unit": "index",
+     "passed": true,
+     "seconds": 0.234,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "N": 8192,
+      "S1": [
+       0.31385173589464727,
+       0.4423957479281567,
+       0.000489209738462313
+      ],
+      "ST": [
+       0.5572091765445375,
+       0.44235668691640145,
+       0.2436887960317161
+      ],
+      "S1_ci": [
+       [
+        0.2866040296249052,
+        0.34510732900223
+       ],
+       [
+        0.42036070313259083,
+        0.4727371380397827
+       ],
+       [
+        -0.023252335411044673,
+        0.025064460757749832
+       ]
+      ],
+      "ST_ci": [
+       [
+        0.5306348470328881,
+        0.5903492100919346
+       ],
+       [
+        0.4281146240810736,
+        0.45580305434067603
+       ],
+       [
+        0.2337936666044857,
+        0.25146108836833564
+       ]
+      ],
+      "analytic_S1": [
+       0.31391,
+       0.44241,
+       0.0
+      ],
+      "analytic_ST": [
+       0.55759,
+       0.44241,
+       0.24368
+      ]
+     },
+     "figure": {
+      "kind": "xy",
+      "title": "Sobol indices of the Ishigami function",
+      "xlabel": "factor x1, x2, x3",
+      "ylabel": "index",
+      "series": [
+       {
+        "label": "analytic S1",
+        "kind": "line",
+        "x": [
+         1.0,
+         2.0,
+         3.0
+        ],
+        "y": [
+         0.31390519,
+         0.44241114,
+         0.0
+        ]
+       },
+       {
+        "label": "estimated S1",
+        "kind": "points",
+        "x": [
+         1.0,
+         2.0,
+         3.0
+        ],
+        "y": [
+         0.31385174,
+         0.44239575,
+         0.00048920974
+        ]
+       },
+       {
+        "label": "analytic ST",
+        "kind": "line",
+        "x": [
+         1.0,
+         2.0,
+         3.0
+        ],
+        "y": [
+         0.55758886,
+         0.44241114,
+         0.24368366
+        ]
+       },
+       {
+        "label": "estimated ST",
+        "kind": "points",
+        "x": [
+         1.0,
+         2.0,
+         3.0
+        ],
+        "y": [
+         0.55720918,
+         0.44235669,
+         0.2436888
+        ]
+       }
+      ],
+      "logy": false,
+      "hline": null,
+      "hline_label": "",
+      "diag": false,
+      "categories": null
+     }
+    },
+    {
+     "id": "experiments.morris_linear",
+     "model": "experiments",
+     "title": "Morris elementary effects of a linear function",
+     "quantity": "largest difference of the μ, μ* and σ experiments.morris_indices gives for y = Σ c_i x_i on the unit cube (20 random trajectories on a 4-level grid) from c_i, |c_i| and 0",
+     "reference": "the elementary effects of a linear function, which are its coefficients exactly",
+     "references": [
+      "morris1991",
+      "campolongo2007"
+     ],
+     "error": 7.8916723523882e-16,
+     "tolerance": 1e-09,
+     "unit": "response per range",
+     "passed": true,
+     "seconds": 0.001,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "coefficients": [
+       3.0,
+       -2.0,
+       0.5,
+       0.0,
+       7.5
+      ],
+      "mu": [
+       3.0,
+       -2.0,
+       0.4999999999999999,
+       0.0,
+       7.5
+      ],
+      "mu_star": [
+       3.0,
+       2.0,
+       0.4999999999999999,
+       0.0,
+       7.5
+      ],
+      "sigma": [
+       7.8916723523882e-16,
+       6.891106626990641e-16,
+       6.032743494040158e-16,
+       0.0,
+       7.346747138368236e-16
+      ],
+      "trajectories": 20
+     },
+     "figure": null
+    },
+    {
+     "id": "experiments.wilson",
+     "model": "experiments",
+     "title": "Wilson's interval for a share",
+     "quantity": "largest difference of experiments.wilson's 95 % and 90 % intervals for 0/10, 3/10, 17/40, 99/100 and 500/1000 from scipy.stats.binomtest's Wilson interval",
+     "reference": "scipy.stats.binomtest(k, n).proportion_ci(method='wilson')",
+     "references": [
+      "wilson1927"
+     ],
+     "error": 1.1102230246251565e-16,
+     "tolerance": 1e-09,
+     "unit": "share",
+     "passed": true,
+     "seconds": 0.002,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "cases": 10
+     },
+     "figure": null
+    },
+    {
+     "id": "experiments.uncertainty_linear",
+     "model": "experiments",
+     "title": "Uncertainty propagated through a linear function",
+     "quantity": "relative difference of the standard deviation experiments.uncertainty gives for y = 2·x1 + 3·x2 − 1 with x1, x2 standard normal (20 000 draws) from the analytic √13, and of its mean from −1 in units of that σ; the analytic σ must lie in its bootstrap interval; tolerance 4.5 standard errors of a σ estimated from the draws",
+     "reference": "the variance of a linear combination of independent normals, written out in the check",
+     "references": [
+      "efron1993",
+      "saltelli2010"
+     ],
+     "error": 0.0038753069348975706,
+     "tolerance": 0.022500562521094628,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.198,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "n": 20000,
+      "sd": 3.6157650978037443,
+      "sd_ci": [
+       3.5842285575912567,
+       3.6522258747596936
+      ],
+      "mean": -1.0139726178619344,
+      "analytic_sd": 3.605551275463989
+     },
+     "figure": {
+      "kind": "xy",
+      "title": "Running mean and its interval against the draws",
+      "xlabel": "draws",
+      "ylabel": "mean of y",
+      "series": [
+       {
+        "label": "running mean",
+        "kind": "line",
+        "x": [
+         5.0,
+         7.0,
+         10.0,
+         15.0,
+         21.0,
+         30.0,
+         44.0,
+         62.0,
+         90.0,
+         128.0,
+         184.0,
+         264.0,
+         379.0,
+         543.0,
+         779.0,
+         1117.0,
+         1602.0,
+         2298.0,
+         3296.0,
+         4727.0,
+         6779.0,
+         9723.0,
+         13945.0,
+         20000.0
+        ],
+        "y": [
+         -2.2049386,
+         -1.9840241,
+         -2.2020549,
+         -2.0124956,
+         -2.0177083,
+         -1.3827469,
+         -1.6976605,
+         -1.2876342,
+         -1.1424221,
+         -0.95125002,
+         -0.87165768,
+         -0.88547715,
+         -0.66961951,
+         -0.70655057,
+         -0.85722783,
+         -0.90935985,
+         -1.0481638,
+         -1.1144298,
+         -1.0647358,
+         -1.0665016,
+         -1.0641883,
+         -1.0391819,
+         -1.0328708,
+         -1.0139726
+        ]
+       },
+       {
+        "label": "mean + half interval",
+        "kind": "line",
+        "x": [
+         5.0,
+         7.0,
+         10.0,
+         15.0,
+         21.0,
+         30.0,
+         44.0,
+         62.0,
+         90.0,
+         128.0,
+         184.0,
+         264.0,
+         379.0,
+         543.0,
+         779.0,
+         1117.0,
+         1602.0,
+         2298.0,
+         3296.0,
+         4727.0,
+         6779.0,
+         9723.0,
+         13945.0,
+         20000.0
+        ],
+        "y": [
+         2.8110436,
+         1.3649832,
+         0.23341587,
+         -0.39660097,
+         -0.64179706,
+         -0.010223571,
+         -0.61382441,
+         -0.35406252,
+         -0.38163555,
+         -0.31696526,
+         -0.35019738,
+         -0.45260867,
+         -0.30357699,
+         -0.39703273,
+         -0.59703717,
+         -0.69494643,
+         -0.8683613,
+         -0.96364357,
+         -0.93954939,
+         -0.9631235,
+         -0.97810862,
+         -0.96730094,
+         -0.97282746,
+         -0.96385856
+        ]
+       },
+       {
+        "label": "mean − half interval",
+        "kind": "line",
+        "x": [
+         5.0,
+         7.0,
+         10.0,
+         15.0,
+         21.0,
+         30.0,
+         44.0,
+         62.0,
+         90.0,
+         128.0,
+         184.0,
+         264.0,
+         379.0,
+         543.0,
+         779.0,
+         1117.0,
+         1602.0,
+         2298.0,
+         3296.0,
+         4727.0,
+         6779.0,
+         9723.0,
+         13945.0,
+         20000.0
+        ],
+        "y": [
+         -7.2209208,
+         -5.3330314,
+         -4.6375257,
+         -3.6283902,
+         -3.3936196,
+         -2.7552702,
+         -2.7814967,
+         -2.2212059,
+         -1.9032086,
+         -1.5855348,
+         -1.393118,
+         -1.3183456,
+         -1.035662,
+         -1.0160684,
+         -1.1174185,
+         -1.1237733,
+         -1.2279664,
+         -1.265216,
+         -1.1899223,
+         -1.1698797,
+         -1.1502679,
+         -1.1110628,
+         -1.0929141,
+         -1.0640867
+        ]
+       }
+      ],
+      "logy": false,
+      "hline": -1.0,
+      "hline_label": "−1 (analytic)",
+      "diag": false,
+      "categories": null
+     }
+    }
+   ]
+  }
+ ],
+ "references": {
+  "kannala2006": "J. Kannala and S. S. Brandt, \"A generic camera model and calibration method for conventional, wide-angle, and fish-eye lenses\", IEEE Trans. Pattern Analysis and Machine Intelligence 28(8), 1335–1340, 2006.",
+  "miyamoto1964": "K. Miyamoto, \"Fish eye lens\", Journal of the Optical Society of America 54(8), 1060–1061, 1964.",
+  "opencv": "OpenCV, Camera Calibration and 3D Reconstruction (calib3d) and its fisheye module (cv::fisheye), https://docs.opencv.org/.",
+  "hartley2004": "R. Hartley and A. Zisserman, Multiple View Geometry in Computer Vision, 2nd ed., Cambridge University Press, 2004.",
+  "econ": "e-con Systems, product pages and lens datasheets of the camera modules in the built-in library (each lens names its page), https://www.e-consystems.com.",
+  "johnson1958": "J. Johnson, \"Analysis of image forming systems\", Image Intensifier Symposium, Fort Belvoir, 1958 (the pixels-on-target criteria for detection and recognition).",
+  "iso8855": "ISO 8855:2011, Road vehicles — Vehicle dynamics and road-holding ability — Vocabulary.",
+  "greene1986": "N. Greene, \"Environment mapping and other applications of world projections\", IEEE Computer Graphics and Applications 6(11), 21–29, 1986.",
+  "moller1997": "T. Möller and B. Trumbore, \"Fast, minimum storage ray–triangle intersection\", Journal of Graphics Tools 2(1), 21–28, 1997.",
+  "rep103": "ROS REP 103, Standard Units of Measure and Coordinate Conventions (T. Foote, M. Purvis, 2010).",
+  "skolnik2001": "M. I. Skolnik, Introduction to Radar Systems, 3rd ed., McGraw-Hill, 2001 (the radar equation).",
+  "macleod2010": "H. A. Macleod, Thin-Film Optical Filters, 4th ed., CRC Press, 2010, ch. 2 (the characteristic matrix of a multilayer).",
+  "bornwolf1999": "M. Born and E. Wolf, Principles of Optics, 7th ed., Cambridge University Press, 1999, §1.5–1.6 (Fresnel equations, stratified media).",
+  "emilsson2017": "E. Emilsson, Radar Transparency and Paint Compatibility: A Study of Automobile Bumper and Bumper-Skin Complex Permittivities for 77 GHz Microwaves, master's thesis, Chalmers University of Technology, 2017 (sample 11: measured S21 and S11 of a painted plate).",
+  "knott2004": "E. F. Knott, J. F. Shaeffer and M. T. Tuley, Radar Cross Section, 2nd ed., SciTech, 2004 (the trihedral corner reflector, σ = 4πa⁴ / 3λ²).",
+  "hecht2017": "E. Hecht, Optics, 5th ed., Pearson, 2017 (the lateral shift of a ray through a plane-parallel plate).",
+  "itu_p838": "Recommendation ITU-R P.838-3, Specific attenuation model for rain for use in prediction methods, 2005.",
+  "itu_p840": "Recommendation ITU-R P.840, Attenuation due to clouds and fog (the double-Debye permittivity of liquid water and the Rayleigh absorption coefficient K_l).",
+  "kunkel1984": "B. A. Kunkel, \"Parameterization of droplet terminal velocity and extinction coefficient in fog models\", Journal of Climate and Applied Meteorology 23, 34–41, 1984.",
+  "itu_p1814": "Recommendation ITU-R P.1814, Prediction methods required for the design of terrestrial free-space optical links, 2007 (rain and snow attenuation).",
+  "koschmieder1924": "H. Koschmieder, \"Theorie der horizontalen Sichtweite\", Beiträge zur Physik der freien Atmosphäre 12, 33–55 and 171–181, 1924.",
+  "wmo8": "WMO-No. 8, Guide to Instruments and Methods of Observation, World Meteorological Organization (meteorological optical range: the distance at which the contrast of a black object falls to 5 %).",
+  "kim2001": "I. I. Kim, B. McArthur and E. Korevaar, \"Comparison of laser beam propagation at 785 nm and 1550 nm in fog and haze for optical wireless communications\", Proc. SPIE 4214, 26–37, 2001.",
+  "corless1996": "R. M. Corless, G. H. Gonnet, D. E. G. Hare, D. J. Jeffrey and D. E. Knuth, \"On the Lambert W function\", Advances in Computational Mathematics 5, 329–359, 1996.",
+  "unr112": "UN Regulation No. 112, Uniform provisions concerning the approval of motor vehicle headlamps emitting an asymmetrical passing beam or a driving beam or both (class B photometric test points).",
+  "janesick2007": "J. R. Janesick, Photon Transfer, SPIE Press, 2007 (signal, shot noise and read noise of an image sensor).",
+  "reda2004": "I. Reda and A. Andreas, \"Solar position algorithm for solar radiation applications\", Solar Energy 76(5), 577–589, 2004 (NREL SPA; its worked example).",
+  "noaa": "NOAA Global Monitoring Laboratory, General Solar Position Calculations and the NOAA Solar Calculator.",
+  "meeus1998": "J. Meeus, Astronomical Algorithms, 2nd ed., Willmann-Bell, 1998 (ch. 25 solar coordinates, ch. 28 the equation of time).",
+  "gillespie1992": "T. D. Gillespie, Fundamentals of Vehicle Dynamics, SAE International, 1992 (ride rates, load transfer, anti-dive and anti-squat, roll centres).",
+  "milliken1995": "W. F. Milliken and D. L. Milliken, Race Car Vehicle Dynamics, SAE International, 1995 (wheel rate, motion ratio, roll stiffness and lateral load transfer).",
+  "aashto2018": "AASHTO, A Policy on Geometric Design of Highways and Streets (the Green Book), 7th ed., 2018 (crest and sag vertical curves).",
+  "ieee1588": "IEEE 1588-2019, Standard for a Precision Clock Synchronization Protocol for Networked Measurement and Control Systems (PTP).",
+  "liang2008": "C.-K. Liang, L.-W. Chang and H. H. Chen, \"Analysis and compensation of rolling shutter effect\", IEEE Trans. Image Processing 17(8), 1323–1330, 2008.",
+  "groves2013": "P. D. Groves, Principles of GNSS, Inertial, and Multisensor Integrated Navigation Systems, 2nd ed., Artech House, 2013 (lever arms, attitude error propagation).",
+  "zhang2000": "Z. Zhang, \"A flexible new technique for camera calibration\", IEEE Trans. Pattern Analysis and Machine Intelligence 22(11), 1330–1334, 2000.",
+  "triggs2000": "B. Triggs, P. F. McLauchlan, R. I. Hartley and A. W. Fitzgibbon, \"Bundle adjustment — a modern synthesis\", Vision Algorithms: Theory and Practice, LNCS 1883, 298–372, 2000.",
+  "huber1964": "P. J. Huber, \"Robust estimation of a location parameter\", Annals of Mathematical Statistics 35(1), 73–101, 1964.",
+  "kay1993": "S. M. Kay, Fundamentals of Statistical Signal Processing, Volume I: Estimation Theory, Prentice Hall, 1993 (Fisher information and the Cramér–Rao bound).",
+  "huber1967": "P. J. Huber, \"The behavior of maximum likelihood estimates under nonstandard conditions\", Proc. Fifth Berkeley Symposium on Mathematical Statistics and Probability 1, 221–233, 1967 (the sandwich covariance).",
+  "zhang2004": "Q. Zhang and R. Pless, \"Extrinsic calibration of a camera and laser range finder (improves camera calibration)\", Proc. IEEE/RSJ IROS, 2301–2306, 2004.",
+  "unnikrishnan2005": "R. Unnikrishnan and M. Hebert, Fast extrinsic calibration of a laser rangefinder to a camera, Carnegie Mellon University, CMU-RI-TR-05-09, 2005.",
+  "nuscenes2020": "H. Caesar et al., \"nuScenes: A multimodal dataset for autonomous driving\", Proc. IEEE/CVF CVPR, 11621–11631, 2020; the nuScenes devkit and its schema.",
+  "kitti2013": "A. Geiger, P. Lenz, C. Stiller and R. Urtasun, \"Vision meets robotics: The KITTI dataset\", International Journal of Robotics Research 32(11), 1231–1237, 2013; the KITTI raw data devkit.",
+  "ros_camera_info": "ROS sensor_msgs/CameraInfo message definition and the camera_calibration_parsers YAML format.",
+  "kalibr2013": "P. Furgale, J. Rehder and R. Siegwart, \"Unified temporal and spatial calibration for multi-sensor systems\", Proc. IEEE/RSJ IROS, 1280–1286, 2013; Kalibr's camchain.yaml format.",
+  "sobol2001": "I. M. Sobol', \"Global sensitivity indices for nonlinear mathematical models and their Monte Carlo estimates\", Mathematics and Computers in Simulation 55(1–3), 271–280, 2001.",
+  "saltelli2010": "A. Saltelli, P. Annoni, I. Azzini, F. Campolongo, M. Ratto and S. Tarantola, \"Variance based sensitivity analysis of model output. Design and estimator for the total sensitivity index\", Computer Physics Communications 181(2), 259–270, 2010.",
+  "jansen1999": "M. J. W. Jansen, \"Analysis of variance designs for model output\", Computer Physics Communications 117(1–2), 35–43, 1999.",
+  "ishigami1990": "T. Ishigami and T. Homma, \"An importance quantification technique in uncertainty analysis for computer models\", Proc. ISUMA '90, 398–403, 1990.",
+  "efron1993": "B. Efron and R. J. Tibshirani, An Introduction to the Bootstrap, Chapman & Hall, 1993.",
+  "morris1991": "M. D. Morris, \"Factorial sampling plans for preliminary computational experiments\", Technometrics 33(2), 161–174, 1991.",
+  "campolongo2007": "F. Campolongo, J. Cariboni and A. Saltelli, \"An effective screening design for sensitivity analysis of large models\", Environmental Modelling & Software 22(10), 1509–1518, 2007.",
+  "wilson1927": "E. B. Wilson, \"Probable inference, the law of succession, and statistical inference\", Journal of the American Statistical Association 22(158), 209–212, 1927."
+ }
+}
