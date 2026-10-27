@@ -144,6 +144,7 @@ def _warm_up():
         img = np.full((7 * sq + 40, 7 * sq + 40), 230, np.uint8)
         img[20:-20, 20:-20] = b
         flags = cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY | cv2.CALIB_CB_NORMALIZE_IMAGE
+        cv2.setRNGSeed(SB_SEED)                     # its result is thrown away, but no unseeded draw anywhere
         cv2.findChessboardCornersSB(cv2.GaussianBlur(img, (3, 3), 0.8), (6, 6), flags=flags)
         _warmed = True
 

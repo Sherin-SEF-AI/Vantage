@@ -139,6 +139,7 @@ def _check_opencv(S):
     import cv2
     import numpy as np
     img = np.zeros((60, 80), np.uint8)
+    cv2.setRNGSeed(0)                               # the detector draws on OpenCV's generator
     cv2.findChessboardCornersSB(img, (4, 3))
     pic = (np.arange(48 * 64 * 3) % 251).astype(np.uint8).reshape(48, 64, 3)
     for ext in ('.png', '.jpg'):
@@ -604,7 +605,7 @@ def _check_exports(S):
             got = {os.path.relpath(x, out).replace(os.sep, '/') for x in paths}
             # the bracket STLs are what may be written: a camera the generator turns down gets none
             lost = [n for n in want if n not in got and not (fmt.id == 'brackets' and n.endswith('.stl'))]
-            if not paths:
+            if not paths and want:                  # (a format with nothing to write here, e.g. no experiment set up)
                 raise ValueError('nothing written')
             if lost:
                 raise ValueError(f'{", ".join(lost[:3])} not written')

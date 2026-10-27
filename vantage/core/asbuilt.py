@@ -80,6 +80,7 @@ import numpy as np
 
 from . import drivelog as DL
 from .mathutil import BODY_TO_OPTICAL, euler_zyx, rot_zyx
+from .pngtext import put_text
 
 SCHEMA = 'vantage.asbuilt/1'
 ANALYSIS_W = 960            # images are analysed at most this wide (px)
@@ -2295,7 +2296,7 @@ def overlay_png(res: AsBuiltResult, tag) -> bytes | None:
             txt = f'{r["tag"]}  not fitted'
             img[:] = (img * 0.5).astype(np.uint8)
         cv2.rectangle(img, (0, 0), (img.shape[1], 22), (30, 29, 28), -1)
-        cv2.putText(img, txt, (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (236, 235, 230), 1, cv2.LINE_AA)
+        put_text(img, txt, (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (236, 235, 230), 1, cv2.LINE_AA)
         panels.append(img)
     out = np.concatenate([panels[0], np.full((panels[0].shape[0], 6, 3), 30, np.uint8), panels[1]], 1)
     foot = np.full((26, out.shape[1], 3), (30, 29, 28), np.uint8)
@@ -2303,9 +2304,9 @@ def overlay_png(res: AsBuiltResult, tag) -> bytes | None:
     for text, col in (('real outline', REAL_COLOR), ('simulated', SIM_COLOR), ('image circle measured', CIRCLE_REAL),
                       ('lens model', CIRCLE_SIM), ('undecided', UND_COLOR)):
         cv2.line(foot, (x, 13), (x + 18, 13), _bgr(col), 2, cv2.LINE_AA)
-        cv2.putText(foot, text, (x + 24, 17), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (183, 194, 195), 1, cv2.LINE_AA)
+        put_text(foot, text, (x + 24, 17), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (183, 194, 195), 1, cv2.LINE_AA)
         x += 34 + int(cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0][0])
-    cv2.putText(foot, VERDICT_TEXT[r['verdict']], (out.shape[1] - 170, 17), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+    put_text(foot, VERDICT_TEXT[r['verdict']], (out.shape[1] - 170, 17), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
                 (236, 235, 230), 1, cv2.LINE_AA)
     ok, buf = cv2.imencode('.png', np.concatenate([out, foot], 0))
     return buf.tobytes() if ok else None

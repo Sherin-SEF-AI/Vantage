@@ -994,6 +994,7 @@ class DriveLogPage(QWidget):
             folder = QFileDialog.getExistingDirectory(self, 'Export the drive-log check into')
             if not folder:
                 return []
-        paths = DL.export(res, self.ctx.store.project, folder)
+        from ...core import provenance as PV          # where the JSON came from
+        paths = PV.stamp_paths(DL.export(res, self.ctx.store.project, folder), self.ctx.store.project, folder)
         self.ctx.msg(f'Exported the drive-log check to {folder}', 5000)
         return paths

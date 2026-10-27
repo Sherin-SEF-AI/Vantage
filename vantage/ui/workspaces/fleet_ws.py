@@ -960,6 +960,8 @@ class FleetPage(QWidget):
             if not folder:
                 return []
         cells = [self.sel_cell] if self.sel_cell else None
-        paths = FL.export(res, self.ctx.store.project, folder, cells=cells)
+        from ...core import provenance as PV          # where the JSON came from
+        paths = PV.stamp_paths(FL.export(res, self.ctx.store.project, folder, cells=cells),
+                                self.ctx.store.project, folder)
         self.ctx.msg(f'Exported the fleet to {folder}', 5000)
         return paths

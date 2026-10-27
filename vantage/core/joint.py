@@ -110,7 +110,8 @@ def joint_solve(project: Project, cams: list, obs: dict, init: dict, img_shapes:
         res.message = 'No camera has board observations.'
         return res
     targets = {t.uid: t for t in project.targets}
-    board_ids = sorted({o.target_uid for c in cams for o in obs[c.uid] if o.target_uid in targets})
+    seen = {o.target_uid for c in cams for o in obs[c.uid] if o.target_uid in targets}
+    board_ids = [t.uid for t in project.targets if t.uid in seen]       # the project's order, never the uids'
     bidx = {u: i for i, u in enumerate(board_ids)}
     nc, nb = len(cams), len(board_ids) if solve_boards else 0
     W2O0, P0, intr, scale = [], [], [], []

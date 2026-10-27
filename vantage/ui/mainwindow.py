@@ -52,6 +52,7 @@ PAGE_CLASSES = {
     'critical': ('critical_ws', 'CriticalPage'), 'materials': ('materials_ws', 'MaterialsPage'),
     'automation': ('automation_ws', 'AutomationPage'), 'terrain': ('terrain_ws', 'TerrainPage'),
     'harness': ('harness_ws', 'HarnessPage'), 'observability': ('observability_ws', 'ObservabilityPage'),
+    'experiments': ('experiments_ws', 'ExperimentsPage'), 'sim': ('sim_ws', 'SimPage'),
 }
 
 
@@ -150,6 +151,8 @@ class MainWindow(QMainWindow):
         'terrain': (),
         'harness': (),
         'observability': (),
+        'experiments': (),
+        'sim': (),
     }
 
     def set_page(self, name):
@@ -515,6 +518,10 @@ class MainWindow(QMainWindow):
         A('requirements', 'Requirements scorecard…', lambda: self.set_page('requirements'), None, 'checklist',
           category='Analysis', tip='The programme\'s requirements as pass/fail checks on the studies: one verdict, '
                                    'the evidence behind each value, and the design-review pack (PDF)')
+        A('experiments', 'Experiments…', lambda: self.set_page('experiments'), None, 'filter', category='Analysis',
+          tip='Vary design inputs (poses, lenses, sensor models, mount offsets, ROI, load case, weather) over a designed '
+              'set of points and compute any scorecard metric at each: Sobol indices, Morris screening, main effects, '
+              'response surfaces, the Pareto front and the best design (Add as variant), and Monte Carlo uncertainty')
         A('an_settings', 'Settings…', self.preferences, None, 'gear', category='Analysis')
         A('automation', 'Automation…', lambda: self.set_page('automation'), None, 'refresh', category='Export',
           tip='Regenerate the exports and run your own checks when the design changes (on save, after changes or by '
@@ -549,6 +556,9 @@ class MainWindow(QMainWindow):
         A('calib_import', 'Import unit calibrations…', self.import_calibrations, None, 'file', category='Calibrate')
         A('calib_export', 'Export unit calibrations…', self.export_calibrations, None, 'export', category='Calibrate')
         A('calib_clear', 'Clear unit calibration', self.clear_calibration, None, None, category='Calibrate')
+        # simulate
+        A('carla', 'CARLA…', lambda: self.set_page('sim'), None, 'car-front', category='Simulate',
+          tip='Run the planned rig in the CARLA simulator and record a nuScenes folder and a ROS 2 bag')
         # export
         A('export', 'Export…', self.export_dialog, 'Ctrl+E', 'export', category='Export')
         for fid, text in (('mount_sheet_pdf', 'Mount sheet (PDF)'), ('report_html', 'Report (HTML)'), ('report_pdf', 'Report (PDF)'),
@@ -569,6 +579,9 @@ class MainWindow(QMainWindow):
         A('shortcuts', 'Keyboard shortcuts', self.shortcuts, '?', 'keyboard', category='Help')
         A('help_frames', 'Coordinate frames', lambda: self.help_topic('frames'), None, 'axes', category='Help')
         A('help_lens', 'Lens projection models', lambda: self.help_topic('lens'), None, 'lens', category='Help')
+        A('validate_models', 'Validate the models…', self.validate_models, None, 'checklist', category='Help',
+          tip='Check every model against independent references (closed forms, OpenCV, ITU-R tables, published '
+              'examples, exact ray casting, Monte Carlo) and open the report')
         A('about', 'About Vantage', self.about, None, 'app', category='Help')
 
     def _build_menus(self):
@@ -682,7 +695,7 @@ class MainWindow(QMainWindow):
         an.addActions([a['sensor_coverage'], a['sync_plan'], a['recording_budget'], a['power_budget'],
                        a['cable_harness'], a['gnss_imu'], a['sun_dirt'], a['materials'], a['mount_brackets']])
         an.addSeparator()
-        an.addAction(a['requirements'])
+        an.addActions([a['requirements'], a['experiments']])
         an.addSeparator()
         an.addAction(a['an_settings'])
         cb = menu('Calibrate')
@@ -693,6 +706,8 @@ class MainWindow(QMainWindow):
         cb.addActions([a['lens_calib'], a['calib_import'], a['calib_export'], a['calib_clear']])
         cb.addSeparator()
         cb.addActions([a['install'], a['lidar_calib'], a['live_rig'], a['drive_log'], a['asbuilt'], a['fleet']])
+        si = menu('Simulate')
+        si.addAction(a['carla'])
         ex = menu('Export')
         ex.addAction(a['export'])
         ex.addSeparator()
@@ -710,6 +725,8 @@ class MainWindow(QMainWindow):
         w.aboutToShow.connect(self._fill_window_menu)
         h = menu('Help')
         h.addActions([a['shortcuts'], a['help_frames'], a['help_lens']])
+        h.addSeparator()
+        h.addAction(a['validate_models'])
         h.addSeparator()
         h.addAction(a['about'])
         corner = QWidget()
@@ -2157,6 +2174,41 @@ class MainWindow(QMainWindow):
     def about(self):
         from .dialogs.misc import AboutDialog
         AboutDialog(self).exec()
+
+    def validate_models(self, folder=None, open_report=True, quick=False, models=()):
+        """Help ▸ Validate the models: the validation suite (vantage.validation) in the background on a copy of the
+        project (its vehicle and exports are checked too), the report into the working folder, then opened."""
+        from .. import workdir
+        from .. import validation as VA
+        from ..core import provenance as PV
+        project = self.store.project.snapshot()
+        if folder is None:
+            folder = workdir.project_dir(project, workdir.get(self.ctx.settings), 'validation',
+                                         time.strftime('%Y%m%d-%H%M%S'))
+        eng = self._shared_engine()
+        st = VA.ValidationSettings.from_dict({'quick': bool(quick), 'models': list(models)})
+
+        def work(progress, cancel):
+            res = VA.run(project, eng, settings=st, progress=lambda f: progress(f, f'{f * 100:.0f} % of the checks'),
+                         cancel=cancel)
+            paths = PV.stamp_paths(VA.export(res, project, folder), project, folder)
+            return res, paths
+
+        def done(out):
+            res, paths = out
+            self.validation_report = os.path.join(folder, 'validation.html')
+            text = (f'{res.passed} of {len(res.checks)} checks passed' + (' (cancelled)' if res.cancelled else '')
+                    + f' · report in {folder}')
+            self.store.project.add_log('validation', text)
+            self.msg(text, 8000)
+            if open_report and not res.cancelled and QGuiApplication.platformName() != 'offscreen':
+                from PyQt6.QtCore import QUrl
+                from PyQt6.QtGui import QDesktopServices
+                QDesktopServices.openUrl(QUrl.fromLocalFile(self.validation_report))
+        started = self.run_job('validation', 'Validating the models', work, done)
+        if not started:
+            self.msg('The models are being validated already', 4000)
+        return started
 
     # ------------------------------------------------------------------ photos
     def load_photos(self):

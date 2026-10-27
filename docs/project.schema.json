@@ -1,0 +1,357 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Sherin-SEF-AI/Vantage/blob/main/docs/project.schema.json",
+  "title": "Vantage project (project.json inside a .vantage file), format version 1",
+  "description": "A .vantage file is a ZIP archive: project.json (this schema), mesh.npz (the vehicle body: vertices float32 (V,3) metres in the vehicle frame, faces int32 (F,3), face_part int32 (F,), face_zone int16 (F,)) and optionally thumb.png. Vehicle frame: ISO 8855, x forward, y left, z up, metres, origin at the rear-axle centre on the ground. Orientations: intrinsic Z-Y-X yaw, pitch, roll in degrees, pitch positive DOWN, the body's optical axis along +x. docs/project-format.md explains every part. The schema is strict (unknown keys are errors) so that it documents every field Vantage writes; Vantage's own reader is tolerant: it ignores unknown keys and fills missing ones with defaults.",
+  "type": "object",
+  "required": ["format", "version"],
+  "additionalProperties": false,
+  "properties": {
+    "format": {"const": "vantage", "description": "Marks the file as a Vantage project."},
+    "version": {"type": "integer", "minimum": 1, "description": "Format version; 1 since Vantage 0.1. New fields are added without a new version (older readers ignore them, newer ones fill them in)."},
+    "name": {"type": "string", "description": "The project's name."},
+    "created": {"type": "number", "description": "When the project was created, seconds since 1970-01-01 UTC."},
+    "saved_at": {"type": "number", "description": "When the file was saved, seconds since 1970-01-01 UTC."},
+    "vehicle": {"$ref": "#/$defs/vehicle"},
+    "modules": {"type": "object", "description": "Camera modules by id: the built-in library and any edited or custom ones (a saved entry wins over the built-in one of the same id).", "additionalProperties": {"$ref": "#/$defs/module"}},
+    "lenses": {"type": "object", "description": "Lenses by id (as modules).", "additionalProperties": {"$ref": "#/$defs/lens"}},
+    "sensor_models": {"type": "object", "description": "Lidar, radar, GNSS antenna and IMU models by id (as modules).", "additionalProperties": {"$ref": "#/$defs/sensor_model"}},
+    "variants": {"type": "array", "description": "Rig layouts on the vehicle: each a set of cameras and sensors.", "items": {"$ref": "#/$defs/variant"}},
+    "active": {"type": "string", "description": "uid of the variant shown when the project opens."},
+    "roi": {"$ref": "#/$defs/roi"},
+    "analysis": {"$ref": "#/$defs/analysis"},
+    "targets": {"type": "array", "description": "Calibration boards on the ground.", "items": {"$ref": "#/$defs/target"}},
+    "target_settings": {"$ref": "#/$defs/target_settings"},
+    "obstacles": {"type": "array", "description": "Poles and other standing objects around the vehicle (coverage checks).", "items": {"$ref": "#/$defs/obstacle"}},
+    "rig": {"type": "array", "description": "Solids of the data-collection rig on the vehicle (roof rack, mast, crossbar, enclosure): they block views like the body and cameras can be placed on them.", "items": {"$ref": "#/$defs/rig_part"}},
+    "ecu": {"$ref": "#/$defs/ecu"},
+    "photos": {"$ref": "#/$defs/photos"},
+    "frame": {"$ref": "#/$defs/frame_id", "description": "Display and default export frame (origin), all with ISO 8855 axes."},
+    "custom_origin": {"$ref": "#/$defs/vec3", "description": "Origin of the 'custom' frame in the vehicle frame, metres."},
+    "units": {"enum": ["m", "mm"], "description": "Display length unit (the file always stores metres)."},
+    "streams": {"type": "object", "description": "Live stream source per camera tag: RTSP/HTTP URL (never with a password: passwords live in the user's private store), a device, a file or 'synthetic'.", "additionalProperties": {"type": "string"}},
+    "fleet": {"$ref": "#/$defs/fleet"},
+    "log": {"type": "array", "description": "The last 400 entries of the project's history: [time (s since 1970 UTC), kind, text].", "items": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": ["number", "string"]}}}
+  },
+  "$defs": {
+    "vec3": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}},
+    "frame_id": {"enum": ["rear_axle", "front_axle", "front_bumper", "centre", "custom"]},
+    "uid": {"type": "string", "description": "A random identity (10 hexadecimal digits) other entries refer to; it carries no meaning."},
+    "vehicle": {
+      "type": "object",
+      "description": "The vehicle the rig is planned on. Its body triangles are in mesh.npz.",
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string"},
+        "spec_name": {"type": "string", "description": "Model name as shown (e.g. 'Tata Tigor EV sedan')."},
+        "source": {"type": "string", "description": "Where the body came from: the imported file's path on the computer it was imported on, or 'template:<key>'."},
+        "template": {"type": "string", "description": "Template key when generated (tigor, sedan, hatchback, suv, van, truck), else empty."},
+        "import_units": {"enum": ["m", "mm", "cm", "in"], "description": "Length unit of the imported model."},
+        "import_up": {"enum": ["+X", "-X", "+Y", "-Y", "+Z", "-Z"], "description": "The imported model's up axis."},
+        "import_forward": {"enum": ["+X", "-X", "+Y", "-Y", "+Z", "-Z"], "description": "The imported model's forward axis."},
+        "occluder_target": {"type": "integer", "minimum": 0, "description": "Triangles the body is simplified to for occlusion."},
+        "wheel_centres": {"type": "object", "description": "Wheel centres FL, FR, RL, RR in the vehicle frame, metres.", "additionalProperties": {"$ref": "#/$defs/vec3"}},
+        "spec": {"type": "object", "description": "Datasheet dimensions in metres (Length, Width, Height, Wheelbase, Ground clearance, …).", "additionalProperties": {"type": ["number", "string", "null"]}},
+        "landmarks": {"type": "object", "description": "Named points on the body in the vehicle frame, metres.", "additionalProperties": {"$ref": "#/$defs/vec3"}},
+        "imported_tris": {"type": "integer", "minimum": 0, "description": "Triangles of the model as imported."},
+        "parts": {"type": "array", "description": "Body parts, indexed by mesh.npz face_part.", "items": {"$ref": "#/$defs/part"}},
+        "zones": {"type": "array", "description": "Mount zones, indexed by mesh.npz face_zone (-1 = none).", "items": {"$ref": "#/$defs/zone"}}
+      }
+    },
+    "part": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string"},
+        "material": {"type": "string", "description": "Material name imported with the model ('rig' for rig parts)."},
+        "alpha": {"type": "number", "minimum": 0, "maximum": 1, "description": "Opacity in the views."},
+        "color": {"type": "array", "minItems": 3, "maxItems": 4, "items": {"type": "number", "minimum": 0, "maximum": 1}},
+        "role": {"enum": ["occluder · mountable", "occluder · not mountable", "wheels", "ignored"], "description": "Whether the part blocks views and can carry a camera."},
+        "surface": {"type": "string", "description": "Surface material class (core.materials); absent = from the role and name."},
+        "surface_mm": {"type": "number", "minimum": 0, "description": "Its thickness, mm; absent = the class's typical one."}
+      }
+    },
+    "zone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string"},
+        "kind": {"enum": ["allowed", "forbidden"]},
+        "auto": {"type": "boolean", "description": "Made by Vantage (from the parts) rather than painted by the user."}
+      }
+    },
+    "module": {
+      "type": "object",
+      "description": "A camera module. Figures are datasheet values; 'note' gives the source.",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": {"type": "string"}, "name": {"type": "string"}, "vendor": {"type": "string"},
+        "sensor": {"type": "string", "description": "Image sensor."},
+        "width_px": {"type": "integer", "minimum": 1}, "height_px": {"type": "integer", "minimum": 1},
+        "pixel_um": {"type": "number", "exclusiveMinimum": 0, "description": "Pixel pitch, micrometres."},
+        "optical_format": {"type": "string"}, "interface": {"type": "string"},
+        "fps": {"type": "number", "minimum": 0}, "hw_sync": {"type": "boolean", "description": "Takes a hardware trigger."},
+        "size_mm": {"$ref": "#/$defs/vec3", "description": "Housing width, height, length, mm."},
+        "weight_g": {"type": "number", "minimum": 0},
+        "cables_m": {"type": "array", "items": {"type": "number", "minimum": 0}, "description": "Cable lengths available, metres."},
+        "power_w": {"type": "number", "minimum": 0},
+        "builtin": {"type": "boolean"}, "shutter": {"type": "string", "description": "rolling | global (empty: not given)."},
+        "dynamic_range_db": {"type": "number", "minimum": 0}, "ip_rating": {"type": "string"},
+        "temp_c": {"type": "array", "maxItems": 2, "items": {"type": "number"}, "description": "Operating temperature range, °C."},
+        "chroma": {"type": "string"}, "url": {"type": "string"}, "note": {"type": "string"}
+      }
+    },
+    "lens": {
+      "type": "object",
+      "description": "A lens: its projection r(θ) maps the angle off the optical axis to the image height.",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": {"type": "string"}, "name": {"type": "string"},
+        "label": {"type": "string", "description": "wide, narrow, fisheye, unit, …"},
+        "module_id": {"type": "string", "description": "Module it was characterised on (empty: any)."},
+        "focal_mm": {"type": "number", "exclusiveMinimum": 0},
+        "f_number": {"type": "number", "minimum": 0, "description": "0: not given."},
+        "focus_near_m": {"type": "number", "minimum": 0, "description": "0: not given."},
+        "focus_far_m": {"type": ["number", "null"], "description": "null: infinity."},
+        "projection": {"enum": ["rectilinear", "equidistant", "equisolid", "stereographic", "orthographic", "kannala_brandt"]},
+        "kb": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number"}, "description": "Kannala–Brandt k1..k4 (with projection kannala_brandt)."},
+        "sheet_fov": {"$ref": "#/$defs/vec3", "description": "Datasheet field of view H, V, D, degrees (0: unknown)."},
+        "max_half_deg": {"type": "number", "minimum": 0, "description": "Image-circle half angle, degrees (0: from the diagonal FOV)."},
+        "pp_offset_px": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "number"}, "description": "Principal point offset from the sensor centre, pixels."},
+        "aspect": {"type": "number", "exclusiveMinimum": 0, "description": "fy / fx."},
+        "measured": {"type": "array", "items": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "number"}}, "description": "Measured [θ degrees, image height mm] samples the model was fitted to."},
+        "fit_rms_px": {"type": "number", "minimum": 0},
+        "builtin": {"type": "boolean"}, "note": {"type": "string"}
+      }
+    },
+    "sensor_model": {
+      "type": "object",
+      "description": "A lidar, radar, GNSS antenna or IMU product or typical class. Angles in degrees, ranges in metres.",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": {"type": "string"}, "name": {"type": "string"},
+        "kind": {"enum": ["lidar", "radar", "gnss", "imu"]}, "vendor": {"type": "string"},
+        "scan": {"enum": ["spinning", "solid", "nonrepetitive", "fixed"]},
+        "channels": {"type": "integer", "minimum": 0},
+        "v_min": {"type": "number"}, "v_max": {"type": "number"},
+        "beams": {"type": "array", "items": {"type": "number"}, "description": "Measured beam elevations, degrees (override the even v_min..v_max spread)."},
+        "h_fov": {"type": "number", "minimum": 0}, "h_res": {"type": "number", "minimum": 0},
+        "rate_hz": {"type": "number", "minimum": 0},
+        "range_m": {"type": "number", "minimum": 0, "description": "Lidar: on a 10 % target; radar: on a car (10 m²)."},
+        "range_max_m": {"type": "number", "minimum": 0}, "range_min_m": {"type": "number", "minimum": 0},
+        "points_per_s": {"type": "number", "minimum": 0}, "bytes_per_point": {"type": "number", "minimum": 0},
+        "rotation": {"enum": ["cw", "ccw"]},
+        "zones": {"type": "array", "items": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}}, "description": "Radar zones: [range m, azimuth half-angle °, elevation half-angle °]."},
+        "data_mbps": {"type": "number", "minimum": 0}, "interface": {"type": "string"}, "time_sync": {"type": "string"},
+        "size_mm": {"$ref": "#/$defs/vec3"}, "optical_z_mm": {"type": "number"}, "power_w": {"type": "number", "minimum": 0},
+        "mask_deg": {"type": "number"}, "antennas": {"type": "integer", "minimum": 0, "maximum": 2},
+        "heading_sigma_deg": {"type": "number", "minimum": 0}, "heading_baseline_m": {"type": "number", "minimum": 0},
+        "pos_sigma_cm": {"type": "number", "minimum": 0}, "attitude_sigma_deg": {"type": "number", "minimum": 0},
+        "accel_noise_density": {"type": "number", "minimum": 0, "description": "m/s²/√Hz."},
+        "accel_random_walk": {"type": "number", "minimum": 0, "description": "m/s³/√Hz."},
+        "gyro_noise_density": {"type": "number", "minimum": 0, "description": "rad/s/√Hz."},
+        "gyro_random_walk": {"type": "number", "minimum": 0, "description": "rad/s²/√Hz."},
+        "note": {"type": "string"}, "builtin": {"type": "boolean"}
+      }
+    },
+    "variant": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "uid": {"$ref": "#/$defs/uid"}, "name": {"type": "string"}, "note": {"type": "string"},
+        "cameras": {"type": "array", "items": {"$ref": "#/$defs/camera"}},
+        "sensors": {"type": "array", "items": {"$ref": "#/$defs/sensor"}},
+        "seams": {"type": "object", "description": "Manual stitching seams: 'uidA|uidB' (two cameras) → azimuth in degrees about the body centre, counter-clockwise from +x.", "additionalProperties": {"type": "number"}},
+        "blend_m": {"type": "number", "minimum": 0, "description": "Seam blend width, metres."},
+        "created": {"type": "number", "description": "Seconds since 1970-01-01 UTC."}
+      }
+    },
+    "camera": {
+      "type": "object",
+      "description": "A camera: its position is the optical centre in the vehicle frame, metres; yaw, pitch (positive down) and roll in degrees turn the body's +x optical axis.",
+      "additionalProperties": false,
+      "properties": {
+        "uid": {"$ref": "#/$defs/uid"}, "tag": {"type": "string", "description": "Short name (F, R, ML, …), unique in the variant."},
+        "name": {"type": "string"}, "location": {"type": "string"},
+        "slot": {"type": "integer", "minimum": 0, "maximum": 7, "description": "Colour slot."},
+        "x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"},
+        "yaw": {"type": "number"}, "pitch": {"type": "number"}, "roll": {"type": "number"},
+        "module_id": {"type": "string"}, "lens_id": {"type": "string"},
+        "port": {"type": "integer", "minimum": 0, "description": "GMSL port 1..8 (0: unassigned)."},
+        "sync": {"type": "string", "description": "Trigger line (A–H)."},
+        "cable_m": {"type": "number", "minimum": 0}, "standoff_mm": {"type": "number", "description": "Optical centre off the surface, mm."},
+        "bracket": {"type": "string"}, "snap_normal": {"type": "boolean"}, "locked": {"type": "boolean"}, "visible": {"type": "boolean"},
+        "link_uid": {"type": "string", "description": "uid of the mirrored partner camera (empty: none)."},
+        "route_extra_m": {"type": "number"}, "route_note": {"type": "string"},
+        "calib": {"$ref": "#/$defs/unit_calibration"}
+      }
+    },
+    "unit_calibration": {
+      "type": "object",
+      "description": "The camera's own lens calibration (empty: the library lens). OpenCV pixel coordinates (pixel centres on integers), Kannala–Brandt / OpenCV fisheye model; it overrides the lens model.",
+      "additionalProperties": false,
+      "anyOf": [{"maxProperties": 0}, {"required": ["width", "height", "fx", "fy", "cx", "cy", "k"]}],
+      "properties": {
+        "model": {"type": "string"}, "width": {"type": "integer", "minimum": 1}, "height": {"type": "integer", "minimum": 1},
+        "fx": {"type": "number", "exclusiveMinimum": 0}, "fy": {"type": "number", "exclusiveMinimum": 0},
+        "cx": {"type": "number"}, "cy": {"type": "number"},
+        "k": {"type": "array", "minItems": 4, "items": {"type": "number"}},
+        "rms_px": {"type": ["number", "null"], "minimum": 0}, "serial": {"type": "string"}, "source": {"type": "string"},
+        "views": {"type": ["integer", "null"], "minimum": 0}, "date": {"type": "string"}
+      }
+    },
+    "sensor": {
+      "type": "object",
+      "description": "A lidar, radar, GNSS antenna or IMU: the position is its optical centre (a GNSS antenna's phase centre, an IMU's axis origin) in the vehicle frame, metres; yaw, pitch (positive down), roll in degrees.",
+      "additionalProperties": false,
+      "properties": {
+        "uid": {"$ref": "#/$defs/uid"}, "tag": {"type": "string"}, "name": {"type": "string"},
+        "kind": {"enum": ["lidar", "radar", "gnss", "imu"]}, "model_id": {"type": "string"},
+        "x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"},
+        "yaw": {"type": "number"}, "pitch": {"type": "number"}, "roll": {"type": "number"},
+        "phase_deg": {"type": "number", "minimum": 0, "exclusiveMaximum": 360, "description": "Spinning lidar: the sensor-frame azimuth it faces at the top of each sync period."},
+        "port": {"type": "string"}, "visible": {"type": "boolean"}, "locked": {"type": "boolean"}
+      }
+    },
+    "roi": {
+      "type": "object",
+      "description": "The ground region of interest the coverage figures are computed on.",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"enum": ["offset", "polygon"]},
+        "distance": {"type": "number", "minimum": 0, "description": "Offset mode: metres beyond the body."},
+        "measured_from": {"enum": ["outline", "bbox"]},
+        "corners": {"enum": ["round", "square"]},
+        "exclude_under_body": {"type": "boolean"},
+        "polygon": {"type": "array", "items": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "number"}}, "description": "Polygon mode: ground points [x, y], metres."}
+      }
+    },
+    "analysis": {
+      "type": "object",
+      "description": "Analysis settings. Every study keeps its own settings in a slot here (empty = its defaults); each module's settings class documents and clamps its fields.",
+      "additionalProperties": false,
+      "properties": {
+        "cell_m": {"type": "number", "exclusiveMinimum": 0, "description": "Ground grid cell, metres."},
+        "min_density": {"type": "number", "minimum": 0, "description": "Minimum pixel density, px/cm."},
+        "target_density": {"type": "number", "minimum": 0, "description": "Target pixel density, px/cm."},
+        "live": {"type": "boolean", "description": "Re-analyse on every edit."},
+        "heatmap": {"type": "string", "description": "Heat map shown in the views."},
+        "obstacle_mode": {"enum": ["ground", "pole05", "pole10", "child"]},
+        "tol_deg": {"type": "number", "minimum": 0, "description": "Mounting tolerance, degrees."},
+        "tol_mm": {"type": "number", "minimum": 0, "description": "Mounting tolerance, mm."},
+        "load_cases": {"type": "array", "items": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": ["string", "number"]}}, "description": "[name, front axle drop mm, rear axle drop mm]."},
+        "bowl": {"type": "object"}, "volume": {"type": "object"}, "guidelines": {"type": "object"},
+        "stitched": {"type": "object"}, "assistant": {"type": "object"}, "perception": {"type": "object"},
+        "sensor_coverage": {"type": "object"}, "timing": {"type": "object"}, "recording": {"type": "object"},
+        "gnss": {"type": "object"}, "power": {"type": "object"}, "exposure": {"type": "object"},
+        "brackets": {"type": "object"}, "dataset": {"type": "object"}, "lidar_calib": {"type": "object"},
+        "drivelog": {"type": "object"}, "requirements": {"type": "object"}, "housings": {"type": "object"},
+        "asbuilt": {"type": "object"}, "suspension": {"type": "object"}, "critical": {"type": "object"},
+        "terrain": {"type": "object"}, "observability": {"type": "object"}, "materials": {"type": "object"},
+        "weather": {"type": "object"}, "harness": {"type": "object"}, "automation": {"type": "object"},
+        "sim": {"type": "object", "description": "The CARLA run (core/simrig.py SimSettings): town, weather, duration_s, traffic, seed, vehicle, camera_rate, image_scale, face_oversample, undistort, jpeg_quality, exposure, exposure_ev, keyframe_hz, channel_names, nuscenes, rosbag, lidar_noise_cm, drop_self_hits, max_lidar_channels, radar_points, tick_hz, min_tick_hz, max_tick_hz, warmup_s, quality, memory_gb, port, tm_port, timeout_s."},
+        "experiments": {"type": "object", "description": "A designed experiment (core/experiments.py ExperimentSettings): name, variant, factors, responses, design, samples, sobol_n, morris_r, levels, morris_levels, seed, bootstrap, confidence, workers."}
+      }
+    },
+    "target": {
+      "type": "object",
+      "description": "A calibration board lying on the ground: centre x, y (metres), yaw (degrees).",
+      "additionalProperties": false,
+      "properties": {
+        "uid": {"$ref": "#/$defs/uid"}, "name": {"type": "string"},
+        "x": {"type": "number"}, "y": {"type": "number"}, "yaw": {"type": "number"},
+        "pattern": {"enum": ["checkerboard", "charuco", "aprilgrid"]},
+        "rows": {"type": "integer", "minimum": 1}, "cols": {"type": "integer", "minimum": 1},
+        "square_mm": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "target_settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pattern": {"enum": ["checkerboard", "charuco", "aprilgrid"]},
+        "rows": {"type": "integer", "minimum": 1}, "cols": {"type": "integer", "minimum": 1},
+        "square_mm": {"type": "number", "exclusiveMinimum": 0},
+        "cams_per_target": {"type": "integer", "minimum": 1}, "min_density": {"type": "number", "minimum": 0}
+      }
+    },
+    "obstacle": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "uid": {"$ref": "#/$defs/uid"}, "name": {"type": "string"},
+        "x": {"type": "number"}, "y": {"type": "number"},
+        "height": {"type": "number", "minimum": 0}, "radius": {"type": "number", "minimum": 0}
+      }
+    },
+    "rig_part": {
+      "type": "object",
+      "description": "Centre x, y, z (metres) in the vehicle frame; box: length along x and width along y before yaw; cylinder: vertical; bar: horizontal along y before yaw.",
+      "additionalProperties": false,
+      "properties": {
+        "uid": {"$ref": "#/$defs/uid"}, "name": {"type": "string"}, "kind": {"enum": ["box", "cylinder", "bar"]},
+        "x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"},
+        "length": {"type": "number", "minimum": 0}, "width": {"type": "number", "minimum": 0},
+        "height": {"type": "number", "minimum": 0}, "radius": {"type": "number", "minimum": 0},
+        "yaw": {"type": "number"}, "occludes": {"type": "boolean"}, "mountable": {"type": "boolean"}, "visible": {"type": "boolean"}
+      }
+    },
+    "ecu": {
+      "type": "object",
+      "description": "The computer the cameras connect to, for cable routing and the link budget.",
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string"}, "location": {"type": "string"},
+        "x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"},
+        "ports": {"type": "integer", "minimum": 0},
+        "route_factor": {"type": "number", "minimum": 0, "description": "Routing slack over the Manhattan length."},
+        "service_loop_m": {"type": "number", "minimum": 0},
+        "link_gbps": {"type": "number", "minimum": 0, "description": "GMSL2 forward channel per camera link."},
+        "csi_gbps_per_deser": {"type": "number", "minimum": 0},
+        "bpp": {"type": "integer", "minimum": 1, "description": "Bits per pixel the ECU receives (16 = YUV 4:2:2)."},
+        "overhead": {"type": "number", "minimum": 1, "description": "Blanking and protocol overhead factor."}
+      }
+    },
+    "photos": {
+      "type": "object",
+      "description": "Reference photos of the vehicle fitted to the body (landmarks, camera poses of the photos).",
+      "additionalProperties": false,
+      "properties": {
+        "source": {"type": "string", "description": "Folder or .zip of the photos on the computer that fitted them."},
+        "frames": {"type": "array", "items": {"$ref": "#/$defs/photo_frame"}},
+        "width": {"type": "integer", "minimum": 0}, "height": {"type": "integer", "minimum": 0},
+        "f_px": {"type": "number", "minimum": 0}, "cx": {"type": "number"}, "cy": {"type": "number"},
+        "k1": {"type": "number"}, "rms": {"type": "number", "minimum": 0}, "method": {"type": "string"},
+        "solved_at": {"type": "string"},
+        "landmarks": {"type": "object", "additionalProperties": {"$ref": "#/$defs/vec3"}},
+        "current": {"type": "integer", "minimum": 0, "description": "The photo shown."}
+      }
+    },
+    "photo_frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string"},
+        "pose": {"anyOf": [{"type": "null"}, {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number"}}}], "description": "4×4 world-to-camera transform (OpenCV optical), row-major."},
+        "points": {"type": "array", "items": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": ["string", "number"]}}, "description": "[landmark, u, v] pixel observations."},
+        "rms": {"type": "number", "minimum": 0}
+      }
+    },
+    "fleet": {
+      "type": "object",
+      "description": "Vehicles built to this design and their measured calibrations (core.fleet).",
+      "properties": {
+        "vehicles": {"type": "array", "items": {"type": "object", "required": ["id", "name", "records"], "properties": {
+          "id": {"type": "string"}, "name": {"type": "string"}, "vin": {"type": "string"}, "note": {"type": "string"},
+          "records": {"type": "array", "items": {"type": "object"}, "description": "Measured poses of some sensors on one date (vehicle frame, metres and degrees)."}}}},
+        "settings": {"type": "object"}
+      }
+    }
+  }
+}

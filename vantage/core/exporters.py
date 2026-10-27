@@ -96,6 +96,7 @@ class ExportFormat:
     filename: Callable          # (project, variant) -> str | list[str], relative to out_dir
     kind: str                   # 'text' | 'binary'
     multi: bool = False
+    default: bool = True        # among the formats batch --export writes when none are named (False: slow or large)
 
 
 def _safe(s: str) -> str:
@@ -154,6 +155,29 @@ def _terrain_names(p, v):
         ['terrain/terrain_profile.csv', 'terrain/terrain_profile.png'] if road else [])
 
 
+def _experiment_names(p, v):
+    """The experiment stored in the project (Analysis ▸ Experiments), when it can run: the spec, the points, the
+    analysis and the plots its design draws (a plot whose data are all missing is left out)."""
+    from . import experiments as EXP
+    st = EXP.settings_of(p)
+    if EXP.errors(p, st, None if st.variant else v):          # its own variant when it names one
+        return []
+    fs, rs = EXP.factors_of(st), st.responses
+    png = [n for n, on in (('sensitivity', st.design in ('sobol', 'morris', 'oat')), ('effects', bool(rs)),
+                           ('surface', len(fs) >= 2), ('pareto', len(rs) >= 2), ('uncertainty', st.design == 'montecarlo'))
+           if on]
+    return ['experiment/experiment_spec.json', 'experiment/experiment_points.csv',
+            'experiment/experiment_analysis.json'] + [f'experiment/experiment_{n}.png' for n in png]
+
+
+def _sim_rig_names(p, v):
+    """The CARLA bridge's rig and its remap tables, when the variant has something to simulate."""
+    if not any(c.visible for c in v.cameras) and not any(s.visible and s.kind in ('lidar', 'radar')
+                                                          for s in v.sensors):
+        return []
+    return ['carla/sim_rig.json', 'carla/sim_remap.npz']
+
+
 GROUPS = ['Documents', 'Extrinsics', 'Calibration and robotics', 'Datasets', 'Surround view', 'Images', 'Mount points']
 
 FORMATS: list[ExportFormat] = [
@@ -209,6 +233,8 @@ FORMATS: list[ExportFormat] = [
     ExportFormat('weather', 'Documents', 'Weather comparison', 'JSON, CSV, PNG',
                  lambda p, v: ['weather/weather.json', 'weather/weather_conditions.csv', 'weather/weather_sensors.csv',
                                'weather/weather.png'], 'binary', multi=True),
+    ExportFormat('experiment', 'Documents', 'Designed experiment (sensitivity, uncertainty)', 'JSON, CSV, PNG',
+                 _experiment_names, 'binary', multi=True, default=False),
     ExportFormat('ci_templates', 'Documents', 'CI templates (GitHub Actions, GitLab CI)', 'YAML, MD',
                  lambda p, v: ['ci/github/vantage.yml', 'ci/gitlab/vantage.gitlab-ci.yml', 'ci/README.md'],
                  'text', multi=True),
@@ -229,6 +255,8 @@ FORMATS: list[ExportFormat] = [
     ExportFormat('ros_camera_info', 'Datasets', 'ROS camera_info, per camera', 'YAML ×N',
                  lambda p, v: [f'camera_info/{t}.yaml' for t in safe_tags(v).values()], 'text', multi=True),
     ExportFormat('kalibr_camchain', 'Datasets', 'Kalibr camchain', 'YAML', lambda p, v: _kalibr_names(v), 'text'),
+    ExportFormat('sim_rig', 'Datasets', 'CARLA simulator rig', 'JSON, NPZ', _sim_rig_names, 'binary', multi=True,
+                 default=False),
     ExportFormat('bev_lut', 'Surround view', 'Bird\'s-eye remap tables', 'NPZ, BIN',
                  lambda p, v: ['bev_lut/bev_lut.json', 'bev_lut/bev_lut.npz'] + [f'bev_lut/{t}_{k}.bin' for t in safe_tags(v).values()
                                                                                  for k in ('map', 'weight')] + ['bev_lut/body_mask.bin',
@@ -2860,6 +2888,17 @@ def _camera_view_files(ctx: _Ctx) -> list:
 
 
 def _render(fmt_id: str, ctx: _Ctx) -> list:
+    """[(relative path, bytes)] for one format, every JSON object in it carrying its provenance block (core.provenance:
+    the version and environment, the project's and variant's content hashes, the settings, the result's hash). The
+    preview and the files written both come from here, so they stay the same."""
+    from . import provenance as PV
+    out = {'option': '--export', 'format': fmt_id} if PV.current_batch() else {'format': fmt_id}
+    return PV.stamp_files(_render_files(fmt_id, ctx), ctx.project, output=out, variant=ctx.variant, study=fmt_id,
+                          export={'format': fmt_id, 'frame': ctx.frame, 'units': ctx.units, 'angles': ctx.angles},
+                          when=ctx.now, cache=ctx.meta)
+
+
+def _render_files(fmt_id: str, ctx: _Ctx) -> list:
     """[(relative path, bytes)] for one format."""
     fmt = format_by_id(fmt_id)
     name = lambda: _names(fmt, ctx.project, ctx.variant)[0]
@@ -2985,6 +3024,19 @@ def _render(fmt_id: str, ctx: _Ctx) -> list:
     if fmt_id == 'ci_templates':
         from . import automation as AU
         return AU.ci_files(ctx.project, now=_now().timestamp())
+    if fmt_id == 'experiment':
+        from . import experiments as EXP
+        from .analysis import Engine
+        if not _experiment_names(ctx.project, ctx.variant):
+            return []                                       # no experiment in the project that can run
+        st = EXP.settings_of(ctx.project)
+        res = EXP.run(ctx.project, ctx.opts.engine or Engine(), st, variant=None if st.variant else ctx.variant)
+        return [(f'experiment/{n}', d) for n, d in EXP.files(res, ctx.project)] if res is not None else []
+    if fmt_id == 'sim_rig':
+        from . import simrig as SR
+        if not _sim_rig_names(ctx.project, ctx.variant):
+            return []
+        return [(f'carla/{n}', d) for n, d in SR.files(SR.build(ctx.project, variant=ctx.variant), ctx.project)]
     if fmt_id == 'gnss_imu':
         from . import gnss as GN
         return [(f'gnss_imu/{n}', d) for n, d in GN.files(GN.run(ctx.project, ctx.opts.engine, variant=ctx.variant),
@@ -3323,6 +3375,29 @@ def preview(fmt_id: str, project: Project, result, opts: ExportOptions) -> tuple
                 + (f' · sector checks: {counts}' if counts else '') + f' · {_size_text(total)}\n\n'
                 f'(the per-direction ranges, per-lidar figures and the ground density are left out of this preview)\n'
                 + _json(head), total)
+    if fmt_id == 'experiment':
+        from . import experiments as EXP
+        if not names:
+            st = EXP.settings_of(project)
+            why = EXP.errors(project, st) if (st.factors or st.responses) else []
+            return first, ('No experiment to run: ' + ' '.join(why) if why else
+                           'No experiment in this project: set one up on Analysis ▸ Experiments.'), 0
+        st = EXP.settings_of(project)
+        n = EXP.point_count(EXP.factors_of(st), st)
+        return (first, f'{EXP.DESIGN_LABEL[st.design]}: {n:,} design points, {len(st.factors)} factors, '
+                       f'{len(st.responses)} responses · the experiment runs when exported (the page\'s Estimate '
+                       f'times it) · {len(names)} files: ' + ', '.join(os.path.basename(x) for x in names), 0)
+    if fmt_id == 'sim_rig':
+        if not names:
+            return first, 'Nothing to simulate: no visible camera, lidar or radar in this variant.', 0
+        v = ctx.variant
+        nc = sum(c.visible for c in v.cameras)
+        ns = {k: sum(s.visible and s.kind == k for s in v.sensors) for k in ('lidar', 'radar', 'gnss', 'imu')}
+        return (first, f'The rig as the CARLA bridge reads it (sim_rig.json: {nc} cameras, {ns["lidar"]} lidars, '
+                       f'{ns["radar"]} radars, {ns["gnss"]} GNSS antennas, {ns["imu"]} IMUs, the CARLA car, weather '
+                       'and tick plan) and every camera\'s remap tables from the pinhole views to the lens '
+                       '(sim_remap.npz, tens of MB) · built when exported, a few seconds · run it with python -m '
+                       'vantage.sim.carla_bridge sim_rig.json OUT from CARLA\'s Python', 0)
     if fmt_id == 'bev_lut':
         if ctx.result is None and ctx.opts.lut is None:
             return first, 'Not available: the remap tables need an analysis result.', 0

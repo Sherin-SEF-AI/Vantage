@@ -2,12 +2,13 @@
 batch mode runs each flag with its exit code, and the assistant reads each study (the studies themselves are tested
 in their own files: test_power, test_gnss, test_exposure, test_brackets, test_fleet, test_dataset, test_drivelog,
 test_lidar_calib, test_requirements, test_critical, test_materials, test_weather, test_automation, test_terrain,
-test_harness, test_observability)."""
+test_harness, test_observability, test_experiments, test_validation, test_provenance, test_sim)."""
 import json
 import os
 import sys
 import time
 
+import numpy as np
 import pytest
 
 from vantage.core import samples, sensors
@@ -21,7 +22,8 @@ PAGES = {'power_budget': ('power', 'Analysis'), 'gnss_imu': ('gnss', 'Analysis')
          'asbuilt': ('asbuilt', 'Calibrate'), 'critical_targets': ('critical', 'Analysis'),
          'materials': ('materials', 'Analysis'), 'weather': ('perception', 'Analysis'),
          'automation': ('automation', 'Export'), 'terrain': ('terrain', 'Analysis'),
-         'cable_harness': ('harness', 'Analysis'), 'observability': ('observability', 'Calibrate')}
+         'cable_harness': ('harness', 'Analysis'), 'observability': ('observability', 'Calibrate'),
+         'experiments': ('experiments', 'Analysis'), 'carla': ('sim', 'Simulate')}
 FORMATS = {'power_budget': ['power_budget/power_budget.json', 'power_budget/power_budget.csv',
                             'power_budget/power_circuits.csv'],
            'gnss_imu': ['gnss_imu/gnss_imu.json', 'gnss_imu/ins_lever_arms.txt', 'gnss_imu/gnss_sky.png'],
@@ -41,7 +43,8 @@ FORMATS = {'power_budget': ['power_budget/power_budget.json', 'power_budget/powe
            'terrain': ['terrain/terrain.json', 'terrain/terrain_motion.csv'],
            'harness': ['harness/harness.json', 'harness/harness.csv', 'harness/harness.png'],
            'observability': ['observability/observability.json', 'observability/observability.csv',
-                             'observability/observability.png', 'observability/fusion_density.png']}
+                             'observability/observability.png', 'observability/fusion_density.png'],
+           'sim_rig': ['carla/sim_rig.json', 'carla/sim_remap.npz']}
 
 
 def _rig():
@@ -656,3 +659,230 @@ def test_camera_menu_opens_the_parking_guidelines(app, win):
         win.ctx.set_overlay('guidelines', bool(was))
         win.set_page('viewports')
         settle(app, win)
+
+
+
+# ----------------------------------------------------------------------------- round 7: experiments, validation,
+# provenance, the CARLA simulator
+def _with_experiment(p, design='oat'):
+    """A small experiment on the active variant: F's pitch over three levels, the blind ground and the minimum density."""
+    from vantage.core import experiments as EXP
+    F = p.variant.by_tag('F')
+    f = dict(EXP.new_factor(p, p.variant, 'camera', F.uid, 'pitch'), lo=F.pitch - 5.0, hi=F.pitch + 5.0, levels=3,
+             mirror=False)
+    st = EXP.ExperimentSettings.from_dict({'factors': [f], 'design': design, 'seed': 2, 'bootstrap': 50,
+                                           'responses': [{'metric': 'coverage.blind_m2'},
+                                                         {'metric': 'coverage.min_density'}]})
+    p.analysis.experiments = st.to_dict()
+    return st
+
+
+def test_experiment_export_format_runs_the_project_experiment(tmp_path):
+    from vantage.core import exporters as ex
+    from vantage.core import experiments as EXP
+    p = _rig()
+    f = ex.format_by_id('experiment')
+    assert f.group == 'Documents' and not f.default and ex._names(f, p, p.variant) == []    # none set up: nothing
+    assert ex.export(['experiment'], p, None, ex.ExportOptions(out_dir=str(tmp_path / 'none'))) == []
+    assert 'No experiment' in ex.preview('experiment', p, None, ex.ExportOptions(out_dir=str(tmp_path)))[1]
+    _with_experiment(p)
+    names = ex._names(f, p, p.variant)
+    assert names[:3] == ['experiment/experiment_spec.json', 'experiment/experiment_points.csv',
+                         'experiment/experiment_analysis.json'] and 'experiment/experiment_sensitivity.png' in names
+    assert 'One at a time: 3 design points' in ex.preview('experiment', p, None, ex.ExportOptions(out_dir=str(tmp_path)))[1]
+    paths = ex.export(['experiment'], p, None, ex.ExportOptions(out_dir=str(tmp_path)))
+    got = {os.path.relpath(x, tmp_path).replace(os.sep, '/') for x in paths}
+    assert set(names[:3]) <= got <= set(names)
+    doc = json.loads((tmp_path / 'experiment' / 'experiment_analysis.json').read_text())
+    assert doc['schema'] == EXP.SCHEMA and doc['provenance']['settings']['experiments']['design'] == 'oat'
+    assert doc['provenance']['seeds'] == {'experiments.seed': 2}
+    # the spec round-trips into batch mode
+    spec = json.loads((tmp_path / 'experiment' / 'experiment_spec.json').read_text())
+    assert EXP.load_spec(spec, p).to_dict()['factors'][0]['target'] == p.variant.by_tag('F').uid
+
+
+def test_batch_flags_of_round_seven(tmp_path, capsys, monkeypatch):
+    """--experiment, --validate (with --validate-models, --validate-quick), --carla-rig and --carla-run: their files
+    and exit codes, each JSON stamped with its provenance."""
+    from vantage import batch
+    from vantage.core import experiments as EXP
+    from test_advanced import _args
+    for flag in ('experiment', 'validate', 'validate_models', 'validate_quick', 'carla_rig', 'carla_run', 'carla_python',
+                 'reproduce', 'tolerance'):
+        assert hasattr(_args(), flag), flag
+    for flag, v in (('experiment', ['s.json', 'o']), ('validate', 'v'), ('carla_rig', 'c'), ('carla_run', 'r'),
+                    ('reproduce', ['r.json'])):
+        assert batch.wanted(_args(**{flag: v})), flag
+    for flag, v in (('validate_models', 'lens'), ('validate_quick', True), ('carla_python', 'py')):
+        assert not batch.wanted(_args(**{flag: v})), flag                 # modifiers, like --variant
+    with pytest.raises(SystemExit):
+        batch.run(_args(validate_quick=True))                  # --validate-quick needs --validate
+    with pytest.raises(SystemExit):
+        batch.run(_args(carla_python='python3'))              # --carla-python needs --carla-run
+    p = _rig()
+    # an experiment from its spec: exit 0, its files stamped; a spec naming a camera the project lacks: exit 4
+    st = _with_experiment(p.snapshot())
+    spec = tmp_path / 'experiment_spec.json'
+    spec.write_text(json.dumps(EXP.spec_doc(st, p)))
+    out = tmp_path / 'exp'
+    assert _batch(tmp_path, p, experiment=[str(spec), str(out)]) == 0
+    doc = json.loads((out / 'experiment_analysis.json').read_text())
+    assert doc['schema'] == 'vantage.experiments/1' and doc['provenance']['output']['option'] == '--experiment'
+    assert (out / 'experiment_points.csv').is_file() and (out / 'experiment_points.jsonl').is_file()
+    rep = tmp_path / 'rep.json'                                # and it reproduces, bit for bit
+    assert _batch(tmp_path, p, reproduce=[str(out / 'experiment_analysis.json'), str(rep)]) == 0
+    r = json.loads(rep.read_text())                            # (the spec found by its hash, not the copy beside
+    assert r['verdict'] == 'reproduces' and r['reasons'] == []  # the results: no input differs)
+    bad = json.loads(spec.read_text())
+    bad['settings']['factors'][0].update(target='nope', tag='NOPE')
+    spec.write_text(json.dumps(bad))
+    assert _batch(tmp_path, p, experiment=[str(spec), str(tmp_path / 'exp2')]) == 4
+    assert 'experiment:' in capsys.readouterr().err
+    # the validation suite, no project: the checks of one model, the report written and stamped (no project in it)
+    out = tmp_path / 'val'
+    a = _args(validate=str(out), validate_models='sun', validate_quick=True)
+    a.sample = False
+    assert batch.run(a) == 0
+    vdoc = json.loads((out / 'validation.json').read_text())
+    assert vdoc['summary']['ok'] and {m['id'] for m in vdoc['models']} == {'sun'}
+    assert vdoc['provenance']['project'] is None and vdoc['provenance']['output']['option'] == '--validate'
+    assert (out / 'validation.html').is_file() and (out / 'validation.csv').is_file()
+    a = _args(reproduce=[str(out / 'validation.json'), str(tmp_path / 'vrep.json')])
+    a.sample = False
+    assert batch.run(a) == 0 and json.loads((tmp_path / 'vrep.json').read_text())['verdict'] == 'reproduces'
+    # a model that no longer matches its reference: exit 6
+    from vantage.core import weather as W
+    monkeypatch.setattr(W, 'rain_optical_db_km', lambda rate: 1.58 * np.power(np.maximum(rate, 0.0), 0.63))
+    a = _args(validate=str(tmp_path / 'val2'), validate_models='weather', validate_quick=True)
+    a.sample = False
+    assert batch.run(a) == 6
+    assert 'FAIL  weather.p1814_coefficients' in capsys.readouterr().err
+    monkeypatch.undo()
+    with pytest.raises(SystemExit):
+        batch.run(_args(validate=str(tmp_path / 'v3'), validate_models='nope'))
+    # the CARLA rig: exit 0 and its two files; a variant with nothing to simulate: exit 2
+    out = tmp_path / 'carla'
+    assert _batch(tmp_path, p, carla_rig=str(out)) == 0
+    rig = json.loads((out / 'sim_rig.json').read_text())
+    assert rig['schema'] == 'vantage.sim_rig/1' and (out / 'sim_remap.npz').stat().st_size > 0
+    assert rig['provenance']['settings']['sim']['town'] == 'Town10HD'
+    q = p.snapshot()
+    for o in list(q.variant.cameras) + list(q.variant.sensors):
+        o.visible = False
+    assert _batch(tmp_path, q, carla_rig=str(tmp_path / 'carla2')) == 2
+    assert _batch(tmp_path, q, carla_run=str(tmp_path / 'run0'), carla_python=sys.executable) == 2
+    assert 'Nothing to simulate' in capsys.readouterr().err
+    # --carla-run: no server on the project's port, or no client Python: exit 7, nothing run
+    import socket
+    s_ = socket.socket()
+    s_.bind(('127.0.0.1', 0))
+    free = s_.getsockname()[1]
+    s_.close()
+    p.analysis.sim = {'port': free}
+    assert _batch(tmp_path, p, carla_run=str(tmp_path / 'run1'), carla_python=sys.executable) == 7
+    assert f'no CARLA server answers on port {free}' in capsys.readouterr().err
+    assert _batch(tmp_path, p, carla_run=str(tmp_path / 'run2'), carla_python=str(tmp_path / 'no-python')) == 7
+    assert 'no Python for CARLA' in capsys.readouterr().err
+
+
+def test_batch_carla_run_with_the_fake_carla(tmp_path, monkeypatch):
+    """--carla-run end to end against tests/fake_carla (a listening socket stands for the server): the rig exported
+    into OUT/rig, the bridge run in its own process, the recording and run.json written and stamped; exit 0."""
+    import socket
+    from vantage.sim import server as SV
+    fake = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fake_carla')
+    real = SV.bridge_command
+
+    def with_fake(python, rig, out, args=(), **kw):
+        cmd, env = real(python, rig, out, args, scope=False)
+        env['PYTHONPATH'] = fake + os.pathsep + env['PYTHONPATH']
+        return cmd, env
+    monkeypatch.setattr(SV, 'bridge_command', with_fake)
+    srv = socket.socket()
+    srv.bind(('127.0.0.1', 0))
+    srv.listen(4)
+    try:
+        p = _rig()
+        p.variant.cameras[:] = p.variant.cameras[:1]
+        p.analysis.sim = {'port': srv.getsockname()[1], 'image_scale': 0.05, 'duration_s': 0.5, 'traffic': 1,
+                          'warmup_s': 0.1, 'town': 'Town01'}
+        out = tmp_path / 'drive'
+        assert _batch(tmp_path, p, carla_run=str(out), carla_python=sys.executable) == 0
+    finally:
+        srv.close()
+    run = json.loads((out / 'run.json').read_text())
+    assert run['status'] == 'ok' and run['town'] == 'Town01' and run['provenance']['output']['option'] == '--carla-run'
+    assert (out / 'rig' / 'sim_rig.json').is_file() and (out / 'nuscenes').is_dir() and (out / 'rosbag').is_dir()
+    assert json.loads((out / 'dataset.json').read_text())['generator'] == 'carla'
+
+
+def test_assistant_reads_experiments_validation_provenance_and_the_carla_rig(tmp_path):
+    from vantage.assistant import tools as T
+    from vantage.core import exporters as ex
+    from vantage.core.analysis import Engine
+    p = _rig()
+    for name in ('get_experiment', 'run_experiment', 'run_validation', 'list_validation_checks', 'check_result',
+                 'get_sim_rig'):
+        assert name in T.BY_NAME, name
+    tc = T.ToolContext(p.snapshot(), None, Engine(), working_dir=str(tmp_path))
+    assert 'Experiments' in json.loads(T.run(tc, 'get_experiment', {})[0])['error']          # no page result
+    assert 'Add a factor' in json.loads(T.run(tc, 'run_experiment', {})[0])['error']          # none set up
+    q = p.snapshot()
+    _with_experiment(q)
+    tq = T.ToolContext(q, None, Engine(), working_dir=str(tmp_path))
+    assert 'more than 2' in json.loads(T.run(tq, 'run_experiment', {'max_points': 2})[0])['error']
+    e = json.loads(T.run(tq, 'run_experiment', {})[0])
+    assert e['points'] == 3 and e['design'] == 'oat' and {r['key'] for r in e['responses']} >= {'coverage.blind_m2'}
+    page = {**e, 'stale': False}
+    assert json.loads(T.run(T.ToolContext(q, None, Engine(), experiment=page), 'get_experiment', {})[0])['points'] == 3
+    # the validation suite: one model, quick; the catalogue without running
+    v = json.loads(T.run(tc, 'run_validation', {'models': ['sun']})[0])
+    assert v['ok'] and v['passed'] == v['checks'] > 0 and v['models'] == {'sun': f'{v["checks"]}/{v["checks"]}'}
+    assert 'error' in json.loads(T.run(tc, 'run_validation', {'models': ['nope']})[0])
+    cat = json.loads(T.run(tc, 'list_validation_checks', {'models': ['occlusion']})[0])
+    assert {c['id'] for c in cat['checks']} >= {'occlusion.cube_vs_rays', 'occlusion.cube_depth'}
+    # a result's provenance: intact, then edited; never a file outside the working or project folder
+    ex.export(['extrinsics_json'], p, None, ex.ExportOptions(out_dir=str(tmp_path / 'exports')))
+    r = json.loads(T.run(tc, 'check_result', {'path': 'exports/extrinsics.json'})[0])
+    assert r['provenance'] and r['intact'] is True and r['study'] == 'extrinsics_json' and r['same_project_as_open']
+    assert r['differences_from_now'] == [] and r['file'] == os.path.join('exports', 'extrinsics.json')
+    f = tmp_path / 'exports' / 'extrinsics.json'
+    d = json.loads(f.read_text())
+    d['cameras'][0]['tag'] = 'EDITED'                         # a number or a name changed after Vantage wrote it
+    f.write_text(json.dumps(d))
+    assert json.loads(T.run(tc, 'check_result', {'path': str(f)})[0])['intact'] is False
+    outside = tmp_path.parent / 'outside.json'
+    outside.write_text('{}')
+    assert 'error' in json.loads(T.run(tc, 'check_result', {'path': str(outside)})[0])
+    assert T.BY_NAME['check_result'].kind == 'read'
+    # the CARLA rig, planned only
+    g = json.loads(T.run(tc, 'get_sim_rig', {})[0])
+    assert [c['tag'] for c in g['cameras']] == [c.tag for c in p.variant.cameras if c.visible]
+    assert {x['tag'] for x in g['lidars']} == {'L1'} and g['tick_hz'] > 0
+    assert 'error' in json.loads(T.run(tc, 'get_sim_rig', {'variant': 'nope'})[0])
+
+
+def test_validation_from_the_help_menu_and_stamped_page_exports(app, win, tmp_path):
+    """Help ▸ Validate the models runs in the background and writes its report into the folder given (stamped with
+    the provenance); a study page's Export button stamps its JSON too."""
+    act = win.actions_by_id['validate_models']
+    menus = {a.text().replace('&', ''): a.menu() for a in win.menuBar().actions()}
+    assert act in menus['Help'].actions() and not act.icon().isNull()
+    assert win.validate_models(folder=str(tmp_path / 'val'), open_report=False, quick=True, models=('sun',))
+    _wait(app, lambda: 'validation' not in win._jobs, 120)
+    doc = json.loads((tmp_path / 'val' / 'validation.json').read_text())
+    assert doc['summary']['ok'] and doc['project'] == win.store.project.name
+    assert doc['provenance']['interface'] == 'app' and doc['provenance']['project']['name'] == win.store.project.name
+    assert win.validation_report == str(tmp_path / 'val' / 'validation.html')
+    # the power budget's Export button
+    win.actions_by_id['power_budget'].trigger()
+    pump(app, 0.3)
+    pg = win.page('power')
+    _wait(app, lambda: pg.result is not None)
+    paths = pg.export(str(tmp_path / 'power'))
+    pdoc = json.loads((tmp_path / 'power' / 'power_budget.json').read_text())
+    assert pdoc['provenance']['output']['name'] == 'power_budget.json' and pdoc['provenance']['study'] == 'power_budget'
+    assert pdoc['provenance']['settings']['power']                           # its settings, every default filled in
+    assert len(paths) == 3
+    win.set_page('viewports')
+    settle(app, win)

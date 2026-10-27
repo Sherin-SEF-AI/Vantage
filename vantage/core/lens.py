@@ -668,18 +668,19 @@ def builtin_lenses() -> list[Lens]:
     """The lenses e-con states a field of view for, each on its module (h05r2 first: the default lens)."""
     M = {m.id: m for m in builtin_modules()}
     hs = half_sizes(M['sturdecam31'])
-    old = 'The focal length{} are the earlier library figures (not on e-con\'s public pages).'
+    sheets = ('as e-con\'s STURDeCAM31 Lens Datasheet (Rev 1.2) and Module Datasheet (Rev 1.4) state them; neither '
+              'gives a distortion table: the distortion terms are fitted to reproduce the stated FOV')
     wide = Lens(id='h05r2', name='H05R2', label='wide', module_id='sturdecam31', focal_mm=2.62, f_number=2.0,
                 focus_near_m=0.35, projection='kannala_brandt', sheet_fov=(128.7, 98.7, 170.1), builtin=True,
                 note=f'FOV 128.7° H × 98.7° V × 170.1° D as e-con states it for the wide lens (on request) on '
-                     f'STURDeCAM31\'s pages (read {CHECKED}). ' + old.format(', aperture F2.0 and 0.35 m near focus'))
+                     f'STURDeCAM31\'s pages (read {CHECKED}). Focal length 2.62 mm, aperture F2.0 and focus 0.35 m '
+                     f'to infinity {sheets}.')
     wide.kb = fit_kb_to_fov(2.62, wide.sheet_fov, hs, base='equisolid')
     narrow = Lens(id='h03r2', name='H03R2', label='narrow', module_id='sturdecam31', focal_mm=5.5, f_number=2.0,
                   focus_near_m=1.28, projection='kannala_brandt', sheet_fov=(54.04, 42.86, 70.17), builtin=True,
-                  note=f'e-con\'s default STURDeCAM31 lens (70° DFOV): FOV 54.04° H × 42.86° V × 70.17° D and '
-                       f'focus 1.28 m to infinity as e-con states them (read {CHECKED}). '
-                       + old.format(' and aperture F2.0')
-                       + ' Distortion refitted in 2026-10 so the model reproduces the stated FOV within 0.5°.')
+                  note=f'e-con\'s default STURDeCAM31 lens (70° DFOV): FOV 54.04° H × 42.86° V × 70.17° D as e-con '
+                       f'states it (read {CHECKED}). Focal length 5.5 mm, aperture F2.0 and focus 1.28 m to infinity '
+                       f'{sheets} (refitted in 2026-10: within 0.5°).')
     narrow.kb = fit_sheet(5.5, narrow.sheet_fov, hs, base='equisolid')
     return [
         wide, narrow,

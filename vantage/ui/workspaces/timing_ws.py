@@ -531,7 +531,8 @@ class TimingPage(QWidget):
             folder = QFileDialog.getExistingDirectory(self, 'Export the sync and timing plan into')
             if not folder:
                 return []
-        paths = TM.export(self.res, self.ctx.store.project, folder)
+        from ...core import provenance as PV          # where the JSON came from
+        paths = PV.stamp_paths(TM.export(self.res, self.ctx.store.project, folder), self.ctx.store.project, folder)
         self.ctx.msg(f'Exported the sync and timing plan to {folder}', 5000)
         return paths
 

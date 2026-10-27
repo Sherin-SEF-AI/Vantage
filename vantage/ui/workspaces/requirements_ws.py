@@ -985,7 +985,8 @@ class RequirementsPage(QWidget):
             folder = QFileDialog.getExistingDirectory(self, 'Export the requirements scorecard into')
             if not folder:
                 return []
-        paths = RQ.export(res, self.ctx.store.project, folder)
+        from ...core import provenance as PV          # where the JSON came from
+        paths = PV.stamp_paths(RQ.export(res, self.ctx.store.project, folder), self.ctx.store.project, folder)
         open_ = sum(r.status == 'not_run' or r.stale for r in res.items)
         self.ctx.msg(f'Exported the scorecard and the review pack to {folder}'
                      + (f' ({open_} requirements not run or stale: run first for a complete pack)' if open_ else ''),

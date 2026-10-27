@@ -138,6 +138,7 @@ class _Ctx:
 def _sample_perturbations(rng, st: TolSettings, cams, n):
     out = []
     pick = set(st.cameras) if st.cameras else {c.uid for c in cams}
+    order = {c.uid: i for i, c in enumerate(cams)}      # mirrored pairs by the cameras' order, never their random uids
     for _ in range(n):
         d = {}
         for c in cams:
@@ -152,7 +153,7 @@ def _sample_perturbations(rng, st: TolSettings, cams, n):
                         v[3] * st.pos_mm / 1000, v[4] * st.pos_mm / 1000, v[5] * st.pos_mm / 1000)
         if st.correlate_pairs:
             for c in cams:
-                if c.link_uid and c.uid in d and c.link_uid in d and c.uid < c.link_uid:
+                if c.link_uid and c.uid in d and c.link_uid in d and order[c.uid] < order[c.link_uid]:
                     a = d[c.uid]
                     d[c.link_uid] = (-a[0], a[1], -a[2], a[3], -a[4], a[5])
         out.append(d)

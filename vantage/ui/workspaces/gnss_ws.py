@@ -826,6 +826,7 @@ class GnssPage(QWidget):
             folder = QFileDialog.getExistingDirectory(self, 'Export the GNSS and IMU study into')
             if not folder:
                 return []
-        paths = G.export(res, self.ctx.store.project, folder)
+        from ...core import provenance as PV          # where the JSON came from
+        paths = PV.stamp_paths(G.export(res, self.ctx.store.project, folder), self.ctx.store.project, folder)
         self.ctx.msg(f'Exported the GNSS and IMU study to {folder}', 5000)
         return paths

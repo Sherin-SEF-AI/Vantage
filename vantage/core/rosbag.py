@@ -3,7 +3,8 @@ reader for rosbag2 SQLite (.db3) bags.
 
 Why: the rig's synthetic drives go out as ROS 2 bags that `ros2 bag play`, Foxglove and rosbags open, and recorded
 drives come back in for checks, with no ROS installation and no new dependency (numpy and the standard library; the
-zstandard / lz4 modules only when a bag's chunks use that compression, OpenCV only to decode compressed images).
+zstandard / lz4 modules only when a bag's chunks use that compression, OpenCV only to decode compressed images, PyYAML
+to write a bag's metadata.yaml and to read one: the app has it, and so must the Python the CARLA bridge runs in).
 
 Messages are plain dicts keyed by the field names of the .msg definitions: nested messages are dicts, arrays lists,
 uint8 / byte / char arrays (image and point-cloud data) bytes. encode() fills missing fields with their defaults

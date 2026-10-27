@@ -14,7 +14,8 @@ and the point-cloud sweeps around it (their depth edges and a thinned copy of th
 on the mapping or the thresholds, so editing them checks again without reading the bag again.
 
 Checks, each with findings ok / warning / fault:
-1. Streams: per mapped sensor the message count, the measured rate (median interval between header stamps) against
+1. Streams: per mapped sensor the message count, the measured rate (the mean interval between header stamps, drops
+   left out) against
    the plan's (the module's fps, the model's rate_hz), drops (intervals longer than drop_factor × the nominal period:
    frames missing, the longest gap, the share of time missing), jitter, latency (log time − header stamp; negative
    means a clock problem), stamps going backwards, the share of the bag the stream covers, the image size against the
@@ -39,11 +40,17 @@ Checks, each with findings ok / warning / fault:
    (where the range jumps between neighbouring points of a ring or of neighbouring rings, the foreground side
    continuous) projected through the camera's lens model at the plan's extrinsics; the score is the edges' mean
    attraction to the image's edges (for the coarse grid a Gaussian of the distance to the nearest Canny edge, for the
-   refinement the image's normalised gradient magnitude, which peaks exactly on an edge). A rotation correction of the
+   refinement the image's normalised gradient magnitude, which peaks exactly on an edge). Image edges on the own
+   vehicle (its pixels by the cube map, grown by BODY_DIL) are left out, and so are the lidar edges that project there
+   or within three widths of the refinement's smoothing of it, and those the vehicle hides from the camera (a mirror
+   camera's own mirror hides building edges the roof lidar sees over it): an edge the image cannot show would
+   otherwise pull the rotation away from the vehicle. The vehicle is the project's, with the variant's rig and
+   housings, whether or not the caller passes an engine. A rotation correction of the
    camera (yaw, pitch, roll within ±search_deg; a coarse grid, then Nelder-Mead on the sharper map) maximises it over all
    sampled frames, under a weak prior towards small corrections. The standard error is the larger of a cluster-robust
    sandwich estimate (image regions as clusters) and the spread of each frame's own optimum; an axis whose score
-   peak is too flat, or whose error is over twice the tolerance, is not pinned down and stays as planned. A camera is
+   peak is too flat (its width from central differences of at least a pixel), or whose error is over twice the
+   tolerance, is not pinned down and stays as planned. A camera is
    'rotated' when a pinned-down axis exceeds the tolerance with high or medium confidence. Images whose pixel (at the
    image centre) spans more than the tolerance — a sample dataset at a tenth of the sensor's size — give no verdict
    ('uncertain', saying why): they cannot resolve the rotation they would be judged by.
@@ -70,6 +77,7 @@ from dataclasses import asdict, dataclass, field
 import numpy as np
 
 from .mathutil import BODY_TO_OPTICAL, euler_zyx, rot_zyx
+from .pngtext import put_text
 
 SCHEMA = 'vantage.drive_log_check/1'
 SEVERITIES = ('fault', 'warning', 'ok')
@@ -1268,9 +1276,10 @@ def _expected_hz(project, kind, obj) -> float | None:
 
 
 def interval_stats(t_ns, nominal_s=None, drop_factor=1.5) -> dict:
-    """Rate, drops and jitter of a stream from its stamps (ns, in the order received): the median interval, intervals
-    over drop_factor × the nominal period as drops (each missing round(gap / period) − 1 frames), the jitter of the
-    others, stamps not after the previous one."""
+    """Rate, drops and jitter of a stream from its stamps (ns, in the order received): intervals over drop_factor ×
+    the nominal period as drops (each missing round(gap / period) − 1 frames), the rate from the mean of the others
+    (a stream stamped on a coarser clock, a 15 Hz radar on 80 Hz ticks, alternates 62.5 and 75 ms: its median interval
+    says 16 Hz, the mean 15), their jitter, stamps not after the previous one."""
     t = np.asarray(t_ns, np.int64)
     out = {'n': int(len(t)), 'median_ms': None, 'rate_hz': None, 'drops': 0, 'drop_events': 0, 'longest_gap_ms': None,
            'missing_s': 0.0, 'missing_share': 0.0, 'drop_share': 0.0, 'jitter_ms': None, 'jitter_p95_ms': None,
@@ -1298,6 +1307,8 @@ def interval_stats(t_ns, nominal_s=None, drop_factor=1.5) -> dict:
     out['missing_share'] = out['missing_s'] / span if span > 0 else 0.0
     out['drop_share'] = out['drops'] / (len(t) + out['drops'])
     normal = d[~gap & (d > 0)]
+    if len(normal):
+        out['rate_hz'] = 1.0 / float(np.mean(normal))
     if len(normal) > 1:
         out['jitter_ms'] = float(np.std(normal) * 1000.0)
         out['jitter_p95_ms'] = float(np.percentile(np.abs(normal - nom), 95) * 1000.0)
@@ -1938,9 +1949,12 @@ def _sandwich(fn, x, clusters, h=0.05):
     return np.sqrt(np.maximum(np.diag(Hi @ Mt @ Hi), 0.0))
 
 
-def _peak_width(fn, x, h=0.15):
+def _peak_width(fn, x, px_deg=0.0):
     """Per axis, the marginal width (deg, one sigma of a Gaussian fitted to the log score) of the score's peak at x and
-    whether the axis is pinned down (width under OBSERVABLE_DEG): the Hessian of log score by central differences."""
+    whether the axis is pinned down (width under OBSERVABLE_DEG): the Hessian of log score by central differences of
+    0.15°, at least one pixel (px_deg): the score samples its maps bilinearly, linear between pixel centres, so a
+    shorter step measures where the peak falls within its pixel rather than its width."""
+    h = max(0.15, float(px_deg))
     f0 = fn(x)
     if f0 <= 0:
         return [math.inf] * 3, [False] * 3
@@ -1972,8 +1986,8 @@ def _nm(fn, x0, step, xatol=0.002):
     return np.asarray(r.x, float), -float(r.fun)
 
 
-def _camera_masks(project, cam, intr, ashape, sx, sy, engine):
-    """(inside the lens circle, on the own vehicle) per analysis pixel."""
+def _camera_masks(project, cam, intr, ashape, sx, sy, engine, var=None):
+    """(inside the lens circle, on the own vehicle) per analysis pixel; the vehicle with var's rig housings."""
     import cv2
     ha, wa = ashape
     xs = (np.arange(wa) + 0.5) / sx
@@ -1982,7 +1996,7 @@ def _camera_masks(project, cam, intr, ashape, sx, sy, engine):
     d, th = intr.unproject(U.ravel(), V.ravel())
     circle = (th <= THETA_SHARE * intr.max_theta).reshape(ha, wa)
     body = None
-    if engine is not None and engine.vehicle_geom(project) is not None:
+    if engine is not None and engine.vehicle_geom(project, var) is not None:
         W2O = BODY_TO_OPTICAL @ rot_zyx(cam.yaw, cam.pitch, cam.roll).T
         bd = engine.cube(cam.pos()).lookup(d @ W2O)[0]
         body = (np.isfinite(bd) & (bd > 0.05)).reshape(ha, wa)
@@ -2062,6 +2076,19 @@ def _frame_points(tg, topic, t_c_ns, T_s, ref, R_L, p_L, motion, base_ns, sense=
     return E, K, np.abs(te - t_c)
 
 
+def _on_mask(Q, W2O, intr, sx, sy, mask):
+    """Which points (camera-relative, vehicle frame) project at the plan pose into the analysis-size mask."""
+    out = np.zeros(len(Q), bool)
+    if not len(Q):
+        return out
+    u, v, _, ok = intr.project_dirs(Q @ W2O.T)
+    ha, wa = mask.shape
+    xi, yi = np.floor(u * sx).astype(np.int64), np.floor(v * sy).astype(np.int64)
+    ok &= (xi >= 0) & (xi < wa) & (yi >= 0) & (yi < ha)
+    out[ok] = mask[yi[ok], xi[ok]]
+    return out
+
+
 def _visible(Qe, Qk, W2O, intr, sx, sy, ha, wa, cube):
     """Which edge points (and kept points) the camera can see at the plan pose: in front, inside the lens circle and
     the image, not behind the own vehicle, not behind nearer lidar points (a coarse depth buffer)."""
@@ -2126,11 +2153,16 @@ def _extrinsic(project, var, cam, topic, lid, lid_topic, scan, motion, st, conv_
     R_L, p_L = rot_zyx(lid.yaw, lid.pitch, lid.roll), lid.pos()
     lts = scan.topics[lid_topic]
     ref = st.lidar_stamp if st.lidar_stamp != 'auto' else lts.stamp_ref
-    circle, body = _camera_masks(project, cam, intr, ashape, sx, sy, engine)
-    cube = engine.cube(cam.pos()) if engine is not None and engine.vehicle_geom(project) is not None else None
+    circle, body = _camera_masks(project, cam, intr, ashape, sx, sy, engine, var)
+    cube = engine.cube(cam.pos()) if engine is not None and engine.vehicle_geom(project, var) is not None else None
     ppd = intr.f_px * sx * math.pi / 180.0                     # analysis px per degree at the image centre
     tau_c = float(np.clip(1.0 * ppd, 2.0, 16.0))
     tau_f = float(np.clip(0.15 * ppd, 1.0, 4.0))
+    hide = None                                         # lidar edges near the vehicle's (masked) pixels: left out,
+    if body is not None and body.any():                 # out to where the fine map still feels the mask (3 τ)
+        import cv2
+        k = 2 * int(math.ceil(3 * tau_f)) + 1
+        hide = cv2.dilate(body.astype(np.uint8), np.ones((k, k), np.uint8)) > 0
     W2O = BODY_TO_OPTICAL @ rot_zyx(cam.yaw, cam.pitch, cam.roll).T
     pos = cam.pos()
     lo = hi = None
@@ -2153,6 +2185,8 @@ def _extrinsic(project, var, cam, topic, lid, lid_topic, scan, motion, st, conv_
             K = K[~np.all((K >= lo) & (K <= hi), axis=1)]
         Qe, Qk = E - pos, K - pos
         ve, vk = _visible(Qe, Qk, W2O, intr, sx, sy, ha, wa, cube)
+        if hide is not None:                            # an edge the image cannot show (its edges there are left out)
+            ve &= ~_on_mask(Qe, W2O, intr, sx, sy, hide)    # would pull the rotation away from the vehicle
         Qe, adt = Qe[ve], adt[ve]
         if len(Qe) < 20:
             continue
@@ -2220,7 +2254,8 @@ def _extrinsic(project, var, cam, topic, lid, lid_topic, scan, motion, st, conv_
             best, bval = x, v
     s0, s1 = fine(np.zeros(3)), fine(best)
     res['score_plan'], res['score_corrected'] = s0, s1
-    width, observable = _peak_width(fine, best)
+    px_deg = 1.0 / max(ppd, 1e-9)               # one pixel's angle at the image centre
+    width, observable = _peak_width(fine, best, px_deg)
     xs, ys, _ = fine.project(best, Q)
     clusters = fi * 64 + np.clip((xs / wa * 8).astype(int), 0, 7) * 8 + np.clip((ys / ha * 8).astype(int), 0, 7)
     se_sw = _sandwich(fine, best, clusters)
@@ -2235,7 +2270,6 @@ def _extrinsic(project, var, cam, topic, lid, lid_topic, scan, motion, st, conv_
     tol = st.tolerance_deg
     obs = np.array(observable)
     stderr = se_sw.copy()
-    px_deg = 1.0 / max(ppd, 1e-9)               # one pixel's angle at the image centre
     agree = None
     if len(per) >= 2:
         sig = 1.4826 * np.median(np.abs(per - best), axis=0)
@@ -2473,10 +2507,13 @@ def _variant(project, variant, st):
 def run(project, path=None, settings: DriveLogSettings | None = None, progress=None, cancel=None, engine=None,
         variant=None, scan: Scan | None = None) -> DriveLogResult | None:
     """Check a drive log (a bag or a nuScenes folder; the settings' path by default) against a variant's plan (the
-    settings' variant, else the active one). engine (optional) adds the vehicle's blocking: of the lidar's points, of
-    the camera's view. A scan of the same files from an earlier run is used again (pass it as scan). None when
-    cancelled."""
+    settings' variant, else the active one). engine: the analysis engine whose cube maps give the vehicle's blocking
+    (of the lidar's points, of each camera's view); one is made when none is given, so a script gets the answer the
+    page gets. A scan of the same files from an earlier run is used again (pass it as scan). None when cancelled."""
     t_start = time.perf_counter()
+    if engine is None:                  # without the own vehicle, lidar edges a mirror camera's own mirror hides
+        from .analysis import Engine    # (the roof lidar sees over it) were matched to the mirror's image edge: a
+        engine = Engine()               # correctly mounted MR came out 0.4° off and 'rotated'
     st = settings or DriveLogSettings.from_dict(getattr(project.analysis, 'drivelog', None))
     path = norm_path(path or st.path)
     if not path:
@@ -2870,7 +2907,7 @@ def overlay_png(project, var, res: DriveLogResult, uid, k=None) -> bytes | None:
         txt = 'plan' if label == 'plan' else (f'corrected  yaw {d[0]:+.2f}  pitch {d[1]:+.2f}  roll {d[2]:+.2f} deg'
                                               if delta is not None else 'no correction')
         cv2.rectangle(img, (0, 0), (img.shape[1], 22), (30, 29, 28), -1)
-        cv2.putText(img, f'{ov["tag"]}  {txt}', (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (236, 235, 230), 1,
+        put_text(img, f'{ov["tag"]}  {txt}', (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (236, 235, 230), 1,
                     cv2.LINE_AA)
         panels.append(img)
     out = np.concatenate([panels[0], np.full((panels[0].shape[0], 6, 3), 30, np.uint8), panels[1]], 1)
@@ -2879,7 +2916,7 @@ def overlay_png(project, var, res: DriveLogResult, uid, k=None) -> bytes | None:
     line = f'frame {k + 1} of {len(frames)} at {fr["t_s"]:.2f} s   {fr["edges"]} depth-edge points'
     if s0 is not None and s1 is not None:
         line += f'   edge score {s0:.3f} -> {s1:.3f}   {ext.get("verdict", "")} ({ext.get("confidence") or "-"})'
-    cv2.putText(foot, line, (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (183, 194, 195), 1, cv2.LINE_AA)
+    put_text(foot, line, (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (183, 194, 195), 1, cv2.LINE_AA)
     ok, buf = cv2.imencode('.png', np.concatenate([out, foot], 0))
     return buf.tobytes() if ok else None
 
@@ -2896,12 +2933,12 @@ def timeline_png(res: DriveLogResult, var=None, width=1200) -> bytes:
     dur = max(res.span['duration_s'], 1e-6)
     x0, x1 = left, width - 16
     X = lambda s: int(round(x0 + (x1 - x0) * s / dur))          # noqa: E731
-    cv2.putText(img, f'Drops and gaps per stream  {os.path.basename(res.path)}  {dur:.1f} s', (12, 24), font, 0.55,
+    put_text(img, f'Drops and gaps per stream  {os.path.basename(res.path)}  {dur:.1f} s', (12, 24), font, 0.55,
                 (236, 235, 230), 1, aa)
     for i, e in enumerate(rows):
         y = head + i * rh
         col = _bgr(stream_color(var, e))
-        cv2.putText(img, e['tag'], (12, y + 15), font, 0.45, col, 1, aa)
+        put_text(img, e['tag'], (12, y + 15), font, 0.45, col, 1, aa)
         if e['topic'] is None:
             for xx in range(x0, x1, 8):
                 cv2.line(img, (xx, y + 17), (xx + 6, y + 5), (90, 88, 84), 1, aa)
@@ -2917,7 +2954,7 @@ def timeline_png(res: DriveLogResult, var=None, width=1200) -> bytes:
     t = 0.0
     while t <= dur + 1e-9:
         cv2.line(img, (X(t), yb), (X(t), yb + 4), (129, 135, 137), 1)
-        cv2.putText(img, f'{t:g} s', (X(t) - 10, yb + 18), font, 0.38, (129, 135, 137), 1, aa)
+        put_text(img, f'{t:g} s', (X(t) - 10, yb + 18), font, 0.38, (129, 135, 137), 1, aa)
         t += step
     ok, buf = cv2.imencode('.png', img)
     return buf.tobytes()

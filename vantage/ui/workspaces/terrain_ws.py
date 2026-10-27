@@ -1080,6 +1080,7 @@ class TerrainPage(QWidget):
             folder = QFileDialog.getExistingDirectory(self, 'Export the road and body motion study into')
             if not folder:
                 return []
-        paths = TR.export(res, self.ctx.store.project, folder)
+        from ...core import provenance as PV          # where the JSON came from
+        paths = PV.stamp_paths(TR.export(res, self.ctx.store.project, folder), self.ctx.store.project, folder)
         self.ctx.msg(f'Exported the road and body motion study to {folder}', 5000)
         return paths

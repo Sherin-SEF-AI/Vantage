@@ -94,7 +94,7 @@ class PartCard:
         gfx.vignette(p, 0.35)
         p.end()
         e = self.e
-        gfx.part_card(img, t, e['part'], e['title'], e['blurb'], e['items'], self.dur, PART_EXIT)
+        gfx.part_card(img, t, e['part'], e['title'], e['blurb'], e['items'], self.dur, PART_EXIT, e.get('of', 5))
         return gfx.to_np(img)
 
 
@@ -110,7 +110,7 @@ def preview(cid, out):
     import chapters as C
     import gfx
     app()
-    seq = C.sequence()
+    seq = C.sequence(name=C.episode_of(cid))          # the chapter's own episode
     i = next(k for k, e in enumerate(seq) if e['kind'] == 'chapter-card' and e['id'] == cid)
     entries = [seq[i]]
     if i > 0 and seq[i - 1]['kind'] == 'part':

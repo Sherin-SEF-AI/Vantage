@@ -1089,6 +1089,7 @@ class AsBuiltPage(QWidget):
             folder = QFileDialog.getExistingDirectory(self, 'Export the as-built check into')
             if not folder:
                 return []
-        paths = AB.export(res, self.ctx.store.project, folder)
+        from ...core import provenance as PV          # where the JSON came from
+        paths = PV.stamp_paths(AB.export(res, self.ctx.store.project, folder), self.ctx.store.project, folder)
         self.ctx.msg(f'Exported the as-built check to {folder}', 5000)
         return paths

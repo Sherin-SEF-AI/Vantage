@@ -863,7 +863,8 @@ class BracketsPage(QWidget):
             folder = QFileDialog.getExistingDirectory(self, 'Export the brackets into')
             if not folder:
                 return []
-        paths = BR.export(res, self.ctx.store.project, folder)
+        from ...core import provenance as PV          # where the JSON came from
+        paths = PV.stamp_paths(BR.export(res, self.ctx.store.project, folder), self.ctx.store.project, folder)
         self.ctx.msg(f'Exported {sum(p.endswith(".stl") for p in paths)} brackets to '
                      f'{os.path.join(folder, "brackets")}', 5000)
         return paths

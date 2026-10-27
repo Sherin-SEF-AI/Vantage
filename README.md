@@ -96,7 +96,7 @@ vantage --desktop-shortcut          # Linux: the same, plus a Vantage launcher o
 vantage project.vantage --analyse report.json
 ```
 
-**Building the downloads.** Tag a version (`git tag v0.2.0 && git push origin v0.2.0`). The *Build installers*
+**Building the downloads.** Tag a version (`git tag v0.3.0 && git push origin v0.3.0`). The *Build installers*
 workflow builds and smoke-tests all four bundles (Linux x86_64 and arm64, Windows, macOS). When all pass, it publishes
 the GitHub release with `SHA256SUMS.txt` and the CHANGELOG entry as notes. Starting the workflow by hand from the Actions tab builds the
 bundles as artifacts only, without a release. To build for the machine you are on, in a fresh virtual environment
@@ -168,6 +168,12 @@ python3 run_vantage.py project.vantage --perception-range night.json --condition
 python3 run_vantage.py --watch project.vantage --on-change "make perception-test"   # regenerate the exports and
                                                                          # run your check on every change
 python3 run_vantage.py project.vantage --ci-templates ci/                # GitHub Actions and GitLab CI jobs
+python3 run_vantage.py project.vantage --reproduce ranges.json check.json --tolerance 'blind_m2=0.005'
+                                                                         # run a result again, compare every number
+python3 run_vantage.py project.vantage --experiment experiment_spec.json experiment/   # a designed experiment
+python3 run_vantage.py --validate report/ --validate-quick               # every model against its reference
+python3 run_vantage.py project.vantage --carla-rig carla/                # the rig as the CARLA bridge reads it
+python3 run_vantage.py project.vantage --carla-run drive/                # drive it in a running CARLA server
 ```
 
 `--variant NAME|N` picks a variant, `--frame`, `--units m|mm` and `--angles deg|rad` set the export conventions, and
@@ -181,6 +187,15 @@ first frames, then measures for SECONDS and writes `vantage.rig_health/1` (defau
 (Export ▸ Automation; `--export DIR`, `--formats` and `--variant` override them) once at the start and after every
 change of the file, runs `--on-change` through the shell in the project's folder, and stops after `--watch-runs N`
 runs (default: when stopped). The command comes from the command line only, never from the project file.
+`--reproduce RESULT.json [OUT.json]` runs again what wrote a result (from its provenance block: the same project given
+first, input files next to the result or in this folder) and compares every number, exactly or within
+`--tolerance [PATTERN=]VALUE[%]` per quantity. `--experiment SPEC.json OUT_DIR` runs a designed experiment exported
+from Analysis ▸ Experiments and resumes from OUT_DIR's journal after an interruption. `--validate [OUT_DIR]` writes
+the validation suite's report (default `./validation`; with a project its vehicle and exports are checked too),
+`--validate-models lens,weather` picks models, `--validate-quick` is a 30-second smoke run. `--carla-rig OUT_DIR`
+writes the variant as the CARLA bridge reads it; `--carla-run OUT_DIR` drives it in the CARLA server already running on
+the port of Simulate ▸ CARLA's settings (`--carla-python PY`: CARLA's client Python, else the one the page chose).
+`--export` without `--formats` leaves out the experiment and the CARLA rig (minutes, tens of MB).
 Captures are matched to cameras by tag in the file name (`F.png`, `cam_QR.jpg`, `ML-capture.tif`); imported
 calibrations by the camera name or ROS topic in the file, the file name, or the serial number. Exit code: 0 fine, 2 the
 plan has critical issues (with `--analyse` or `--export`; with `--recording-budget`, the recorder or a sensor's link
@@ -195,8 +210,11 @@ be checked (or, with `--rig-health`, a camera's stream is faulty or not set; wit
 fault; with `--as-built-check`, the plan's coverage does not hold as built; with `--fleet`, a sensor needs re-mounting in its vehicle's latest record; with `--lidar-calib`, the lidar has to be
 re-mounted or its pose is not determined), 4 a lens calibration failed or an
 imported calibration matched no camera (or did not fit it), or a fleet record, drive log, as-built recording, suspension data file or lidar calibration capture could not be read or the
-sample dataset not written, 5 with `--check` a must requirement fails or cannot be evaluated; when several apply, the
-highest is returned. `--watch` exits with its last run's code: the command's own when it ran, else 5 when the
+sample dataset not written (or the `--experiment` spec cannot be read or does not fit the project, or `--reproduce`
+cannot try the result), 5 with `--check` a must requirement fails or cannot be evaluated, 6 with `--reproduce` the
+result does not reproduce or with `--validate` a check of the models fails, 7 with `--carla-run` no CARLA server
+answers, CARLA's client Python is missing or the run fails (2 with `--carla-rig` or `--carla-run` when the variant has
+nothing to simulate); when several apply, the highest is returned. `--watch` exits with its last run's code: the command's own when it ran, else 5 when the
 requirements check fails, 4 when the project could not be read or a format not written, 130 when stopped during the
 command.
 
@@ -251,6 +269,10 @@ command.
 | Dataset calibration (Export, *Datasets* group) | The rig's calibration in the layouts training datasets and their tools read, each checked against the tool itself. **nuScenes** `sensor` / `calibrated_sensor` (checked with the nuScenes devkit). **KITTI** raw `calib_cam_to_cam.txt` (the raw fisheye K, D, R, T per camera, and `P_rect` for a rectified pinhole image made with the README's `cv2.fisheye` remap: the KITTI devkit's projection lands lidar points within 0.001 px in every camera; pykitti reads camera 00's matrices exactly, and all four on a KITTI-like stereo layout), `calib_velo_to_cam.txt`, `calib_imu_to_velo.txt`, camera and sensor poses in the vehicle frame, and with a lidar a KITTI object-benchmark calib file per camera (`kitti/object/<TAG>.txt`, read by mmdetection3d and OpenPCDet). **ROS** `camera_info` per camera, read exactly by ROS 2's camera_calibration_parsers; image_proc rectifies it within 0.001 px. **Kalibr** camchain (read by Kalibr's own config reader): pinhole-equi for lenses within 90°, exact for the library lenses; double sphere, omni or extended unified fitted within 0.25 px RMS for lenses that see past 90°, with the error stated per camera and a warning when no model fits. With an IMU, the camchain-imucam `T_cam_imu` and an `imu.yaml`, whose noise figures are Kalibr's example values until you enter your IMU's. |
 | Export (Ctrl+E) | Mount sheet PDF, report HTML/PDF, extrinsics JSON/YAML/CSV, OpenCV fisheye YAML per camera, ROS 2 URDF + static TF launch file (cameras, lidars, radars, GNSS antennas, IMUs and the rig; the lidar and radar frames also go into the extrinsics, nuScenes and KITTI files), Jetson AGX Orin camera config, dataset-ready calibration (nuScenes, KITTI, ROS `camera_info`, Kalibr: see *Dataset calibration*), bird's-eye remap tables, reference stitcher sources, 3D surround-view bowl, parking guideline tables, objects in the stitched view (JSON + map), blind volume (OBJ + JSON), perception range (JSON + plan), lidar and radar coverage (JSON + plan), sync and timing plan (JSON + dial), recording budget (JSON + CSV), power budget (JSON + device and circuit CSVs), GNSS and IMU (JSON + INS lever arms + sky plots), sun glare and dirt (JSON + PNG), fleet (JSON + CSV + PNG), housings in view (JSON + CSV), suspension load cases (JSON + CSVs + the suspension data), requirements scorecard (JSON + CSV + design-review pack PDF), calibration observability (JSON + CSV + PNGs), cable harness (JSON + CSV + PNG), road and body motion (JSON + CSVs + profile PNG), critical targets and mounting envelopes (JSON + CSVs + PNGs), materials, glass and wipers (JSON + CSVs + PNG), weather comparison (JSON + CSVs + PNG), CI templates (GitHub Actions, GitLab CI), viewport / bird's-eye / camera-view PNGs, mount points as DXF and STEP, mount brackets (STL per camera + JSON + sheet). The sample dataset (Export ▸ Sample dataset…) is a page of its own: it takes minutes. |
 | Automation (Export ▸ Automation…) | When the design changes, Vantage regenerates what downstream needs and runs your own checks. The project keeps *what* to regenerate — the export formats (the calibration files by default: extrinsics, OpenCV and ROS camera_info per camera, URDF + static TF, nuScenes, KITTI, Kalibr), a folder next to the project file (never outside its folder), the variant and conventions, the requirements check — and *when*: on save, once nothing has changed for a quiet period, or by hand; off until you turn it on. The **command** to run afterwards (`make perception-test`, a script) is kept only in your own settings for that project file, shown in full and approved by you before it first runs; changing it asks again, and a project file can never set or run one. It runs through the shell in the project's folder with `VANTAGE_EXPORT_DIR`, `VANTAGE_PROJECT`, `VANTAGE_VARIANT`, `VANTAGE_SUMMARY` (a JSON of the run: every file with its SHA-256, what changed, the requirements verdict, the Issues), `VANTAGE_CHECK_EXIT` …; a time limit and Stop end it with everything it started. The page shows each run's output live, exit code, duration and the files that changed (by content: the time stamps exports carry do not count; PDFs are marked rewritten), removes files a camera or format no longer produces, and keeps a history of runs on this computer. Batch `--watch project.vantage --on-change "cmd"` does the same headless on a CI box or a Jetson and passes the command's exit code through; **CI templates** (GitHub Actions, GitLab CI) run `--export` and `--check` on the project in its repository and keep the calibration files and the review pack as artifacts. The assistant can read the automation's state, never the command, and cannot start a run. |
+| Experiments (Analysis ▸ Experiments…) | Many designs of the rig evaluated automatically, and what drives each figure. **Factors**: any camera's or sensor's x, y, z, yaw, pitch, roll (a value or an offset from the design), a camera's lens or a sensor's model, every camera moved together (a mount height offset), the ROI distance, a load case and the weather condition; a camera's mirror partner can follow (y, yaw, roll mirrored); ranges and levels, and for uncertainty uniform, normal or truncated-normal distributions. **Responses**: any metric of the requirements scorecard with its parameters (coverage, blind area, densities, perception and detection ranges, lidar and radar coverage, timing, recording, power, GNSS, exposure, blind volume, stitched view, mounting tolerance, brackets, critical targets unresolved, the calibration observability's loosest camera). **Designs**: full factorial, one at a time, Latin hypercube (seeded), Sobol/Saltelli, Morris screening and Monte Carlo. **Analysis**: Sobol first-order and total indices with bootstrap intervals (checked against the Ishigami function's analytic indices), Morris μ*/σ, main effects with intervals, two-factor response surfaces, the Pareto front over every response, the best design (Add as variant, one undo step), and Monte Carlo uncertainty: mean, sd, percentiles with bootstrap intervals, the share meeting a target (Wilson) and convergence. Runs in the background with Cancel; every design point is cached under a key of its inputs, so a cancelled run resumes; Estimate times the first points first. Export: the spec (JSON, re-runnable), every point (CSV), the analysis (JSON, `vantage.experiments/1`) and the plots (PNG); batch `--experiment spec.json OUT` resumes from its journal. |
+| Simulate in CARLA (Simulate ▸ CARLA…) | The planned rig in the free CARLA simulator (0.9.16): every camera, lidar, radar, GNSS antenna and IMU of the variant on the CARLA car nearest the vehicle's size, in CARLA's town, traffic and weather (a Vantage weather condition mapped by documented heuristics, or a CARLA preset), recorded in synchronous mode as a nuScenes folder and a ROS 2 bag in exactly the sample dataset's layout, with ground-truth boxes, point counts and visibility. Fisheye cameras are rendered as pinhole cube faces and remapped through the lens model (within 0.1 px); lidar beams lie exactly on CARLA's channels with the exact azimuth step and phase; radar zones become CARLA radars. Each cube face reaches 1.5° past its seams and the faces are feathered there, Unreal's vignette is taken out of every pixel in linear light through CARLA's measured camera response, and each lidar point is placed where the sensor was when it fired. **The cameras need a GPU** (a server without rendering records lidars, radars, GNSS and IMUs only; on a computer with an integrated and an NVIDIA GPU the server runs on the NVIDIA one). Checked on CARLA 0.9.16: lidar points fall on CARLA's depth image within 0.33 mm and the colour images' edges on its segmentation within 0.1 px; on an RTX 5080 the sample's six fisheyes, lidar and five radars record 6 s of driving in 28 s, and the drive-log check finds every camera within 0.25° of its plan (a common pitch of about −0.1° whose cause is not known yet: the views' mounting, CARLA's projection and its lidar check out exactly). The server starts headless in its own memory-capped scope; a run is a background job, then opens in the drive-log check (the cameras' rotation against the lidar: the geometric cross-check). The as-built check reports a CARLA drive as not checkable, since CARLA's car is not the project's body. Batch `--carla-rig OUT` writes the rig, `--carla-run OUT` drives it in a running server (exit 7 when none answers); `python -m vantage.sim.carla_bridge sim_rig.json OUT --town Town10HD --weather ClearNoon --duration 20 --traffic 30 --seed 1` runs it from CARLA's Python. |
+| Validation suite and technical reference (Help ▸ Validate the models…, `vantage --validate`) | 69 quantitative checks of every model against references that share none of its code: lens models against OpenCV, coverage against analytic footprints on a plate, cube-map occlusion and its depths against exact ray casting, rain attenuation against ITU-R P.838-3's own table, headlamps against UN R112's test points, the sun against the SPA paper's example, a bumper fascia against a measured plate, suspension against hand calculations, observability against Monte Carlo solves, the joint solve against an independent reference, the experiments' estimators against analytic sensitivity indices, and nuScenes/KITTI/ROS/Kalibr files against their formulae. For each check the report (HTML with figures, JSON, CSV) gives the quantity, the reference, the error measured, the tolerance and pass or fail; seeded and reproducible; exit 6 when one fails, so CI can gate on it. The app runs it in the background on the open project and opens the report from the working folder. The website's **technical reference** (`site/methods.html`) documents each model's equations, frames, assumptions, typical parameters with sources, limits and references, with the suite's results under each. |
+| Provenance and reproducibility (`vantage --reproduce`) | Every JSON Vantage writes — each export, each study page's Export button and every batch output — ends with a `provenance` block: the Vantage version and a hash of its code (with the git commit, and whether the code has local changes), the Python, NumPy, SciPy, OpenCV and Qt versions and the platform, the project's content hash (and one per section: vehicle, mesh, library, variants, analysis, …) and the variant's, the study's settings with every default filled in, its random seeds, the batch command with each path reduced to a file name and each input file's SHA-256, the UTC time and a hash of the result itself (time stamps left out, so equal results hash alike). Never a path, user or host name of the computer. `vantage project.vantage --reproduce result.json` runs the same study on the same project again and compares every number, exactly or within `--tolerance` per quantity (`blind_m2=0.005`, `'*_pct=0.1%'`), and says why a result does not reproduce: another version, other code or libraries, which part of the project differs, a changed input file, or an edited result. Every random number comes from a seeded generator (a test reads the sources), and studies give the same numbers bit for bit in two processes, whatever the random ids of the cameras and boards. The assistant's `check_result` reads a result's block without running anything. The `.vantage` format is documented in `docs/project-format.md` with a JSON Schema; `CITATION.cff` says how to cite Vantage. |
 | Workflow | Undo/redo with History, command palette (Ctrl+K), keyboard shortcuts (?), workspaces, dark and light themes, UI scale, `.vantage` project files (zip of JSON + mesh + thumbnail), start window with recent projects and templates. |
 | Downloads and self-test | Windows installer, macOS app and Linux bundle with their own Python, built and smoke-tested on GitHub for every release, with SHA-256 checksums; `--self-test` checks an installation without a window: the sample analysed, every export written, a ROS 2 bag written and read, Qt's plugins, OpenGL and the software renderer, every page. |
 
@@ -298,8 +320,16 @@ beam-angle files, misplacement issues, every sensor frame through the URDF, nuSc
 coverage (points on objects against the beam geometry, roof blocking, verdicts), the sync plan (sweep crossings,
 triggers, groups, blur against hand-worked cases), the recording budget (rates, links, disks), the dataset exports (reprojection through every written file), batch mode, the shader
 renderer (run headless through EGL in a subprocess and checked against the CPU visibility test; skipped where there is no
-EGL OpenGL), the 3D surround view, regression tests for every bug found in review (`test_regressions_*.py`), and GUI
-tests that drive the app with real mouse and keyboard events.
+EGL OpenGL), the 3D surround view, designed experiments (Sobol indices against the Ishigami function's analytic values
+and their interval coverage over seeds, Morris on linear and interacting functions, Monte Carlo intervals; responses
+against the studies run by hand on project copies; cancel and resume), the validation suite (a quick run of every
+check, injected model faults caught by the checks meant to catch them, seeded reproducibility), provenance (content
+hashes independent of random ids, results bit for bit in two processes, an audit of the sources for unseeded random
+numbers, `--reproduce` on every batch output), the CARLA bridge (against a fake `carla` module that records what the
+client asks for: frames, lidar resampling, the rig file, a drive end to end read back by the drive-log and as-built
+checks; a live test runs where `VANTAGE_CARLA` names a server), regression tests for every bug found in review
+(`test_regressions_*.py`), and GUI tests that drive the app with real mouse and keyboard events. The validation suite
+itself (`vantage --validate`) checks the models against independent references.
 
 ## Layout
 
@@ -316,9 +346,12 @@ vantage/core   engine: lens models, mesh, loaders, body generator, occlusion, an
                body motion (terrain), critical targets and mounting envelopes (critical), materials, radar
                through the fascia and glass (materials), windscreen wipers (wipers), weather and night
                (weather), cable routing and link limits (harness), calibration observability
-               (observability), regenerating exports and running the user's checks (automation), and the rest
-               of the studies (gnss, power, exposure, brackets, dataset, drivescene, rosbag, lidar_calib,
-               drivelog, fleet, requirements)
+               (observability), regenerating exports and running the user's checks (automation), designed
+               experiments and sensitivity (experiments), provenance blocks and reproducing results
+               (provenance), the rig as a simulator needs it (simrig), and the rest of the studies (gnss, power,
+               exposure, brackets, dataset, drivescene, rosbag, lidar_calib, drivelog, fleet, requirements)
+vantage/validation  the validation suite: every model against independent references, the report (`--validate`)
+vantage/sim    the CARLA bridge, run in CARLA's own Python (carla_bridge, record, frames) and the server (server)
 vantage/runtime  reference bird's-eye stitchers shipped with the remap tables (C++17, Python)
 vantage/batch  command-line batch mode
 vantage/selftest  --self-test: checks an installation (analysis, exports, cameras, bags, plugins, OpenGL, every page)
@@ -326,7 +359,9 @@ vantage/selftest  --self-test: checks an installation (analysis, exports, camera
 vantage/sysenv  the environment for system programs started from the bundle (GStreamer, ffmpeg, desktop tools)
 vantage/ui     Qt UI: main window, docks, viewports (render_gl: the shader renderer), plan views, camera images,
                charts, dialogs, workspaces, the bowl controller
-tests/         pytest suites
+tests/         pytest suites (tests/fake_carla: a fake carla module for the bridge's tests)
+docs/          the .vantage project format (project-format.md) and its JSON Schema
+site/          the website: index, docs, the technical reference (methods.html) and the published validation report
 packaging/     PyInstaller spec, build script, icons, Linux install scripts and desktop entry,
                Windows installer (Inno Setup); .github/workflows/build.yml builds them on GitHub
 ```

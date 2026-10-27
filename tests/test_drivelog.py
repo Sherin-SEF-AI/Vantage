@@ -643,6 +643,42 @@ def test_a_mapping_edit_checks_again_from_the_same_scan(drive):
     assert res2.extrinsic('ML')['delta_deg'] == pytest.approx(res.extrinsic('ML')['delta_deg'], abs=1e-9)
 
 
+def test_without_an_engine_the_own_vehicle_still_hides_what_it_hides(drive):
+    """A run given no engine left the own vehicle out of the rotation check: the image edges on it were kept and so
+    were the lidar edges it hides from a camera. On the sample's synthetic urban drive the roof lidar sees building
+    edges over the right mirror that MR cannot see past its own mirror; scored against the mirror's edge they pulled
+    a correctly mounted MR 0.36°/0.38°/0.47° off, 'rotated' (medium). The run now makes an engine when none is
+    given: the same rows as with one (here ML used 5525 edge points without the vehicle, 2859 with it)."""
+    res = drive['res']
+    res2 = DL.run(drive['p'], drive['path'], drive['st'], scan=res.scan)
+    assert [r['tag'] for r in res2.extrinsics] == [r['tag'] for r in res.extrinsics]
+    for a, b in zip(res.extrinsics, res2.extrinsics):
+        assert (b['verdict'], b.get('points'), b.get('frames')) == (a['verdict'], a.get('points'), a.get('frames')), \
+            a['tag']
+        if a.get('delta_deg') is not None:
+            assert b['delta_deg'] == pytest.approx(a['delta_deg'], abs=1e-9), a['tag']
+    assert res2.stream('L1')['blocked_share'] == pytest.approx(res.stream('L1')['blocked_share'])
+
+
+def test_a_mirror_camera_off_its_plan_is_recovered(drive):
+    """MR on the right mirror, its plan yawed 0.6° from the pose its images were rendered at: the own vehicle is
+    masked at the plan pose (as on a real rig) and the correction back to the true pose is found. In the garage its
+    view holds pillars and box sides, upright edges: yaw is pinned down, pitch and roll are said not to be."""
+    p, v = drive['p'], drive['v']
+    c = v.by_tag('MR')
+    yaw0 = c.yaw
+    c.yaw = yaw0 + 0.6
+    try:
+        r = DL.run(p, drive['path'], drive['st'], engine=drive['eng'], scan=drive['res'].scan).extrinsic('MR')
+    finally:
+        c.yaw = yaw0
+    assert r['verdict'] == 'rotated' and r['confidence'] in ('high', 'medium') and r['apply']
+    assert r['observable'][0] and r['delta_deg'][0] == pytest.approx(-0.6, abs=0.15)
+    assert r['correction_deg'][0] == r['delta_deg'][0]
+    assert all(abs(d) < 0.15 or not o for d, o in zip(r['delta_deg'][1:], r['observable'][1:]))
+    assert r['corrected_deg'][0] == pytest.approx(yaw0, abs=0.15)
+
+
 def test_a_variant_without_sensors_and_cancel(drive):
     from vantage.core.project import Variant
     p = drive['p']

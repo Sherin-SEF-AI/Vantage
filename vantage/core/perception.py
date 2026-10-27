@@ -27,6 +27,7 @@ import numpy as np
 
 from .analysis import camera_frames
 from .lens import dr_dtheta, r_of_theta, resolve
+from .pngtext import put_text
 
 SCHEMA = 'vantage.perception_range/1'
 
@@ -531,7 +532,7 @@ def png(pr: PerceptionResult, size=900, k_sel=0) -> bytes:
         return np.round(np.array(pts) * 16).astype(np.int32)            # 4 fractional bits
 
     def text(t, x, y, col, s=0.45, th=1):
-        cv2.putText(img, t, (int(x), int(y)), font, s, col, th, aa)
+        put_text(img, t, (int(x), int(y)), font, s, col, th, aa)
     for ring in PNG_RINGS:
         if ring <= rmax * 1.001:
             rr = int(round(math.sqrt(ring) * scale * 16))

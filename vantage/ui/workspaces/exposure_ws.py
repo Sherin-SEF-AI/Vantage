@@ -807,6 +807,7 @@ class ExposurePage(QWidget):
             folder = QFileDialog.getExistingDirectory(self, 'Export the sun glare and dirt exposure into')
             if not folder:
                 return []
-        paths = X.export(res, self.ctx.store.project, folder)
+        from ...core import provenance as PV          # where the JSON came from
+        paths = PV.stamp_paths(X.export(res, self.ctx.store.project, folder), self.ctx.store.project, folder)
         self.ctx.msg(f'Exported the sun glare and dirt exposure to {folder}', 5000)
         return paths

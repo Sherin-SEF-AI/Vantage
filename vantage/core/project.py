@@ -337,6 +337,8 @@ class AnalysisSettings:
     weather: dict = field(default_factory=dict)       # rain, fog, night (core.weather)
     harness: dict = field(default_factory=dict)       # cable routing along the body (core.harness)
     automation: dict = field(default_factory=dict)    # what to regenerate on a change (core.automation; never a command)
+    sim: dict = field(default_factory=dict)           # simulator runs (core.simrig, vantage.sim: the CARLA bridge)
+    experiments: dict = field(default_factory=dict)   # sweeps, sensitivity and uncertainty (core.experiments)
 
     def to_dict(self):
         return asdict(self)

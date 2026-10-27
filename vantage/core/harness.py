@@ -1663,7 +1663,8 @@ def png(res: HarnessResult, project, width=1400) -> bytes:
         return np.stack([pad + (Q[..., 0] - lo[0]) * sx, head + top_h + gap + (hi[2] - Q[..., 2]) * sx], -1)
 
     def text(t, x, y, col=ink, s=0.45, th=1):
-        cv2.putText(img, t, (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, s, col, th, cv2.LINE_AA)
+        from .pngtext import put_text       # OpenCV's Hershey fonts are ASCII only: · × → would print as ??
+        put_text(img, t, (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, s, col, th, cv2.LINE_AA)
 
     text(f'Cable harness · {getattr(project, "name", "")} · {res.variant}', pad, 26, ink, 0.6, 1)
     t = res.totals

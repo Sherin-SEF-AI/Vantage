@@ -97,7 +97,10 @@ def _cams(p):
 # ----------------------------------------------------------------------------- registry
 def test_formats_registry():
     ids = [f.id for f in ex.FORMATS]
-    assert len(ids) == len(set(ids)) == 43
+    assert len(ids) == len(set(ids)) == 45
+    # written only when named (batch --export without --formats leaves them out): an experiment runs for minutes,
+    # the CARLA rig's remap tables are tens of MB
+    assert [f.id for f in ex.FORMATS if not f.default] == ['experiment', 'sim_rig']
     assert {f.group for f in ex.FORMATS} == set(ex.GROUPS)
     for f in ex.FORMATS:
         assert f.kind in ('text', 'binary')
@@ -120,10 +123,10 @@ def test_export_writes_every_file(sample, exported):
     # take one as planned, the json and the sheet), the housings in view (json, csv) and the suspension load cases
     # (json, 2 csv, the suspension data json), the calibration observability (json, csv, png: no lidar, no fusion
     # map), the cable harness (json, csv, png), the road and body motion on flat ground (json, csv), the critical
-    # targets (json, 2 csv, 2 png), the materials (json, 2 csv, png), the weather comparison (json, 2 csv, png) and
-    # the CI templates (2 yml, md)
+    # targets (json, 2 csv, 2 png), the materials (json, 2 csv, png), the weather comparison (json, 2 csv, png),
+    # the CI templates (2 yml, md), no experiment (none set up) and the CARLA rig (json, npz)
     assert len(paths) == (11 + 2 * n + 2 + (2 * n + 4) + 4 + 5 + 2 + 2 * n + 2 + 2 + 3 + 3 + n + 1 + 2 + 2 + 2
-                          + 3 + 3 + 2 + 3 + 3 + 4 + 2 + 4 + 3 + 3 + 2 + 5 + 4 + 4 + 3)
+                          + 3 + 3 + 2 + 3 + 3 + 4 + 2 + 4 + 3 + 3 + 2 + 5 + 4 + 4 + 3 + 0 + 2)
     for path in paths:
         assert os.path.isabs(path) and os.path.isfile(path) and os.path.getsize(path) > 0
         assert os.path.commonpath([path, str(out)]) == str(out)
@@ -177,6 +180,7 @@ def test_yaml_matches_json(sample, exported):
     out, _, _ = exported
     y = yaml.safe_load((out / 'extrinsics.yaml').read_text('utf-8'))
     j = json.loads((out / 'extrinsics.json').read_text('utf-8'))
+    j.pop('provenance')                         # where the JSON came from (core.provenance); the YAML has no such block
     assert y == j
 
 
@@ -622,9 +626,9 @@ def test_exports_without_analysis_result(sample, tmp_path, qapp):
     # IMU, the requirements and the fleet: three; sun glare and dirt: two; the brackets: four (QL, QR, json, sheet);
     # the housings: two; the suspension load cases: four; the calibration observability and the cable harness:
     # three; the road and body motion on flat ground: two; the critical targets: five; the materials and the weather
-    # comparison: four; the CI templates: three
-    assert len(paths) == ((len(ids) - 25) + 2 * len(_cams(p)) + 2 + 2 + 2 + 2 + 2 + 2 + 3 + 3
-                          + 3 + 3 + 3 + 3 + 2 + 4 + 2 + 4 + 3 + 3 + 2 + 5 + 4 + 4 + 3)
+    # comparison: four; the CI templates: three; the experiment: none (the sample has none set up); the CARLA rig: two
+    assert len(paths) == ((len(ids) - 27) + 2 * len(_cams(p)) + 2 + 2 + 2 + 2 + 2 + 2 + 3 + 3
+                          + 3 + 3 + 3 + 3 + 2 + 4 + 2 + 4 + 3 + 3 + 2 + 5 + 4 + 4 + 3 + 0 + 2)
     html_text = (tmp_path / 'report.html').read_text('utf-8')
     assert 'No analysis result' in html_text
     _, desc, _ = ex.preview('report_pdf', p, None, ex.ExportOptions(out_dir=str(tmp_path)))

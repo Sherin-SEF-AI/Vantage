@@ -718,7 +718,8 @@ class PerceptionPage(QWidget):
             folder = QFileDialog.getExistingDirectory(self, 'Export the weather comparison into')
             if not folder:
                 return []
-        paths = W.export(res, self.ctx.store.project, folder)
+        from ...core import provenance as PV          # where the JSON came from
+        paths = PV.stamp_paths(W.export(res, self.ctx.store.project, folder), self.ctx.store.project, folder)
         self.ctx.msg(f'Exported the weather comparison to {folder}', 5000)
         return paths
 
@@ -826,5 +827,7 @@ class PerceptionPage(QWidget):
             fh.write(json.dumps(PR.to_doc(pr, self.ctx.store.project), indent=1) + '\n')
         with open(paths[1], 'wb') as fh:
             fh.write(PR.png(pr))
+        from ...core import provenance as PV          # where the JSON came from
+        PV.stamp_paths(paths, self.ctx.store.project, folder)
         self.ctx.msg(f'Exported the perception range to {folder}', 5000)
         return paths

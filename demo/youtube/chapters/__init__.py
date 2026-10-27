@@ -8,6 +8,12 @@ A chapter is a file `chapters/<nn>_<id>.py` (nn two digits) defining
 
 The intro is 00_intro.py (part 0) and the outro 99_outro.py (part 6). META and LINES are read here with `ast`
 (literal values only), so the voice renderer and produce.py never import Qt or the app: keep them plain literals.
+
+Episodes: the chapter files of every video live here side by side (ids are unique across them); an episode is a plan
+over them (EPISODES: its parts, chapters, intro, outro and the texts of its deliverables). 'tour' is the full app tour
+(PLAN, PARTS); 'v020' is "What's new in Vantage 0.2.0" (files 40_intro-v020 ... 49_outro-v020). The episode in use is
+$VANTAGE_EPISODE (default 'tour'; produce.py --episode sets it for every child process); a chapter's own episode is
+episode_of(cid), so record.py and cards.py need no variable.
 """
 from __future__ import annotations
 
@@ -69,6 +75,94 @@ PLAN = [
     (38, 'install-anywhere', 5, 'Downloads, self-test and running on the Jetson'),
 ]
 INTRO, OUTRO = 'intro', 'outro'
+
+# "What's new in Vantage 0.2.0": the files are 41_new-critical.py ... 48_new-automation.py; the numbers on screen
+# (cards, the indicator, YouTube chapters) count this video's own chapters, 1 to 8
+PARTS_V020 = {
+    1: ('On the road', 'What the rig must resolve, how the road moves it, and what rain, fog and night take away.'),
+    2: ('In the workshop', 'What each sensor looks through, the cables behind it, and how well it can be calibrated.'),
+    3: ('In the pipeline', 'A more accurate calibration, and the whole rig checked on every commit.'),
+}
+PLAN_V020 = [
+    (1, 'new-critical', 1, 'Critical targets and mounting envelopes'),
+    (2, 'new-terrain', 1, 'Road and body motion'),
+    (3, 'new-weather', 1, 'Weather and night'),
+    (4, 'new-materials', 2, 'Materials, glass and wipers'),
+    (5, 'new-harness', 2, 'Cable harness'),
+    (6, 'new-observability', 2, 'Calibration observability and fusion'),
+    (7, 'new-calib', 3, 'A more accurate calibration'),
+    (8, 'new-automation', 3, 'Automation and CI'),
+]
+
+# what an episode is: its plan, and what its deliverables say (assemble.py reads the texts; None = the tour's own)
+EPISODES = {
+    'tour': {
+        'parts': PARTS, 'plan': PLAN, 'intro': INTRO, 'outro': OUTRO, 'version': '0.1.1',
+        'name': 'vantage-tour',
+        'title': 'Vantage: full tour of the sensor rig planner for autonomous-driving data collection',
+        'video_title': 'Vantage: full app tour',
+        'marks': ('Intro: what Vantage is', 'Download, website and licence'),
+        'texts': ('chapters.txt', 'description.md', 'thumbnail.png'),     # in demo/out/youtube
+        'description': None,
+        'tags': None,
+        'thumb': {'still': 'intro', 'eyebrow': 'FULL APP TOUR', 'word': 'Vantage', 'word_px': 230,
+                  'lines': ('Plan a sensor rig.', 'Prove what it sees.'), 'foot': 'FREE AND OPEN SOURCE'},
+    },
+    'v020': {
+        'parts': PARTS_V020, 'plan': PLAN_V020, 'intro': 'intro-v020', 'outro': 'outro-v020', 'version': '0.2.0',
+        'name': 'vantage-whats-new-0.2.0',
+        'title': "What's new in Vantage 0.2.0: targets, road, weather, materials, harness, calibration, CI",
+        'video_title': "What's new in Vantage 0.2.0",
+        'marks': ("Intro: what's new in 0.2.0", 'Download 0.2.0, website and licence'),
+        'texts': ('{name}-chapters.txt', '{name}-description.md', '{name}-thumbnail.png'),
+        'description': 'v020',
+        'tags': 'v020',
+        'thumb': {'still': 'intro-v020', 'shot_x': 640, 'eyebrow': "WHAT'S NEW IN", 'word': 'Vantage 0.2.0', 'word_px': 156,
+                  'lines': ('Targets, road, weather,', 'harness, calibration, CI.'), 'foot': 'FREE AND OPEN SOURCE'},
+    },
+}
+DEFAULT_EPISODE = 'tour'
+
+
+def current() -> str:
+    """The episode in use: $VANTAGE_EPISODE, else the tour."""
+    ep = os.environ.get('VANTAGE_EPISODE') or DEFAULT_EPISODE
+    if ep not in EPISODES:
+        raise SystemExit(f'unknown episode {ep!r} (VANTAGE_EPISODE): one of {", ".join(EPISODES)}')
+    return ep
+
+
+def episode(name=None) -> dict:
+    return EPISODES[name or current()]
+
+
+def members(name) -> list[str]:
+    """The segment ids of an episode in order (intro, chapters, outro), whether recorded or not."""
+    e = EPISODES[name]
+    return [e['intro']] + [c[1] for c in e['plan']] + [e['outro']]
+
+
+def episode_of(cid, default=None) -> str:
+    """The episode a chapter id belongs to (else `default`, else the current one)."""
+    for name in EPISODES:
+        if cid in members(name):
+            return name
+    return default or current()
+
+
+def resolve(name=None, only=None) -> str:
+    """The episode to produce: the one asked for, else $VANTAGE_EPISODE, else the one every id in `only` belongs to,
+    else the tour."""
+    if name:
+        if name not in EPISODES:
+            raise SystemExit(f'unknown episode {name!r}: one of {", ".join(EPISODES)}')
+        return name
+    if os.environ.get('VANTAGE_EPISODE'):
+        return current()
+    eps = {episode_of(c, DEFAULT_EPISODE) for c in (only or [])}
+    return eps.pop() if len(eps) == 1 else DEFAULT_EPISODE
+
+
 _NAME = re.compile(r'^(\d\d)_([a-z0-9-]+)\.py$')
 
 
@@ -112,30 +206,33 @@ def load(cid):
 
 
 def plan_entry(cid):
-    return next((c for c in PLAN if c[1] == cid), None)
+    return next((c for c in episode(episode_of(cid))['plan'] if c[1] == cid), None)
 
 
-def sequence(only=None):
-    """The video's segments in order, for the chapters whose files exist (or `only` of them): a list of dicts
-    {'kind': 'segment'|'part'|'chapter-card', ...}. The intro opens and the outro closes it when present."""
+def sequence(only=None, name=None):
+    """An episode's segments in order (default: the current episode), for the chapters whose files exist (or `only`
+    of them): a list of dicts {'kind': 'segment'|'part'|'chapter-card', ...}. The intro opens and the outro closes it
+    when present."""
+    ep = episode(name)
+    plan, parts, intro, outro = ep['plan'], ep['parts'], ep['intro'], ep['outro']
     have = files()
     want = set(only) if only else None
     seq = []
-    if INTRO in have and (want is None or INTRO in want):
-        seq.append({'kind': 'segment', 'id': INTRO})
+    if intro in have and (want is None or intro in want):
+        seq.append({'kind': 'segment', 'id': intro})
     part = None
-    for nn, cid, pt, title in PLAN:
+    for nn, cid, pt, title in plan:
         if cid not in have or (want is not None and cid not in want):
             continue
         if pt != part:
             part = pt
-            items = [(n, t) for n, c, p_, t in PLAN if p_ == pt]
-            seq.append({'kind': 'part', 'part': pt, 'title': PARTS[pt][0], 'blurb': PARTS[pt][1], 'items': items,
-                        'next': cid})
+            items = [(n, t) for n, c, p_, t in plan if p_ == pt]
+            seq.append({'kind': 'part', 'part': pt, 'title': parts[pt][0], 'blurb': parts[pt][1], 'items': items,
+                        'next': cid, 'of': len(parts)})
         m = meta(cid)
-        seq.append({'kind': 'chapter-card', 'id': cid, 'nn': nn, 'part': pt, 'part_title': PARTS[pt][0],
+        seq.append({'kind': 'chapter-card', 'id': cid, 'nn': nn, 'part': pt, 'part_title': parts[pt][0],
                     'title': m.get('title', title), 'promise': m.get('promise', ''), 'menu': m.get('menu', '')})
         seq.append({'kind': 'segment', 'id': cid})
-    if OUTRO in have and (want is None or OUTRO in want):
-        seq.append({'kind': 'segment', 'id': OUTRO})
+    if outro in have and (want is None or outro in want):
+        seq.append({'kind': 'segment', 'id': outro})
     return seq

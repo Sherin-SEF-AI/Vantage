@@ -18,8 +18,9 @@ points summed over all lidars reach the class's min_points.
 
 Radar: the object's centre lies in a radar zone at the zone's range scaled by (rcs / 10 m²)^¼ and by what the radar
 looks through (core.materials: (two-way transmission through the fascia and its paint)^¼ per zone, 1 for a radar in
-front of the body), with nothing of the vehicle in between (hits within 0.15 m of the radar are the bumper fascia it
-sits behind). A class with rcs 0 is left to the other sensors.
+front of the body), with nothing of the vehicle in between (hits within 0.15 m of a radar the materials study finds
+inside the body behind a cover are that cover, the bumper fascia it sits behind; for a radar outside the body or
+behind an opaque part every hit is the vehicle in the way). A class with rcs 0 is left to the other sensors.
 
 The camera range of a class is the perception range of the class of the same name; the required range per sector is
 the perception range's, so all three are judged against one requirement: a sector is redundant when two or more
@@ -374,9 +375,10 @@ class _Lidar:
 
 
 class _Radar:
-    def __init__(self, s, m, cube, zone_scale=None):
+    def __init__(self, s, m, cube, zone_scale=None, fascia=True):
         self.s, self.m, self.cube = s, m, cube
         self.zone_scale = zone_scale          # range factor per zone through what the radar looks through (materials)
+        self.fascia = fascia                  # a hit within FASCIA_M is the cover the radar sits behind
         self.pos = s.pos().astype(float)
 
     def sees(self, P, rcs) -> np.ndarray:
@@ -386,8 +388,20 @@ class _Radar:
             d = P[ok] - self.pos
             dist = np.linalg.norm(d, axis=1)
             depth = self.cube.lookup(d)[0]
-            ok[ok] = (depth > dist - (0.02 + 0.01 * dist)) | (depth <= FASCIA_M)
+            ok[ok] = (depth > dist - (0.02 + 0.01 * dist)) | (self.fascia & (depth <= FASCIA_M))
         return ok
+
+
+def radar_mount(project, sensor, vg=None) -> str | None:
+    """How core.materials finds the radar mounted: 'behind' or 'deep' (inside the body, behind a cover it looks
+    through), 'enclosed', 'blocked' (behind an opaque part), 'exposed' (outside the body); None when unknown."""
+    from . import materials as MT
+    try:
+        res = MT.cached_run(project, vg)
+    except Exception:                                   # noqa: BLE001 — unknown: the datasheet's field, as before
+        return None
+    r = res.radar_by_uid(sensor.uid) if res is not None else None
+    return r['mount'] if r is not None else None
 
 
 def radar_zone_scale(project, sensor, vg=None) -> list | None:
@@ -409,7 +423,10 @@ def radar_view(project, sensor, cube=None, vg=None) -> _Radar:
     """A radar as this study counts it: .sees(P, rcs) for object centres P (n, 3) — in a zone at its range for the
     cross-section and what the radar looks through (vg: the vehicle geometry the materials study traces), nothing of
     the vehicle in between (cube, None = nothing blocks)."""
-    return _Radar(sensor, project.sensor_model_for(sensor), cube, radar_zone_scale(project, sensor, vg))
+    # a surface close ahead is the fascia only for a radar inside the body behind a cover: outside the body (in an open
+    # engine bay, under the bonnet's edge) or behind metal it is the vehicle in the way
+    return _Radar(sensor, project.sensor_model_for(sensor), cube, radar_zone_scale(project, sensor, vg),
+                  fascia=radar_mount(project, sensor, vg) not in ('exposed', 'blocked'))
 
 
 def object_points(project, engine, sensor, cls, ground_xy) -> np.ndarray:

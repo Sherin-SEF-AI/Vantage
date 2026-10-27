@@ -1707,8 +1707,9 @@ def monte_carlo(res: ObservabilityResult, trials=None, seed=None, parts=('camera
 def _agreement(groups, trials) -> tuple[bool, float, float]:
     """Whether simulated spreads match the predictions: every group's (a camera's, a pair's) mean squared
     Mahalanobis distance within four standard deviations of its number of axes, and every axis's empirical σ within
-    4.5 standard errors of the predicted one (a σ estimated from n trials scatters by 1 / √(2(n − 1)); dozens of
-    correlated axes are checked at once). Returns (agree, worst |log ratio|, the per-axis band)."""
+    4.5 standard errors of the predicted one, either way: |log(σ̂ / σ)| ≤ 4.5 / √(2(n − 1)) (log σ̂ from n trials
+    scatters by 1 / √(2(n − 1)); dozens of correlated axes are checked at once). Returns (agree, worst |log ratio|, the
+    per-axis band on |log ratio|)."""
     se = 1.0 / math.sqrt(2.0 * max(trials - 1, 1))
     band = 4.5 * se
     worst, ok = 0.0, True
@@ -1721,7 +1722,7 @@ def _agreement(groups, trials) -> tuple[bool, float, float]:
             band_k = 4.0 * math.sqrt(2.0 / (k * trials))
             if math.isfinite(s['mahalanobis2']) and abs(s['mahalanobis2'] / k - 1.0) > band_k:
                 ok = False
-    ok = ok and worst <= math.log(1.0 + band) + 1e-12
+    ok = ok and worst <= band + 1e-12          # |log ratio| within 4.5 standard errors of log σ̂, either way
     return bool(ok), worst, band
 
 

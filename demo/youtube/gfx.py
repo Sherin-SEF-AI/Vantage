@@ -894,8 +894,9 @@ def chapter_card(img: QImage, t: float, nn: int, part: int, part_title: str, tit
     p.end()
 
 
-def part_card(img: QImage, t: float, part: int, title: str, blurb: str, items, dur: float, exit_t: float = 0.6):
-    """The part card: PART n, its title, a line, and its chapters listed in order."""
+def part_card(img: QImage, t: float, part: int, title: str, blurb: str, items, dur: float, exit_t: float = 0.6,
+              of: int = 5):
+    """The part card: PART n OF m, its title, a line, and its chapters listed in order."""
     p = painter(img)
     out = clamp((t - (dur - exit_t)) / exit_t)
     a_out = 1 - in_cubic(out)
@@ -905,7 +906,7 @@ def part_card(img: QImage, t: float, part: int, title: str, blurb: str, items, d
     _ghost_number(p, str(part), W - 640, 960 - 40 * t / max(dur, 1) - (1 - gk) * 40, 820, gk * a_out)
     x = 176
     k = out_cubic(window(t, 0.15, 0.5))
-    draw_text(p, x, 386 + (1 - k) * 14 + lift, f'PART {part} OF 5', font(20, 'semibold', mono=True, spacing=4.0),
+    draw_text(p, x, 386 + (1 - k) * 14 + lift, f'PART {part} OF {of}', font(20, 'semibold', mono=True, spacing=4.0),
               ACCENT, k * a_out)
     k = out_cubic(window(t, 0.25, 0.65))
     draw_text(p, x, 508 + (1 - k) * 26 + lift, title, font(118, 'semibold'), INK, k * a_out)
@@ -938,9 +939,9 @@ def icon_image() -> QImage:
     return _ICON
 
 
-def logo_reveal(img: QImage, t: float, dur: float, a_out: float = 1.0):
+def logo_reveal(img: QImage, t: float, dur: float, a_out: float = 1.0, version: str | None = None):
     """The logo: the icon scales and sharpens in, the wordmark slides out from behind it, then the tagline and the
-    licence line."""
+    licence line (with `version`, default VERSION)."""
     import cv2
     p = painter(img)
     glow(p, W / 2, H / 2 - 40, 760, ACCENT, 0.09 * out_cubic(window(t, 0.0, 1.2)) * a_out)
@@ -978,7 +979,7 @@ def logo_reveal(img: QImage, t: float, dur: float, a_out: float = 1.0):
     tw = text_w(f_tag, TAGLINE)
     draw_text(p, W / 2 - tw / 2, icon_y + size + 112 + (1 - k2) * 12, TAGLINE, f_tag, INK2, k2 * a_out)
     k3 = out_cubic(window(t, 1.6, 0.7))
-    line = f'Free and open source  ·  v{VERSION}'
+    line = f'Free and open source  ·  v{version or VERSION}'
     f_l = font(21, 'medium', mono=True, spacing=1.0)
     lw = text_w(f_l, line)
     p.setOpacity(1.0)
@@ -988,9 +989,10 @@ def logo_reveal(img: QImage, t: float, dur: float, a_out: float = 1.0):
     p.end()
 
 
-def end_card(img: QImage, t: float, dur: float):
+def end_card(img: QImage, t: float, dur: float, version: str | None = None, rows=None):
     """The end screen: the left half says what to do next; the right half stays clear for YouTube's end-screen
-    elements (two video tiles and the subscribe button)."""
+    elements (two video tiles and the subscribe button). `rows`: [(heading, link, note)] instead of the download,
+    website and source rows; `version` instead of VERSION."""
     p = painter(img)
     x = 150
     k = out_cubic(window(t, 0.0, 0.8))
@@ -1003,9 +1005,9 @@ def end_card(img: QImage, t: float, dur: float):
     draw_text(p, x, 372 + (1 - k) * 10, TAGLINE, font(28, 'regular'), INK2, k)
     k = out_quint(window(t, 0.4, 0.7))
     p.fillRect(QRectF(x, 408, 120 * k, 3), col(ACCENT))
-    rows = [('DOWNLOAD', RELEASES, 'Windows · macOS · Linux x86-64 and arm64 (Jetson)'),
-            ('WEBSITE AND DOCS', SITE, 'feature videos, the full documentation, batch mode'),
-            ('SOURCE', REPO, f'{LICENCE} · free and open source')]
+    rows = rows or [('DOWNLOAD', RELEASES, 'Windows · macOS · Linux x86-64 and arm64 (Jetson)'),
+                    ('WEBSITE AND DOCS', SITE, 'feature videos, the full documentation, batch mode'),
+                    ('SOURCE', REPO, f'{LICENCE} · free and open source')]
     f_h = font(16, 'semibold', mono=True, spacing=2.0)
     f_u = font(30, 'medium')
     f_s = font(20, 'regular')
@@ -1020,7 +1022,8 @@ def end_card(img: QImage, t: float, dur: float):
     p.fillRect(QRectF(W / 2 + 10, 150, 1, (H - 300) * k), col(INK, 0.08))
     k = out_cubic(window(t, 1.2, 0.8))
     f_v = font(16, 'medium', mono=True, spacing=1.5)
-    draw_text(p, x, H - 96, f'v{VERSION}  ·  RECORDED FROM THE APP  ·  VOICE: KOKORO-82M, LOCAL', f_v, MUTED, 0.8 * k)
+    draw_text(p, x, H - 96, f'v{version or VERSION}  ·  RECORDED FROM THE APP  ·  VOICE: KOKORO-82M, LOCAL', f_v, MUTED,
+              0.8 * k)
     p.end()
 
 

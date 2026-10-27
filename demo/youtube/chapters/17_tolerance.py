@@ -225,7 +225,10 @@ def scene(stage, r):
     # ---- 10: the best candidate
     r.say(10)
     r.expect(op.table.item(0, 0).text(), 'C1', 'first candidate')
-    changes = op.table.item(0, 6).text()
+    # by its header: 0.2.0 added a Targets column before it
+    col = next(i for i in range(op.table.columnCount())
+               if op.table.horizontalHeaderItem(i).text().startswith('Changes'))
+    changes = op.table.item(0, col).text()
     print('C1 changes:', changes, '|', op.summary.text(), flush=True)
     r.expect('ML/MR ψ 110.0→101.9' in changes and 'R θ 60.0→48.6' in changes, True, 'C1 changes')
     nom, best = op.opt.nominal_cand.worst, op.cands[0].worst
@@ -233,7 +236,7 @@ def scene(stage, r):
     tr = r.wrect(op.table)
     r.zoom(QRectF(tr.x(), tr.y() - 34, tr.width(), 34 + 6 * 23), 1.0)
     r.callout(r.local_rect(op.table.viewport(), QRectF(op.table.visualItemRect(op.table.item(0, 0)).united(
-        op.table.visualItemRect(op.table.item(0, 6))))), '', dur=3.4, pad=3, dim=0.25)
+        op.table.visualItemRect(op.table.item(0, col))))), '', dur=3.4, pad=3, dim=0.25)
     r.until_word(10, 'the worst case falls')
     r.zoom(None, 0.8)
     r.figure('Worst case under tolerance', best, 'm²', 2, dur=max(2.8, r.speech_left() + 0.8), src=op.summary,

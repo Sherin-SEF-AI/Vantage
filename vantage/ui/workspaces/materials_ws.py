@@ -1145,6 +1145,7 @@ class MaterialsPage(QWidget):
             folder = QFileDialog.getExistingDirectory(self, 'Export the materials study into')
             if not folder:
                 return []
-        paths = M.export(res, self.ctx.store.project, folder)
+        from ...core import provenance as PV          # where the JSON came from
+        paths = PV.stamp_paths(M.export(res, self.ctx.store.project, folder), self.ctx.store.project, folder)
         self.ctx.msg(f'Exported the materials study to {folder}', 5000)
         return paths

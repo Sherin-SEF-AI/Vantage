@@ -285,5 +285,7 @@ class VolumePage(QWidget):
             fh.write(json.dumps(vol.to_doc(vr, self.ctx.store.project), indent=1) + '\n')
         with open(paths[1], 'w', encoding='utf-8') as fh:
             fh.write(vol.to_obj(vr))
+        from ...core import provenance as PV          # where the JSON came from
+        PV.stamp_paths(paths, self.ctx.store.project, folder)
         self.ctx.msg(f'Exported the blind volume to {folder}', 5000)
         return paths

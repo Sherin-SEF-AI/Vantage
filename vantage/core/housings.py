@@ -282,7 +282,8 @@ class HousingSet:
 
 def tri_info(geom) -> tuple:
     """(triangles, their lower and upper bounds, the largest centroid-to-corner distance) of an occluder, cached on
-    it. The last is how far a cube map's depth (a triangle's centroid distance) can lie beyond the true surface."""
+    it. The last bounds how far a cube map's depth can lie from the surface the texel's ray meets (the depth is exact
+    on the triangle drawn there, but at a silhouette that triangle can be another one within a texel)."""
     info = getattr(geom, '_housing_tri_info', None)
     if info is None:
         tri = np.asarray(geom.tri, float)
@@ -415,8 +416,8 @@ def layer(h: Housing, pos, n: int = FACE_N, static=None, tris: tuple | None = No
     (rows, cols) float32 metres, inf for a miss, shade (rows, cols) uint8)], one block per face it reaches. The block
     covers the housing's bounding box clipped to the face's near plane and projected, cropped to the texels hit.
     static (the body map's depth (6, n, n)) and tris (tri_info of its occluder): a texel whose body depth is within
-    the largest triangle radius (the centroid depth's error bound) of the hit, or nearer, is tested exactly against
-    the triangles, and left out when the body lies in front of the hit or less than EMBED_TOL_M behind it."""
+    the largest triangle radius (a bound on the depth's error at silhouettes) of the hit, or nearer, is tested exactly
+    against the triangles, and left out when the body lies in front of the hit or less than EMBED_TOL_M behind it."""
     pos = np.asarray(pos, float)
     P = corners(h) - pos
     inside = contains(h, pos)

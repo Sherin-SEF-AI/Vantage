@@ -517,3 +517,170 @@ def test_a_radar_deep_in_the_nose_is_flagged():
         assert len(iss) == 1, back
         # RD1's optical centre sits 19 mm behind the fascia's face: the depth grows with the move
         assert float(re.search(r'sits (\d+) mm', iss[0].message).group(1)) == pytest.approx(back * 1000 - 19, abs=5)
+
+
+def test_png_exports_spell_typographic_characters_in_ascii():
+    """OpenCV's Hershey fonts are ASCII only: the cable harness PNG printed '??' for every '·', '×' and '→' of its
+    titles (the sample's variants are named 'Data rig · 6-cam + lidar + radars')."""
+    from vantage.core import pngtext
+    assert pngtext.ascii_text('Cable harness · Data rig · 6-cam × 2 → ECU, 40° ±1') == \
+        'Cable harness - Data rig - 6-cam x 2 -> ECU, 40 deg +/-1'
+    assert pngtext.ascii_text('ok') == 'ok' and '?' not in pngtext.ascii_text('Δz ≤ 3 mm, σ … µs ▸')
+    img = np.zeros((40, 400, 3), np.uint8)
+    pngtext.put_text(img, 'a · b', (5, 25), 0, 0.6, (255, 255, 255), 1)
+    assert img.any()
+    import inspect
+    from vantage.core import asbuilt, drivelog, harness, perception
+    for m in (asbuilt, drivelog, harness, perception):
+        assert 'cv2.putText(' not in inspect.getsource(m), m.__name__
+
+
+def _occluder(tris):
+    from vantage.core.occlusion import OccluderGeom
+    tri = np.asarray(tris, float)
+    n = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    return OccluderGeom(tri, n / np.linalg.norm(n, axis=1, keepdims=True))
+
+
+def test_cube_map_depth_is_the_exact_distance_to_the_surface():
+    """A cube map texel stored the distance to the centroid of the triangle drawn there (16-bit mm), not to the
+    surface: under a camera 1 m above a 100 m ground plane of two triangles that was ~30 m wherever the ground was hit.
+    Now every texel holds the exact distance along its centre ray to the plane of its triangle."""
+    from vantage.core import occlusion as OC
+    ground = [[[-50, -50, 0], [50, -50, 0], [50, 50, 0]], [[-50, -50, 0], [50, 50, 0], [-50, 50, 0]]]
+    cube = OC.build_cube(_occluder(ground), (0.3, -0.2, 1.0))
+    D = OC.face_dirs(OC.FACE_N)
+    hit = np.isfinite(cube.depth)
+    want = 1.0 / -D[..., 2]                                  # the ray (0.3, -0.2, 1) + t d meets z = 0 at t = 1 / -d_z
+    down = D[..., 2] < -0.05                                 # (grazing rays run off the 50 m plane)
+    assert hit[down].all() and not hit[D[..., 2] > 0].any()
+    inside = down & (np.abs(D[..., 0] * want) < 45) & (np.abs(D[..., 1] * want) < 45)
+    err = np.abs(cube.depth[inside] - want[inside]) / want[inside]
+    assert inside.sum() > 6 * 256 * 256 // 4 and err.max() < 1e-5          # float32, nothing else
+    # looked up off the texel centre: within the texel's size
+    rng = np.random.default_rng(1)
+    d = rng.normal(size=(2000, 3))
+    d[:, 2] = -np.abs(d[:, 2]) - 2.0                         # well below the horizon (not grazing)
+    d /= np.linalg.norm(d, axis=1, keepdims=True)
+    got, _ = cube.lookup(d)
+    assert np.allclose(got, 1.0 / -d[:, 2], rtol=0.02)
+
+
+def test_cube_map_paints_a_near_slanted_triangle_over_a_farther_one():
+    """The painter's order by centroid distance put a small board 1 m ahead over a large slanted panel the ray meets
+    at 0.75 m (its centroid lies 2.4 m away), so the camera 'saw through' the panel. Ordered by each triangle's
+    nearest point, the panel is drawn last and the texel holds its exact depth."""
+    from vantage.core import occlusion as OC
+    panel = [[0.4, -0.3, -0.2], [0.4, 0.3, -0.2], [6.0, 0.0, 3.0]]
+    board = [[1.0, -0.05, -0.05], [1.0, 0.05, -0.05], [1.0, 0.0, 0.05]]
+    occ = _occluder([panel, board])
+    assert np.linalg.norm(occ.centroid[0]) > 2.4 > 1.0 > OC.tri_distance(occ.tri, np.zeros(3))[0]
+    cube = OC.build_cube(occ, np.zeros(3))
+    f, y, x = (int(v[0]) for v in OC.texel_index(np.array([[1.0, 0.0, 0.0]]), OC.FACE_N))
+    d = OC.face_dirs(OC.FACE_N)[f, y, x]
+    P = np.array(panel)
+    n = np.cross(P[1] - P[0], P[2] - P[0])
+    assert float(cube.depth[f, y, x]) == pytest.approx(float(n @ P[0] / (n @ d)), rel=1e-6)
+    assert float(cube.lookup(np.array([[1.0, 0.0, 0.0]]))[0][0]) == pytest.approx(0.75, abs=0.01)
+
+
+def test_tri_distance_against_a_brute_force_minimum():
+    """The point–triangle distance (Ericson's regions) against the minimum over a fine barycentric grid."""
+    from vantage.core.occlusion import tri_distance
+    rng = np.random.default_rng(4)
+    tri = rng.normal(size=(300, 3, 3))
+    tri[0] = [[0, 0, 0], [1e-9, 0, 0], [2e-9, 0, 0]]                       # degenerate: its nearest corner
+    P = rng.normal(size=3) * 2
+    w = np.linspace(0, 1, 121)
+    U, V = np.meshgrid(w, w)
+    keep = (U + V) <= 1
+    U, V = U[keep], V[keep]
+    pts = tri[:, :1] + U[None, :, None] * (tri[:, 1:2] - tri[:, :1]) + V[None, :, None] * (tri[:, 2:3] - tri[:, :1])
+    brute = np.linalg.norm(pts - P, axis=2).min(axis=1)
+    got = tri_distance(tri, P)
+    assert np.all(got <= brute + 1e-12) and np.allclose(got, brute, atol=2e-3 * np.abs(tri).max())
+
+
+def test_observability_agreement_band_is_symmetric():
+    """The Monte Carlo agreement allowed an empirical σ up to 1 + 4.5 se of the prediction but only down to
+    1 / (1 + 4.5 se): a correct prediction failed at seed 61027 with 60 trials (σ̂/σ = 0.69). The band is on
+    |log(σ̂/σ)| ≤ 4.5 / √(2(n − 1)), either way."""
+    from vantage.core import observability as OB
+    trials = 60
+    band = 4.5 / math.sqrt(2 * (trials - 1))
+
+    def group(ratio):
+        return {'F': {'axes': {'yaw_deg': {'ratio': ratio}, 'x_mm': {'ratio': 1.0}}, 'mahalanobis2': 6.0, 'dof': 6}}
+    for r in (0.69, 1 / 0.69, math.exp(band) * 0.999, math.exp(-band) * 1.001):
+        ok, worst, b = OB._agreement([group(r)], trials)
+        assert ok and b == pytest.approx(band) and worst == pytest.approx(abs(math.log(r))), r
+    for r in (math.exp(band) * 1.01, math.exp(-band) / 1.01, 0.5, 2.0):
+        assert not OB._agreement([group(r)], trials)[0], r
+
+
+def test_drive_log_leaves_out_lidar_edges_the_body_mask_hides():
+    """The drive-log rotation check zeroed image edges on the own vehicle (dilated) but kept the lidar edges that
+    project there: at the plan pose they scored nothing, so a rotation that moved them off the vehicle scored higher.
+    Exact cube-map depths grew the mirror cameras' vehicle mask to its true size (11 % of MR's image beyond 5 cm,
+    not 6.6 %) and MR's pitch came out 0.25° off (16 standard errors). Lidar edges that project into the mask, or
+    within three fine-map widths of it (where the smoothed image still feels the cut), are left out."""
+    from vantage.core import drivelog as DL
+    from vantage.core.lens import resolve
+    from vantage.core.mathutil import BODY_TO_OPTICAL, rot_zyx
+    p = samples.tigor_sample_project()
+    cam = p.variant.cameras[0]
+    intr = resolve(p.module_for(cam), p.lens_for(cam))
+    W2O = BODY_TO_OPTICAL @ rot_zyx(cam.yaw, cam.pitch, cam.roll).T
+    ha, wa = 96, 120
+    sx, sy = wa / intr.width, ha / intr.height
+    mask = np.zeros((ha, wa), bool)
+    mask[60:, :] = True                                      # the lower part of the image: the own vehicle
+    u = np.array([10.5, 60.5, 100.5, 60.5]) / sx
+    v = np.array([20.5, 70.5, 90.5, 59.5]) / sy
+    d, _ = intr.unproject(u, v)
+    Q = (d @ W2O) * 5.0                                       # 5 m out along each pixel's ray, vehicle frame
+    assert DL._on_mask(Q, W2O, intr, sx, sy, mask).tolist() == [False, True, True, False]
+    assert DL._on_mask(np.zeros((0, 3)), W2O, intr, sx, sy, mask).tolist() == []
+
+
+def test_computation_times_under_any_seconds_key_are_not_compared():
+    """A result hash and --reproduce blanked only keys named 'seconds': an experiment's study_seconds and the drive-log
+    and as-built checks' scan_seconds made a bit-for-bit re-run 'not reproduce'."""
+    from vantage.core import provenance as PV
+    a = {'schema': 'vantage.x/1', 'blind_m2': 0.01, 'study_seconds': {'coverage': 0.256, 'perception': 1.5},
+         'metrics': {'scan_seconds': 3.1, 'seconds': 2.0, 'flag': True}}
+    b = {'schema': 'vantage.x/1', 'blind_m2': 0.01, 'study_seconds': {'coverage': 0.162, 'perception': 0.9},
+         'metrics': {'scan_seconds': 2.2, 'seconds': 1.0, 'flag': True}}
+    assert PV.result_digest(a) == PV.result_digest(b)
+    assert PV.compare(a, b)['verdict'] == 'reproduces'
+    assert PV.neutral(a)['metrics']['flag'] is True                       # not a time: kept
+    assert PV.result_digest(dict(b, blind_m2=0.02)) != PV.result_digest(a)
+
+
+def test_drive_log_peak_width_does_not_depend_on_where_the_peak_falls_in_its_pixel():
+    """The drive-log rotation check calls an axis pinned down when its edge-score peak is narrower than 1.5° (one sigma),
+    from central differences of the log score at a fixed 0.15°. The score samples pixel maps bilinearly, so it is
+    linear between pixel centres: in a quarter-size image (0.26° a pixel) a 0.15° step measured where the peak sat
+    within its pixel, not its width, and MR of the sample's 0.25-scale drive came out 2.4–3.0° wide, 'uncertain',
+    though every frame agreed (1.1–1.6° at a pixel's step). The step is now at least one pixel."""
+    from vantage.core import drivelog as DL
+    px, sig, base = 0.262, 0.6, 0.2
+    grid = np.arange(-40, 41) * px                           # pixel centres (deg)
+    smooth, by_px, fixed = [], [], []
+    for phase in (0.0, 0.25, 0.5, 0.75):                      # the peak at this share of a pixel from a centre
+        x0 = np.full(3, phase * px)
+        g = base + np.exp(-0.5 * ((grid - x0[0]) / sig) ** 2)
+
+        def sampled(d):                                      # linear between pixel centres, per axis
+            return float(np.prod([np.interp(v, grid, g) for v in d]))
+
+        def exact(d):
+            return float(np.prod([base + math.exp(-0.5 * ((v - x0[0]) / sig) ** 2) for v in d]))
+        smooth.append(DL._peak_width(exact, x0, px)[0][0])
+        by_px.append(DL._peak_width(sampled, x0, px)[0][0])
+        fixed.append(DL._peak_width(sampled, x0, 0.0)[0][0])          # the old fixed 0.15° step
+    assert np.allclose(by_px, smooth, rtol=0.03), (by_px, smooth)
+    assert max(fixed) / min(fixed) > 1.5                     # 0.50° to 1.04° for the same 0.66° peak
+    w, ok = DL._peak_width(lambda d: float(np.prod([base + math.exp(-0.5 * (v / 0.3) ** 2) for v in d])),
+                           np.zeros(3), 0.1)
+    assert all(ok) and np.allclose(w, w[0]) and w[0] < 0.6    # finer pixels: the 0.15° step, a narrow peak passes

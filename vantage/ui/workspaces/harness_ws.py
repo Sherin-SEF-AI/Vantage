@@ -862,6 +862,7 @@ class HarnessPage(QWidget):
             folder = QFileDialog.getExistingDirectory(self, 'Export the cable harness into')
             if not folder:
                 return []
-        paths = HN.export(res, self.ctx.store.project, folder)
+        from ...core import provenance as PV          # where the JSON came from
+        paths = PV.stamp_paths(HN.export(res, self.ctx.store.project, folder), self.ctx.store.project, folder)
         self.ctx.msg(f'Exported the cable harness to {folder}', 5000)
         return paths

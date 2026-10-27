@@ -1164,7 +1164,8 @@ class AutomationPage(QWidget):
             folder = QFileDialog.getExistingDirectory(self, 'Export the run into')
             if not folder:
                 return []
-        paths = AU.export(rec, self.ctx.store.project, folder)
+        from ...core import provenance as PV          # where the JSON came from
+        paths = PV.stamp_paths(AU.export(rec, self.ctx.store.project, folder), self.ctx.store.project, folder)
         self.ctx.msg(f'Exported the run to {folder}', 5000)
         return paths
 

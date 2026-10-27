@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use Vantage in your research, please cite it as below."
+type: software
+title: "Vantage: sensor rig planner for autonomous-driving data collection"
+abstract: >-
+  Vantage is a desktop application for designing data-collection sensor rigs for autonomous-driving training data:
+  cameras, lidars, radars, GNSS antennas and IMUs are placed on a vehicle model in simulation, their coverage,
+  resolution, timing, data rates and calibration are analysed, and the rig is checked against live streams and
+  recordings before and after the hardware is fitted.
+authors:
+  - name: "Sherin-SEF-AI"
+    website: "https://github.com/Sherin-SEF-AI"
+version: "0.3.0"
+date-released: "2026-10-27"
+license: GPL-3.0-or-later
+repository-code: "https://github.com/Sherin-SEF-AI/Vantage"
+url: "https://sherin-sef-ai.github.io/Vantage/"
+keywords:
+  - autonomous driving
+  - sensor placement
+  - camera calibration
+  - lidar
+  - radar
+  - data collection
+  - surround view

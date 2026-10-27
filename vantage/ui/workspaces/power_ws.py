@@ -818,6 +818,7 @@ class PowerPage(QWidget):
             folder = QFileDialog.getExistingDirectory(self, 'Export the power budget into')
             if not folder:
                 return []
-        paths = PW.export(res, self.ctx.store.project, folder)
+        from ...core import provenance as PV          # where the JSON came from
+        paths = PV.stamp_paths(PW.export(res, self.ctx.store.project, folder), self.ctx.store.project, folder)
         self.ctx.msg(f'Exported the power budget to {folder}', 5000)
         return paths

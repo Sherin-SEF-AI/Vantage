@@ -1418,6 +1418,7 @@ class CriticalPage(QWidget):
             folder = QFileDialog.getExistingDirectory(self, 'Export the critical targets into')
             if not folder:
                 return []
-        paths = CR.export(res, self.ctx.store.project, folder)
+        from ...core import provenance as PV          # where the JSON came from
+        paths = PV.stamp_paths(CR.export(res, self.ctx.store.project, folder), self.ctx.store.project, folder)
         self.ctx.msg(f'Exported the critical targets and mounting envelopes to {folder}', 5000)
         return paths

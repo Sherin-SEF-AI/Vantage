@@ -813,7 +813,8 @@ class LidarCalibPage(QWidget):
             folder = QFileDialog.getExistingDirectory(self, 'Export the lidar–camera calibration into')
             if not folder:
                 return []
-        paths = LC.export(res, self.ctx.store.project, folder)
+        from ...core import provenance as PV          # where the JSON came from
+        paths = PV.stamp_paths(LC.export(res, self.ctx.store.project, folder), self.ctx.store.project, folder)
         self.ctx.msg(f'Exported the lidar–camera calibration to {folder}', 5000)
         return paths
 

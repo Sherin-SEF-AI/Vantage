@@ -93,8 +93,10 @@ def test_p840_coefficient_is_the_rayleigh_absorption_of_its_permittivity():
 
 def test_optical_extinction_rain_snow_fog_and_kim():
     assert float(W.rain_optical_db_km(25.0)) == pytest.approx(1.076 * 25 ** 0.67)
-    assert float(W.snow_optical_db_km(2.0, 905.0)) == pytest.approx((5.42e-5 * 905 + 5.4958776) * 2 ** 1.38)
-    assert float(W.snow_optical_db_km(2.0, 905.0, 'wet')) == pytest.approx((1.023e-4 * 905 + 3.7855466) * 2 ** 0.72)
+    # ITU-R P.1814's constants as it prints them (the code once carried 5.4958776 and 1.023e-4·λ + 3.7855466)
+    assert float(W.snow_optical_db_km(2.0, 905.0)) == pytest.approx((5.42e-5 * 905 + 5.50) * 2 ** 1.38, rel=1e-12)
+    assert float(W.snow_optical_db_km(2.0, 905.0, 'wet')) == pytest.approx((1.02e-4 * 905 + 3.79) * 2 ** 0.72,
+                                                                             rel=1e-12)
     assert [W.kim_q(v) for v in (60, 20, 3, 0.8, 0.2)] == pytest.approx([1.6, 1.3, 0.16 * 3 + 0.34, 0.3, 0.0])
     fog = W.Condition('f', 'f', visibility_m=150.0)
     assert W.visible_extinction(fog) == pytest.approx(-math.log(0.05) / 150.0)   # Koschmieder with WMO's 5 %

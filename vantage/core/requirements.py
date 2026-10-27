@@ -1776,6 +1776,90 @@ def _m_lc_smm(ev, prm):
     return float(res.sigma['position_mm']), _ev(_lidar_calib_figures(res, ev), '')
 
 
+# =========================================================================== critical targets, calibration observability
+def _run_critical(ev):
+    cr = _mod('critical')
+    st = cr.settings_of(ev.p)
+    if not any(t['enabled'] for t in st.targets):
+        raise NotEvaluated('No critical target: add them on Analysis ▸ Critical targets.')
+    if not any(c.visible for c in ev.v.cameras):
+        raise NotEvaluated('No visible camera in the variant.')
+    res = cr.run(ev.p, ev.engine, st, envelopes=False, progress=ev.sub_progress('critical'), cancel=ev.cancel)
+    if res is None:
+        raise _Cancelled()
+    return res
+
+
+def _critical_figures(res, ev):
+    return [(r.name, ('resolved by ' + ', '.join(r.met_by)) if r.met else 'not resolved') for r in res.targets]
+
+
+_study(id='critical', label='Critical targets', page='critical', menu='Analysis ▸ Critical targets…', cost='study',
+       run=_run_critical, figures=_critical_figures, module='critical', weight=0.5,
+       assumptions=lambda r: _mod('critical').ASSUMPTIONS)
+
+
+@_metric('critical.unresolved', 'Critical targets not resolved', '', 'critical', '<=', 0, (),
+         'Critical targets no camera (with the lidars, where a target needs points) resolves')
+def _m_critical(ev, prm):
+    res = ev.study('critical')
+    miss = [r.name for r in res.targets if not r.met]
+    return float(len(miss)), _ev(_critical_figures(res, ev),
+                                 ('Not resolved: ' + ', '.join(miss) + '.') if miss else 'Every target resolved.')
+
+
+def _run_observability(ev):
+    ob = _mod('observability')
+    if not ev.p.targets:
+        raise NotEvaluated('No calibration targets planned: plan them in Calibrate ▸ Targets.')
+    if not any(c.visible for c in ev.v.cameras):
+        raise NotEvaluated('No visible camera in the variant.')
+    d = ob.settings_of(ev.p).to_dict()
+    d.update(suggest=False, lidar_pairs=False, fusion=False)          # the cameras' poses only: quicker
+    res = ob.run(ev.p, ev.engine, ob.ObservabilitySettings.from_dict(d), progress=ev.sub_progress('observability'),
+                 cancel=ev.cancel)
+    if res is None:
+        raise _Cancelled()
+    return res
+
+
+def _obs_cams(ev):
+    cams = ev.study('observability').cameras
+    blind = [c['tag'] for c in cams if c['sigma'] is None]
+    if not cams or blind:
+        raise NotEvaluated(f'{", ".join(blind)} see no calibration board whole: their poses are not determined.'
+                           if blind else 'No visible camera in the variant.')
+    return cams
+
+
+_study(id='observability', label='Calibration observability', page='observability',
+       menu='Calibrate ▸ Calibration observability…', cost='study', run=_run_observability,
+       figures=lambda r, ev: [(c['tag'], f'{c["ratio"]:.2f}× the requirement ({c["worst_axis"]})') for c in r.cameras
+                              if c['sigma'] is not None],
+       module='observability', weight=0.5, assumptions=lambda r: _mod('observability').ASSUMPTIONS)
+
+
+@_metric('observability.worst_ratio', 'Loosest camera calibration against the requirement', '×', 'observability',
+         '<=', 2, (), 'The worst camera\'s worst axis (1σ) in units of the requirement')
+def _m_obs_ratio(ev, prm):
+    c = max(_obs_cams(ev), key=lambda c_: c_['ratio'])
+    return float(c['ratio']), _ev([], f'{c["tag"]}: {c["worst_axis"]}')
+
+
+@_metric('observability.worst_deg', 'Loosest camera angle after calibration (1σ)', '°', 'observability', '<=', 3, (),
+         'The largest angle 1σ of any camera the planned boards give')
+def _m_obs_deg(ev, prm):
+    v, tag = max((max(c['sigma'][k] for k in ('yaw_deg', 'pitch_deg', 'roll_deg')), c['tag']) for c in _obs_cams(ev))
+    return float(v), _ev([], tag)
+
+
+@_metric('observability.worst_mm', 'Loosest camera position after calibration (1σ)', 'mm', 'observability', '<=', 1,
+         (), 'The largest position 1σ of any camera the planned boards give')
+def _m_obs_mm(ev, prm):
+    v, tag = max((max(c['sigma'][k] for k in ('x_mm', 'y_mm', 'z_mm')), c['tag']) for c in _obs_cams(ev))
+    return float(v), _ev([], tag)
+
+
 # =========================================================================== items and settings
 def _new_id(taken=()) -> str:
     taken = set(taken)

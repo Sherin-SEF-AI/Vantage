@@ -71,10 +71,23 @@ def _every_metric_items(p):
 def done():
     """The data rig evaluated once with a requirement on every metric (shared by the registry tests)."""
     p = _rig()
+    _with_critical(p)
     _with(p, _every_metric_items(p), mc_samples=120)
     eng = Engine()
     res = RQ.run(p, eng)
     return p, eng, res
+
+
+def _with_critical(p):
+    """A child 2 m ahead (resolved) and a sign 400 m ahead (no camera resolves it) as critical targets."""
+    from vantage.core import critical as CR
+    st = CR.settings_of(p)
+    st.targets.append(CR.preset(p, 'Child 2 m ahead', st.targets))
+    far = CR.preset(p, 'sign', st.targets)
+    far['x'], far['name'] = 400.0, 'Far sign'
+    st.targets.append(far)
+    p.analysis.critical = st.to_dict()
+    return p
 
 
 def _val(res, metric, **params):
@@ -239,6 +252,36 @@ def test_registry_exposure(done):
     b = next(i for i in xr.items if i.tag == 'R')
     assert r.items[0].value == pytest.approx(100 * f.sun['share'])
     assert r.items[1].value == pytest.approx(b.dirt['score'])
+
+
+def test_registry_critical_targets_and_observability(done):
+    """critical.unresolved and observability.* against the studies called directly (the scorecard runs them with the
+    envelopes, the board suggestions, the lidar pairs and the fusion density left out: the figures are the same)."""
+    from vantage.core import critical as CR
+    from vantage.core import observability as OB
+    p, eng, res = done
+    cr = CR.run(p, Engine())
+    miss = [r.name for r in cr.targets if not r.met]
+    assert miss == ['Far sign'] and _val(res, 'critical.unresolved') == 1.0
+    r = next(x for x in res.items if x.item['metric'] == 'critical.unresolved')
+    assert r.status == 'fail' and 'Far sign' in r.evidence['detail'] and r.evidence['study'] == 'critical'
+    ob = OB.run(p, Engine())
+    cams = [c for c in ob.cameras if c['sigma'] is not None]
+    assert len(cams) == len(ob.cameras) == sum(c.visible for c in p.variant.cameras)
+    assert _val(res, 'observability.worst_ratio') == pytest.approx(max(c['ratio'] for c in cams), rel=1e-9)
+    assert _val(res, 'observability.worst_deg') == pytest.approx(
+        max(c['sigma'][k] for c in cams for k in ('yaw_deg', 'pitch_deg', 'roll_deg')), rel=1e-9)
+    assert _val(res, 'observability.worst_mm') == pytest.approx(
+        max(c['sigma'][k] for c in cams for k in ('x_mm', 'y_mm', 'z_mm')), rel=1e-9)
+    # no critical targets, no boards: not evaluated, with the reason
+    q = _rig()
+    q.targets = []
+    _with(q, [_item('critical.unresolved', 0.0), _item('observability.worst_ratio', 1.0)])
+    out = {r.item['metric']: r for r in RQ.run(q, Engine()).items}
+    assert out['critical.unresolved'].status == 'not_evaluated' and 'No critical target' in \
+        out['critical.unresolved'].reason
+    assert out['observability.worst_ratio'].status == 'not_evaluated' and 'No calibration targets' in \
+        out['observability.worst_ratio'].reason
 
 
 def test_registry_fleet():

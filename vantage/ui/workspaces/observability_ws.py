@@ -1303,7 +1303,8 @@ class ObservabilityPage(QWidget):
                         rows.append((name, k, a['predicted'], a['empirical'], None, a['ratio']))
             note = (f'{mc["trials"]} simulated captures per check, seed {mc["seed"]}, {mc["seconds"]:.0f} s. '
                     + ('The predictions hold: ' if mc['agree'] else 'The spread differs from the prediction: ')
-                    + f'every σ within ×{1 + mc["band"]:.2f} (4.5 standard errors at this many trials).')
+                    + f'every σ within ×{math.exp(mc["band"]):.2f} of its prediction, either way (4.5 standard '
+                      'errors at this many trials).')
             if cam:
                 note += (f' The joint solve stopped short of its optimum in {cam["stalled"]} of {cam["solved"]} '
                          'trials' + (' (its own spread is shown beside the optimum\'s).' if cam['stalled'] else '.'))
@@ -1317,7 +1318,7 @@ class ObservabilityPage(QWidget):
             t.setItem(r, 2, _num(_f(pred, nd)))
             t.setItem(r, 3, _num(_f(emp, nd)))
             t.setItem(r, 4, _num(_f(opt_, nd) if opt_ is not None else ''))
-            ok = mc is not None and abs(math.log(max(ratio, 1e-9))) <= math.log(1 + mc['band']) \
+            ok = mc is not None and abs(math.log(max(ratio, 1e-9))) <= mc['band'] + 1e-12 \
                 if math.isfinite(ratio) else False
             t.setItem(r, 5, _num(_f(ratio, 2), None, _tone('good' if ok else 'warning')))
 
@@ -1364,7 +1365,8 @@ class ObservabilityPage(QWidget):
             folder = QFileDialog.getExistingDirectory(self, 'Export the calibration observability into')
             if not folder:
                 return []
-        paths = OB.export(res, self.ctx.store.project, folder)
+        from ...core import provenance as PV          # where the JSON came from
+        paths = PV.stamp_paths(OB.export(res, self.ctx.store.project, folder), self.ctx.store.project, folder)
         self.ctx.msg(f'Exported the calibration observability to {folder}', 5000)
         return paths
 

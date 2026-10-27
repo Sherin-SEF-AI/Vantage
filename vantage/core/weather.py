@@ -16,8 +16,8 @@ Cameras
   C0·exp(−σd) at distance d; it is resolved while that stays above the detector's contrast threshold ε (typical 0.05,
   the threshold behind the MOR). σ at 550 nm: fog or haze 3.0 / MOR (= −ln 0.05 / MOR); rain 1.076·R^0.67 dB/km (ITU-R
   P.1814, Carbonneau's coefficients; drops are much larger than the wavelength, so it holds for light and the lidar
-  alike); snow a·S^b dB/km with a = 5.42e-5·λ + 5.4958776, b = 1.38 (dry) or a = 1.02e-4·λ + 3.7855466, b = 0.72 (wet),
-  λ in nm (ITU-R P.1814). Fog, rain and snow add.
+  alike); snow a·S^b dB/km with a = 5.42e-5·λ + 5.50, b = 1.38 (dry) or a = 1.02e-4·λ + 3.79, b = 0.72 (wet), λ in nm,
+  S the snow rate (ITU-R P.1814, Table 3, the constants as it prints them). Fog, rain and snow add.
 * Light: the object's luminance L = ρ·E/π (Lambertian, reflectance ρ) under the ambient illuminance plus the vehicle's
   two headlamps, E = Σ I(h, v)·exp(−σ d_lamp) / d_lamp², with I the lamp's luminous intensity toward the object. The
   lamp pattern is a typical one shaped after the UN R112 class B test points (cut-off 0.7° below the horizon on the
@@ -321,11 +321,12 @@ def rain_optical_db_km(rate):
 
 
 def snow_optical_db_km(rate, nm=550.0, kind='dry'):
-    """ITU-R P.1814: optical snow attenuation, dB/km, for a water rate in mm/h at wavelength nm."""
+    """ITU-R P.1814: optical snow attenuation, dB/km, for a water rate in mm/h at wavelength nm (a·S^b with P.1814's
+    printed constants; the 5.4958776 and 3.7855466 some later papers quote differ by 0.1 %)."""
     if kind == 'wet':
-        a, b = 1.023e-4 * nm + 3.7855466, 0.72
+        a, b = 1.02e-4 * nm + 3.79, 0.72
     else:
-        a, b = 5.42e-5 * nm + 5.4958776, 1.38
+        a, b = 5.42e-5 * nm + 5.50, 1.38
     return a * np.power(np.maximum(rate, 0.0), b)
 
 

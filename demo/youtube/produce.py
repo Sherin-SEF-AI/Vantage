@@ -6,6 +6,9 @@
     python3 demo/youtube/produce.py --draft                 960 x 540, 15 fps, 1x pixels: a quick check
     python3 demo/youtube/produce.py --record-only           voice and segments, no video
     python3 demo/youtube/produce.py --name NAME             the deliverables' base name
+    python3 demo/youtube/produce.py --episode v020          another episode (default: the full tour; see
+                                                            chapters/__init__.py EPISODES); --only ids of one episode
+                                                            choose it without --episode
 
 Steps: (a) render the narration lines not rendered yet (Kokoro, in its own virtualenv); (b) record each segment whose
 script, voice lines or the recorder's style changed, or that is missing (one capped, offscreen process per segment,
@@ -33,7 +36,7 @@ sys.path.insert(0, HERE)
 import chapters as C  # noqa: E402
 import common  # noqa: E402
 
-SCRATCH = '/tmp/claude-1000/-home-jo-Documents-econ-systems/f395468f-5b02-463c-baab-ffd7e833ea23/scratchpad'
+SCRATCH = os.environ.get('VANTAGE_SCRATCH', os.path.join(common.ROOT, 'demo', 'build', 'youtube', 'work'))  # TTS, the lock
 TTS = os.environ.get('VANTAGE_TTS', os.path.join(SCRATCH, 'tts'))
 ESPEAK = os.environ.get('VANTAGE_ESPEAK', os.path.join(SCRATCH, 'e'))
 LOCK = os.environ.get('VANTAGE_LOCK', os.path.join(SCRATCH, 'heavy.lock'))
@@ -42,11 +45,13 @@ RECORD_TIMEOUT = 3600
 
 
 def capped(cmd, mem='8G', lock=True, timeout=RECORD_TIMEOUT, log=None):
-    """Run cmd offscreen under a memory cap with a throw-away settings folder (and the heavy lock)."""
+    """Run cmd offscreen under a memory cap with a throw-away settings folder (and the heavy lock), in the episode
+    being produced (VANTAGE_EPISODE)."""
     os.makedirs(CFG, exist_ok=True)
     full = (['flock', LOCK] if lock else []) + [
         'systemd-run', '--user', '--scope', '-q', '-p', f'MemoryMax={mem}', '-p', 'MemorySwapMax=0',
         'env', f'XDG_CONFIG_HOME={CFG}', 'QT_QPA_PLATFORM=offscreen', 'PYTHONUNBUFFERED=1',
+        f'VANTAGE_EPISODE={C.current()}',
         'timeout', '-s', 'KILL', str(timeout)] + cmd
     if log:
         with open(log, 'w') as fh:
@@ -77,24 +82,31 @@ def main():
     ap.add_argument('--draft', action='store_true')
     ap.add_argument('--record-only', action='store_true')
     ap.add_argument('--name')
+    ap.add_argument('--episode', choices=sorted(C.EPISODES))
     a = ap.parse_args()
     only = [x for x in a.only.split(',') if x] or None
     unknown = [x for x in (only or []) if x not in C.files()]
     if unknown:
         raise SystemExit(f'no chapter file for: {", ".join(unknown)}')
+    ep = C.resolve(a.episode, only)
+    os.environ['VANTAGE_EPISODE'] = ep                     # this process and every child: voice, record, assemble
+    other = [x for x in (only or []) if x not in C.members(ep)]
+    if other:
+        raise SystemExit(f'not in episode {ep}: {", ".join(other)} (use --episode {C.episode_of(other[0])})')
     t0 = time.time()
     logs = os.path.join(common.DRAFT_DIR if a.draft else common.BUILD, 'logs')
     os.makedirs(logs, exist_ok=True)
     ids = segment_ids(only)
-    print(f'segments: {", ".join(ids)}', flush=True)
+    tag = ('' if ep == C.DEFAULT_EPISODE else f'-{ep}') + (f'-{"-".join(only)}'[:80] if only else '')
+    print(f'episode {ep}; segments: {", ".join(ids)}', flush=True)
 
     # (a) voice
     py = os.path.join(TTS, 'env', 'bin', 'python')
     rc = capped([py, os.path.join(HERE, 'voice.py'), '--models', os.path.join(TTS, 'models'), '--espeak-data', ESPEAK,
-                 '--only', ','.join(ids)], mem='3G', lock=False, timeout=3600, log=os.path.join(logs, 'voice.log'))
-    print(open(os.path.join(logs, 'voice.log')).read().strip().splitlines()[-1:], flush=True)
+                 '--only', ','.join(ids)], mem='3G', lock=False, timeout=3600, log=os.path.join(logs, f'voice{tag}.log'))
+    print(open(os.path.join(logs, f'voice{tag}.log')).read().strip().splitlines()[-1:], flush=True)
     if rc:
-        raise SystemExit(f'voice failed ({rc}): see {logs}/voice.log')
+        raise SystemExit(f'voice failed ({rc}): see {logs}/voice{tag}.log')
 
     # (b) the segments, one capped process each
     failed = []
@@ -118,11 +130,12 @@ def main():
 
     # (c-f) cards, assembly, mix, loudness, texts
     cmd = ['python3', os.path.join(HERE, 'assemble.py')] + (['--draft'] if a.draft else []) + \
-          (['--only', ','.join(only)] if only else []) + (['--name', a.name] if a.name else [])
-    rc = capped(cmd, mem='6G', lock=True, timeout=6 * 3600, log=os.path.join(logs, 'assemble.log'))
-    print(open(os.path.join(logs, 'assemble.log')).read().strip(), flush=True)
+          (['--only', ','.join(only)] if only else []) + (['--name', a.name] if a.name else []) + ['--episode', ep]
+    alog = os.path.join(logs, f'assemble{tag}.log')
+    rc = capped(cmd, mem='6G', lock=True, timeout=6 * 3600, log=alog)
+    print(open(alog).read().strip(), flush=True)
     if rc:
-        raise SystemExit(f'assembly failed ({rc}): see {logs}/assemble.log')
+        raise SystemExit(f'assembly failed ({rc}): see {alog}')
     print(f'produced in {(time.time() - t0) / 60:.1f} min', flush=True)
 
 

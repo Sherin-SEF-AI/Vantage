@@ -2,7 +2,7 @@
 it, stings, clicks; loudness -14 LUFS, true peak under -1 dBTP), the subtitles, YouTube chapters, the description,
 the thumbnail and a contact sheet. produce.py runs this; it can also run on its own:
 
-    python3 demo/youtube/assemble.py [--only intro,projects,...] [--draft] [--name vantage-tour-draft]
+    python3 demo/youtube/assemble.py [--only intro,projects,...] [--draft] [--name vantage-tour-draft] [--episode v020]
 
 Reads demo/build/youtube/seg/<id>/ (draft: demo/build/youtube/draft/seg/<id>/); writes the deliverables to
 demo/out/youtube/ (draft: demo/build/youtube/draft/out/). Segments that have not been recorded are left out.
@@ -381,13 +381,16 @@ def write_srt(voices, total_s, path):
     return len(cues)
 
 
-def chapter_marks(items):
-    """[(seconds, label)]: 00:00 the intro, each chapter from its part card or chapter card, the outro."""
+def chapter_marks(items, ep=None):
+    """[(seconds, label)]: 00:00 the intro, each chapter from its part card or chapter card, the outro (the
+    episode's intro and outro and their labels)."""
+    import chapters as C
+    ep = ep or C.episode()
     marks = []
     pending_part = None
     for it in items:
-        if it['kind'] == 'segment' and it['id'] == 'intro':
-            marks.append((0.0, 'Intro: what Vantage is'))
+        if it['kind'] == 'segment' and it['id'] == ep['intro']:
+            marks.append((0.0, ep['marks'][0]))
         elif it['kind'] == 'part':
             pending_part = it['start']
         elif it['kind'] == 'chapter-card':
@@ -395,8 +398,8 @@ def chapter_marks(items):
             t = pending_part if pending_part is not None else it['start']
             pending_part = None
             marks.append((t, f'{e["nn"]:02d} {e["title"]}'))
-        elif it['kind'] == 'segment' and it['id'] == 'outro':
-            marks.append((it['start'], 'Download, website and licence'))
+        elif it['kind'] == 'segment' and it['id'] == ep['outro']:
+            marks.append((it['start'], ep['marks'][1]))
     if marks and marks[0][0] > 0:
         marks[0] = (0.0, marks[0][1])
     # YouTube: every chapter at least 10 s
@@ -446,43 +449,101 @@ Narration: Kokoro-82M (voice af_heart), rendered locally. Music: synthesised for
 {tags}
 """
 
+DESCRIPTIONS = {}         # episode -> its description template (the tour's is DESCRIPTION)
+DESCRIPTIONS['v020'] = """# {title}
+
+## Description
+
+Vantage {version} adds seven studies for a data-collection rig on the road and in the workshop, and makes its
+calibration more accurate. This video explains each one on the app's Tata Tigor EV sample: the problem it solves on a
+data-collection vehicle, every control on its page, how to read each result, a worked example, its limits, and its
+batch-mode and export hooks.
+
+What is new in {version}:
+- Critical targets and mounting envelopes (Analysis ▸ Critical targets): what the rig must resolve, by which sensor,
+  and how far each camera may move before a target is lost.
+- Road and body motion (Analysis ▸ Road and body motion): brake dive, squat and roll; ramps, crests, speed bumps and
+  kerbs in the coverage analysis.
+- Weather and night (Analysis ▸ Weather and night): overcast, night, rain, fog and snow in the perception range study
+  and the rendered sample dataset.
+- Materials, glass and wipers (Analysis ▸ Materials, glass and wipers): radar loss through fascia, paint and grilles;
+  refraction, glare and the wiper sweep for cameras behind glass.
+- Cable harness (Analysis ▸ Cable harness): every cable routed along the body against its link's length limit.
+- Calibration observability (Calibrate ▸ Calibration observability): how firmly the planned boards pin each camera,
+  the weak axis, and the board moves that help most.
+- A more accurate calibration: the installation check's joint solve now converges every time and matches its own
+  uncertainty; the lidar-camera calibration's precision is honest and its bias is gone.
+- Automation and CI (Export ▸ Automation): calibration files regenerated on save, your own approved test command,
+  --watch, and GitHub Actions / GitLab CI templates.
+
+Download {version} (Windows, macOS, Linux x86-64 and arm64 / Jetson): https://github.com/Sherin-SEF-AI/Vantage/releases/tag/v{version}
+All releases: https://github.com/Sherin-SEF-AI/Vantage/releases
+Website and documentation: https://sherin-sef-ai.github.io/Vantage/
+Source code: https://github.com/Sherin-SEF-AI/Vantage
+Licence: GPL-3.0-or-later. Free and open source.
+A full tour of every earlier feature is a separate video.
+
+Notes: recorded from the app itself (v{version}) on its sample project; every figure on screen is the app's own output
+on the sample, and nominal or typical values are labelled as such; time-lapses are marked with their speed-up; the
+calibration chapter's before/after figures were measured for this video by running 0.1.1's and 0.2.0's solves on the
+same simulated captures. Narration: Kokoro-82M (voice af_heart), rendered locally. Music: synthesised for this video.
+
+## Chapters
+
+{chapters}
+
+## Tags
+
+{tags}
+"""
+
 TAGS = ['autonomous driving', 'self-driving', 'sensor rig', 'data collection', 'camera placement', 'lidar', 'radar',
         'sensor calibration', 'camera calibration', 'surround view', 'fisheye camera', 'GMSL', 'Jetson AGX Orin',
         'e-con Systems', 'ROS 2', 'nuScenes', 'KITTI', 'Kalibr', 'OpenCV', 'open source', 'PyQt', 'Vantage']
+TAGS_BY = {'v020': ['Vantage 0.2.0', 'what is new', 'autonomous driving', 'data collection', 'sensor rig',
+                    'sensor calibration', 'lidar camera calibration', 'calibration observability', 'radar fascia',
+                    'cable harness', 'GMSL2', 'weather simulation', 'fog', 'night driving', 'speed bump',
+                    'mounting tolerance', 'CI', 'GitHub Actions', 'GitLab CI', 'open source', 'Vantage']}
 
 
-def write_description(marks, path, title):
-    import gfx
+def write_description(marks, path, title, ep=None):
+    import chapters as C
+    ep = ep or C.episode()
+    tmpl = DESCRIPTIONS[ep['description']] if ep.get('description') else DESCRIPTION
+    tags = TAGS_BY[ep['tags']] if ep.get('tags') else TAGS
     chapters = '\n'.join(f'{hms(t)} {lab}' for t, lab in marks)
     with open(path, 'w', encoding='utf-8') as fh:
-        fh.write(DESCRIPTION.format(title=title, version=gfx.VERSION, chapters=chapters, tags=', '.join(TAGS)))
+        fh.write(tmpl.format(title=title, version=ep['version'], chapters=chapters, tags=', '.join(tags)))
 
 
-def make_thumbnail(seg_root, path):
-    """1280 x 720: a frame of the cold open (the data rig's turntable) with the title, under 2 MB."""
+def make_thumbnail(seg_root, path, ep=None):
+    """1280 x 720: a frame of the cold open (the episode's intro still 'thumb') with the title, under 2 MB."""
     import cards
+    import chapters as C
     import gfx
     from PyQt6.QtCore import QRectF
     from PyQt6.QtGui import QImage, QLinearGradient, QBrush
     cards.app()
-    src = os.path.join(seg_root, 'intro', 'stills', 'thumb.png')
+    th = (ep or C.episode())['thumb']
+    src = os.path.join(seg_root, th['still'], 'stills', 'thumb.png')
     shot = QImage(src) if os.path.exists(src) else gfx.from_np(gfx.base_np())
     img = gfx.from_np(gfx.base_np())
     p = gfx.painter(img)
-    p.drawImage(QRectF(400, 0, 1920, 1080), shot.scaled(1920, 1080))     # the car in the right half
+    p.drawImage(QRectF(th.get('shot_x', 400), 0, 1920, 1080), shot.scaled(1920, 1080))     # the car in the right half
     g = QLinearGradient(0, 0, 1920, 0)
+    x0 = 0.22 if 'shot_x' not in th else (th['shot_x'] + 60) / 1920    # past the shifted shot's left edge (x = 400)
     g.setColorAt(0.0, gfx.col('#0b0b0a', 1.0))
-    g.setColorAt(0.22, gfx.col('#0b0b0a', 1.0))          # past the shifted shot's left edge (x = 400)
-    g.setColorAt(0.40, gfx.col('#0b0b0a', 0.78))
-    g.setColorAt(0.64, gfx.col('#0b0b0a', 0.0))
+    g.setColorAt(x0, gfx.col('#0b0b0a', 1.0))
+    g.setColorAt(x0 + 0.18, gfx.col('#0b0b0a', 0.78))
+    g.setColorAt(x0 + 0.42, gfx.col('#0b0b0a', 0.0))
     p.fillRect(QRectF(0, 0, 1920, 1080), QBrush(g))
     p.drawImage(QRectF(120, 150, 150, 150), gfx.icon_image())
-    gfx.draw_text(p, 120, 400, 'FULL APP TOUR', gfx.font(46, 'semibold', mono=True, spacing=6), gfx.ACCENT)
-    gfx.draw_text(p, 110, 610, 'Vantage', gfx.font(230, 'semibold'), gfx.INK)
+    gfx.draw_text(p, 120, 400, th['eyebrow'], gfx.font(46, 'semibold', mono=True, spacing=6), gfx.ACCENT)
+    gfx.draw_text(p, 110, 610, th['word'], gfx.font(th['word_px'], 'semibold'), gfx.INK)
     p.fillRect(QRectF(124, 650, 220, 6), gfx.col(gfx.ACCENT))
-    gfx.draw_text(p, 120, 760, 'Plan a sensor rig.', gfx.font(76, 'semibold'), gfx.INK)
-    gfx.draw_text(p, 120, 850, 'Prove what it sees.', gfx.font(76, 'semibold'), gfx.INK2)
-    gfx.draw_text(p, 122, 960, 'FREE AND OPEN SOURCE', gfx.font(34, 'medium', mono=True, spacing=4), gfx.MUTED)
+    gfx.draw_text(p, 120, 760, th['lines'][0], gfx.font(76, 'semibold'), gfx.INK)
+    gfx.draw_text(p, 120, 850, th['lines'][1], gfx.font(76, 'semibold'), gfx.INK2)
+    gfx.draw_text(p, 122, 960, th['foot'], gfx.font(34, 'medium', mono=True, spacing=4), gfx.MUTED)
     p.end()
     small = img.scaled(1280, 720, transformMode=__import__('PyQt6.QtCore', fromlist=['Qt']).Qt.TransformationMode.SmoothTransformation)
     small.save(path, 'PNG')
@@ -516,16 +577,22 @@ def main():
     ap.add_argument('--only', default='')
     ap.add_argument('--draft', action='store_true')
     ap.add_argument('--name')
+    ap.add_argument('--episode')
+    ap.add_argument('--remux', action='store_true',
+                    help='keep the video of the deliverable already assembled (same pieces) and redo the sound, texts '
+                         'and sheets')
     a = ap.parse_args()
     only = [x for x in a.only.split(',') if x] or None
+    import chapters as C
+    os.environ['VANTAGE_EPISODE'] = C.resolve(a.episode, only)
+    ep = C.episode()
     seg_root = os.path.join(common.DRAFT_DIR if a.draft else common.BUILD, 'seg')
     out_dir = os.path.join(common.DRAFT_DIR, 'out') if a.draft else common.OUT
     os.makedirs(out_dir, exist_ok=True)
     fps = 15 if a.draft else common.FPS
     w, h = (960, 540) if a.draft else (common.W, common.H)
-    import chapters as C
-    complete = all(cid in C.files() for _, cid, _, _ in C.PLAN) and not only
-    name = a.name or ('vantage-tour' if complete else 'vantage-tour-draft')
+    complete = all(cid in C.files() for _, cid, _, _ in ep['plan']) and not only
+    name = a.name or (ep['name'] if complete else ep['name'] + '-draft')
     t0 = time.time()
     items, total = build_plan(only, seg_root, fps)
     if not items:
@@ -535,33 +602,45 @@ def main():
     work = os.path.join(common.DRAFT_DIR if a.draft else common.BUILD, 'assemble')
     os.makedirs(work, exist_ok=True)
     vid = os.path.join(work, f'{name}.video.mp4')
-    n = render_video(items, total, vid, w, h, fps, seg_root, a.draft)
+    final = os.path.join(out_dir, f'{name}.mp4')
+    if a.remux:
+        # the video stream of the deliverable already made from these pieces (frames and durations unchanged)
+        subprocess.run(['ffmpeg', '-y', '-v', 'error', '-i', final, '-map', '0:v', '-c', 'copy', vid], check=True)
+        n = total
+    else:
+        n = render_video(items, total, vid, w, h, fps, seg_root, a.draft)
     raw = os.path.join(work, f'{name}.mix.f32')
     voices = render_audio(items, total, fps, raw)
     wav = os.path.join(work, f'{name}.mix.wav')
-    m1, m2 = loudnorm(raw, wav)
-    os.remove(raw)
-    final = os.path.join(out_dir, f'{name}.mp4')
     # ffmpeg's AAC encoder can overshoot a sharp transient by several dB (seen: a 0.83 peak encoded as 1.56); the mix
-    # has next to nothing above 16 kHz, so a 17 kHz low-pass first, and if the file still measures over -1 dBTP the
-    # other coder, then half a dB less
-    for extra in (['-af', 'lowpass=f=17000'], ['-aac_coder', 'fast'], ['-aac_coder', 'fast', '-af', 'volume=-0.5dB']):
+    # has next to nothing above 16 kHz, so a 17 kHz low-pass first. If the file still measures over -1 dBTP, the mix is
+    # limited again to a lower true-peak ceiling (the loudness stays at -14 LUFS); last, the other coder, then half a
+    # dB less
+    tries = [(-1.6, ['-af', 'lowpass=f=17000']), (-2.4, ['-af', 'lowpass=f=17000']), (-3.2, ['-af', 'lowpass=f=17000']),
+             (-3.2, ['-aac_coder', 'fast']), (-3.2, ['-aac_coder', 'fast', '-af', 'volume=-0.5dB'])]
+    done_ceiling = None
+    for ceiling, extra in tries:
+        if ceiling != done_ceiling:
+            m1, m2 = loudnorm(raw, wav, ceiling=ceiling)
+            done_ceiling = ceiling
         subprocess.run(['ffmpeg', '-y', '-v', 'error', '-i', vid, '-i', wav, '-map', '0:v', '-map', '1:a', '-c:v', 'copy',
                         '-c:a', 'aac', '-b:a', '192k', '-ar', str(SR), '-ac', '2'] + extra +
-                       ['-metadata', 'title=Vantage: full app tour', '-metadata:s:a:0', 'language=eng',
+                       ['-metadata', f'title={ep["video_title"]}', '-metadata:s:a:0', 'language=eng',
                         '-movflags', '+faststart', '-shortest', final], check=True)
         loud = measure(final)
-        loud['aac'] = ' '.join(extra)
+        loud['aac'] = ' '.join(extra) + f' (mix limited to {ceiling} dBTP)'
         if loud['TP'] is not None and loud['TP'] <= -1.0:
             break
-        print(f'  true peak {loud["TP"]} dBTP after AAC with {extra}: trying again', flush=True)
+        print(f'  true peak {loud["TP"]} dBTP after AAC with {extra}, the mix limited to {ceiling} dBTP: trying again',
+              flush=True)
+    os.remove(raw)
     srt = os.path.join(out_dir, f'{name}.srt')
     ncues = write_srt(voices, total_s, srt)
-    marks = chapter_marks(items)
-    write_chapters(marks, os.path.join(out_dir, 'chapters.txt'))
-    title = 'Vantage: full tour of the sensor rig planner for autonomous-driving data collection'
-    write_description(marks, os.path.join(out_dir, 'description.md'), title)
-    thumb = make_thumbnail(seg_root, os.path.join(out_dir, 'thumbnail.png'))
+    marks = chapter_marks(items, ep)
+    f_ch, f_desc, f_th = (x.format(name=name) for x in ep['texts'])
+    write_chapters(marks, os.path.join(out_dir, f_ch))
+    write_description(marks, os.path.join(out_dir, f_desc), ep['title'], ep)
+    thumb = make_thumbnail(seg_root, os.path.join(out_dir, f_th), ep)
     sheets = contact_sheets(final, out_dir, total_s, name)
     report = {'name': name, 'seconds': round(total_s, 2), 'frames': n, 'fps': fps, 'size': [w, h],
               'loudness_final': loud, 'loudnorm_pass1': {k: m1[k] for k in ('input_i', 'input_tp', 'input_lra')},

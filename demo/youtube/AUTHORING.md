@@ -13,7 +13,7 @@ the sample's reference photos or a machine path; never call the Groq API or any 
 | Path | What it is |
 |---|---|
 | `demo/youtube/chapters/<nn>_<id>.py` | one chapter: `META`, `LINES`, `scene(stage, r)` (see below) |
-| `demo/youtube/chapters/__init__.py` | the plan: the 38 chapters' order, ids, parts and titles (`PLAN`), the parts (`PARTS`) |
+| `demo/youtube/chapters/__init__.py` | the plans: the tour's 38 chapters (`PLAN`, `PARTS`), the other episodes' (`PLAN_V020`, `PARTS_V020`) and what each episode's deliverables say (`EPISODES`; see Episodes below) |
 | `demo/youtube/studio.py` | the recorder `Rec` (pointer, menus, zooms, narration, overlays) and the `Stage` (windows, set-ups) |
 | `demo/youtube/gfx.py` | the motion graphics: overlay layers, cards, the logo, the end card, the terminal, colours, easing |
 | `demo/youtube/record.py` | records one segment in this process |
@@ -211,8 +211,8 @@ Prepared data for the calibration chapters (demo/clip_*.py, importable from a sc
 
 ## Commands
 
-Set `S=/tmp/claude-1000/-home-jo-Documents-econ-systems/f395468f-5b02-463c-baab-ffd7e833ea23/scratchpad` and run
-from the repository root.
+Set `VANTAGE_SCRATCH` to a working folder outside the repository (the voice's environment, the heavy-job lock and a
+throw-away config folder live there; default `demo/build/youtube/work`) and run from the repository root.
 
 ```bash
 # one chapter, quick draft (960 x 540, 15 fps, 1x pixels; about 3x faster than real time): voice + record
@@ -255,6 +255,56 @@ Look at the contact sheet and a few full frames of every recording (`frame_*.jpg
 `ffmpeg -ss T -i demo/build/youtube/seg/<id>/video.mp4 -frames:v 1 f.png`) for: a machine path or a name on screen,
 the reference photos, a dialog left open, a callout on the wrong thing, a zoom that cuts what is talked about, a
 figure that is not on screen.
+
+## Episodes
+
+The same pipeline makes more than one video. An **episode** is a plan over the chapter files (which all live in
+`chapters/`, ids unique across episodes): its parts, its chapters in order, its intro and outro, and what its
+deliverables are called and say. `chapters.EPISODES` holds them:
+
+| Episode | Video | Files | Parts |
+|---|---|---|---|
+| `tour` (the default) | `vantage-tour.mp4`: the full app tour, v0.1.1 | `00_intro` ... `38_install-anywhere`, `99_outro` | 5 |
+| `v020` | `vantage-whats-new-0.2.0.mp4`: what is new in 0.2.0 | `40_intro-v020`, `41_new-critical` ... `48_new-automation`, `49_outro-v020` | 3 |
+
+* `produce.py --episode v020` chooses it, and every child (voice, record, cards, assemble) gets it as
+  `VANTAGE_EPISODE`. `--only` with ids of one episode chooses that episode without `--episode`; ids of another episode
+  are refused. With neither, it is the tour, exactly as before.
+* `record.py <id>` and `cards.py preview <id>` find the chapter's own episode by its id (`chapters.episode_of`): no
+  variable needed.
+* What changes with the episode: the part cards ("PART 1 OF 3"), the chapter cards (the episode's part titles), the
+  indicator (the hairline map of the episode's chapters and "PART 3 · 07 ..." at the top), the numbers on screen (an
+  episode's plan numbers its chapters from 1: the v020 files are 41-48 but show 01-08), the YouTube chapters, the
+  description, the thumbnail (the still `thumb` its intro saves), the video's name and title. The v020 texts are
+  written next to the video with its name in front (`vantage-whats-new-0.2.0-chapters.txt`, `...-description.md`,
+  `...-thumbnail.png`) so they never overwrite the tour's `chapters.txt`, `description.md`, `thumbnail.png`.
+* A chapter's `META['part']` is its part in its own episode (v020: 1 On the road, 2 In the workshop, 3 In the
+  pipeline; the intro 0, the outro 4). `gfx.logo_reveal(..., version=)` and `gfx.end_card(..., version=, rows=)` take
+  the episode's version and links (the tour's cards keep v0.1.1).
+* The recordings of both live in `demo/build/youtube/seg/<id>/` (ids do not collide); the voice cache is shared.
+* v020's intro quotes its chapters: its cold open plays excerpts of their final recordings and its overview drifts over
+  stills of them (`COLD`, `BACKDROPS` in `40_intro-v020.py`), so record it after them (a draft falls back to drafts).
+  Its segment key does not include them: when a quoted chapter is re-recorded, check the seconds quoted still show the
+  same moment and re-record the intro (`produce.py --episode v020 --only intro-v020 --record-only --rerecord`).
+* Chapter 47's before/after cards read `demo/build/youtube/data/calib_measure.json`, written by
+  `demo/youtube/calib_measure.py` (0.1.1's joint and lidar–camera solves, read from the tag v0.1.1 with `git show`,
+  against 0.2.0's on the same simulated captures; about 8 minutes, under the 2G cap): run it before recording 47.
+* The sound alone: `assemble.py --episode v020 --remux` (under the heavy lock and the 6G cap, as produce runs it) keeps
+  the video of the deliverable already assembled from the same pieces and redoes the mix, loudness, subtitles, texts
+  and sheets (about 4 minutes instead of 18). When the AAC encode overshoots -1 dBTP, the assembler now limits the mix
+  to a lower true-peak ceiling (-2.4, then -3.2 dBTP) before it gives up loudness, so the result stays at -14 LUFS (the
+  tour's own run passed on its first try and is unchanged).
+
+```bash
+# a v020 chapter: draft, review, final (as above, with the episode)
+systemd-run --user --scope -q -p MemoryMax=2G -p MemorySwapMax=0 python3 demo/youtube/produce.py --episode v020 --draft --only new-critical --record-only
+systemd-run --user --scope -q -p MemoryMax=2G -p MemorySwapMax=0 python3 demo/youtube/review.py new-critical --draft
+systemd-run --user --scope -q -p MemoryMax=2G -p MemorySwapMax=0 python3 demo/youtube/produce.py --episode v020 --only new-critical --record-only
+systemd-run --user --scope -q -p MemoryMax=2G -p MemorySwapMax=0 python3 demo/youtube/review.py new-critical
+python3 demo/youtube/cards.py preview new-critical          # its card and part card ("PART 1 OF 3"), under the cap
+# the whole episode (only what is missing or changed is re-recorded)
+systemd-run --user --scope -q -p MemoryMax=2G -p MemorySwapMax=0 python3 demo/youtube/produce.py --episode v020
+```
 
 ## Pitfalls already hit
 

@@ -503,6 +503,8 @@ class SensorCoveragePage(QWidget):
             folder = QFileDialog.getExistingDirectory(self, 'Export the lidar and radar coverage into')
             if not folder:
                 return []
-        paths = SC.export(res, self.ctx.store.project, folder, k_sel=int(self.pick.value() or 0))
+        from ...core import provenance as PV          # where the JSON came from
+        paths = PV.stamp_paths(SC.export(res, self.ctx.store.project, folder, k_sel=int(self.pick.value() or 0)),
+                                self.ctx.store.project, folder)
         self.ctx.msg(f'Exported the lidar and radar coverage to {folder}', 5000)
         return paths

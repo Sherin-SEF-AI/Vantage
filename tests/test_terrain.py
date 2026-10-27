@@ -562,6 +562,10 @@ def test_run_edge_cases(proj, engine):
     assert not res.road and res.coverage is None and res.motion['cases']
     assert any(f['kind'] == 'flat' for f in res.findings)
     assert [n for n, _ in TR.files(res, proj)] == ['terrain.json', 'terrain_motion.csv']
+    # the cases over the load cases' limits are counted as exceeding them (the text said 'pass')
+    bad = sum(c['image'].status != 'good' for c in res.motion['cases'])
+    ghost = [f for f in res.findings if f['kind'] == 'ghost']
+    assert bad and len(ghost) == 1 and f'{bad} of {len(res.motion["cases"])} cases exceed' in ghost[0]['message']
     # switched off: kept, not used
     res = TR.run(_with(proj, [{'kind': 'bump'}], enabled=False), engine)
     assert not res.road and any(f['kind'] == 'off' for f in res.findings)
@@ -591,7 +595,7 @@ def test_issues_are_gated_cached_and_cheap(proj):
     again = TR.issues(q)
     assert time.perf_counter() - t0 < 0.03 and first < 5.0
     assert out == again and out and all(isinstance(i, rules.Issue) for i in out)
-    assert any(i.severity == 'serious' and 'touch' in i.message for i in out) and all(i.action == 'terrain'
+    assert any(i.severity == 'serious' and 'hit the road' in i.message for i in out) and all(i.action == 'terrain'
                                                                                      for i in out)
     assert TR.issues(_with(proj, [{'kind': 'bump', 'height': 0.05, 'start': 1.0}])) == []
 

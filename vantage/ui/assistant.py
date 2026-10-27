@@ -106,7 +106,7 @@ PAGES = {'viewports': '3D and top views', 'camviews': 'Camera views', 'tolerance
          'requirements': 'Requirements scorecard', 'lidar_calib': 'Lidar–camera calibration',
          'asbuilt': 'As-built check', 'critical': 'Critical targets', 'materials': 'Materials, glass and wipers',
          'automation': 'Automation', 'terrain': 'Road and body motion', 'harness': 'Cable harness',
-         'observability': 'Calibration observability'}
+         'observability': 'Calibration observability', 'experiments': 'Experiments', 'sim': 'CARLA simulator'}
 
 
 # ============================================================================================ controller
@@ -345,7 +345,7 @@ class AssistantController(QObject):
                              an.worst, getattr(so, 'result', None), getattr(so, 'advice', None),
                              getattr(vol, 'result', None), self._guidelines(), [c.tag for c in st.selected_cams()],
                              PAGES.get(page, page), st.revision, brief=self.brief(), rig_health=self._rig_health(),
-                             drive_log=self._drive_log(), asbuilt=self._asbuilt(),
+                             drive_log=self._drive_log(), asbuilt=self._asbuilt(), experiment=self._experiment(),
                              working_dir=workdir.get(self.ctx.settings))
 
     def _rig_health(self):
@@ -361,6 +361,11 @@ class AssistantController(QObject):
     def _asbuilt(self):
         w = self.ctx.window
         pg = getattr(w, '_page_widgets', {}).get('asbuilt') if w is not None else None
+        return pg.summary() if pg is not None else None
+
+    def _experiment(self):
+        w = self.ctx.window
+        pg = getattr(w, '_page_widgets', {}).get('experiments') if w is not None else None
         return pg.summary() if pg is not None else None
 
     def _guidelines(self):

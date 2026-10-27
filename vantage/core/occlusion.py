@@ -1,9 +1,14 @@
 """Per-camera occlusion as a cube map of depth + shade: the body and rig rasterised with QPainter, the sensor and
 camera housings composited in.
 
-Each cube face stores, per direction from the camera centre, the distance to the nearest body or rig triangle (mm,
-16 bit; the triangle's centroid distance, painter's algorithm) and a flat shade value. Rotating a camera does not
-change its cube map, so tolerance studies and aim changes reuse it; only a position change rebuilds it.
+Each cube face stores, per direction from the camera centre, the distance to the nearest body or rig triangle and a
+flat shade value. The triangles are painted far to near by the distance of their nearest point (painter's algorithm),
+each in a colour that encodes its index; the depth of a texel is then the exact distance along the ray through the texel's
+centre to the plane of the triangle drawn there, t = n·(v0 − pos) / (n·d) (metres, float32; at most the triangle's
+farthest corner, for the texels a polygon's one-pixel outline adds at its edges). Only the texel's size limits it,
+not the triangle's: the centroid's distance, stored until 0.2.0, was 15 % off in the median and over 3× in 5 % of
+directions. Rotating a camera does not change its cube map, so tolerance studies and aim changes reuse it; only a
+position change rebuilds it.
 
 Housings (core.housings: every lidar, radar, GNSS antenna and IMU housing and every other camera's module body) are
 not rasterised into that static map: a cube map asked for from an occluder that carries housings (HousedOccluder) is
@@ -13,8 +18,9 @@ housing's footprint layer and the composite are cached separately, so moving one
 per camera and re-merges, and never re-rasterises a body map. The housing whose anchor (a camera's lens, a sensor's
 optical centre) lies at the cube's position, within OWN_TOL_M, is that cube's own and left out of it.
 
-Body in front. Where the static map's centroid depth leaves it in doubt (within the occluder's largest triangle radius
-of the housing's hit), the texel's ray is tested exactly against the body and rig triangles near it: a housing texel is
+Body in front. Where the static map leaves it in doubt (within the occluder's largest triangle radius of the housing's
+hit: the triangle the painter's order put at a texel can be a farther one near a silhouette), the texel's ray is tested
+exactly against the body and rig triangles near it: a housing texel is
 kept only if no triangle lies in front of the hit or less than EMBED_TOL_M behind it (a radar behind a bumper fascia,
 a camera module sunk into a panel do not show; the body is kept there). Elsewhere the housing is the nearer surface.
 """
@@ -54,6 +60,11 @@ class OccluderGeom:
             shade = np.where(glass, shade * 0.45, shade)
         self.shade = np.clip(shade, 1, 255).astype(np.int32)
         self.centroid = self.tri.mean(axis=1)
+        # each triangle's plane: unit normal (zero for a degenerate triangle) and its offset n·v0
+        nrm = np.cross(self.tri[:, 1] - self.tri[:, 0], self.tri[:, 2] - self.tri[:, 0])
+        ln = np.linalg.norm(nrm, axis=1, keepdims=True)
+        self.plane_n = np.divide(nrm, ln, out=np.zeros_like(nrm), where=ln > 1e-15)
+        self.plane_d = np.einsum('ij,ij->i', self.plane_n, self.tri[:, 0])
         self.version = version
 
 
@@ -102,6 +113,19 @@ def texel_dirs(f: int, y0: int, y1: int, x0: int, x1: int, n: int) -> np.ndarray
     v = 1 - (np.arange(y0, y1 + 1) + 0.5) / n * 2
     d = fw[None, None, :] + u[None, :, None] * rt[None, None, :] + v[:, None, None] * up[None, None, :]
     return d / np.linalg.norm(d, axis=2, keepdims=True)
+
+
+_FACE_DIRS: dict = {}
+
+
+def face_dirs(n: int) -> np.ndarray:
+    """(6, n, n, 3) unit directions through every texel centre of a cube map with n × n texels per face (cached)."""
+    d = _FACE_DIRS.get(n)
+    if d is None:
+        d = np.stack([texel_dirs(f, 0, n - 1, 0, n - 1, n) for f in range(6)])
+        d.setflags(write=False)
+        _FACE_DIRS[n] = d
+    return d
 
 
 class CubeDepth:
@@ -169,17 +193,51 @@ def _clip_near(poly_cam):
 _paint_lock = threading.Lock()
 
 
+def tri_distance(tri: np.ndarray, p) -> np.ndarray:
+    """Distance from point p to each triangle (M, 3, 3): to its closest point, face, edge or corner (Ericson,
+    Real-Time Collision Detection, 5.1.5, vectorised). A degenerate triangle gives its nearest corner's distance."""
+    a, b, c = tri[:, 0], tri[:, 1], tri[:, 2]
+    p = np.asarray(p, float)
+    ab, ac = b - a, c - a
+    ap, bp, cp = p - a, p - b, p - c
+    dot = lambda u, v: np.einsum('ij,ij->i', u, v)          # noqa: E731
+    d1, d2, d3, d4, d5, d6 = dot(ab, ap), dot(ac, ap), dot(ab, bp), dot(ac, bp), dot(ab, cp), dot(ac, cp)
+    vc, vb, va = d1 * d4 - d3 * d2, d5 * d2 - d1 * d6, d3 * d6 - d5 * d4
+    conds = [(d1 <= 0) & (d2 <= 0), (d3 >= 0) & (d4 <= d3), (d6 >= 0) & (d5 <= d6),
+             (vc <= 0) & (d1 >= 0) & (d3 <= 0), (vb <= 0) & (d2 >= 0) & (d6 <= 0),
+             (va <= 0) & (d4 - d3 >= 0) & (d5 - d6 >= 0)]
+    with np.errstate(divide='ignore', invalid='ignore', over='ignore'):    # (the regions not taken; degenerate ones)
+        v_ab = d1 / (d1 - d3)
+        w_ac = d2 / (d2 - d6)
+        w_bc = (d4 - d3) / ((d4 - d3) + (d5 - d6))
+        den = 1.0 / (va + vb + vc)
+        v_in, w_in = vb * den, vc * den
+        choices = [a, b, c, a + v_ab[:, None] * ab, a + w_ac[:, None] * ac, b + w_bc[:, None] * (c - b)]
+        q = np.select([m[:, None] for m in conds], choices, a + v_in[:, None] * ab + w_in[:, None] * ac)
+        d = np.linalg.norm(q - p, axis=1)
+    corner = np.linalg.norm(tri - p, axis=2).min(axis=1)
+    return np.where(np.isfinite(d), np.minimum(d, corner), corner)
+
+
 def build_cube(geom: OccluderGeom, pos, n: int = FACE_N) -> CubeDepth:
+    """The cube map of geom's triangles seen from pos: per texel the exact distance (metres) along the texel's centre
+    ray to the plane of the nearest triangle (painter's order) and its shade; inf and 0 where nothing is hit."""
     from PyQt6.QtGui import QImage, QPainter, QPolygonF, QColor, QPen
-    from PyQt6.QtCore import QPointF, Qt
+    from PyQt6.QtCore import QPointF
 
     pos = np.asarray(pos, float)
     rel = geom.tri - pos                     # (M,3,3)
     dist = np.linalg.norm(geom.centroid - pos, axis=1)
-    order = np.argsort(-dist)                # far to near (painter's algorithm)
+    # far to near (painter's algorithm) by each triangle's nearest point, ties by the centroid: a large triangle close
+    # to the camera at a grazing angle is drawn over the ones behind it (by the centroid alone it often was not)
+    order = np.lexsort((-dist, -tri_distance(geom.tri, pos)))
     rel = rel[order]
-    dist_mm = np.clip(dist[order] * 1000.0, 0, 65534).astype(np.int64)
     shade = geom.shade[order]
+    plane_n = geom.plane_n[order]
+    plane_h = geom.plane_d[order] - plane_n @ pos            # n·(v0 − pos): the plane's offset from pos
+    far = np.linalg.norm(rel, axis=2).max(axis=1)            # a hit on the triangle is no farther than its far corner
+    cdist = np.minimum(dist[order], far)
+    dirs = face_dirs(n)
     depth = np.full((6, n, n), np.inf, np.float32)
     shade_out = np.zeros((6, n, n), np.uint8)
     half = n / 2.0
@@ -199,7 +257,7 @@ def build_cube(geom: OccluderGeom, pos, n: int = FACE_N) -> CubeDepth:
         if len(idx_full) == 0 and len(idx_part) == 0:
             continue
         img = QImage(n, n, QImage.Format.Format_RGB32)
-        img.fill(QColor(0, 255, 255))
+        img.fill(QColor(0, 0, 0))              # 0: nothing; a triangle is painted as its index + 1 (24 bits)
         sx = (px + 1) * half
         sy = (1 - py) * half
         items = []
@@ -214,8 +272,8 @@ def build_cube(geom: OccluderGeom, pos, n: int = FACE_N) -> CubeDepth:
             p = QPainter(img)
             p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
             for i, pts in items:
-                dm = int(dist_mm[i])
-                col = QColor(int(shade[i]), dm >> 8, dm & 255)
+                k = int(i) + 1
+                col = QColor((k >> 16) & 255, (k >> 8) & 255, k & 255)
                 p.setBrush(col)
                 p.setPen(QPen(col, 1.0))
                 p.drawPolygon(QPolygonF([QPointF(a, b) for a, b in pts]))
@@ -223,11 +281,19 @@ def build_cube(geom: OccluderGeom, pos, n: int = FACE_N) -> CubeDepth:
         ptr = img.constBits()
         ptr.setsize(img.sizeInBytes())
         arr = np.frombuffer(ptr, np.uint8).reshape(n, img.bytesPerLine() // 4, 4)[:, :n]
-        b, g, r = arr[..., 0].astype(np.int32), arr[..., 1].astype(np.int32), arr[..., 2]
-        dmm = g * 256 + b
-        hit = dmm < 65535
-        depth[f] = np.where(hit, dmm / 1000.0, np.inf)
-        shade_out[f] = np.where(hit, r, 0)
+        ids = (arr[..., 2].astype(np.int64) << 16) | (arr[..., 1].astype(np.int64) << 8) | arr[..., 0]
+        hit = ids > 0
+        if not hit.any():
+            continue
+        tid = ids[hit] - 1
+        den = np.einsum('ij,ij->i', plane_n[tid], dirs[f][hit])
+        with np.errstate(divide='ignore', invalid='ignore'):
+            t = plane_h[tid] / den
+        # the plane behind the ray or parallel to it (an outline texel past a grazing triangle's edge): the
+        # centroid's distance; never beyond the triangle's far corner
+        t = np.where(np.isfinite(t) & (t > 0), t, cdist[tid])
+        depth[f][hit] = np.minimum(t, far[tid])
+        shade_out[f][hit] = shade[tid]
     return CubeDepth(depth, shade_out, pos)
 
 

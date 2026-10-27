@@ -1075,9 +1075,10 @@ def _findings(res: TerrainResult, project) -> list:
                          [dv['uid']])
         for dr in res.drive_over:
             if dr['body_m'] is not None and dr['body_m'] < 0:
-                _finding(out, 'serious', 'touch', f'Driving over "{dr["label"]}" the body would touch the road: '
-                                                  f'{-dr["body_m"] * 100:.0f} cm at the {dr["body_where"]} (with '
-                                                  f'the primitive {dr["body_at_m"]:.1f} m from the bumper).')
+                _finding(out, 'serious', 'touch', f'Driving over "{dr["label"]}" the body would hit the road: it '
+                                                  f'would reach {-dr["body_m"] * 100:.0f} cm into it at the '
+                                                  f'{dr["body_where"]} (with the primitive {dr["body_at_m"]:.1f} m '
+                                                  'from the bumper).')
             elif dr['body_m'] is not None and dr['body_m'] < 0.03:
                 _finding(out, 'warning', 'touch', f'Driving over "{dr["label"]}" the body clears the road by only '
                                                   f'{dr["body_m"] * 100:.1f} cm ({dr["body_where"]}).')
@@ -1131,7 +1132,7 @@ def _findings(res: TerrainResult, project) -> list:
         _finding(out, 'warning', 'ghost', f'Against the calibration at "{mot["info"]["calibrated_at"]}" the stitched '
                                           f'ground shifts up to {w["image"].ground_shift_cm:.1f} cm ({w["name"]}) and '
                                           f'the seams ghost up to {g["image"].seam_ghost_cm:.1f} cm ({g["name"]}); '
-                                          f'{len(bad)} of {len(mot["cases"])} cases pass the load cases\' limits (a '
+                                          f'{len(bad)} of {len(mot["cases"])} cases exceed the load cases\' limits (a '
                                           '2 cm seam ghost or 0.01 m² more blind ground). Record the body attitude '
                                           '(IMU) with the data to correct it.')
     fwd = [(c, h) for c in mot.get('cases', []) for h in c['horizon'] if h['facing'] == 'forward']

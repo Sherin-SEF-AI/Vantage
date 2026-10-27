@@ -100,7 +100,8 @@ def record(cid, out, draft):
     studio.use_shader_renderer()
     fps = 15 if draft else common.FPS
     stage = studio.Stage(app, out, fps)
-    plan = C.PLAN if meta.get('part', 0) in (1, 2, 3, 4, 5) else None
+    ep_plan = C.episode(C.episode_of(cid))['plan']        # the chapter's own episode: its parts on the indicator
+    plan = ep_plan if any(c[1] == cid for c in ep_plan) else None
     r = studio.Rec(app, out, cid, vlines, fps=fps, out_size=(960, 540) if draft else (common.W, common.H),
                    crf=20 if draft else 12, preset='veryfast' if draft else 'medium', plan=plan)
     r.meta = meta

@@ -191,11 +191,11 @@ def test_desktop_shortcut(tmp_path, monkeypatch):
 
 # ---------------------------------------------------------------------------------------------------- the release
 def test_version_tops_the_changelog():
-    """The version (0.2.0: round 6's studies) is the CHANGELOG's top entry, which the release job
+    """The version (0.3.0: experiments, CARLA, validation, provenance) is the CHANGELOG's top entry, which the release job
     publishes as the notes, with the sections a user needs before downloading."""
     from vantage import __version__
     release = _packaging_module('release')
-    assert __version__ == '0.2.0' == release.version()
+    assert __version__ == '0.3.0' == release.version()
     entries = release.changelog()
     assert entries and entries[0][0] == __version__
     assert len({v for v, _, _ in entries}) == len(entries)                  # one entry per version
@@ -255,6 +255,26 @@ def test_spec_data_files():
                  'vantage/resources/fonts/OFL.txt', 'vantage/runtime/bev_stitch.cpp', 'vantage/runtime/bev_stitch.py',
                  'vantage/runtime/CMakeLists.txt'):
         assert need in src, need
+    # the CARLA bridge runs in CARLA's own Python from the bundle's folder: every source it imports is a plain file,
+    # including each file vantage.sim.server.vantage_source() looks for
+    import ast
+    bridge = {'vantage/__init__.py', 'vantage/core/__init__.py', 'vantage/core/rosbag.py', 'vantage/core/mathutil.py'}
+    bridge |= {f'vantage/sim/{n}' for n in os.listdir(os.path.join(ROOT, 'vantage', 'sim')) if n.endswith('.py')}
+    assert bridge <= src and not [f for f in src if f.endswith('.py') and f not in bridge
+                                  and f != 'vantage/runtime/bev_stitch.py']
+    tree = ast.parse(_text('vantage', 'sim', 'server.py'))
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'vantage_source')
+    looked = {'vantage/' + '/'.join(t.value for t in e.elts) for e in ast.walk(fn) if isinstance(e, ast.Tuple)
+              and e.elts and all(isinstance(t, ast.Constant) and isinstance(t.value, str) for t in e.elts)}
+    assert looked and looked <= src, looked - src
+    for mod in sorted(bridge):                           # and nothing else of the app is imported by them
+        for node in ast.walk(ast.parse(_text(*mod.split('/')))):
+            if isinstance(node, ast.ImportFrom) and node.level:
+                base = mod.rsplit('/', node.level)[0] + (f'/{node.module.replace(".", "/")}' if node.module else '')
+                used = [base + '.py'] if os.path.isfile(os.path.join(ROOT, base + '.py')) else \
+                    [f'{base}/__init__.py'] + [f'{base}/{a.name}.py' for a in node.names
+                                               if os.path.isfile(os.path.join(ROOT, base, a.name + '.py'))]
+                assert set(used) <= bridge, (mod, used)
     for d, subdirs, names in os.walk(os.path.join(ROOT, 'vantage')):
         subdirs[:] = [x for x in subdirs if x != '__pycache__']
         for n in names:

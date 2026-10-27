@@ -57,6 +57,7 @@ class ToolContext:
     rig_health: dict | None = None       # the Live rig page's snapshot while it streams (core.rig_health)
     drive_log: dict | None = None        # the Drive-log check page's last result (core.drivelog.summary)
     asbuilt: dict | None = None          # the As-built check page's last result (core.asbuilt.summary)
+    experiment: dict | None = None       # the Experiments page's last run (core.experiments.summary)
     working_dir: str = ''                # where outputs go (workdir.get of the settings); never sent to the model
     _proposals: int = 0
 
@@ -793,6 +794,159 @@ def get_automation(tc, **_):
     from PyQt6.QtCore import QSettings
     from ..core import automation as AU
     return AU.overview(tc.project, commands=AU.CommandStore(QSettings('Vantage', 'Vantage')))
+
+
+def get_experiment(tc, **_):
+    if not tc.experiment:
+        return {'error': 'no experiment run yet: set one up on Analysis ▸ Experiments and Run (or run_experiment for '
+                         'the one stored in the project)'}
+    return {**tc.experiment, 'meaning': _EXPERIMENT_MEANING}
+
+
+_EXPERIMENT_MEANING = (
+    'a designed experiment over the rig\'s design inputs: per response its range over the points, the factors ranked '
+    'by what drives it (by = total Sobol index, Morris mu*, one-at-a-time swing, or main-effect range), the best point '
+    '(the Pareto front\'s best on the first response, meeting the targets when they are set) and, for Monte Carlo, '
+    'each response\'s mean, sd, 5/50/95th percentiles and share meeting its target; stale = the design changed since')
+
+
+def run_experiment(tc, max_points=2000, **_):
+    """Run the experiment stored in the project (Analysis ▸ Experiments) on a copy, when it is small enough."""
+    from ..core import experiments as EXP
+    st = EXP.settings_of(tc.project)
+    bad = EXP.errors(tc.project, st)
+    if bad:
+        return {'error': ' '.join(bad) + ' (set the experiment up on Analysis ▸ Experiments)'}
+    try:
+        cap = max(1, int(max_points))
+    except (TypeError, ValueError):
+        cap = 2000
+    n = EXP.point_count(EXP.factors_of(st), st)
+    if n > cap:
+        return {'error': f'the design has {n:,} points, more than {cap:,}: run it on Analysis ▸ Experiments'}
+    tc.status(f'Experiment: {n:,} points…')
+    last = [-1.0]
+
+    def progress(f, text=''):
+        if f - last[0] >= 0.1 or f >= 1.0:
+            last[0] = f
+            tc.status(f'Experiment · {f * 100:.0f} %' + (f' · {text}' if text else ''))
+    res = EXP.run(tc.project, tc.engine, st, progress=progress, cancel=tc.cancelled)
+    if res is None:
+        return {'error': 'cancelled'}
+    return {**EXP.summary(res), 'meaning': _EXPERIMENT_MEANING}
+
+
+def run_validation(tc, models=None, quick=True, **_):
+    """The validation suite (vantage.validation) on a copy of the project: every selected model's checks against
+    their independent references."""
+    from .. import validation as VA
+    ms = [str(m) for m in (models or []) if str(m)]
+    unknown = [m for m in ms if m not in VA.MODEL_IDS]
+    if unknown:
+        return {'error': f'unknown model {", ".join(unknown)}; models: {", ".join(VA.MODEL_IDS)}'}
+    st = VA.ValidationSettings.from_dict({'models': ms, 'quick': bool(quick)})
+    tc.status(f'Validating the models ({len(VA.specs(st))} checks)…')
+    res = VA.run(tc.project, tc.engine, settings=st, cancel=tc.cancelled,
+                 progress=lambda f: tc.status(f'Validating the models · {f * 100:.0f} %'))
+    if res.cancelled:
+        return {'error': 'cancelled'}
+    return {**VA.summary(res),
+            'meaning': 'each model checked against a reference that shares none of its code (closed forms, OpenCV, '
+                       'ITU-R tables, published examples, exact ray casting, Monte Carlo): passed of checks, per model '
+                       'passed/total, and each failed check\'s error against its tolerance. It shows the models '
+                       'compute what their methods say; not that a model describes a real vehicle or sensor. Help ▸ '
+                       'Validate the models writes the full report'}
+
+
+def list_validation_checks(tc, models=None, **_):
+    from .. import validation as VA
+    st = VA.ValidationSettings.from_dict({'models': [str(m) for m in (models or [])]})
+    return {'models': [{'id': m, 'title': t} for m, t, *_ in VA.MODELS], 'checks': VA.catalogue(st)}
+
+
+def _result_file(tc, path):
+    """A JSON file the user named, inside the working folder or the project's folder (never elsewhere), or None."""
+    import os
+    from .. import workdir
+    if not path or not str(path).lower().endswith('.json'):
+        return None
+    roots = [os.path.abspath(tc.working_dir or workdir.default())]
+    if getattr(tc.project, 'path', ''):
+        roots.append(os.path.dirname(os.path.abspath(tc.project.path)))
+    p = str(path)
+    cands = [p] if os.path.isabs(p) else [os.path.join(r, p) for r in roots]
+    for c in cands:
+        c = os.path.abspath(os.path.expanduser(c))
+        try:
+            inside = any(os.path.commonpath([c, r]) == r for r in roots)
+        except ValueError:                  # another drive
+            inside = False
+        if inside and os.path.isfile(c):
+            return c
+    return None
+
+
+def check_result(tc, path='', **_):
+    """Where a result JSON came from and whether it still holds what Vantage wrote (core.provenance); reads the file's
+    provenance block only, never runs the study."""
+    import json as _json
+    import os
+    from .. import workdir
+    from ..core import provenance as PV
+    f = _result_file(tc, path)
+    if f is None:
+        return {'error': 'name a .json result inside the working folder or the project\'s folder (a path relative '
+                         'to the working folder, e.g. tigor/exports/rig/extrinsics.json)'}
+    if os.path.getsize(f) > 512 << 20:
+        return {'error': 'the file is larger than 512 MB'}
+    try:
+        with open(f, encoding='utf-8') as fh:
+            doc = _json.load(fh)
+    except (OSError, ValueError) as e:
+        return {'error': f'not a JSON file Vantage can read: {e}'}
+    prov = doc.get(PV.KEY) if isinstance(doc, dict) else None
+    shown = workdir.display(f, tc.working_dir or None)
+    if not isinstance(prov, dict) or prov.get('schema') != PV.SCHEMA:
+        return {'file': shown, 'provenance': False,
+                'note': 'no provenance block: written by a Vantage without provenance blocks or by another program'}
+    integ = PV.verify(doc)
+    now = PV.block(tc.project, None, variant=tc.project.variant, study=prov.get('study'))
+    rp, rv = prov.get('project') or {}, prov.get('variant') or {}
+    return {'file': shown, 'provenance': True, 'schema': doc.get('schema'), 'study': prov.get('study'),
+            'written_utc': prov.get('created_utc'), 'interface': prov.get('interface'),
+            'vantage_then': (prov.get('vantage') or {}).get('version'), 'vantage_now': (now.get('vantage') or {}).get(
+                'version'), 'project': rp.get('name'), 'variant': rv.get('name'),
+            'command': prov.get('command'), 'seeds': prov.get('seeds'),
+            'intact': integ['ok'], 'same_project_as_open': (rp.get('sha256') == (now.get('project') or {}).get('sha256'))
+            if rp else None,
+            'differences_from_now': PV.differences(prov, now),
+            'meaning': 'the result\'s provenance block: intact = its numbers are what Vantage wrote (its result hash '
+                       'matches); differences_from_now = why re-running it here could give other numbers (version, '
+                       'code, libraries, project section, variant, inputs). vantage PROJECT --reproduce FILE re-runs '
+                       'it and compares every number'}
+
+
+def get_sim_rig(tc, variant=None, **_):
+    from ..core import simrig as SR
+    v = None
+    if variant:
+        v = next((x for i, x in enumerate(tc.project.variants) if variant in (x.name, x.uid, str(i + 1))), None)
+        if v is None:
+            return {'error': f'no variant {variant!r}; variants: ' + ', '.join(x.name for x in tc.project.variants)}
+    tc.status('Planning the CARLA rig…')
+    try:
+        rig = SR.build(tc.project, variant=v, tables=False, cancel=tc.cancelled)
+    except ValueError as e:
+        return {'error': str(e)}
+    if rig is None:
+        return {'error': 'cancelled'}
+    return {**SR.summary(rig),
+            'meaning': 'the variant as the CARLA simulator would run it (Simulate ▸ CARLA): the CARLA car nearest the '
+                       'vehicle\'s size (size error), the simulation step, each camera\'s pinhole views and image '
+                       'size, each lidar on CARLA\'s channels (elevation error, oversampling, rays per second), the '
+                       'radars and their zones, GNSS and IMUs, and the notes on what rounds or differs. Planning only: '
+                       'the assistant cannot start CARLA'}
 
 
 def get_requirements(tc, run=False, **_):
@@ -1695,6 +1849,33 @@ TOOLS = [
          'requirements check, the trigger: on save, after changes or by hand) and the last runs on this computer: '
          'status, the exit code of the user\'s own command, duration and the files that changed. Says whether a '
          'command is set and approved, never its text; the assistant cannot run it. Cheap.', {}, get_automation),
+    Tool('get_experiment', 'Read the designed experiment',
+         'The last experiment run on Analysis ▸ Experiments: design, points, factors, per response its range and the '
+         'factors that drive it, the best point and, for Monte Carlo, the uncertainty. Reads the page\'s result. '
+         'Cheap.', {}, get_experiment),
+    Tool('run_experiment', 'Run the designed experiment',
+         'Run the experiment stored in the project (factors, responses and design set on Analysis ▸ Experiments) on '
+         'a copy, when it has at most max_points points (default 2000): the same summary as get_experiment. Seconds '
+         'to minutes.', {'max_points': {'type': 'integer'}}, run_experiment, 'compute'),
+    Tool('run_validation', 'Validate the models',
+         'Check Vantage\'s models against independent references (closed forms, OpenCV, ITU-R tables, published '
+         'examples, exact ray casting, Monte Carlo): checks passed, per model, and every failure with its error and '
+         'tolerance. quick (default true): about 30 s; models: ids to run (default all).',
+         {'models': {'type': 'array', 'items': {'type': 'string'}}, 'quick': {'type': 'boolean'}}, run_validation,
+         'compute'),
+    Tool('list_validation_checks', 'List the validation checks',
+         'The validation suite\'s models and checks (id, what is compared, the reference, tolerance, unit), without '
+         'running them. Cheap.', {'models': {'type': 'array', 'items': {'type': 'string'}}}, list_validation_checks),
+    Tool('check_result', 'Check a result file',
+         'Where a JSON result the user names came from (its provenance block: study, time, version, project, '
+         'variant, command, seeds), whether it is intact, and what differs from now. path: relative to the working '
+         'folder or the project\'s folder. Reads the block only; never runs the study.',
+         {'path': {'type': 'string'}}, check_result, 'read', ('path',)),
+    Tool('get_sim_rig', 'Read the CARLA simulator rig',
+         'The variant as the CARLA simulator would run it (Simulate ▸ CARLA): the CARLA car, the step rate, each '
+         'camera\'s views, each lidar on CARLA\'s channels, the radars, GNSS, IMUs and the notes. About a second.',
+         {'variant': {'type': 'string', 'description': 'variant name or 1-based index (default: the active one)'}},
+         get_sim_rig),
     Tool('get_requirements', 'Read the requirements scorecard',
          'The project\'s requirements with value, target, margin and pass/fail, and the verdict. Cheap metrics at once; '
          'run=true also runs the studies the others need (seconds).',
@@ -1760,7 +1941,7 @@ TOOLS = [
          'guidelines, frustums, sensors, critical, wipers, harness; on), open_page (viewports | camviews | volume | '
          'perception | tolerance | compare | rig | coverage | timing | recording | power | gnss | exposure | fleet | '
          'brackets | dataset | drivelog | asbuilt | requirements | lidar_calib | critical | materials | automation | '
-         'terrain | harness | observability).',
+         'terrain | harness | observability | experiments | sim).',
          {'action': {'type': 'string', 'enum': list(UI_ACTIONS)}, 'cameras': {'type': 'array', 'items': {'type': 'string'}},
           'x': {'type': 'number'}, 'y': {'type': 'number'}, 'heatmap': {'type': 'string'}, 'overlay': {'type': 'string'},
           'on': {'type': 'boolean'}, 'page': {'type': 'string'}}, show_in_app, 'ui', ('action',)),

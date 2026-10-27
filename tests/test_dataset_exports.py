@@ -146,7 +146,7 @@ def test_registered_under_datasets(rig):
     q, _ = rig
     assert 'Datasets' in ex.GROUPS
     got = {f.id: f for f in ex.FORMATS if f.group == 'Datasets'}
-    assert list(got) == IDS
+    assert list(got) == IDS + ['sim_rig']                    # (the CARLA rig: test_sim and test_rig_studies)
     tags = list(ex.safe_tags(q.variant).values())
     assert got['nuscenes_calib'].filename(q, q.variant) == ['nuscenes/calibrated_sensor.json', 'nuscenes/sensor.json',
                                                              'nuscenes/README.md']

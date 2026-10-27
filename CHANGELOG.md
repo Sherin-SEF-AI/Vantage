@@ -2,6 +2,140 @@
 
 Versions follow [semantic versioning](https://semver.org). The top entry is what the release notes on GitHub show.
 
+## 0.3.0 — 2026-10-27
+
+Research grade: designed experiments over the rig, the planned rig in the CARLA simulator, a validation suite with a
+technical reference for every model, and a provenance record on every number Vantage writes.
+
+**What's new**
+
+- **Designed experiments** (Analysis ▸ Experiments): vary camera and sensor poses, lenses and models, the mount
+  height, the ROI distance, the load case or the weather over a full factorial, a one-at-a-time sweep, a Latin
+  hypercube, Sobol/Saltelli or Morris design, or propagate input distributions by Monte Carlo; the responses are the
+  requirements scorecard's metrics (now including critical targets and calibration observability). Sobol first-order
+  and total indices with bootstrap intervals (checked against the Ishigami function's exact indices), Morris μ*/σ, main
+  effects, two-factor surfaces, Pareto fronts and the best design, added as a variant in one click. Points are cached
+  and a cancelled run resumes; cheap metrics take about 3 ms a point. `vantage --experiment spec.json OUT` runs one
+  headless.
+- **Simulate in CARLA** (Simulate ▸ CARLA): the planned rig in the free CARLA simulator (0.9.16) on the CARLA car
+  nearest the vehicle's size, in its towns, traffic and weather, recorded as a nuScenes folder and a ROS 2 bag in the
+  sample dataset's layout with ground-truth boxes. Fisheye cameras are rendered as pinhole cube faces and remapped
+  through the lens model (within 0.1 px), lidar beams lie on CARLA's channels with the exact azimuth step, each radar
+  zone is a CARLA radar; the faces are feathered across their seams, Unreal's vignette is taken out in linear light
+  through CARLA's measured camera response, and each lidar point is placed where the sensor was when it fired. The
+  server runs headless in its own memory-capped scope (on the NVIDIA GPU of a computer with two); the drive then opens
+  in the drive-log check. On an RTX 5080 the sample's six fisheyes, lidar and five radars record 6 s in 28 s, and the
+  drive-log check finds every camera within 0.25° of its plan. `--carla-rig` writes the rig for CARLA's own Python, `--carla-run` records a drive (exit 7 when no server
+  answers or the run fails).
+- **Validation suite** (Help ▸ Validate the models…, `vantage --validate`): 69 checks of 20 models against references
+  that share none of their code — OpenCV, analytic footprints, exact ray casting, ITU-R and UN R112 tables, published
+  worked examples, Monte Carlo — each with its quantity, reference, measured error, tolerance and verdict, as HTML, JSON
+  and CSV; exit 6 when a check fails. The website's **technical reference** (methods.html) documents each model's
+  equations, frames, assumptions, parameters and limits with its literature and standards, and the suite's report is
+  published next to it.
+- **Provenance and reproducing a result**: every JSON Vantage writes (exports, page exports, batch outputs) ends with
+  a `provenance` block — the version and a hash of the code, the libraries, the project's and variant's content
+  hashes, the study's settings with every default filled in, its seeds, the batch command and each input's SHA-256,
+  and a hash of the result. `vantage project.vantage --reproduce result.json` runs it again and compares every number,
+  exactly or within `--tolerance`, and says why a result does not reproduce (exit 6). Every random number now comes
+  from a seeded generator. The `.vantage` format is documented in `docs/project-format.md` with a JSON Schema, and
+  `CITATION.cff` says how to cite Vantage.
+
+**Fixed**
+
+- The body occlusion maps stored, per direction, the distance to the centre of the triangle drawn there rather than
+  to the surface itself: 15 % off in the median and over 3× in 5 % of directions (which directions are hidden was
+  right). They now store the exact distance (0.15 % median error), in the same time. Two results move with it:
+  - a radar outside the body (an open engine bay) no longer treats a surface just ahead of it as its bumper fascia;
+    the sample's radar coverage is unchanged;
+  - the drive-log check leaves out lidar edges that land on the camera's own vehicle, where the image's edges are
+    masked: they pulled the rotation off. On the sample dataset's drive, a correctly mounted mirror camera's apparent
+    error falls from up to 0.9° to 0.36°.
+- The calibration observability check's agreement band was lopsided: it could reject a correct prediction that came
+  out lower than the simulated spread. It is now symmetric.
+- The tolerance study and the joint solve could give different numbers for the same project in two sessions (mirrored
+  pairs and boards were ordered by random ids); they now follow the project's order.
+- The snow attenuation uses ITU-R P.1814's printed constants (a 0.1 % change).
+- The drive-log check measured a stream's rate from its median interval: a stream stamped on a coarser clock (a
+  15 Hz radar on 80 Hz ticks, intervals of 62.5 and 75 ms) read 16 Hz and was flagged. It now uses the mean of the
+  regular intervals, drops left out.
+- The drive-log check run from a script (Python, without the analysis engine) did not model the own vehicle: lidar
+  edges a mirror camera's own mirror hides were matched to the mirror's image edge, and a correctly mounted mirror
+  camera came out 0.4° off and "rotated". It now always models the vehicle, with the checked variant's rig. Whether
+  an axis is pinned down is now judged over at least a pixel, so on small images a well-agreed axis is no longer
+  called uncertain.
+- The road study said "N of M cases pass the load cases' limits" when it counted the cases that exceed them.
+- Typographic characters (°, ±, ×, →) in exported PNG images came out as "??".
+
+**Changed**
+
+- `--export` without `--formats` writes the default formats; the two new ones (`experiment`, `sim_rig`) are written
+  only when named. 45 export formats, 31 pages.
+- New batch exit codes: 6 (a result does not reproduce, or a validation check failed) and 7 (a CARLA run failed).
+
+**What it does**
+
+Everything in 0.2.0 and before (below): place cameras, lidars, radars, GNSS antennas and IMUs on the vehicle and the
+rig; prove what they record; calibrate and check them against recordings; hand the calibration to the data pipeline.
+Now with designed experiments over the design, the rig in the CARLA simulator, every model validated against
+independent references, and a provenance record on every number. Free software under the GNU General Public License,
+version 3 or later.
+
+**Downloads**
+
+| System | File | Needs |
+|---|---|---|
+| Windows | `Vantage-0.3.0-windows-x64-setup.exe` (installer), or the `.zip` | Windows 10 or 11, x64 |
+| macOS | `Vantage-0.3.0-macos-arm64.zip` | macOS 14 or later, Apple silicon |
+| Linux x86_64 | `Vantage-0.3.0-linux-x86_64.tar.gz` | glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer) |
+| Linux arm64 | `Vantage-0.3.0-linux-arm64.tar.gz` | glibc 2.35 or later: NVIDIA Jetson Orin with JetPack 6, Ubuntu 22.04 arm64 and newer |
+
+`SHA256SUMS.txt` lists each file's SHA-256. Every bundle carries its own Python and libraries and can check itself
+on your machine: the *Vantage self-test* entry in the Start menu on Windows, `vantage --self-test` on Linux once
+installed, `/Applications/Vantage.app/Contents/MacOS/vantage-cli --self-test` on macOS. On a Jetson, GStreamer
+camera pipelines need `gst-launch-1.0` (JetPack installs it; else `sudo apt install gstreamer1.0-tools`).
+
+**Unsigned builds**
+
+The downloads are not code-signed, so the system warns the first time:
+
+- **Windows** (SmartScreen, "Windows protected your PC"): choose *More info*, then *Run anyway*.
+- **macOS** ("Vantage cannot be opened" or "Apple could not verify Vantage"): open *System Settings ▸ Privacy &
+  Security* and choose *Open Anyway* next to the message about Vantage (on macOS 14 you can instead Control-click the
+  app and choose *Open*). If macOS says the app is damaged, run in Terminal:
+  `xattr -dr com.apple.quarantine /Applications/Vantage.app`.
+- **Linux**: nothing to approve; check the download against `SHA256SUMS.txt`.
+
+**Known limits**
+
+- Validated in simulation and on synthetic captures only; the first fitted rig will tell how close the planned poses,
+  the installation check and the calibrations come in practice.
+- Lidar, radar, GNSS and IMU figures in the library are nominal datasheet values (the radars are typical classes, not
+  specific products); check them against your units.
+- The drift indicator of the live rig health is an indicator, not a measurement: it misses a rotation along a body
+  edge (a mirror camera's yaw) and featureless edges, and frame times are when frames reached Vantage, not sensor time.
+- STEP import needs the optional gmsh package, which the downloads do not include: run from source with
+  `pip install .[step]` for it.
+- No Intel Mac or Windows on Arm build (Windows on Arm runs the x64 build emulated); run from source there.
+- The Linux arm64 bundle needs glibc 2.35 or later: JetPack 6 on a Jetson (Ubuntu 22.04), not JetPack 5 (Ubuntu
+  20.04; run from source there). It carries Qt 6.7 rather than 6.11, because PyQt6's later arm64 builds need Ubuntu
+  24.04; the whole test suite passes on both. It was built and self-tested on GitHub's arm64 machines, not yet on a
+  Jetson; on a Jetson, OpenGL comes from NVIDIA's driver.
+- Without OpenGL 2.1 the 3D view falls back to a slower software renderer.
+- ROS 2 bags: rosbag2's whole-file compression (`.mcap.zstd`) is not read (`ros2 bag decompress` first), nor XCDR2
+  messages.
+- The assistant sends what it reads of the design (figures, issues, the project brief) to Groq; it is off until you
+  give it a key, and it proposes design changes for you to apply rather than making them.
+- Since 0.2.0: the road surface is used by the coverage analysis and the road study; the optimiser, tolerance study,
+  perception range, stitched-objects study, installation check and critical targets still assume flat ground. The
+  material, weather, headlamp and cable figures are typical values with their sources stated, not measurements of your
+  vehicle, parts or units. The automation command runs with your own permissions, unsandboxed.
+- New in 0.3.0: CARLA's cameras need a GPU. CARLA's car is not your vehicle's body, so the as-built outline check reports a CARLA
+  drive as not checkable; the drive-log rotation check is the cross-check (on CARLA drives the cameras share a pitch of
+  about −0.1° whose cause is not known yet; the views' mounting, CARLA's projection and its lidar check out exactly). CARLA's lidar has no reflectivity and its radar no cross-section.
+- The validation suite checks the models on the cases it builds against independent references; it does not
+  replace measuring a fitted rig.
+
 ## 0.2.0 — 2026-10-26
 
 Seven new studies for the rig on the road and in the workshop, and a more accurate installation check and lidar–camera

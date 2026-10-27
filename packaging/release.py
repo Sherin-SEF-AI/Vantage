@@ -29,17 +29,26 @@ def version(root: str = ROOT) -> str:
     return m.group(1)
 
 
+# the CARLA bridge runs in CARLA's own Python with the bundle's folder on PYTHONPATH (vantage.sim.server.vantage_source):
+# these sources must be there as plain files, not only compiled inside the bundle
+BRIDGE_SOURCES = ('vantage/__init__.py', 'vantage/core/__init__.py', 'vantage/core/rosbag.py', 'vantage/core/mathutil.py')
+
+
 def data_files(root: str = ROOT) -> list[tuple[str, str]]:
     """(source file, destination folder) for every file of the package that is not Python (fonts, icons, the C++
-    stitcher and its CMake file), plus the runtime's Python stitcher as a plain file too: exports copy it next to the
-    remap tables, so it must exist on disk, not only as compiled code inside the bundle."""
+    stitcher and its CMake file), plus as plain files too: the runtime's Python stitcher (exports copy it next to the
+    remap tables, so it must exist on disk, not only as compiled code inside the bundle) and the CARLA bridge's sources
+    (vantage/sim and BRIDGE_SOURCES, run by CARLA's Python)."""
     out = []
     pkg = os.path.join(root, 'vantage')
     for d, subdirs, files in os.walk(pkg):
         subdirs[:] = sorted(s for s in subdirs if s != '__pycache__')
         rel = os.path.relpath(d, root)
         for f in sorted(files):
-            if not f.endswith(('.py', '.pyc')) or (os.path.basename(d) == 'runtime' and f.endswith('.py')):
+            src = os.path.relpath(os.path.join(d, f), root).replace(os.sep, '/')
+            if not f.endswith(('.py', '.pyc')) or (f.endswith('.py') and (
+                    os.path.basename(d) in ('runtime', 'sim') and rel.replace(os.sep, '/').count('/') == 1
+                    or src in BRIDGE_SOURCES)):
                 out.append((os.path.join(d, f), rel))
     return out
 
