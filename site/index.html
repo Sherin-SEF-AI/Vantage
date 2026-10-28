@@ -952,7 +952,7 @@ analysed 6-cam · v3: 6 cameras in 0.6 s
 wrote range.json
 <span class="p">$</span> jq -c '.provenance | [.vantage.version, .project.sha256[:12],
       .variant.name, .result_sha256[:12]]' range.json
-["0.4.0","87a7e88f9b1a","6-cam · v3","cf837a06e950"]
+["0.5.0","87a7e88f9b1a","6-cam · v3","cf837a06e950"]
 <span class="p">$</span> vantage tigor.vantage --reproduce range.json report.json 2&gt;/dev/null
 <span class="p">$</span> echo $?; jq -r '.message, .reasons[]' report.json
 0
@@ -1433,10 +1433,11 @@ does not match)</span></pre>
 <section class="alt" id="assistant">
   <div class="wrap">
     <div class="head">
-      <div class="eyebrow">AI assistant</div>
-      <h2>Ask the design questions. Get answers from the analysis.</h2>
-      <p>The assistant runs on a model hosted on Groq with your own API key. It reads the design only through Vantage's
-        own tools, so every number in an answer comes from the analysis, and it can only propose changes.</p>
+      <div class="eyebrow">AI assistant and Copilot</div>
+      <h2>Ask the design questions. Say what to run. Approve the plan.</h2>
+      <p>The assistant runs on a cloud model with your own API key, Groq or Claude. It reads the design only through
+        Vantage's own tools, so every number in an answer comes from the analysis; it proposes changes and plans, and
+        nothing changes or runs until you say so.</p>
     </div>
     <article class="feature" style="padding-top:0">
       <div class="text">
@@ -1458,6 +1459,36 @@ does not match)</span></pre>
           <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
           <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
         </div>
+      </div>
+    </article>
+    <article class="feature flip" id="copilot">
+      <div class="text">
+        <div class="eyebrow">Copilot · new in 0.5.0</div>
+        <h3>Say what to run; review every value; approve</h3>
+        <p>Ask in plain words, <i>a 10 s drive in Town10 at dusk in rain, 30 cars, 10 walkers, a pedestrian crossing,
+          ground truth on</i>, and the Copilot answers with a plan: every setting filled in, each with where it came
+          from and why, the limits that apply and an estimate. You change any value, then approve it, or not.</p>
+        <ul>
+          <li><b>Plans for every run:</b> CARLA drives, simulation campaigns, detection quality, critical targets in
+            CARLA, the live rig with timed faults, designed experiments, sample datasets, studies and exports.</li>
+          <li><b>Values in words:</b> <i>F pitch 25–45° (5 levels) · F lens h05r2, h03r2</i>; a follow-up such as
+            <i>20 cars and fog</i> lists its changes one per setting; settings a design does not use are greyed.</li>
+          <li><b>Nothing runs until you approve:</b> the approval is recorded in the project with the exact settings and
+            their SHA-256, each page refuses a plan without it, an approved plan never changes, and every output names
+            its plan. <code class="nowrap">--run-plan</code> repeats it headless without the model.</li>
+          <li><b>Groq or Claude</b> (Opus 5.5 or Sonnet 5.5), each with its own key and cost line; a <i>What was sent</i>
+            view shows each request, never images, recordings, keys or folders.</li>
+        </ul>
+        <p class="note">The model's answers can be wrong, which is why the plan is checked by the page's own rules and
+          shown to you before anything runs. The replies in this picture were scripted; the plan's values, checks and
+          estimate were computed by Vantage.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <img src="media/copilot.jpg" alt="A Copilot plan card for a designed experiment: the changes from version 1 listed one per setting, every value with where it came from and why, the settings this design does not use greyed, and the Reject, Open on its page and Approve and run buttons" loading="lazy" width="1015" height="820">
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+        <p class="caption">A plan revised by a follow-up, waiting for approval.</p>
       </div>
     </article>
   </div>
@@ -1598,7 +1629,7 @@ saved built.vantage with variant 6-cam · v3 · as-built
 <section class="alt" id="download">
   <div class="wrap">
     <div class="head">
-      <div class="eyebrow">Download · version 0.4.0</div>
+      <div class="eyebrow">Download · version 0.5.0</div>
       <h2>Install Vantage.</h2>
       <p>Vantage is free software, licensed under the GPL-3.0-or-later. Downloads that need no Python are on the
         <a href="https://github.com/Sherin-SEF-AI/Vantage/releases/latest">latest release</a>, with SHA-256 checksums in <code>SHA256SUMS.txt</code>; or install from

@@ -11,7 +11,8 @@ The intro is 00_intro.py (part 0) and the outro 99_outro.py (part 6). META and L
 
 Episodes: the chapter files of every video live here side by side (ids are unique across them); an episode is a plan
 over them (EPISODES: its parts, chapters, intro, outro and the texts of its deliverables). 'tour' is the full app tour
-(PLAN, PARTS); 'v020' is "What's new in Vantage 0.2.0" (files 40_intro-v020 ... 49_outro-v020). The episode in use is
+(PLAN, PARTS); 'v020' is "What's new in Vantage 0.2.0" (files 40_intro-v020 ... 49_outro-v020); 'gt040' is "Ground
+truth from CARLA · Vantage 0.4.0" (files 50_intro-gt040 ... 59_outro-gt040). The episode in use is
 $VANTAGE_EPISODE (default 'tour'; produce.py --episode sets it for every child process); a chapter's own episode is
 episode_of(cid), so record.py and cards.py need no variable.
 """
@@ -94,6 +95,20 @@ PLAN_V020 = [
     (8, 'new-automation', 3, 'Automation and CI'),
 ]
 
+# "Ground truth from CARLA · Vantage 0.4.0": the files are 51_gt-rig.py ... 55_gt-app.py (numbered 1 to 5 on screen);
+# their footage is real CARLA drives painted by gtfootage.py, the last chapter the app itself
+PARTS_GT040 = {
+    1: ('Labels from CARLA', 'Every camera frame and lidar sweep of a drive, labelled through the rig’s own lenses.'),
+    2: ('Drives to datasets', 'Scenarios that replay the same way, and the drives opened, read and handed on.'),
+}
+PLAN_GT040 = [
+    (1, 'gt-rig', 1, 'The rig in CARLA'),
+    (2, 'gt-layers', 1, 'Four layers on one camera'),
+    (3, 'gt-lidar', 1, 'Every lidar point labelled'),
+    (4, 'gt-scenarios', 2, 'Scenarios'),
+    (5, 'gt-app', 2, 'In the app'),
+]
+
 # what an episode is: its plan, and what its deliverables say (assemble.py reads the texts; None = the tour's own)
 EPISODES = {
     'tour': {
@@ -119,6 +134,19 @@ EPISODES = {
         'tags': 'v020',
         'thumb': {'still': 'intro-v020', 'shot_x': 640, 'eyebrow': "WHAT'S NEW IN", 'word': 'Vantage 0.2.0', 'word_px': 156,
                   'lines': ('Targets, road, weather,', 'harness, calibration, CI.'), 'foot': 'FREE AND OPEN SOURCE'},
+    },
+    'gt040': {
+        'parts': PARTS_GT040, 'plan': PLAN_GT040, 'intro': 'intro-gt040', 'outro': 'outro-gt040', 'version': '0.4.0',
+        'name': 'vantage-carla-ground-truth',
+        'title': 'Ground truth from CARLA · Vantage 0.4.0: labels for every camera frame and lidar point',
+        'video_title': 'Ground truth from CARLA · Vantage 0.4.0',
+        'marks': ('Intro: ground truth from CARLA', 'Download 0.4.0, website and licence'),
+        'texts': ('{name}-chapters.txt', '{name}-description.md', '{name}-thumbnail.png'),
+        'description': 'gt040',
+        'tags': 'gt040',
+        'thumb': {'still': 'intro-gt040', 'shot_x': 640, 'eyebrow': 'VANTAGE 0.4.0', 'word': 'Ground truth',
+                  'word_px': 150, 'lines': ('Every camera frame and', 'lidar point, from CARLA.'),
+                  'foot': 'FREE AND OPEN SOURCE'},
     },
 }
 DEFAULT_EPISODE = 'tour'

@@ -989,10 +989,11 @@ def logo_reveal(img: QImage, t: float, dur: float, a_out: float = 1.0, version: 
     p.end()
 
 
-def end_card(img: QImage, t: float, dur: float, version: str | None = None, rows=None):
+def end_card(img: QImage, t: float, dur: float, version: str | None = None, rows=None, foot=None):
     """The end screen: the left half says what to do next; the right half stays clear for YouTube's end-screen
     elements (two video tiles and the subscribe button). `rows`: [(heading, link, note)] instead of the download,
-    website and source rows; `version` instead of VERSION."""
+    website and source rows; `version` instead of VERSION; `foot` instead of the line at the bottom (what the video
+    was made from)."""
     p = painter(img)
     x = 150
     k = out_cubic(window(t, 0.0, 0.8))
@@ -1022,8 +1023,8 @@ def end_card(img: QImage, t: float, dur: float, version: str | None = None, rows
     p.fillRect(QRectF(W / 2 + 10, 150, 1, (H - 300) * k), col(INK, 0.08))
     k = out_cubic(window(t, 1.2, 0.8))
     f_v = font(16, 'medium', mono=True, spacing=1.5)
-    draw_text(p, x, H - 96, f'v{version or VERSION}  ·  RECORDED FROM THE APP  ·  VOICE: KOKORO-82M, LOCAL', f_v, MUTED,
-              0.8 * k)
+    foot = foot or f'v{version or VERSION}  ·  RECORDED FROM THE APP  ·  VOICE: KOKORO-82M, LOCAL'
+    draw_text(p, x, H - 96, foot, f_v, MUTED, 0.8 * k)
     p.end()
 
 

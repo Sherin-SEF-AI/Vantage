@@ -497,13 +497,58 @@ same simulated captures. Narration: Kokoro-82M (voice af_heart), rendered locall
 {tags}
 """
 
+DESCRIPTIONS['gt040'] = """# {title}
+
+## Description
+
+Vantage {version} labels what a sensor rig records in the CARLA simulator: every camera frame gets a semantic, an
+instance and a range image and its objects (tight and full 2D boxes, 3D boxes, occlusion, truncation, COCO), and every
+lidar sweep its nuScenes-lidarseg and panoptic labels. This video shows them on real CARLA 0.9.16 drives of the app's
+sample data rig (six fisheye cameras and a 128-beam roof lidar), frame by frame at real speed: how each label is made
+through the fisheye's own lens model, what it is worth against the lidar, the built-in scenarios that replay the same
+way for the same seed, and the drives opened in the app's Ground truth tab and read back in batch mode.
+
+In this video:
+- The rig in CARLA: each fisheye rendered as five pinhole views and joined through its lens model's remap; an instance
+  and a depth image beside every view, read at the nearest view pixel, so labels are never blurred.
+- Four layers on one camera: tight boxes from each object's own pixels and full boxes from its 3D box; CARLA's 29
+  semantic classes plus the ego; one colour per object for the whole drive; the range along each pixel's ray.
+- Every lidar point labelled: a semantic lidar on the same rays as the recorded one, checked on every step.
+- Scenarios: a pedestrian crossing, a cyclist crossing and a cut-in, each with its events in run.json.
+- In the app: Simulate ▸ CARLA ▸ Open run…, the Ground truth tab and its object table, the nuScenes and COCO files,
+  and --ground-truth-summary.
+
+Download {version} (Windows, macOS, Linux x86-64 and arm64 / Jetson): https://github.com/Sherin-SEF-AI/Vantage/releases/tag/v{version}
+Website and documentation (Simulate in CARLA ▸ Ground truth, faults and scenarios): https://sherin-sef-ai.github.io/Vantage/
+Source code: https://github.com/Sherin-SEF-AI/Vantage
+Licence: GPL-3.0-or-later. Free and open source.
+
+Notes: the footage is real CARLA 0.9.16 drives recorded by Vantage {version} (Town10HD, ClearNoon, seed 1), shown at
+their real speed and held where marked "paused"; every figure narrated is read from the drives' own files, except the
+range and lidar-box checks, which were measured on the same drive without walkers and are said so. The last chapter is
+recorded from the app itself. CARLA is a separate open-source simulator; it is not part of Vantage. Narration:
+Kokoro-82M (voice af_heart), rendered locally. Music: synthesised for this video.
+
+## Chapters
+
+{chapters}
+
+## Tags
+
+{tags}
+"""
+
 TAGS = ['autonomous driving', 'self-driving', 'sensor rig', 'data collection', 'camera placement', 'lidar', 'radar',
         'sensor calibration', 'camera calibration', 'surround view', 'fisheye camera', 'GMSL', 'Jetson AGX Orin',
         'e-con Systems', 'ROS 2', 'nuScenes', 'KITTI', 'Kalibr', 'OpenCV', 'open source', 'PyQt', 'Vantage']
 TAGS_BY = {'v020': ['Vantage 0.2.0', 'what is new', 'autonomous driving', 'data collection', 'sensor rig',
                     'sensor calibration', 'lidar camera calibration', 'calibration observability', 'radar fascia',
                     'cable harness', 'GMSL2', 'weather simulation', 'fog', 'night driving', 'speed bump',
-                    'mounting tolerance', 'CI', 'GitHub Actions', 'GitLab CI', 'open source', 'Vantage']}
+                    'mounting tolerance', 'CI', 'GitHub Actions', 'GitLab CI', 'open source', 'Vantage'],
+           'gt040': ['Vantage 0.4.0', 'CARLA', 'CARLA simulator', 'ground truth', 'auto-labelling', 'synthetic data',
+                     'semantic segmentation', 'instance segmentation', 'depth', 'lidar segmentation',
+                     'nuScenes-lidarseg', 'panoptic segmentation', 'COCO', 'fisheye camera', 'sensor rig',
+                     'data collection', 'autonomous driving', 'scenarios', 'open source', 'Vantage']}
 
 
 def write_description(marks, path, title, ep=None):

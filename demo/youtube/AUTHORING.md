@@ -266,6 +266,7 @@ deliverables are called and say. `chapters.EPISODES` holds them:
 |---|---|---|---|
 | `tour` (the default) | `vantage-tour.mp4`: the full app tour, v0.1.1 | `00_intro` ... `38_install-anywhere`, `99_outro` | 5 |
 | `v020` | `vantage-whats-new-0.2.0.mp4`: what is new in 0.2.0 | `40_intro-v020`, `41_new-critical` ... `48_new-automation`, `49_outro-v020` | 3 |
+| `gt040` | `vantage-carla-ground-truth.mp4`: ground truth from CARLA, 0.4.0 | `50_intro-gt040`, `51_gt-rig` ... `55_gt-app`, `59_outro-gt040` | 2 |
 
 * `produce.py --episode v020` chooses it, and every child (voice, record, cards, assemble) gets it as
   `VANTAGE_EPISODE`. `--only` with ids of one episode chooses that episode without `--episode`; ids of another episode
@@ -289,6 +290,13 @@ deliverables are called and say. `chapters.EPISODES` holds them:
 * Chapter 47's before/after cards read `demo/build/youtube/data/calib_measure.json`, written by
   `demo/youtube/calib_measure.py` (0.1.1's joint and lidar–camera solves, read from the tag v0.1.1 with `git show`,
   against 0.2.0's on the same simulated captures; about 8 minutes, under the 2G cap): run it before recording 47.
+* gt040's chapters 50-54 are not app recordings: they film a `gtfootage.FootageView` (`r.win = view`), a frame-sized
+  widget that paints real CARLA drives with their ground truth (`Quad`, `SixGrid`, `Pair`, `LidarBig`, `Scenario`,
+  `Single`, `BevFull` layouts) at the drive time of its clock, which follows the recorder's frame counter, so a drive
+  plays at real speed and `G.play_until(r, view, t)` holds it ("paused" in its header); zooms, callouts and figures
+  work on it as on the app. The drives are read from `$VANTAGE_GT_DRIVES` (CARLA 0.9.16 drives with ground truth:
+  `gt_drive_walkers`, `scenario_*`); chapter 55 opens a drive in the app from `$VANTAGE_CLIP_RUNS` as
+  `demo/clip_carla.py` does. A segment's key does not include `gtfootage.py`: after changing it, `--rerecord`.
 * The sound alone: `assemble.py --episode v020 --remux` (under the heavy lock and the 6G cap, as produce runs it) keeps
   the video of the deliverable already assembled from the same pieces and redoes the mix, loudness, subtitles, texts
   and sheets (about 4 minutes instead of 18). When the AAC encode overshoots -1 dBTP, the assembler now limits the mix

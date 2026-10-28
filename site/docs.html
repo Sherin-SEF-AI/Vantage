@@ -84,6 +84,7 @@
     <a href="#assistant">Setting up</a>
     <a href="#assistant-use">Asking and proposals</a>
     <a href="#agent">Agent mode</a>
+    <a href="#copilot">The Copilot: plans you approve</a>
     <a href="#privacy">What is sent</a>
     <p>Data</p>
     <a href="#sample-dataset">Sample dataset</a>
@@ -1218,18 +1219,31 @@ vantage project.vantage            # open a project</code></pre>
       <code>--fleet [OUT.json|DIR]</code> writes the report, exiting with 3 when a sensor needs re-mounting.</p>
 
     <h2 id="assistant">Assistant: setting up</h2>
-    <p>The assistant is a chat about the open design with a model hosted on <a href="https://groq.com">Groq</a>, using
-      your own API key. It is off until you set it up:</p>
+    <p>The assistant is a chat about the open design, and the Copilot that plans runs for your approval, with a cloud
+      model of your choice and your own API key: <a href="https://groq.com">Groq</a> or Claude (Anthropic). It is off
+      until you set it up:</p>
     <ol>
-      <li>Create a key at <a href="https://console.groq.com/keys">console.groq.com/keys</a>.</li>
-      <li>Open <b>Preferences ▸ Assistant</b> (<kbd>Ctrl</kbd>+<kbd>,</kbd>), tick <b>Use the assistant</b>, paste the key and press <b>Test</b>: Vantage checks the key and loads the chat models it may use.</li>
-      <li>Pick a model (GPT-OSS 120B by default) and a reasoning effort, then <b>Apply</b>.</li>
+      <li>Create a key with the provider (Groq: <a href="https://console.groq.com/keys">console.groq.com/keys</a>;
+        Claude: the Claude Console).</li>
+      <li>Open <b>Preferences ▸ Assistant</b> (<kbd>Ctrl</kbd>+<kbd>,</kbd>), tick <b>Use the assistant</b>, choose the
+        <b>Provider</b>, paste its key and press <b>Test</b>: Vantage checks the key and loads the models it may use.
+        Each provider keeps its own key; switching provider starts a new conversation.</li>
+      <li>Pick a model, then <b>Apply</b>. Groq: GPT-OSS 120B by default, with a reasoning effort. Claude:
+        <code>claude-opus-5-5</code> by default or <code>claude-sonnet-5-5</code>; thinking is adaptive, at effort
+        high when the Copilot plans a run and medium for a question.</li>
     </ol>
+    <p>The Claude provider uses Anthropic's official Python SDK. The downloads include it; from source install it with
+      <code>pip install --user "anthropic==2.3.0"</code> (or <code>pip install ".[claude]"</code> in the source
+      folder). Without it, Preferences says so and the Groq provider works as before. With Claude, a request a safety
+      classifier declines is retried on Anthropic's recommended model for that category (server-side fallback, a
+      setting on by default); a refusal that stands is shown with its reason and runs nothing.</p>
+    <p>Preferences also hold an optional <b>daily token cap</b> (all providers; nothing is sent once it is used up)
+      and Groq's prices for the cost line (Claude's are built in, with their source and date).</p>
     <figure><div class="frame natural"><img src="media/prefs.jpg" alt="Preferences, Assistant tab: Use the assistant, the API key field with Test, the model and the reasoning effort, and what is sent" loading="lazy" width="1600" height="900"></div>
       <figcaption>Preferences ▸ Assistant before a key is entered.</figcaption></figure>
     <p>The key is kept in the system keyring when the optional <code>keyring</code> package and a keyring service are
       available, otherwise in a private file in your settings folder that only you can read; never in projects. The
-      <code>GROQ_API_KEY</code> environment variable takes precedence.</p>
+      <code>GROQ_API_KEY</code> and <code>ANTHROPIC_API_KEY</code> environment variables take precedence.</p>
 
     <h3 id="assistant-use">Asking and proposals</h3>
     <p>Open the panel with <kbd>Ctrl</kbd>+<kbd>J</kbd>. The model reads the design only through Vantage's tools, so
@@ -1248,6 +1262,7 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td>Optimise a camera</td><td>Searches one camera's pose within ranges for the least blind ground, best minimum density or most redundancy, optionally keeping a minimum density; says when the gain is not worth it.</td></tr>
       <tr><td>Simulate / propose a change</td><td>Camera poses, lenses, seam angles or thresholds, analysed on a copy; a proposal shows the predicted effect.</td></tr>
       <tr><td>Show in Vantage</td><td>Selects cameras, frames a ground point, switches heatmaps and overlays, opens pages. Never changes the design.</td></tr>
+      <tr><td>Catalogue, run settings, limits, estimate, check, propose a plan</td><td>The Copilot's tools (below): what a run can use, each kind's settings, the documented limits, a plan's estimate and its checks, and the plan shown to you. None of them starts, stops or deletes anything.</td></tr>
     </table>
     <p>The assistant can only <b>propose</b> design changes. A proposal card lists the changes (mirrored partners
       included) and the predicted effect; <b>Apply</b> makes one undo step, <b>As new variant</b> applies it to a copy
@@ -1257,6 +1272,7 @@ vantage project.vantage            # open a project</code></pre>
       is saved with the project and sent with every question. Type <code>/</code> for commands:</p>
     <table>
       <tr><th>Command</th><th>Does</th></tr>
+      <tr><td><code>/plan …</code></td><td>Plan a run for your approval (the Copilot).</td></tr>
       <tr><td><code>/goal …</code></td><td>Work towards a goal on its own (agent mode for this message).</td></tr>
       <tr><td><code>/optimise QR</code></td><td>Search a camera's pose and propose it if worth it.</td></tr>
       <tr><td><code>/compare</code></td><td>Compare all variants and recommend one.</td></tr>
@@ -1273,13 +1289,64 @@ vantage project.vantage            # open a project</code></pre>
       and reports what it tried. It has a larger budget than a question (30 rounds of tool calls, 4 minutes); when the
       budget runs out it writes up what it has. <kbd>Esc</kbd> stops it at any time.</p>
 
+    <h3 id="copilot">The Copilot: plans you approve</h3>
+    <p>Say what you want run and the Copilot plans it; it never runs it. For example: <i>a 10 s drive in Town10 at
+      dusk in rain, 30 cars, 10 walkers, a pedestrian crossing, ground truth on, half-size images</i>; <i>a fault
+      campaign: turn F and ML by 0.1 to 1°, three seeds, plus clean drives</i>; <i>compare detection on the two latest
+      drives</i>; <i>critical targets in CARLA</i>; <i>start the live rig and freeze QR after 10 s</i>; <i>an
+      experiment: F pitch 25–45° by 5° × the two lenses, blind area</i>; <i>a 20 s sample dataset at 40 km/h</i>; a
+      study; an export. The model works only through tools: it reads the catalogue (towns, weathers and Vantage
+      conditions, scenarios and their parameters, fault kinds and ranges, actor kinds, the detector model, the
+      recordings found, past runs), each kind's settings and the documented limits, then proposes a <b>plan</b>.</p>
+    <p>A plan is one or more steps: a <b>CARLA drive</b>, a <b>simulation campaign</b>, <b>detection quality</b>,
+      <b>critical targets in CARLA</b>, the <b>CARLA live rig</b> (cameras, scale and faults on a schedule), a
+      <b>designed experiment</b>, a <b>sample dataset</b>, a <b>study</b> or an <b>export</b>. Each step holds the full
+      settings of the page that runs it, cleaned by that page's own rules. The plan card shows:</p>
+    <ul>
+      <li>the summary and the steps;</li>
+      <li>every value in a table grouped by section, with where it came from (<i>your request</i>, <i>default</i>,
+        <i>chosen by the Copilot</i>, <i>forced by a limit</i>) and a one-line reason, said in the page's own words
+        (<i>F pitch 25–45° (5 levels)</i>, <i>Blind ground in the ROI (m²), less is better</i>; the JSON in the
+        tooltip). <i>Forced by a limit</i> means the page changed what was asked; a setting the step's design,
+        scenario or study does not use is greyed as <i>not used</i>. Double-click a value to change it with the page's
+        own kind of field (a new version of the plan, checked again);</li>
+      <li>warnings: substitutions and documented limits, such as <i>CARLA's lidar ignores rain</i>, <i>the as-built
+        check cannot judge mounts on CARLA</i>, or an image scale lowered because full size with ground truth exceeds
+        the bridge's render budget;</li>
+      <li>the estimate, from the app's own estimators: CARLA minutes (from this machine's measured drives where there
+        are any), frames and labels, disk, drives, design points;</li>
+      <li>after a follow-up (<i>more rain</i>, <i>only F</i>, <i>halve it</i>), what changed from the previous version:
+        one line per setting (<i>Traffic 30 → 20 vehicles</i>, <i>Factors: added F lens h05r2, h03r2</i>); a
+        follow-up revises the plan, it does not start over.</li>
+    </ul>
+    <p>A plan that does not validate cannot be approved: the page's settings rules, the render budget, the memory free
+      (MemAvailable), a CARLA port of 2000–2010 that is not the project's own, a missing detector model. The model must
+      fix it or say why.</p>
+    <p><b>Approve and run</b> checks the plan again, writes an <b>approval record</b> into the project
+      (<code>analysis.copilot</code>: the plan, your words, the provider and model, the resolved settings and their
+      SHA-256, the time and the status) and runs each step through exactly the code path of its page's own Run button;
+      a CARLA step uses the CARLA page's server, started as the page starts it on the project's port. A page's Run
+      reached from a plan refuses unless the record is there, intact, with exactly the settings it is about to run. An
+      approved plan never changes: an edit makes a new version that needs approval again. Undo never removes a record.
+      The outputs' provenance names the plan (its <code>plan</code> field), and the plan's folder in the working folder
+      holds <code>copilot_plan.json</code> with each step's result. <b>Open on its page</b> fills the page's fields as
+      one undo step and runs nothing; <b>Reject</b> drops the plan.</p>
+    <p><b>More ▸ Copilot plans</b> lists the project's approved plans; <b>Run again</b> re-runs one from its stored
+      settings without asking the model. In batch mode <code>--run-plan ID [OUT_DIR]</code> does the same (exit 10 when
+      the project holds no approved, intact plan of that ID or a step no longer validates). After a run, ask about the
+      results: the Copilot reads them with the read tools and can propose the next plan, which you approve again.</p>
+
     <h3 id="privacy">What is sent</h3>
-    <div class="callout"><p>With each question, Vantage sends Groq the question, a short context line (project and
-      variant names, the open page, the selected cameras), your project brief, and the results of the lookups the
-      model asks for: camera, lidar, radar, GNSS antenna and IMU poses, lens, module and sensor model names, analysis
-      figures, the fleet's vehicle names and measured offsets (never VINs), a checked drive log's or as-built
-      recording's file name and findings, and the requirements. The vehicle model, images, point clouds, captures and files are never sent. Groq processes them under its own terms. Answers can be wrong: check a proposal's
-      predicted effect before applying it.</p></div>
+    <div class="callout"><p>With each question, Vantage sends the provider you chose (Groq or Anthropic) the question,
+      a short context line (project and variant names, the open page, the selected cameras), your project brief, the
+      plan settings, and the results of the lookups the model asks for: camera, lidar, radar, GNSS antenna and IMU
+      poses, lens, module and sensor model names, analysis figures, run summaries, the fleet's vehicle names and
+      measured offsets (never VINs), a checked drive log's or as-built recording's file name and findings, and the
+      requirements. Never sent: the vehicle model, images, recordings, point clouds, captures, keys (the key goes only
+      in the request's header), stream passwords, the automation command, files, or this computer's folders (shown as
+      <code>~</code>). <b>More ▸ What was sent</b> shows the last request as it left. The first question to a provider
+      asks once, naming it. The provider processes what is sent under its own terms. Answers can be wrong: check a
+      proposal's predicted effect before applying it, and a plan before approving it.</p></div>
 
     <!-- ======================================================== data -->
     <h2 id="sample-dataset">Sample dataset</h2>
@@ -1315,11 +1382,10 @@ vantage project.vantage            # open a project</code></pre>
     <p><b>Generate</b> writes into a new folder of the <b>working folder</b>, which Vantage remembers (Preferences ▸
       General, or <i>Working folder…</i> on the page; <code>~/Documents/Vantage</code> until you change it):
       <code>&lt;working folder&gt;/&lt;project&gt;/datasets/&lt;variant&gt;-&lt;date-time&gt;/</code>, a new folder for every run.
-      <i>Generate into…</i> writes one drive anywhere else. The assistant can write one as well: ask it for a sample
-      dataset and it calls <code>generate_sample_dataset</code> with the page's settings or the ones you name
-      (duration, speed, scene, image size), shows its progress (Esc cancels) and puts the result on this page; the model
-      is told only the folder's name inside the working folder, never your home path. Exports of a project that has
-      not been saved yet also go to the working folder (<code>&lt;project&gt;/exports/&lt;variant&gt;</code>).</p>
+      <i>Generate into…</i> writes one drive anywhere else. The Copilot can plan one: ask for a sample dataset and it
+      proposes a plan with the page's settings or the ones you name (duration, speed, scene, image size); once you
+      approve it, this page writes it. Exports of a project that has not been saved yet also go to the working folder
+      (<code>&lt;project&gt;/exports/&lt;variant&gt;</code>).</p>
 
     <h2 id="rosbags">ROS 2 bags</h2>
     <p>Vantage writes and reads ROS 2 bags itself, without a ROS installation. A bag is a folder holding an MCAP file and a
@@ -1783,7 +1849,8 @@ vantage --ground-truth-summary drive/ gt.json       # a drive's ground truth in 
 vantage project.vantage --carla-live 20 live/ --live-cameras F --live-fault '5:{"tag": "F", "deg": [0, 1, 0]}'
 vantage project.vantage --detection-quality det/ --detection-recording drive/ --detection-download
 vantage project.vantage --campaign campaign/ --campaign-template weather_sweep
-vantage project.vantage --critical-carla critical/  # critical targets stood in CARLA, compared with the study</code></pre>
+vantage project.vantage --critical-carla critical/  # critical targets stood in CARLA, compared with the study
+vantage project.vantage --run-plan P3F9A21C plan-run/  # a Copilot plan approved in the app, from its record</code></pre>
     <table>
       <tr><th>Option</th><th>Meaning</th></tr>
       <tr><td><code>--variant NAME|N</code></td><td>Variant by name or 1-based index (default: the active one).</td></tr>
@@ -1811,6 +1878,7 @@ vantage project.vantage --critical-carla critical/  # critical targets stood in 
       <tr><td><code>--detection-quality OUT_DIR</code></td><td>The detector on CARLA drives with ground truth, evaluated: JSON, CSV, PNG, COCO results, overlays. <code>--detection-recording RUN_DIR</code> (repeatable, the first the reference; default the project's recordings), <code>--detection-download</code> fetches the model first.</td></tr>
       <tr><td><code>--campaign OUT_DIR</code></td><td>The project's simulation campaign (or <code>--campaign-template fault_detectability|weather_sweep|rig_ab</code>): its drives in the campaign's folder when it names one, else OUT_DIR/drives; the analysis into OUT_DIR. <code>--campaign-phase drive|evaluate|analyse</code> runs part of it; a run again resumes.</td></tr>
       <tr><td><code>--critical-carla OUT_DIR</code></td><td>The critical targets stood in CARLA and compared with the study (drives in OUT_DIR/drives, reused); <code>--critical-carla-drives DIR</code> compares drives recorded before, without CARLA.</td></tr>
+      <tr><td><code>--run-plan ID[:VERSION] [OUT_DIR]</code></td><td>Run a Copilot plan approved in the app from its approval record in the project (its stored settings; no model is asked), each step through the option that runs that kind into OUT_DIR/step-&lt;n&gt;-&lt;kind&gt; (default: the plan's folder in the working folder); every output's provenance names the plan. CARLA steps need a server already running, as <code>--carla-run</code> does.</td></tr>
       <tr><td><code>--save OUT.vantage</code></td><td>Save the project afterwards: with imported or fitted calibrations, fleet records, the suspension data read by <code>--suspension-data</code>, or the as-built variant of <code>--as-built-check</code>.</td></tr>
     </table>
     <p>Captures are matched to cameras by the tag in the file name (<code>F.png</code>, <code>cam_QR.jpg</code>,
@@ -1827,6 +1895,7 @@ vantage project.vantage --critical-carla critical/  # critical targets stood in 
       <tr><td><code>7</code></td><td>With <code>--carla-run</code>, <code>--carla-live</code>, <code>--campaign</code> or <code>--critical-carla</code>, no CARLA server answers, CARLA's client Python is missing, or the run fails (its <code>run.json</code> and <code>bridge.log</code>, or <code>live.log</code>, say why).</td></tr>
       <tr><td><code>8</code></td><td>With <code>--detection-quality</code> (or a <code>--campaign</code> whose checks include detection), the detector model is missing or does not verify, or its download failed.</td></tr>
       <tr><td><code>9</code></td><td>With <code>--campaign</code>, a drive failed or is still to do: run it again, and what is done is reused.</td></tr>
+      <tr><td><code>10</code></td><td>With <code>--run-plan</code>, the project holds no approved, intact plan of that ID, or a step no longer validates: approve it again in the app. Otherwise <code>--run-plan</code> returns the first failing step's own code; a step that reports findings (3, 5 or 6) lets the plan go on, any other stops it.</td></tr>
     </table>
     <p>When several apply, the highest is returned. Ctrl+C during a CARLA run returns 130 once CARLA is tidied up. <code>--watch</code> exits with its last run's code: the command's own
       when it ran, else 5 when the requirements check fails, 4 when the project could not be read or a format not
