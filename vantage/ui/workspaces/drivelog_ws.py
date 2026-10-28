@@ -34,6 +34,9 @@ FIELDS = (
                                                           'flagged'),
     ('search_deg', 'Search range', '°', 1, 0.5, 'Rotation corrections are searched within ± this'),
     ('drop_factor', 'Drop factor', '×', 2, 0.1, 'An interval this many times the nominal period counts as a drop'),
+    ('freeze_frames', 'Freeze repeats', '', 0, 1.0,
+     'Repeats in a row that make a camera frozen: this many images or more identical to the one before are a fault, '
+     'fewer a warning (a working camera\'s noise makes every frame differ)'),
     ('sync_tol_ms', 'Sync tolerance', 'ms', 1, 0.5, 'Sync offsets and trigger skews beyond this are flagged'),
 )
 STREAM_COLS = (('Sensor', ''), ('Topic', ''), ('Msgs', 'Messages on the topic'),
@@ -281,7 +284,8 @@ class DriveLogPage(QWidget):
         self.tiles = {}
         for key, caption, tip in (
                 ('streams', 'Streams', 'Visible sensors whose stream passes every check, of all'),
-                ('drops', 'Dropped frames', 'Frames missing over all streams, and the worst stream'),
+                ('drops', 'Dropped frames', 'Frames missing over all streams, and the worst stream; frozen frames '
+                                            '(images identical to the one before) when there are any'),
                 ('sync', 'Worst sync offset', 'The largest camera trigger error against the sync plan (the lidar\'s '
                                               'phase error taken out)'),
                 ('rotation', 'Worst camera rotation', 'The largest confident rotation correction of a camera against '
@@ -716,10 +720,13 @@ class DriveLogPage(QWidget):
                                                                              if m['missing'] else '')),
                                   'good' if not m['streams_faulty'] else 'critical' if m['missing'] or any(
                                       e['status'] == 'fault' for e in res.streams) else 'warning')
+        fz = m.get('frozen_frames') or 0
         self.tiles['drops'].set(f'{m["drops"]}', 'frames', (f'worst {m["worst_drop"]} '
                                                            f'{m["worst_drop_share"] * 100:.1f} %' if m['drops'] else
-                                                           'no gaps'), 'good' if not m['drops'] else
-                                'critical' if m['worst_drop_share'] > 0.01 else 'warning')
+                                                           'no gaps')
+                                + (f' · {fz} frozen ({m["worst_freeze"]})' if fz else ''),
+                                'critical' if m['drops'] and m['worst_drop_share'] > 0.01 else
+                                'warning' if m['drops'] or fz else 'good')
         tol = res.settings.sync_tol_ms
         if m['worst_sync_ms'] is None:
             self.tiles['sync'].set('—', '', res.sync.get('reason') or 'not measured')

@@ -1,5 +1,6 @@
 """Drive-log check in the UI: the overlay viewer (a sampled camera frame with the lidar points projected at the plan's or
-the corrected rotation, coloured by range) and the timeline of each stream's data and gaps over the drive."""
+the corrected rotation, coloured by range) and the timeline of each stream's data, gaps and frozen images over the
+drive."""
 from __future__ import annotations
 
 
@@ -111,13 +112,14 @@ class OverlayView(QWidget):
 
 class TimelineView(ChartBase):
     """Each stream over the drive: a bar from its first to its last message, its gaps (intervals over the drop
-    factor × its period) in red, at least 2 px wide, a missing stream hatched. Hover a row for its figures."""
+    factor × its period) in red and the time a camera repeated one image (amber, from the held frame to its last
+    repeat), each at least 2 px wide, a missing stream hatched. Hover a row for its figures."""
     LEFT, ROW, TOP, AXIS = 56, 20, 22, 26
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.title = 'Data and gaps per stream'
-        self.rows = []                  # dicts: tag, color, first, last, gaps, missing, status, tip
+        self.title = 'Data, gaps and frozen images per stream'
+        self.rows = []                  # dicts: tag, color, first, last, gaps, frozen, missing, status, tip
         self.duration = 0.0
         self.setMinimumHeight(self.TOP + self.AXIS + self.ROW)
 
@@ -164,6 +166,10 @@ class TimelineView(ChartBase):
             for g0, g1 in r['gaps']:
                 ga, gb = self._x(g0), self._x(g1)
                 p.fillRect(QRectF(ga, y + 3, max(gb - ga, 2.0), self.ROW - 6), gc)
+            fc = QColor(STATUS['warning'])
+            for fr in r.get('frozen', ()):
+                fa, fb = self._x(fr['held_s']), self._x(fr['to_s'])
+                p.fillRect(QRectF(fa, y + 3, max(fb - fa, 2.0), self.ROW - 6), fc)
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(sev_color(r['status']))
             p.drawEllipse(QPointF(self.width() - 6, y + self.ROW / 2), 3, 3)
@@ -201,6 +207,11 @@ class TimelineView(ChartBase):
                      None)
             if g is not None:
                 tip += f'\nGap from {g[0]:.3f} s to {g[1]:.3f} s ({(g[1] - g[0]) * 1000:.0f} ms)'
+            fr = next((f for f in r.get('frozen', ()) if f['held_s'] - 0.02 * self.duration <= t <=
+                       f['to_s'] + 0.02 * self.duration), None)
+            if fr is not None:
+                tip += (f'\nFrozen from {fr["from_s"]:.3f} s to {fr["to_s"]:.3f} s: {fr["repeats"]} '
+                        f'frame{"s" * (fr["repeats"] != 1)} repeat the image of {fr["held_s"]:.3f} s')
         QToolTip.showText(e.globalPosition().toPoint(), tip, self)
 
 
@@ -215,12 +226,15 @@ def timeline_rows(res, var) -> list:
         if e['topic'] is None:
             tip = f'{e["tag"]}: no topic in the log'
         else:
+            fz = e.get('frozen') or {}
             tip = (f'{e["tag"]} · {e["topic"]}\n{e["messages"]} messages'
                    + (f' at {e["rate_hz"]:.2f} Hz' if e.get('rate_hz') else '')
                    + (f' (plan {e["expected_hz"]:g} Hz)' if e.get('expected_hz') else '')
-                   + (f'\n{e["drops"]} dropped, longest gap {e["longest_gap_ms"]:.0f} ms' if e.get('drops') else ''))
+                   + (f'\n{e["drops"]} dropped, longest gap {e["longest_gap_ms"]:.0f} ms' if e.get('drops') else '')
+                   + (f'\n{fz["frames"]} frozen frame{"s" * (fz["frames"] != 1)} (identical to the one before), '
+                      f'longest run {fz["longest"]}' if fz.get('frames') else ''))
         first, last = e.get('span_s') or (e.get('first_s', 0.0), e.get('last_s', 0.0))
         rows.append({'tag': e['tag'], 'color': col, 'first': first, 'last': last,
-                     'gaps': e.get('gaps', []), 'missing': e['topic'] is None, 'status': e['status'] or 'ok',
-                     'tip': tip})
+                     'gaps': e.get('gaps', []), 'frozen': list((e.get('frozen') or {}).get('runs', [])),
+                     'missing': e['topic'] is None, 'status': e['status'] or 'ok', 'tip': tip})
     return rows

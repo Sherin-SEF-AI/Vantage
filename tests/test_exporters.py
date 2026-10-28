@@ -85,6 +85,8 @@ def exported(sample, images, tmp_path_factory, qapp):
     steps = []
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(ex, '_now', lambda: FIXED_NOW)
+        from vantage import workdir
+        mp.setattr(workdir, 'default', lambda: str(out / 'work'))   # (no campaign of the user's working folder)
         paths = ex.export([f.id for f in ex.FORMATS], p, res, ex.ExportOptions(out_dir=str(out), images=images),
                           progress=steps.append)
     return out, paths, steps
@@ -97,10 +99,11 @@ def _cams(p):
 # ----------------------------------------------------------------------------- registry
 def test_formats_registry():
     ids = [f.id for f in ex.FORMATS]
-    assert len(ids) == len(set(ids)) == 45
+    assert len(ids) == len(set(ids)) == 47
     # written only when named (batch --export without --formats leaves them out): an experiment runs for minutes,
-    # the CARLA rig's remap tables are tens of MB
-    assert [f.id for f in ex.FORMATS if not f.default] == ['experiment', 'sim_rig']
+    # the CARLA rig's remap tables are tens of MB, a campaign's analysis and the detector's evaluation take minutes
+    assert [f.id for f in ex.FORMATS if not f.default] == ['experiment', 'sim_campaign', 'detection_quality',
+                                                            'sim_rig']
     assert {f.group for f in ex.FORMATS} == set(ex.GROUPS)
     for f in ex.FORMATS:
         assert f.kind in ('text', 'binary')
@@ -124,7 +127,8 @@ def test_export_writes_every_file(sample, exported):
     # (json, 2 csv, the suspension data json), the calibration observability (json, csv, png: no lidar, no fusion
     # map), the cable harness (json, csv, png), the road and body motion on flat ground (json, csv), the critical
     # targets (json, 2 csv, 2 png), the materials (json, 2 csv, png), the weather comparison (json, 2 csv, png),
-    # the CI templates (2 yml, md), no experiment (none set up) and the CARLA rig (json, npz)
+    # the CI templates (2 yml, md), no experiment (none set up), no simulation campaign (no drive on disk), no
+    # detection quality (no recording) and the CARLA rig (json, npz)
     assert len(paths) == (11 + 2 * n + 2 + (2 * n + 4) + 4 + 5 + 2 + 2 * n + 2 + 2 + 3 + 3 + n + 1 + 2 + 2 + 2
                           + 3 + 3 + 2 + 3 + 3 + 4 + 2 + 4 + 3 + 3 + 2 + 5 + 4 + 4 + 3 + 0 + 2)
     for path in paths:
@@ -613,8 +617,10 @@ def test_number_formatting():
 
 
 # ----------------------------------------------------------------------------- robustness
-def test_exports_without_analysis_result(sample, tmp_path, qapp):
+def test_exports_without_analysis_result(sample, tmp_path, qapp, monkeypatch):
     """No mesh analysis (result None): every non-image format still exports."""
+    from vantage import workdir
+    monkeypatch.setattr(workdir, 'default', lambda: str(tmp_path / 'work'))   # (no campaign of the user's own)
     p, _ = sample
     ids = [f.id for f in ex.FORMATS if f.group not in ('Images', 'Surround view')]
     paths = ex.export(ids, p, None, ex.ExportOptions(out_dir=str(tmp_path)))
@@ -626,8 +632,9 @@ def test_exports_without_analysis_result(sample, tmp_path, qapp):
     # IMU, the requirements and the fleet: three; sun glare and dirt: two; the brackets: four (QL, QR, json, sheet);
     # the housings: two; the suspension load cases: four; the calibration observability and the cable harness:
     # three; the road and body motion on flat ground: two; the critical targets: five; the materials and the weather
-    # comparison: four; the CI templates: three; the experiment: none (the sample has none set up); the CARLA rig: two
-    assert len(paths) == ((len(ids) - 27) + 2 * len(_cams(p)) + 2 + 2 + 2 + 2 + 2 + 2 + 3 + 3
+    # comparison: four; the CI templates: three; the experiment: none (the sample has none set up); the simulation
+    # campaign and the detection quality: none (no drive, no recording); the CARLA rig: two
+    assert len(paths) == ((len(ids) - 29) + 2 * len(_cams(p)) + 2 + 2 + 2 + 2 + 2 + 2 + 3 + 3
                           + 3 + 3 + 3 + 3 + 2 + 4 + 2 + 4 + 3 + 3 + 2 + 5 + 4 + 4 + 3 + 0 + 2)
     html_text = (tmp_path / 'report.html').read_text('utf-8')
     assert 'No analysis result' in html_text

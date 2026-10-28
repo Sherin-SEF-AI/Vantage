@@ -51,6 +51,7 @@ def win(app):
         pump(app, 0.05)
     settle(app, w)
     yield w
+    settle(app, w)          # a run a test's last edit started must not emit into a deleted window
     w.store.undo.setClean()
     w.cancel_jobs()
     w.close()

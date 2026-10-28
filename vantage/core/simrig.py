@@ -25,6 +25,10 @@ tag and a 0.9.16 server running here without rendering)
   sun_azimuth_angle, sun_altitude_angle in degrees; fog_density 0–100, fog_distance m, fog_falloff; wetness 0–100;
   scattering, Mie and Rayleigh scales; dust_storm) and the presets ClearNoon … HardRainNight, DustStorm. Fog and rain
   are rendered effects for the RGB camera only: they do not change lidar or radar returns. There is no snow.
+  Measured here (round 8, a still camera, linear light): fog_density sets an extinction proportional to it, a MOR of
+  FOG_MOR_M / fog_density for objects 0.2–2.5 m above the road (a height fog: denser along the road surface itself);
+  precipitation renders water on the lens, not extinction: contrast −12, −21, −34 % at every range for 30, 60, 100
+  and the image centre blurred (its sharpness ×0.74, ×0.38, ×0.32).
 * sensor.camera.rgb: a pinhole camera only, square pixels, image_size_x/_y, fov = the horizontal field (f = W / (2
   tan(fov/2)), principal point at the image centre), BGRA 8-bit raw_data; a lens-distortion post-process (lens_k,
   lens_kcube, lens_circle_*) that is no calibrated lens model; exposure_mode manual | histogram, gamma, motion blur,
@@ -106,6 +110,12 @@ What this module makes
 * Vehicle: the CARLA vehicle nearest the project's (length, width, height, wheelbase), from a table measured on the
   0.9.16 server (CARLA_VEHICLES); its body is not the project's, so the cameras see a different car.
 
+* Ground truth, faults, a scenario, an actors scene (round 8): SimSettings.ground_truth {semantic, instance, range,
+  lidar_labels} (the cameras rendered for it, and their cost in Mpx, in the rig's ground_truth block; each camera's
+  'lens' block lets the bridge project 3D boxes through Vantage's exact lens model), faults (a list, checked against
+  the rig's sensors), scenario {name, params}, actors (ACTORS.json's list), spawn_point, walkers; the contracts and
+  their checks are vantage.sim.carla_bridge's (FAULT_KINDS, SCENARIOS, ACTOR_KINDS, clean_*).
+
 Limits: CARLA renders its own world and its own vehicle; lidar and radar ignore the weather; lidar intensity is not a
 reflectivity; the radar has no RCS and no noise model of Vantage's; a camera frame is one instant (no rolling shutter,
 no motion blur); trigger offsets and rates round to the simulation step.
@@ -123,6 +133,7 @@ import numpy as np
 
 from .lens import resolve
 from .mathutil import BODY_TO_OPTICAL, rot_zyx
+from ..sim import carla_bridge as CB
 from ..sim import frames as FR
 
 SCHEMA = 'vantage.sim_rig/1'
@@ -200,8 +211,15 @@ LIMITS = {'duration_s': (1.0, 600.0), 'traffic': (0, 300), 'seed': (0, 999999), 
           'tick_hz': (0.0, 400.0), 'min_tick_hz': (1.0, 400.0), 'max_tick_hz': (1.0, 400.0),
           'lidar_noise_cm': (0.0, 20.0), 'max_lidar_channels': (2, 1024), 'radar_points': (50, 20000),
           'exposure_ev': (-5.0, 5.0), 'warmup_s': (0.0, 30.0), 'memory_gb': (4.0, 64.0), 'port': (1024, 65000),
-          'tm_port': (1024, 65000), 'timeout_s': (5.0, 600.0)}
-INTS = ('traffic', 'seed', 'jpeg_quality', 'max_lidar_channels', 'radar_points', 'port', 'tm_port')
+          'tm_port': (1024, 65000), 'timeout_s': (5.0, 600.0), 'spawn_point': (-1, 100000), 'walkers': (0, 300)}
+INTS = ('traffic', 'seed', 'jpeg_quality', 'max_lidar_channels', 'radar_points', 'port', 'tm_port', 'spawn_point',
+        'walkers')
+SCENARIOS = tuple(CB.SCENARIOS)
+SERVER_MPX_WARN = 150.0          # rendered Mpx per frame above which the plan warns (measured: 77 ran, 306 crashed)
+GT_NOTE = ('Ground truth beside every pinhole view: CARLA\'s instance camera (its red channel is the semantic tag, its '
+           'green and blue the actor id) and depth camera, same size, field, pose and step; labels read the nearest '
+           'view pixel through the remap (never interpolated), the range runs along each output pixel\'s own ray. A '
+           'semantic lidar beside every lidar (same channels, azimuths and steps) labels each recorded point.')
 BOOLS = ('nuscenes', 'rosbag', 'drop_self_hits', 'undistort')
 ASSUMPTIONS = (
     'CARLA renders its own world, traffic and ego vehicle (the nearest CARLA vehicle by size, not the project\'s '
@@ -209,9 +227,11 @@ ASSUMPTIONS = (
     'instant (no rolling shutter or motion blur) with a manual exposure. Lidar: CARLA\'s even channels resampled to '
     'the beam elevations, the azimuth grid exact; one return per beam, intensity = CARLA\'s atmospheric attenuation '
     '(not reflectivity); no weather effect. Radar: CARLA\'s random rays in an elliptical cone per zone, no RCS. Rates '
-    'and trigger times round to the simulation step. Weather: Vantage\'s conditions mapped to CARLA\'s parameters by '
-    'documented heuristics (CARLA publishes no calibration of fog density or rain against visibility or rain rate); '
-    'fog and rain show in the camera images only; CARLA has no snow.')
+    'and trigger times round to the simulation step. Weather: a Vantage condition\'s fog becomes CARLA\'s fog by a '
+    'calibration measured on CARLA 0.9.16 (a visibility of about 7000 m / fog_density for road users, ±15 %; denser '
+    'along the road surface), its light and rain by documented heuristics (CARLA publishes no calibration of them); '
+    'CARLA\'s rain is water on the lens (contrast lost at every range, the image centre blurred), not extinction with '
+    'range; fog and rain show in the camera images only; CARLA has no snow.')
 
 
 # =========================================================================== settings
@@ -221,6 +241,7 @@ class SimSettings:
     weather: str = 'project'           # 'project' (the selected weather condition), 'vantage:<id>' or a CARLA preset
     duration_s: float = 20.0
     traffic: int = 30                  # other vehicles on autopilot
+    walkers: int = 0                   # pedestrians on CARLA's walker AI (a free drive, a scenario's background)
     seed: int = 1
     vehicle: str = 'auto'              # 'auto' (nearest by size) or a CARLA blueprint id
     camera_rate: str = 'lidar'         # lidar: one frame per lidar rotation at the sync plan's trigger; module: its fps
@@ -247,6 +268,12 @@ class SimSettings:
     port: int = 2000
     tm_port: int = 8100
     timeout_s: float = 60.0
+    # round 8: ground truth, faults, scenarios, an actors scene (contracts in vantage.sim.carla_bridge)
+    ground_truth: dict = field(default_factory=lambda: CB.clean_ground_truth({}))
+    faults: list = field(default_factory=list)          # [{'tag', 'kind', ...}] (CB.FAULT_KINDS)
+    scenario: dict = field(default_factory=lambda: {'name': 'free_drive', 'params': {}})
+    actors: list = field(default_factory=list)          # ACTORS.json's list: an actors scene around the ego, still
+    spawn_point: int = -1                               # the ego's spawn point (−1: a straight road, by the seed)
 
     def to_dict(self):
         return asdict(self)
@@ -287,6 +314,17 @@ class SimSettings:
         if 0.0 < s.tick_hz < 1.0:
             s.tick_hz = 1.0
         s.max_tick_hz = max(s.max_tick_hz, s.min_tick_hz)
+        if 'ground_truth' in d:
+            s.ground_truth = CB.clean_ground_truth(d['ground_truth'])
+        s.faults = CB.clean_faults(d.get('faults'))[0]
+        sc = d.get('scenario')
+        if isinstance(sc, str):
+            sc = {'name': sc}
+        if isinstance(sc, dict):
+            s.scenario = CB.clean_scenario(sc.get('name'), sc.get('params'))[0]
+            s.scenario['params'] = {k: v for k, v in s.scenario['params'].items()
+                                    if k in (sc.get('params') or {})}       # only what was set (defaults implied)
+        s.actors = CB.clean_actors(d.get('actors'))[0]
         return s
 
 
@@ -299,6 +337,31 @@ def _interp(x, xs, ys):
     return float(np.interp(float(x), xs, ys))
 
 
+# CARLA 0.9.16's fog against visibility, measured (round 8: Town10HD, a still pinhole camera 1.6 m up with the
+# bridge's camera attributes, no traffic, every weather field but fog_density fixed, fog_distance 0, fog_falloff 0.1,
+# two views down long straight lanes; the frames in linear light through vantage.sim.tonemap's response). The
+# contrast of texture edges 0.2–2.5 m above the road (where road users are) against the fog-free frame falls as
+# exp(−b·r) with b ∝ fog_density, 3.4e-4 to 5.2e-4 per metre per unit over densities 10–100 (median 4.3e-4): so the
+# WMO MOR (5 % contrast, Koschmieder: MOR = 2.996 / b) is FOG_MOR_M / fog_density, FOG_MOR_M = 7000 m (±15 %: the
+# views and the densities differ by that much). The fog is a height fog: rays that end on the road surface, and low
+# objects such as hedges, pass through denser fog (from density 40 up their contrast is 0.15–0.75 of the fog-free
+# one already at 5–20 m).
+FOG_MOR_M = 7000.0
+FOG_DENSITY_MAX = 100.0              # CARLA's largest fog_density: a MOR below FOG_MOR_M / 100 = 70 m is not reached
+
+
+def fog_density_for(visibility_m: float) -> float:
+    """CARLA fog_density (fog_distance 0, fog_falloff 0.1) whose fog has the given MOR for road users (FOG_MOR_M)."""
+    if not visibility_m or visibility_m <= 0:
+        return 0.0
+    return float(min(FOG_DENSITY_MAX, FOG_MOR_M / float(visibility_m)))
+
+
+def fog_mor_of(fog_density: float) -> float | None:
+    """The MOR (m) CARLA's fog of this fog_density gives road users (the inverse of fog_density_for); None for 0."""
+    return FOG_MOR_M / float(fog_density) if fog_density and fog_density > 0 else None
+
+
 def carla_weather(project, settings: SimSettings) -> dict:
     """{'source', 'label', 'preset' (or ''), 'params' (WeatherParameters fields), 'night', 'beam', 'notes'} for the
     settings' weather: a CARLA preset as it is, or a Vantage condition (core.weather) mapped by these heuristics
@@ -308,8 +371,11 @@ def carla_weather(project, settings: SimSettings) -> dict:
     * rain: precipitation and wind piecewise linear in the rate, 2.5 mm/h (upper end of light rain, AMS) → 30
       (SoftRain), 7.6 mm/h (upper end of moderate) → 60 (MidRain), 25 mm/h → 100 (HardRain); puddles 50 → 90 as the
       presets; wetness as CARLA's night presets (0 by day, as its noon presets);
-    * fog: fog_density log-linear in the visibility, 10 km → 3 (CloudyNoon's haze), 50 m → 100, from the camera
-      (fog_distance 0), falloff 0.1 (the presets');
+    * fog: fog_density = FOG_MOR_M / visibility, from the camera (fog_distance 0), falloff 0.1: measured on CARLA
+      0.9.16 (FOG_MOR_M's note), so the fog's MOR for road users is the condition's (150 m → 46.7; it used to be a
+      log-linear guess, 10 km → 3, 50 m → 100, which put 79.9 on a 150 m fog: a MOR of about 90 m, 60 m along the
+      road surface, and the weather sweep's car recall fell from 26 to 3 %); below 70 m CARLA's densest fog (100)
+      is used and said;
     * snow: none in CARLA: rendered as cloud and wet roads, and said."""
     w = settings.weather
     if w in CARLA_WEATHERS:
@@ -337,9 +403,12 @@ def carla_weather(project, settings: SimSettings) -> dict:
     vis = float(c.visibility_m or 0.0)
     fog = 3.0 if not night else 60.0
     if vis > 0:
-        fog = 3.0 + 97.0 * min(max(math.log(10000.0 / vis) / math.log(10000.0 / 50.0), 0.0), 1.0)
-        notes.append(f'Fog {vis:g} m → fog_density {fog:.0f} (a heuristic: CARLA does not calibrate it against '
-                     'visibility; it shows in the camera images only).')
+        fog = fog_density_for(vis)
+        got = fog_mor_of(fog)
+        notes.append(f'Fog {vis:g} m → fog_density {fog:.1f} (measured on CARLA 0.9.16: a MOR of {FOG_MOR_M:g} m / '
+                     'fog_density for road users, ±15 %; denser along the road surface; camera images only)'
+                     + (f'; CARLA\'s densest fog gives {got:.0f} m, not {vis:g} m' if got and got > vis * 1.05 else '')
+                     + '.')
     if float(c.snow_mm_h) > 0:
         cloud = max(cloud, 80.0)
         deposits = max(deposits, 40.0)
@@ -560,6 +629,20 @@ def blend_tables(d, ok, views: list, offsets: list, band_deg: float = SEAM_BLEND
 def view_sizes_cost(views) -> float:
     """Megapixels a camera frame renders."""
     return sum(v.width * v.height for v in views) / 1e6
+
+
+def bridge_memory_gb(cams: list, gt_kinds: list, workers: int = 3) -> float:
+    """The bridge's peak memory (GB, an estimate with a 30 % margin) for the rig's cameras: the remap tables (about
+    11 bytes per output pixel), the ground truth's per-pixel tables (57), the frames in flight (CB.MAX_CAMERA_JOBS of
+    every camera's views, 4 bytes per rendered pixel per camera kind) and each worker's temporaries; 0.5 GB besides."""
+    k = len(gt_kinds)
+    out = sum(c['image']['width'] * c['image']['height'] for c in cams)
+    rend = [c['render_mpx'] * 1e6 for c in cams]
+    per_frame = (sum(rend) / max(len(rend), 1)) * 4 * (1 + k)
+    worker = max(rend, default=0.0) * 4 * (k + 1) + max((c['image']['width'] * c['image']['height'] for c in cams),
+                                                         default=0) * (60 if k else 20)
+    b = 0.5e9 + out * (11 + (57 if k else 0)) + CB.MAX_CAMERA_JOBS * per_frame + workers * worker
+    return round(1.3 * b / 1e9, 2)
 
 
 # =========================================================================== lidar
@@ -813,6 +896,8 @@ def build(project, settings: SimSettings | None = None, variant=None, progress=N
     remaps = {}
     doc_cams = []
     sensor_tab, cal_tab, tfs = [], [], []
+    gt = dict(st.ground_truth)
+    gt_kinds = CB.gt_camera_kinds(gt)
     for i, c in enumerate(cams):
         if stopped():
             return None
@@ -837,6 +922,14 @@ def build(project, settings: SimSettings | None = None, variant=None, progress=N
                     remaps[f'{key}__blend_{name}'] = arr
         R_cam = rot_zyx(c.yaw, c.pitch, c.roll)
         O2V = R_cam @ BODY_TO_OPTICAL.T                         # optical -> vehicle
+        if st.undistort and intr.projection != 'rectilinear':
+            lens_doc = {'model': 'pinhole', 'K': _m4(K), 'max_theta_deg': math.degrees(intr.max_theta),
+                        'image_size': [w, h]}
+        else:
+            lens_doc = {'model': 'lens', 'projection': intr.projection, 'f_px': float(intr.f_px),
+                        'kb': [float(x) for x in intr.kb], 'cx': float(intr.cx), 'cy': float(intr.cy),
+                        'aspect': float(intr.aspect), 'max_theta_deg': math.degrees(intr.max_theta),
+                        'sensor_size': [int(intr.width), int(intr.height)], 'image_size': [w, h]}
         doc_views = []
         for vw in views:
             R_body = O2V @ vw.F @ BODY_TO_OPTICAL               # the view's body frame (x along it) -> vehicle
@@ -882,7 +975,9 @@ def build(project, settings: SimSettings | None = None, variant=None, progress=N
             'capture': {'rate_hz': rate, 'every_ticks': n, 'phase_ticks': q, 'recorded_hz': R / n,
                         'exposure_centre_s': centre, 'recorded_centre_s': rec_c,
                         'offset_error_ms': 1000.0 * (rec_c - centre), 'triggered': trig_ok, 'trigger_ms': trig},
-            'render_mpx': round(view_sizes_cost(views), 3)})
+            'lens': lens_doc,
+            'render_mpx': round(view_sizes_cost(views), 3),
+            'gt_render_mpx': round(view_sizes_cost(views) * len(gt_kinds), 3)})
         if abs(R / n - rate) > 1e-6:
             notes.append(f'{c.tag}: {rate:g} Hz recorded at {R / n:.4g} Hz (a whole number of steps).')
     prog(0.7, 'Lidars, radars, GNSS and IMU')
@@ -976,6 +1071,41 @@ def build(project, settings: SimSettings | None = None, variant=None, progress=N
     veh = match_vehicle(p, st.vehicle)
     wx = carla_weather(p, st)
     notes += wx['notes']
+    # ---- ground truth, faults, the scenario, an actors scene
+    kinds = {c['tag']: 'camera' for c in doc_cams}
+    kinds.update({x['tag']: k for k, docs in (('lidar', doc_lid), ('radar', doc_rad), ('imu', doc_imu),
+                                              ('gnss', doc_gnss)) for x in docs})
+    faults, fbad = CB.clean_faults(st.faults, kinds)
+    notes += fbad
+    scen, sbad = CB.clean_scenario(st.scenario.get('name'), st.scenario.get('params'))
+    notes += sbad
+    actors, abad = CB.clean_actors(st.actors)
+    notes += abad
+    if actors and scen['name'] != 'free_drive':
+        notes.append(f'An actors scene: the {scen["name"]} scenario is not run (the ego stands still with the actors).')
+    rgb_mpx = sum(c['render_mpx'] for c in doc_cams)
+    gt_mpx = sum(c['gt_render_mpx'] for c in doc_cams)
+    gt_doc = dict(gt, camera_kinds=gt_kinds, render_mpx=round(rgb_mpx, 3), gt_render_mpx=round(gt_mpx, 3),
+                  lidar_sensors=len(doc_lid) if gt.get('lidar_labels') else 0, note=GT_NOTE)
+    mem = bridge_memory_gb(doc_cams, gt_kinds)
+    if mem > 3.5:
+        notes.append(f'The bridge needs about {mem:.1f} GB (its cap is set from this; full-size images with ground '
+                     'truth are the heavy case).')
+    if rgb_mpx + gt_mpx > CB.RENDER_BUDGET_MPX:
+        notes.append(f'The bridge refuses this run: {rgb_mpx + gt_mpx:.0f} Mpx per frame is over its render budget of '
+                     f'{CB.RENDER_BUDGET_MPX:g} (a 0.9.16 server capped at 12 GB crashed at 306 Mpx; --render-budget-mpx '
+                     'raises it for a bigger server).')
+    elif rgb_mpx + gt_mpx > SERVER_MPX_WARN:
+        notes.append(f'CARLA renders {rgb_mpx + gt_mpx:.0f} Mpx per frame of all cameras: more than the server may '
+                     f'hold (a 0.9.16 server capped at 12 GB crashed at 306 Mpx: six 1920 × 1536 fisheyes with ground '
+                     f'truth; 77 Mpx, the same at half size, ran). Lower the image size, or record the ground truth of '
+                     'fewer cameras or none.')
+    if gt.get('lidar_labels') and doc_lid and not st.nuscenes:
+        notes.append('Lidar labels are written as nuScenes-lidarseg and -panoptic files: they need the nuScenes '
+                     'output (on).')
+    if gt_mpx:
+        notes.append(f'Ground truth renders {gt_mpx:.1f} Mpx per frame of all cameras beside the images\' '
+                     f'{rgb_mpx:.1f} ({" + ".join(gt_kinds)}).')
     # keyframes: every n-th sweep of the first lidar (else frame of the first camera), as core.dataset
     ref_rate = doc_lid[0]['rate_hz'] if doc_lid else (doc_cams[0]['capture']['recorded_hz'] if doc_cams else
                                                       (doc_rad[0]['recorded_hz'] if doc_rad else 1.0))
@@ -1000,9 +1130,16 @@ def build(project, settings: SimSettings | None = None, variant=None, progress=N
             k: round(float(meas[k]), 4) for k in ('Length', 'Width', 'Height', 'Wheelbase', 'front_x', 'rear_x')
             if k in meas}),
         'simulation': {'tick_hz': R, 'dt_s': dt, 'warmup_ticks': warm, 'tick_candidates': tick['candidates'],
+                       'bridge_memory_gb': mem, 'render_mpx_per_frame': round(rgb_mpx + gt_mpx, 3),
                        'timing': {'lidar_period_s': period, 'readout_s': readout, 'exposure_s': exposure}},
         'scenario': {'town': st.town, 'weather': st.weather, 'duration_s': st.duration_s, 'traffic': st.traffic,
-                     'seed': st.seed, 'warmup_s': st.warmup_s},
+                     'seed': st.seed, 'warmup_s': st.warmup_s, 'name': scen['name'], 'params': scen['params'],
+                     'walkers': st.walkers},
+        'ground_truth': gt_doc,
+        'faults': faults,
+        'actors': {'items': actors, 'spawn_point': int(st.spawn_point),
+                   'frame': 'vehicle (ISO 8855, rear axle on the ground): x, y the target\'s ground-contact centre '
+                            '(its box centre on the ground), z its lowest point, yaw its heading; metres, degrees'},
         'server': {'port': st.port, 'tm_port': st.tm_port, 'quality': st.quality, 'memory_gb': st.memory_gb,
                    'timeout_s': st.timeout_s},
         'weather': wx,
@@ -1034,6 +1171,7 @@ def run(project, engine=None, settings=None, variant=None, progress=None, cancel
 def summary(rig: SimRig) -> dict:
     d = rig.doc
     return {'project': rig.project, 'variant': rig.variant, 'carla_version': d['carla_version'],
+            'bridge_memory_gb': d['simulation'].get('bridge_memory_gb'),
             'tick_hz': d['simulation']['tick_hz'], 'warmup_ticks': d['simulation']['warmup_ticks'],
             'vehicle': d['vehicle']['blueprint'], 'vehicle_size_error': d['vehicle'].get('size_error'),
             'weather': d['weather']['label'],
@@ -1044,7 +1182,11 @@ def summary(rig: SimRig) -> dict:
                         'elevation_error_deg': l['elevation_error_deg'], 'oversample': l['oversample'],
                         'rays_per_s': l['rays_per_s']} for l in d['lidars']],
             'radars': [{'tag': r['tag'], 'zones': len(r['zones']), 'hz': round(r['recorded_hz'], 4)} for r in d['radars']],
-            'imus': [x['tag'] for x in d['imus']], 'gnss': [x['tag'] for x in d['gnss']], 'notes': list(rig.notes)}
+            'imus': [x['tag'] for x in d['imus']], 'gnss': [x['tag'] for x in d['gnss']],
+            'ground_truth': {k: d['ground_truth'][k] for k in CB.GT_KEYS},
+            'gt_render_mpx': d['ground_truth']['gt_render_mpx'], 'render_mpx': d['ground_truth']['render_mpx'],
+            'scenario': d['scenario']['name'], 'faults': len(d['faults']), 'actors': len(d['actors']['items']),
+            'notes': list(rig.notes)}
 
 
 def to_doc(rig: SimRig, project=None) -> dict:
@@ -1058,9 +1200,16 @@ def remap_npz(rig: SimRig) -> bytes:
 
 
 def files(rig: SimRig, project=None) -> list:
-    """[(name, bytes)]: sim_rig.json and sim_remap.npz (what the bridge reads)."""
-    return [('sim_rig.json', (json.dumps(rig.doc, indent=1) + '\n').encode('utf-8')),
-            ('sim_remap.npz', remap_npz(rig))]
+    """[(name, bytes)]: sim_rig.json and sim_remap.npz (what the bridge reads); faults.json and actors.json too when
+    the rig has faults or an actors scene (the same lists sim_rig.json carries, for the bridge's --faults and
+    --actors)."""
+    out = [('sim_rig.json', (json.dumps(rig.doc, indent=1) + '\n').encode('utf-8')),
+           ('sim_remap.npz', remap_npz(rig))]
+    if rig.doc.get('faults'):
+        out.append(('faults.json', (json.dumps(rig.doc['faults'], indent=1) + '\n').encode('utf-8')))
+    if rig.doc.get('actors', {}).get('items'):
+        out.append(('actors.json', (json.dumps(rig.doc['actors']['items'], indent=1) + '\n').encode('utf-8')))
+    return out
 
 
 def export(rig: SimRig, project, out_dir) -> list[str]:

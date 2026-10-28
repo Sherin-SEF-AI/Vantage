@@ -68,6 +68,8 @@ REFERENCES = {
                   '(crest and sag vertical curves).',
     'liang2008': 'C.-K. Liang, L.-W. Chang and H. H. Chen, "Analysis and compensation of rolling shutter effect", '
                  'IEEE Trans. Image Processing 17(8), 1323–1330, 2008.',
+    'rfc7693': 'M-J. Saarinen and J-P. Aumasson, "The BLAKE2 Cryptographic Hash and Message Authentication Code '
+               '(MAC)", RFC 7693, IETF, 2015.',
     'ieee1588': 'IEEE 1588-2019, Standard for a Precision Clock Synchronization Protocol for Networked Measurement '
                 'and Control Systems (PTP).',
     'groves2013': 'P. D. Groves, Principles of GNSS, Inertial, and Multisensor Integrated Navigation Systems, 2nd ed., '

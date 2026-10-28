@@ -53,6 +53,8 @@ PAGE_CLASSES = {
     'automation': ('automation_ws', 'AutomationPage'), 'terrain': ('terrain_ws', 'TerrainPage'),
     'harness': ('harness_ws', 'HarnessPage'), 'observability': ('observability_ws', 'ObservabilityPage'),
     'experiments': ('experiments_ws', 'ExperimentsPage'), 'sim': ('sim_ws', 'SimPage'),
+    'detection': ('detection_ws', 'DetectionPage'), 'campaign': ('campaign_ws', 'CampaignPage'),
+    'critical_carla': ('critical_carla_ws', 'CriticalCarlaPage'),
 }
 
 
@@ -153,6 +155,9 @@ class MainWindow(QMainWindow):
         'observability': (),
         'experiments': (),
         'sim': (),
+        'detection': (),
+        'campaign': (),
+        'critical_carla': (),
     }
 
     def set_page(self, name):
@@ -558,7 +563,21 @@ class MainWindow(QMainWindow):
         A('calib_clear', 'Clear unit calibration', self.clear_calibration, None, None, category='Calibrate')
         # simulate
         A('carla', 'CARLA…', lambda: self.set_page('sim'), None, 'car-front', category='Simulate',
-          tip='Run the planned rig in the CARLA simulator and record a nuScenes folder and a ROS 2 bag')
+          tip='Run the planned rig in the CARLA simulator and record a nuScenes folder and a ROS 2 bag, with ground '
+              'truth, faults with known answers, scenarios or an actors scene')
+        A('carla_live', 'CARLA live rig…', self.open_carla_live, None, 'play', category='Simulate',
+          tip='Drive the planned cameras in CARLA in real time, watch them on the Live rig page and inject faults')
+        A('detection', 'Detection quality…', lambda: self.set_page('detection'), None, 'eye', category='Simulate',
+          tip='How well an off-the-shelf detector finds the objects in each camera\'s images of a CARLA drive with '
+              'ground truth, per camera, class and range, and rig against rig')
+        A('campaign', 'Simulation campaigns…', lambda: self.set_page('campaign'), None, 'tolerance',
+          category='Simulate',
+          tip='Many CARLA drives with known faults, weathers or rigs, checked by Vantage\'s own checks: what each check '
+              'finds, how small, how often it cries wolf')
+        A('critical_carla', 'Critical targets in CARLA…', lambda: self.set_page('critical_carla'), None, 'target',
+          category='Simulate',
+          tip='Stand the critical targets in CARLA as walkers, cars and props and compare what each camera sees with '
+              'the critical-targets study')
         # export
         A('export', 'Export…', self.export_dialog, 'Ctrl+E', 'export', category='Export')
         for fid, text in (('mount_sheet_pdf', 'Mount sheet (PDF)'), ('report_html', 'Report (HTML)'), ('report_pdf', 'Report (PDF)'),
@@ -707,7 +726,9 @@ class MainWindow(QMainWindow):
         cb.addSeparator()
         cb.addActions([a['install'], a['lidar_calib'], a['live_rig'], a['drive_log'], a['asbuilt'], a['fleet']])
         si = menu('Simulate')
-        si.addAction(a['carla'])
+        si.addActions([a['carla'], a['carla_live']])
+        si.addSeparator()
+        si.addActions([a['detection'], a['campaign'], a['critical_carla']])
         ex = menu('Export')
         ex.addAction(a['export'])
         ex.addSeparator()
@@ -2158,6 +2179,35 @@ class MainWindow(QMainWindow):
     def export_dialog(self, preselect=None):
         from .dialogs.export_dialog import ExportDialog
         ExportDialog(self.ctx, self, preselect=preselect).exec()
+
+    def open_carla_live(self):
+        """Simulate ▸ CARLA live rig: the CARLA page, its live panel in view."""
+        self.set_page('sim')
+        pg = self.page('sim')
+        live = getattr(pg, 'live', None)
+        if live is not None:
+            pg.show_live()
+        return live
+
+    def carla_user(self, asking: str = '') -> str:
+        """What uses the CARLA server now, in words ('' when nothing): the CARLA page's recording or its live rig, a
+        simulation campaign, critical targets in CARLA. A synchronous CARLA world takes one client stepping it, so
+        each of them refuses to start while another runs (asking: the one asking, left out)."""
+        pw = self._page_widgets
+        sim = pw.get('sim')
+        if asking != 'sim' and sim is not None and getattr(sim, 'busy', False):
+            return 'A CARLA recording is running (Simulate ▸ CARLA): start when it is done.'
+        live = getattr(sim, 'live', None) if sim is not None else None
+        if asking != 'live' and live is not None and live.running:
+            return 'The CARLA live rig is streaming: stop it first (Simulate ▸ CARLA ▸ Stop live).'
+        for name, what in (('campaign', 'A simulation campaign is running'),
+                           ('critical_carla', 'Critical targets in CARLA are running'),
+                           ('experiments', 'A designed experiment with detection responses is running')):
+            pg = pw.get(name)
+            if asking != name and pg is not None and getattr(pg, 'busy', False) and \
+                    (name != 'experiments' or getattr(pg, 'uses_carla', False)):
+                return f'{what} on the CARLA server: start when it is done, or cancel it.'
+        return ''
 
     def command_palette(self, prefix=''):
         from .dialogs.palette import CommandPalette

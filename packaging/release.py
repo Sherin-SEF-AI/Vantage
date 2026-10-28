@@ -31,7 +31,8 @@ def version(root: str = ROOT) -> str:
 
 # the CARLA bridge runs in CARLA's own Python with the bundle's folder on PYTHONPATH (vantage.sim.server.vantage_source):
 # these sources must be there as plain files, not only compiled inside the bundle
-BRIDGE_SOURCES = ('vantage/__init__.py', 'vantage/core/__init__.py', 'vantage/core/rosbag.py', 'vantage/core/mathutil.py')
+BRIDGE_SOURCES = ('vantage/__init__.py', 'vantage/core/__init__.py', 'vantage/core/rosbag.py', 'vantage/core/mathutil.py',
+                  'vantage/core/groundtruth.py')
 
 
 def data_files(root: str = ROOT) -> list[tuple[str, str]]:

@@ -129,8 +129,9 @@ def vantage_source() -> str:
         pkg = os.path.join(root, 'vantage')
         if all(os.path.isfile(os.path.join(pkg, *f)) for f in (('__init__.py',), ('core', '__init__.py'),
                                                                 ('core', 'rosbag.py'), ('core', 'mathutil.py'),
+                                                                ('core', 'groundtruth.py'),
                                                                 ('sim', 'carla_bridge.py'), ('sim', 'record.py'),
-                                                                ('sim', 'frames.py'))):
+                                                                ('sim', 'frames.py'), ('sim', 'tonemap.py'))):
             return root
     return ''
 
@@ -229,6 +230,17 @@ def bridge_command(python, rig_path, out_dir, args=(), memory_gb=BRIDGE_MEMORY_G
         raise RuntimeError('The bridge needs Vantage\'s source folder (a frozen build has none): run it from a '
                            'source checkout.')
     cmd = [python, '-m', 'vantage.sim.carla_bridge', rig_path, out_dir, '--progress-json'] + list(args)
+    if scope:
+        cmd = scoped(cmd, memory_gb)
+    return cmd, _clean_env({'PYTHONPATH': src, 'PYTHONUNBUFFERED': '1'})
+
+
+def tidy_command(python, port, host='127.0.0.1', memory_gb=1.0, scope=True) -> tuple[list, dict]:
+    """(command, environment) tidying the server at port after a killed bridge (carla_bridge --tidy)."""
+    src = vantage_source()
+    if not src:
+        raise RuntimeError('Tidying the server needs Vantage\'s source folder.')
+    cmd = [python, '-m', 'vantage.sim.carla_bridge', '--tidy', '--host', host, '--port', str(int(port))]
     if scope:
         cmd = scoped(cmd, memory_gb)
     return cmd, _clean_env({'PYTHONPATH': src, 'PYTHONUNBUFFERED': '1'})

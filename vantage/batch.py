@@ -38,6 +38,12 @@
     vantage --validate report/ --validate-quick
     vantage project.vantage --carla-rig carla/
     vantage project.vantage --carla-run drive/ --carla-python ~/carla/venv/bin/python
+    vantage project.vantage --carla-run drive/ --carla-scenario cut_in --carla-faults faults.json --carla-ground-truth all
+    vantage --ground-truth-summary drive/ gt.json
+    vantage project.vantage --carla-live 20 live/ --live-cameras F,R --live-fault '5:{"tag": "F", "deg": [0, 1, 0]}'
+    vantage project.vantage --detection-quality detection/ --detection-recording drive/ --detection-download
+    vantage project.vantage --campaign campaign/ --campaign-template fault_detectability
+    vantage project.vantage --critical-carla critical/
 
 Every JSON object a batch run writes (and every JSON the exporters write) carries a "provenance" block
 (core.provenance): the version and code, the libraries, the project's and variant's content hashes, the study's
@@ -64,14 +70,25 @@ With --watch the exit code is the last run's: the command's own when it ran, els
 With --reproduce: 0 when the result reproduces (exactly or within the tolerances), 6 when it does not, 4 when it
 cannot be tried (no provenance, the project or an input file not found, a live measurement). With --validate: 6 when a
 check of the models against its reference fails. With --experiment: 4 when the spec cannot be read or does not fit the
-project. With --carla-rig or --carla-run: 2 when the variant has nothing to simulate; with --carla-run, 7 when no CARLA
-server answers, CARLA's client Python is missing or the run fails.
+project. With --carla-rig or --carla-run: 2 when the variant has nothing to simulate or a --carla-* option does not
+fit it (an unknown scenario parameter, a fault on a sensor the rig lacks, an actor without a pose) or, with --carla-run,
+its cameras would render more than the bridge's 200 Mpx a frame; with --carla-run,
+--carla-live, --campaign or --critical-carla, 7 when no CARLA server answers, CARLA's client Python is missing or the
+run fails. With --carla-live: 3 when rig health finds a camera faulty. With --ground-truth-summary: 2 when the drive has
+no ground truth. With --detection-quality: 2 when there is nothing to evaluate (no recording, or one without ground
+truth), 8 when the detector model is missing or does not verify (or its download failed). With --campaign: 2 when the
+design has nothing to drive or names a sensor the variant lacks, 8 when its detection check needs the detector model
+and it is missing, 9 when a drive failed or is still to do (run it again: what is done is reused). With
+--critical-carla: 3 when a camera view disagrees with the study (each printed with why), 2 when there is nothing to
+compare (no target can be stood in CARLA, no drive in --critical-carla-drives). Ctrl+C during a CARLA run returns 130
+after CARLA was tidied up.
 """
 from __future__ import annotations
 
 import contextlib
 import io
 import json
+import math
 import os
 import re
 import sys
@@ -424,8 +441,11 @@ def _run(args) -> int:
         raise SystemExit('--verify checks the predictions of --observability.')
     if (args.validate_models or args.validate_quick) and args.validate is None:
         raise SystemExit('--validate-models and --validate-quick go with --validate.')
-    if args.carla_python and not args.carla_run:
-        raise SystemExit('--carla-python goes with --carla-run.')
+    if args.carla_python and not (args.carla_run or args.carla_live or args.campaign or args.critical_carla):
+        raise SystemExit('--carla-python goes with --carla-run, --carla-live, --campaign or --critical-carla.')
+    _modifiers(args)
+    if args.ground_truth_summary and not (args.path or args.sample or args.template):
+        return _ground_truth_summary(args)              # a drive's folder: no project needed
     if args.validate is not None and not (args.path or args.sample or args.template):
         return _validate(args, None)                    # no project: the checks build their own references
     from .core import exporters as ex
@@ -803,6 +823,16 @@ def _run(args) -> int:
         code = max(code, _carla_rig(project, args))
     if args.carla_run:
         code = max(code, _carla_run(project, args))
+    if args.ground_truth_summary:
+        code = max(code, _ground_truth_summary(args))
+    if args.carla_live:
+        code = max(code, _carla_live(project, args))
+    if args.detection_quality:
+        code = max(code, _detection(project, args))
+    if args.critical_carla:
+        code = max(code, _critical_carla(project, args))
+    if args.campaign:
+        code = max(code, _campaign(project, args))
     if args.validate is not None:
         code = max(code, _validate(args, project, eng))
     if args.save:
@@ -840,12 +870,41 @@ def _experiment(project, eng, args) -> int:
     return 0
 
 
+# modifiers -> the options they go with
+_GOES_WITH = {
+    ('carla_scenario', 'carla_scenario_params', 'carla_faults', 'carla_actors', 'carla_ground_truth', 'carla_walkers',
+     'carla_spawn_point'): ('carla_run', 'carla_rig'),
+    ('detection_recording', 'detection_download'): ('detection_quality',),
+    ('campaign_template', 'campaign_phase'): ('campaign',),
+    ('critical_carla_drives',): ('critical_carla',),
+    ('live_cameras', 'live_scale', 'live_fault'): ('carla_live',),
+}
+
+
+def _given(v) -> bool:
+    return v is not None and v is not False and v != []          # (0 is given: --carla-walkers 0)
+
+
+def _modifiers(args):
+    """A modifier given without the option it modifies is a mistake: said, not ignored."""
+    for mods, mains in _GOES_WITH.items():
+        used = [m for m in mods if _given(getattr(args, m, None))]
+        if used and not any(getattr(args, m, None) for m in mains):
+            raise SystemExit(f'{", ".join("--" + m.replace("_", "-") for m in used)} goes with '
+                             + ' or '.join('--' + m.replace('_', '-') for m in mains) + '.')
+
+
 def _carla_rig(project, args) -> int:
     """--carla-rig OUT_DIR: the variant as the CARLA bridge reads it (sim_rig.json, sim_remap.npz); 2 when it has
     nothing to simulate."""
     from .core import simrig as SR
+    st, bad = carla_settings(project, args)
+    if bad:
+        for b in bad:
+            print(f'carla rig: {b}', file=sys.stderr)
+        return 2
     try:
-        rig = SR.build(project)
+        rig = SR.build(project, st)
     except ValueError as e:
         print(f'carla rig: {e}', file=sys.stderr)
         return 2
@@ -882,12 +941,23 @@ def _carla_run(project, args) -> int:
     import subprocess
     from .core import simrig as SR
     from .sim import server as SV
-    st = SR.settings_of(project)
+    st, bad = carla_settings(project, args)
+    if bad:
+        for b in bad:
+            print(f'carla run: {b}', file=sys.stderr)
+        return 2
     out = os.path.abspath(args.carla_run)
     try:
         rig = SR.build(project, st)
     except ValueError as e:
         print(f'carla run: {e}', file=sys.stderr)
+        return 2
+    from .sim import carla_bridge as CB
+    mpx = CB.render_mpx(rig.doc, None)
+    if mpx > CB.RENDER_BUDGET_MPX:                  # the bridge would refuse it: said before anything is written
+        print(f'carla run: the cameras would render {mpx:.0f} Mpx per frame with their ground truth, over the '
+              f'bridge\'s budget of {CB.RENDER_BUDGET_MPX:g} (a 0.9.16 server capped at 12 GB crashed at 306): '
+              'lower Simulate ▸ CARLA\'s image size or the ground truth', file=sys.stderr)
         return 2
     py = _carla_python(args)
     if not py or not os.path.isfile(py):
@@ -942,9 +1012,428 @@ def _carla_run(project, args) -> int:
     perf, sc = doc.get('performance') or {}, doc.get('scene') or {}
     print(f'carla run: {sc.get("samples", "?")} samples, {perf.get("steps", "?")} steps in {perf.get("wall_s", "?")} s '
           f'written to {out} (nuscenes/, rosbag/, run.json)', file=sys.stderr)
+    gt = ground_truth_doc(out)
+    if gt is not None:
+        print(f'carla run: ground truth: {sum(gt["cameras"].values())} camera frames, {gt["objects"]} objects, '
+              f'{sum(gt["lidars"].values())} lidar sweeps labelled (ground_truth/index.json)', file=sys.stderr)
+    scen = doc.get('scenario') or {}
+    if scen.get('name') and scen['name'] != 'free_drive':
+        for e in scen.get('events') or []:
+            print(f'  {scen["name"]} {e.get("t_s", 0):7.3f} s  {e.get("what")}', file=sys.stderr)
+    for f in doc.get('faults_injected') or []:
+        print(f'  fault {f.get("tag")} {f.get("kind")}' + (f': pose change {f["pose_delta_deg"]} °'
+                                                          if f.get('pose_delta_deg') else ''), file=sys.stderr)
     for n in doc.get('notes') or []:
         print(f'  note: {n}', file=sys.stderr)
     return 0
+
+
+def _json_arg(value, what):
+    """A JSON option: a file's path or the JSON itself (as the bridge reads its --faults, --actors)."""
+    if os.path.isfile(str(value)):
+        with open(value, encoding='utf-8') as fh:
+            return json.load(fh)
+    try:
+        return json.loads(value)
+    except ValueError as e:
+        raise ValueError(f'{what}: neither a file nor JSON ({e})') from None
+
+
+def carla_settings(project, args):
+    """The project's CARLA settings (Simulate ▸ CARLA) with the batch's --carla-* options written over them: (SimSettings,
+    problems). The rig carries them to the bridge (the scenario, the faults, the actors scene, the ground truth); when
+    they hold, they become the project's for this run (its outputs' provenance states them)."""
+    from .core import simrig as SR
+    from .sim import carla_bridge as CB
+    d = SR.settings_of(project).to_dict()
+    bad = []
+    v = project.variant
+    kinds = {c.tag: 'camera' for c in v.cameras if c.visible}
+    kinds.update({s.tag: s.kind for s in v.sensors if s.visible})
+    if args.carla_scenario or args.carla_scenario_params:
+        params = {}
+        if args.carla_scenario_params:
+            try:
+                params = _json_arg(args.carla_scenario_params, '--carla-scenario-params')
+            except (OSError, ValueError) as e:
+                bad.append(str(e))
+            if not isinstance(params, dict):
+                bad.append('--carla-scenario-params: not a JSON object')
+                params = {}
+        name = args.carla_scenario or (d.get('scenario') or {}).get('name', 'free_drive')
+        if name not in CB.SCENARIOS:
+            bad.append(f'--carla-scenario: unknown {name!r} (one of {", ".join(CB.SCENARIOS)})')
+        else:
+            sc, why = CB.clean_scenario(name, params)
+            bad += why
+            d['scenario'] = {'name': sc['name'], 'params': {k: x for k, x in sc['params'].items() if k in params}}
+    for opt, key in (('carla_faults', 'faults'), ('carla_actors', 'actors')):
+        val = getattr(args, opt)
+        if val is None:
+            continue
+        flag = '--' + opt.replace('_', '-')
+        if str(val).strip().lower() == 'none':
+            d[key] = []
+            continue
+        try:
+            items = _json_arg(val, flag)
+        except (OSError, ValueError) as e:
+            bad.append(str(e))
+            continue
+        got, why = CB.clean_faults(items, kinds) if key == 'faults' else CB.clean_actors(items)
+        bad += [f'{flag}: {w}' for w in why]
+        d[key] = got
+    if args.carla_ground_truth is not None:
+        want = {x.strip().lower() for x in str(args.carla_ground_truth).split(',') if x.strip()}
+        unknown = sorted(want - set(CB.GT_KEYS) - {'none', 'all'})
+        if unknown:
+            bad.append(f'--carla-ground-truth: unknown {", ".join(unknown)} (all, none or of {", ".join(CB.GT_KEYS)})')
+        d['ground_truth'] = {k: ('all' in want or k in want) and 'none' not in want for k in CB.GT_KEYS}
+    if args.carla_walkers is not None:
+        d['walkers'] = int(args.carla_walkers)
+    if args.carla_spawn_point is not None:
+        d['spawn_point'] = int(args.carla_spawn_point)
+    st = SR.SimSettings.from_dict(d)
+    if not bad:                     # what the run uses is what its outputs' provenance states (as --condition does)
+        project.analysis.sim = st.to_dict()
+    return st, bad
+
+
+def ground_truth_doc(run_dir) -> dict | None:
+    """A CARLA drive's ground truth in brief (--ground-truth-summary, the assistant): frames, sweeps and objects per
+    camera, lidar and class (core.groundtruth.summary) and what the run's report says of it: the semantic lidar
+    matched against the recorded one, the traffic lights and signs, the scenario's events, the faults as injected
+    (the poses left out), the actors scene (actors_scene; 'actors' counts the distinct actors labelled). None when the
+    folder has no ground truth."""
+    from .core import groundtruth as GT
+    from .core import simrig as SR
+    doc = GT.read(run_dir)
+    if doc is None:
+        return None
+    run = SR.read_run(run_dir) or {}
+    gt = run.get('ground_truth') or {}
+    sc = run.get('scenario') or {}
+    scene = run.get('scene') or {}
+    out = {'schema': 'vantage.ground_truth_summary/1', 'run': os.path.basename(os.path.abspath(run_dir)),
+           'status': run.get('status'), 'town': scene.get('town') or run.get('town'),
+           'weather': scene.get('weather') or run.get('weather'), 'seed': scene.get('seed'),
+           'duration_s': scene.get('duration_s'), **GT.summary(doc),
+           'classes': [c['name'] for c in doc.get('classes', [])], 'settings': gt.get('settings'),
+           'gt_seconds': gt.get('seconds'), 'lidar_labels': gt.get('lidar_labels'),
+           'lights_and_signs': {k: {x: y for x, y in v.items() if x != 'note'}
+                                for k, v in (gt.get('lights_and_signs') or {}).items() if isinstance(v, dict)},
+           'scenario': ({'name': sc.get('name'), 'label': sc.get('label'), 'params': sc.get('params'),
+                         'events': sc.get('events'), 'measures': sc.get('measures')} if sc.get('name') else None),
+           'faults_injected': [{k: x for k, x in f.items() if k not in ('plan_pose', 'actual_pose', 'calibration',
+                                                                         'frame')}
+                               for f in run.get('faults_injected') or []],
+           'actors_scene': [{k: a.get(k) for k in ('id', 'kind', 'actor_id', 'blueprint', 'error_m', 'error')}
+                            for a in run.get('actors') or []],
+           'notes': list(doc.get('notes') or [])[:8]}
+    return out
+
+
+def _ground_truth_summary(args) -> int:
+    """--ground-truth-summary RUN_DIR [OUT.json]: a CARLA drive's ground truth in brief; 2 when it has none."""
+    spec = args.ground_truth_summary
+    if len(spec) > 2:
+        raise SystemExit('--ground-truth-summary takes RUN_DIR and at most one OUT.json.')
+    doc = ground_truth_doc(spec[0])
+    if doc is None:
+        print(f'ground truth: {spec[0]} has no ground truth (ground_truth/index.json): record it with ground truth '
+              'on (Simulate ▸ CARLA, or --carla-run with --carla-ground-truth all)', file=sys.stderr)
+        return 2
+    _out(doc, spec[1] if len(spec) > 1 else '-')
+    print(f'ground truth: {sum(doc["cameras"].values())} camera frames, {doc["objects"]} objects of '
+          f'{doc["actors"]} actors, {sum(doc["lidars"].values())} lidar sweeps labelled', file=sys.stderr)
+    return 0
+
+
+def _detection(project, args) -> int:
+    """--detection-quality OUT_DIR: the detector run on CARLA drives with ground truth and evaluated
+    (core.detection_eval): the project's recordings (Simulate ▸ Detection quality) or --detection-recording PATH
+    (repeatable, the first the reference); --detection-download fetches the model first. 2 when there is nothing to
+    evaluate, 8 when the model is missing or does not verify (or its download failed)."""
+    from .core import detection as DT
+    from .core import detection_eval as DE
+    st = DE.settings_of(project)
+    if args.detection_recording:
+        st = DE.DetectionSettings.from_dict(dict(st.to_dict(), recordings=[os.path.abspath(p) for p in
+                                                                           args.detection_recording]))
+    if not st.recordings:
+        print('detection: no recording: give --detection-recording RUN_DIR (a CARLA run with ground truth)',
+              file=sys.stderr)
+        return 2
+    bad = [r for r in st.recordings if not DE.recording_info(r)['ok']]
+    if bad:
+        for r in bad:
+            print(f'detection: {DE.recording_info(r)["text"]}', file=sys.stderr)
+        return 2
+    s = DT.status(st.model)
+    if not s['verified'] and args.detection_download:
+        last = [-1.0]
+
+        def prog(f, t=''):
+            if f - last[0] >= 0.01 or f >= 1.0:
+                last[0] = f
+                print(f'\r  model {f * 100:5.1f} % {t:<40}', end='', file=sys.stderr)
+        try:
+            DT.download(st.model, progress=prog)
+        except (OSError, ValueError) as e:
+            print(f'\ndetection: the download failed: {e}', file=sys.stderr)
+            return 8
+        print(file=sys.stderr)
+        s = DT.status(st.model)
+    if not s['verified']:
+        print(f'detection: {s["text"]} (--detection-download fetches it)', file=sys.stderr)
+        return 8
+    last = [-1.0]
+
+    def progress(f, t=''):
+        if f - last[0] >= 0.005 or f >= 1.0:
+            last[0] = f
+            print(f'\r  detection {f * 100:5.1f} % {str(t)[:50]:<50}', end='', file=sys.stderr)
+    try:
+        res = DE.run(project, settings=st, progress=progress)
+    except FileNotFoundError as e:
+        print(f'\ndetection: {e}', file=sys.stderr)
+        return 8
+    except ValueError as e:                     # no ground truth in a folder, no class chosen
+        print(f'\ndetection: {e}', file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        print(file=sys.stderr)
+        return 130
+    print(file=sys.stderr)
+    for pth in _stamped(DE.export(res, project, args.detection_quality), '--detection-quality',
+                        args.detection_quality):
+        if not pth.endswith(('.jpg',)) and '/detections/' not in pth.replace(os.sep, '/'):
+            print(pth)
+    for r in DE.summary(res)['recordings']:
+        print(f'detection: {r["recording"]}: ' + ', '.join(
+            f'{c["class"]} recall {c["recall"]:.2f}' for c in r['classes'] if c['recall'] is not None),
+              file=sys.stderr)
+    return 0
+
+
+CAMPAIGN_PHASES = {'all': ('drive', 'evaluate', 'analyse'), 'drive': ('drive',), 'evaluate': ('evaluate', 'analyse'),
+                   'analyse': ('analyse',)}
+
+
+def _campaign(project, args) -> int:
+    """--campaign OUT_DIR: a simulation campaign (core.simcampaign): the project's (Simulate ▸ Simulation campaigns) or
+    --campaign-template's, its drives in the campaign's own folder when it names one, else OUT_DIR/drives (a run again
+    resumes: drives and checks already done are reused); --campaign-phase drive|evaluate|analyse runs part of it. 2
+    when there is nothing to drive, 7 when no CARLA server answers, CARLA's Python is missing or the server stops, 8
+    when the detection check needs a detector model that is missing, 9 when a drive failed or is not done (run again
+    to resume)."""
+    from .core import simcampaign as SC
+    out = os.path.abspath(args.campaign)
+    phases = CAMPAIGN_PHASES[args.campaign_phase or 'all']
+    try:
+        st = SC.template(args.campaign_template, project) if args.campaign_template else SC.settings_of(project)
+    except (KeyError, ValueError) as e:
+        print(f'campaign: {e}', file=sys.stderr)
+        return 2
+    if not st.out_dir:
+        st = SC.CampaignSettings.from_dict(dict(st.to_dict(), out_dir=os.path.join(out, 'drives')))
+    pl = SC.plan(project, st)
+    errors = [m for m in pl.problems if 'only the first' not in m]
+    for m in pl.problems:
+        print(f'campaign: {m}', file=sys.stderr)
+    if errors or not any(d['role'] == 'drive' for d in pl.drives):
+        print('campaign: nothing to drive as designed' if not errors else
+              'campaign: the design names what the variant does not have', file=sys.stderr)
+        return 2
+    if 'evaluate' in phases and 'detection' in st.evaluators:
+        from .core import detection as DT
+        from .core import detection_eval as DE
+        model = DE.DetectionSettings.from_dict(dict(DE.settings_of(project).to_dict(), **(st.detection or {}))).model
+        s = DT.status(model)
+        if not s['verified']:
+            print(f'campaign: the detection check needs the detector: {s["text"]} (batch --detection-quality with '
+                  '--detection-download, or Simulate ▸ Detection quality ▸ Download)', file=sys.stderr)
+            return 8
+    est = SC.estimate(project, st, pl, SC.campaign_dir(project, st))
+    print(f'campaign: {st.name}, {len(pl.drives)} drives ({", ".join(phases)}) · {est.get("text", "")}',
+          file=sys.stderr)
+    last = [-1.0]
+
+    def progress(f, t=''):
+        if f - last[0] >= 0.002 or f >= 1.0:
+            last[0] = f
+            print(f'\r  campaign {f * 100:5.1f} % {str(t)[:60]:<60}', end='', file=sys.stderr)
+    py = _carla_python(args) if 'drive' in phases else None
+    try:
+        res = SC.run(project, None, st, progress=progress, python=py or None, phases=phases)
+    except RuntimeError as e:
+        print(f'\ncampaign: {e}', file=sys.stderr)
+        return 7
+    except KeyboardInterrupt:               # the bridge got the same Ctrl+C: it tidies CARLA up; the drives done stay
+        print(file=sys.stderr)
+        return 130
+    print(file=sys.stderr)
+    if res is None:
+        return 130
+    if 'analyse' in phases:
+        for pth in _stamped(SC.export(res, project, out), '--campaign', out):
+            print(pth)
+    s = SC.summary(res)
+    print(f'campaign: {s["driven"]} of {s["drives"]} drives done, {s["failed"]} failed', file=sys.stderr)
+    for h in s['headline']:
+        print(f'  {h}', file=sys.stderr)
+    for n in s['notes']:
+        print(f'  note: {n}', file=sys.stderr)
+    return 0 if res.complete else 9
+
+
+def _critical_carla(project, args) -> int:
+    """--critical-carla OUT_DIR: the critical targets stood in CARLA and compared with the study
+    (core.critical_carla), its drives in OUT_DIR/drives (reused when the rig is the same); --critical-carla-drives DIR
+    compares drives recorded before, without CARLA. 0 when every compared camera view agrees, 3 when some disagree
+    (each printed with why), 2 when there is nothing to compare, 7 when no CARLA server answers or a drive fails."""
+    from .core import critical_carla as CC
+    out = os.path.abspath(args.critical_carla)
+    last = [-1.0]
+
+    def progress(f, t=''):
+        if f - last[0] >= 0.005 or f >= 1.0:
+            last[0] = f
+            print(f'\r  critical-carla {f * 100:5.1f} % {str(t)[:50]:<50}', end='', file=sys.stderr)
+    try:
+        if args.critical_carla_drives:
+            d = os.path.abspath(args.critical_carla_drives)
+            drives = [d] if CC.is_drive(d) else CC.drives_in(d)
+            if not drives:
+                print(f'critical-carla: no drive in {d} (a folder with run.json and ground_truth/index.json)',
+                      file=sys.stderr)
+                return 2
+            res = CC.analyse(project, drives, progress=progress)
+        else:
+            res = CC.run(project, out_dir=os.path.join(out, 'drives'), python=_carla_python(args) or None,
+                         progress=progress)
+    except ValueError as e:
+        print(f'\ncritical-carla: {e}', file=sys.stderr)
+        return 2
+    except RuntimeError as e:
+        print(f'\ncritical-carla: {e}', file=sys.stderr)
+        return 7
+    except KeyboardInterrupt:
+        print(file=sys.stderr)
+        return 130
+    print(file=sys.stderr)
+    if res is None:
+        return 130
+    CC.make_crops(res)
+    for pth in _stamped(CC.export(res, project, out), '--critical-carla', out):
+        if not pth.endswith('.jpg'):
+            print(pth)
+    s = CC.summary(res)
+    print(f'critical-carla: {s["camera_views_compared"]} camera views compared in {s["drives"]} drives, agreement '
+          f'{s["agreement_pct"]} %', file=sys.stderr)
+    for x in s['disagreements']:
+        print(f'critical-carla: {x["target"]} in {x["camera"]} ({x["drive"]}): {x["why"]}', file=sys.stderr)
+    m = res.metrics
+    return 0 if m['agree'] == m['pairs'] else 3
+
+
+def _live_faults(specs, tags) -> list:
+    """--live-fault AT_S:JSON (repeatable) as [(at_s, fault)], each checked as the live server checks it."""
+    from .sim import live as LV
+    out = []
+    for s in specs or []:
+        at, sep, j = str(s).partition(':')
+        try:
+            t = float(at)
+            if not sep or not math.isfinite(t) or t < 0:
+                raise ValueError('a time in seconds first')
+            f = LV.parse_fault(json.loads(j), tags)
+        except (ValueError, LV.LiveError) as e:
+            raise ValueError(f'--live-fault {s!r}: {e} (AT_S:JSON, e.g. 2:{{"tag": "F", "kind": "freeze"}})') from None
+        out.append((t, f))
+    return out
+
+
+def _carla_live(project, args) -> int:
+    """--carla-live SECONDS [OUT_DIR]: the planned cameras driven live in the CARLA server on the project's port
+    (core.carla_live.run_session), rig health watching their streams for SECONDS while --live-fault injects faults on
+    time; rig_health.json, live.json and the live rig into OUT_DIR (default: a new folder in the working folder). 0
+    when every camera is ok or a warning, 3 when one is a fault, 2 when the options do not fit the rig, 7 when no
+    CARLA server answers, CARLA's Python is missing or the live server fails."""
+    import datetime as _dt
+    from . import workdir
+    from .core import carla_live as CL
+    from .core import simrig as SR
+    spec = args.carla_live
+    try:
+        seconds = float(spec[0])
+    except ValueError:
+        raise SystemExit(f'--carla-live needs the seconds to watch first, not {spec[0]!r}.')
+    if len(spec) > 2 or not math.isfinite(seconds) or seconds <= 0:
+        raise SystemExit('--carla-live takes SECONDS (> 0) and at most one OUT_DIR.')
+    vis = [c.tag for c in project.variant.cameras if c.visible]
+    cams = [t.strip() for t in (args.live_cameras or '').split(',') if t.strip()] or vis
+    unknown = [t for t in cams if t not in vis]
+    if unknown:
+        print(f'carla live: no visible camera {", ".join(unknown)} (cameras: {", ".join(vis) or "none"})',
+              file=sys.stderr)
+        return 2
+    try:
+        faults = _live_faults(args.live_fault, cams)
+    except ValueError as e:
+        print(f'carla live: {e}', file=sys.stderr)
+        return 2
+    scale = min(max(float(args.live_scale if args.live_scale is not None else 0.25), SR.LIMITS['image_scale'][0]),
+                1.0)
+    if len(spec) > 1:
+        out = os.path.abspath(spec[1])
+    else:
+        try:
+            from PyQt6.QtCore import QSettings
+            base = workdir.get(QSettings('Vantage', 'Vantage'))
+        except Exception:                   # noqa: BLE001 — no settings: the default working folder
+            base = workdir.default()
+        stamp = _dt.datetime.now().strftime('%Y%m%d-%H%M%S')
+        out = workdir.project_dir(project, base, 'carla', f'live-{workdir.slug(project.variant.name)}-{stamp}')
+    py = _carla_python(args)
+    if not py or not os.path.isfile(py):
+        print('carla live: no Python for CARLA\'s client: give --carla-python', file=sys.stderr)
+        return 7
+    st = SR.settings_of(project)
+    print(f'carla live: {", ".join(cams)} at {scale * 100:g} % for {seconds:g} s on port {st.port} → {out}',
+          file=sys.stderr)
+    last = [-1.0]
+
+    def progress(f, t=''):
+        if f - last[0] >= 0.01 or f >= 1.0:
+            last[0] = f
+            print(f'\r  carla live {f * 100:5.1f} % {str(t)[:40]:<40}', end='', file=sys.stderr)
+    try:
+        res = CL.run_session(project, seconds, py, out, settings=st, cameras=cams, scale=scale, faults=faults,
+                             progress=progress)
+    except ValueError as e:                 # no camera left to stream
+        print(f'\ncarla live: {e}', file=sys.stderr)
+        return 2
+    except RuntimeError as e:
+        print(f'\ncarla live: {e}', file=sys.stderr)
+        return 7
+    except KeyboardInterrupt:
+        print(file=sys.stderr)
+        return 130
+    print(file=sys.stderr)
+    _stamped([os.path.join(out, 'rig_health.json')], '--carla-live', out)
+    print(os.path.join(out, 'rig_health.json'))
+    if res['status'] != 'ok':
+        print(f'carla live: {res["error"]} (see {os.path.join(out, "live.log")})', file=sys.stderr)
+        return 7
+    for f in res['faults']:
+        print(f'  fault at {f.get("at_s")} s: {f.get("tag")} {f.get("kind")}', file=sys.stderr)
+    cams_h = res['rig_health']['cameras']
+    for k, c in cams_h.items():
+        print(f'  {k:<4} {c["status"]:<8} ' + ('; '.join(c['reasons']) or f'{c.get("fps", 0):.1f} fps')
+              + (f' · drift {c["drift_px"]:.0f} px against CARLA\'s car' if c.get('drift_px') is not None and
+                 c.get('drift_against') == 'carla_body' else ''), file=sys.stderr)
+    return 3 if any(c['status'] == 'fault' for c in cams_h.values()) else 0
 
 
 def _validate(args, project, eng=None) -> int:
@@ -998,12 +1487,13 @@ _PRODUCERS = ('analyse', 'load_cases', 'blind_volume', 'perception_range', 'sens
               'recording_budget', 'power_budget', 'gnss', 'exposure', 'fleet', 'brackets', 'dataset', 'drive_log',
               'housings', 'suspension', 'as_built_check', 'check', 'lidar_calib', 'observability', 'harness', 'terrain',
               'critical_targets', 'materials', 'weather', 'export', 'install_check', 'rig_health', 'ci_templates',
-              'experiment', 'validate', 'carla_rig')
+              'experiment', 'validate', 'carla_rig', 'ground_truth_summary', 'detection_quality', 'critical_carla',
+              'campaign', 'carla_live')
 # what a re-run never does: save a project, write files beside the result, watch a project, run a command
 _NEVER = ('report', 'lut_out', 'as_built', 'calib_out', 'save', 'watch', 'on_change', 'reproduce', 'tolerance',
-          'carla_run', 'carla_python')
+          'carla_run', 'carla_python', 'detection_download')
 # producers whose input comes first and their output second
-_IN_OUT = ('drive_log', 'as_built_check', 'experiment')
+_IN_OUT = ('drive_log', 'as_built_check', 'experiment', 'ground_truth_summary')
 
 
 class _CannotReproduce(Exception):
@@ -1023,6 +1513,14 @@ def _find(name, search, sha=None):
         if same is not None:
             return same
     return cands[0] if cands else None
+
+
+def _is_json(text) -> bool:
+    try:
+        json.loads(str(text))
+    except ValueError:
+        return False
+    return True
 
 
 def _reproduction(prov, args, tmp, search):
@@ -1046,8 +1544,11 @@ def _reproduction(prov, args, tmp, search):
             raise _CannotReproduce(f'the project was not saved when {out["name"]} was exported: give it, '
                                    f'vantage PROJECT.vantage --reproduce …')
     opt = (out.get('option') or '').lstrip('-').replace('-', '_')
-    if opt == 'rig_health':
+    if opt in ('rig_health', 'carla_live'):
         raise _CannotReproduce('the rig health check measures live streams: it cannot be run again')
+    if opt == 'campaign':
+        raise _CannotReproduce('a simulation campaign drives the CARLA simulator for hours: its analysis is '
+                               'recomputed from its drives with --campaign OUT --campaign-phase analyse')
     if opt == 'reproduce':
         raise _CannotReproduce('this is a reproduction report: reproduce the result it checked instead')
     try:
@@ -1058,6 +1559,9 @@ def _reproduction(prov, args, tmp, search):
                                + ' '.join(str(x) for x in cmd)) from None
     if not opt or not hasattr(ns, opt) or getattr(ns, opt) in (None, False):
         raise _CannotReproduce('the result does not say which option wrote it')
+    if opt == 'critical_carla' and not ns.critical_carla_drives:
+        raise _CannotReproduce('it drove the CARLA simulator: compare its drives again with --critical-carla OUT '
+                               '--critical-carla-drives DRIVES')
     # the project: the one given, else the recorded one found by its name (or the sample or template)
     if prov.get('project') is None:
         pass
@@ -1075,6 +1579,10 @@ def _reproduction(prov, args, tmp, search):
             setattr(ns, d, None)
     for d in _NEVER:
         setattr(ns, d, None)
+    for mods, mains in _GOES_WITH.items():          # the modifiers of the options left out go with them
+        if not any(getattr(ns, m, None) for m in mains):
+            for m in mods:
+                setattr(ns, m, None)
     if opt == 'export':
         fmt = ((prov.get('settings') or {}).get('export') or {}).get('format') or out.get('format')
         if fmt:
@@ -1087,6 +1595,8 @@ def _reproduction(prov, args, tmp, search):
             continue
         vals = list(v) if isinstance(v, (list, tuple)) else [v]
         idx = [0] if how == 'first' else range(1, len(vals)) if how == 'rest' else range(len(vals))
+        if how == 'json':                           # JSON given on the command line is no file to find
+            idx = [i for i in idx if not _is_json(vals[i])]
         opt_ = '--' + dest.replace('_', '-')
         for i in idx:
             sha = next((x.get('sha256') for x in prov.get('inputs') or []
@@ -1355,8 +1865,76 @@ def add_arguments(ap):
                         '(2000 unless set) and record a nuScenes folder and a ROS 2 bag into OUT_DIR; exit 7 when no '
                         'server answers or the run fails')
     g.add_argument('--carla-python', metavar='PYTHON',
-                   help='with --carla-run: CARLA\'s client Python (default: the one Simulate ▸ CARLA chose, else the '
-                        'venv next to a CARLA folder found)')
+                   help='with --carla-run, --carla-live, --campaign or --critical-carla: CARLA\'s client Python '
+                        '(default: the one Simulate ▸ CARLA chose, else the venv next to a CARLA folder found)')
+    g.add_argument('--carla-scenario', metavar='NAME',
+                   choices=('free_drive', 'lead_vehicle_brake', 'cut_in', 'pedestrian_crossing', 'cyclist_crossing',
+                            'parked'),
+                   help='with --carla-run or --carla-rig: the scenario to drive (deterministic with the seed): '
+                        'free_drive, lead_vehicle_brake, cut_in, pedestrian_crossing, cyclist_crossing, parked')
+    g.add_argument('--carla-scenario-params', metavar='JSON',
+                   help='with --carla-scenario: its parameters, a JSON object or a file (e.g. \'{"gap_m": 15}\'); '
+                        'exit 2 when one is unknown')
+    g.add_argument('--carla-faults', metavar='FAULTS.json',
+                   help='with --carla-run or --carla-rig: faults with known answers (a list: rotation, translation, '
+                        'clock_offset, drop, freeze, range_bias per sensor tag; a file or JSON; none clears the '
+                        'project\'s): CARLA records the faulty rig while the calibration states the plan; exit 2 when '
+                        'one does not fit the rig')
+    g.add_argument('--carla-actors', metavar='ACTORS.json',
+                   help='with --carla-run or --carla-rig: an actors scene around a still ego (a list of {id, kind, '
+                        'pose} in the vehicle frame; a file or JSON); exit 2 when one is not valid')
+    g.add_argument('--carla-ground-truth', metavar='LIST',
+                   help='with --carla-run or --carla-rig: the ground truth to record: all, none, or of semantic, '
+                        'instance, range, lidar_labels (comma-separated)')
+    g.add_argument('--carla-walkers', type=int, metavar='N',
+                   help='with --carla-run or --carla-rig: pedestrians on CARLA\'s walker AI')
+    g.add_argument('--carla-spawn-point', type=int, metavar='N',
+                   help='with --carla-run or --carla-rig: the ego\'s spawn point (-1: a straight road, by the seed)')
+    g.add_argument('--ground-truth-summary', nargs='+', metavar=('RUN_DIR', 'OUT.json'),
+                   help='a CARLA drive\'s ground truth in brief: frames, sweeps and objects per camera, lidar and '
+                        'class, the lidar labels\' match, the scenario\'s events and the faults injected (OUT.json, '
+                        'default: stdout); needs no project; exit 2 when the drive has no ground truth')
+    g.add_argument('--carla-live', nargs='+', metavar=('SECONDS', 'OUT_DIR'),
+                   help='drive the planned cameras live in the CARLA server on the project\'s port and watch their '
+                        'streams with rig health for SECONDS (rig_health.json, live.json into OUT_DIR, default a new '
+                        'folder in the working folder); exit 3 when a camera is a fault, 7 when no server answers or '
+                        'the live server fails')
+    g.add_argument('--live-cameras', metavar='TAGS',
+                   help='with --carla-live: the cameras to stream, comma-separated (default: every visible camera)')
+    g.add_argument('--live-scale', type=float, metavar='SHARE',
+                   help='with --carla-live: the share of each sensor\'s size CARLA renders (default 0.25; smaller is '
+                        'closer to real time)')
+    g.add_argument('--live-fault', action='append', metavar='AT_S:JSON',
+                   help='with --carla-live: inject a fault AT_S seconds into the watch, e.g. 2:{"tag": "F", "kind": '
+                        '"freeze"} or 3:{"tag": "R", "deg": [0, 1, 0]} (repeatable)')
+    g.add_argument('--detection-quality', metavar='OUT_DIR',
+                   help='run the detector on CARLA drives with ground truth and evaluate it (Simulate ▸ Detection '
+                        'quality): recall, precision, AP and detection range per camera, class and range, the rig '
+                        'figure, recordings compared; exit 2 when there is nothing to evaluate, 8 when the model is '
+                        'missing')
+    g.add_argument('--detection-recording', metavar='RUN_DIR', action='append',
+                   help='with --detection-quality: a CARLA run folder with ground truth (repeatable; the first is the '
+                        'reference; default: the project\'s recordings)')
+    g.add_argument('--detection-download', action='store_true',
+                   help='with --detection-quality: download the detector model first (YOLOX, Apache-2.0, checked by '
+                        'SHA-256)')
+    g.add_argument('--campaign', metavar='OUT_DIR',
+                   help='run the project\'s simulation campaign (Simulate ▸ Simulation campaigns): its drives in '
+                        'CARLA, every check on each, the analysis into OUT_DIR (campaign.json, CSV, PNG, HTML); a run '
+                        'again resumes; exit 2 when there is nothing to drive, 7 when no server answers, 8 when the '
+                        'detector is missing, 9 when a drive failed (run again to resume)')
+    g.add_argument('--campaign-template', choices=('fault_detectability', 'weather_sweep', 'rig_ab'),
+                   help='with --campaign: run this template fitted to the variant instead of the project\'s campaign')
+    g.add_argument('--campaign-phase', choices=tuple(CAMPAIGN_PHASES),
+                   help='with --campaign: all (default), drive (the CARLA drives only), evaluate (the checks and the '
+                        'analysis, no CARLA) or analyse (from the checks done)')
+    g.add_argument('--critical-carla', metavar='OUT_DIR',
+                   help='stand the critical targets in CARLA and compare what each camera sees with the study '
+                        '(Simulate ▸ Critical targets in CARLA): JSON, CSV, PNG and crops into OUT_DIR, the drives in '
+                        'OUT_DIR/drives; exit 3 when a camera view disagrees, 2 when there is nothing to compare, 7 '
+                        'when no server answers or a drive fails')
+    g.add_argument('--critical-carla-drives', metavar='DIR',
+                   help='with --critical-carla: compare the drives in DIR (recorded before) without CARLA')
     g.add_argument('--reproduce', nargs='+', metavar=('RESULT.json', 'OUT.json'),
                    help='run again what wrote RESULT.json (a batch output or an exported JSON, from its provenance '
                         'block; give the same project first, input files next to the result or in this folder) and '
@@ -1382,4 +1960,5 @@ def wanted(args) -> bool:
                                                                'critical_targets', 'materials',
                                                                'weather', 'watch', 'on_change', 'ci_templates',
                                                                'reproduce', 'experiment', 'validate', 'carla_rig',
-                                                               'carla_run'))
+                                                               'carla_run', 'carla_live', 'ground_truth_summary',
+                                                               'detection_quality', 'campaign', 'critical_carla'))

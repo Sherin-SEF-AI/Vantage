@@ -339,6 +339,9 @@ class AnalysisSettings:
     automation: dict = field(default_factory=dict)    # what to regenerate on a change (core.automation; never a command)
     sim: dict = field(default_factory=dict)           # simulator runs (core.simrig, vantage.sim: the CARLA bridge)
     experiments: dict = field(default_factory=dict)   # sweeps, sensitivity and uncertainty (core.experiments)
+    detection: dict = field(default_factory=dict)     # detection quality per rig (core.detection_eval)
+    campaign: dict = field(default_factory=dict)      # simulation campaigns: faults, weather sweeps (core.simcampaign)
+    critical_carla: dict = field(default_factory=dict)   # critical targets as CARLA scenes (core.critical_carla)
 
     def to_dict(self):
         return asdict(self)

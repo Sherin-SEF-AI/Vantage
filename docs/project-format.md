@@ -191,9 +191,20 @@ drop mm, rear axle drop mm]), `live` and `heatmap` (view settings), and one obje
 | `automation` | what to regenerate on a change (`automation.py`; never a command: commands stay on the computer) |
 | `sim` | simulator runs (`simrig.py`, `vantage/sim/`) |
 | `experiments` | designed experiments, sensitivity and uncertainty (`experiments.py`) |
+| `detection` | detection quality per rig on simulated drives (`detection_eval.py`) |
+| `campaign` | simulation campaigns: injected faults, weather sweeps, rig comparisons (`simcampaign.py`) |
+| `critical_carla` | critical targets placed as CARLA scenes (`critical_carla.py`) |
 
 Each module's settings class (its `from_dict`) reads its object tolerantly: unknown keys are dropped, numbers clamped
 to the module's `LIMITS`, missing ones defaulted.
+
+`analysis.drivelog` (`DriveLogSettings` in `drivelog.py`): `path` (the bag or nuScenes folder last checked),
+`variant_uid` (empty: the active variant), `camera_stamp` (what a camera's header stamp marks: `mid_exposure`,
+`trigger`, `readout_end`), `lidar_stamp` (`auto`, `start`, `end`), `frames_per_camera` (2–200, default 20),
+`tolerance_deg` (0.01–10, default 0.3), `search_deg` (0.2–5, default 2), `drop_factor` (1.05–10, default 1.5),
+`freeze_frames` (an integer, 1–10000, default 3: this many repeats in a row of one image, identical content, make a
+camera frozen, a fault; fewer are a warning), `sync_tol_ms` (0.05–100, default 2), `sync_sweeps` (5–5000, default
+300) and `mappings` (per bag path, the topic → sensor tag edits; the last 20 logs are kept).
 
 `analysis.experiments` (`ExperimentSettings` in `experiments.py`): `name`, `variant` (the uid of the variant varied;
 empty for the active one), `factors` (each: `id`, `kind` — `camera`, `sensor`, `cameras` (every visible camera),
@@ -210,8 +221,45 @@ blueprint), `camera_rate` (`lidar` or `module`), `image_scale`, `face_oversample
 `exposure` (`manual` or `histogram`), `exposure_ev`, `keyframe_hz`, `channel_names` (`tags` or `nuscenes`),
 `nuscenes`, `rosbag`, `lidar_noise_cm`, `drop_self_hits`, `max_lidar_channels`, `radar_points`, `tick_hz` (0: chosen),
 `min_tick_hz`, `max_tick_hz`, `warmup_s`, `quality` (`Epic` or `Low`), `memory_gb` (the server's memory cap), `port`,
-`tm_port`, `timeout_s`. Where CARLA is installed and its Python stay on the computer (the app's settings), never in
-the project.
+`tm_port`, `timeout_s`, `walkers` (pedestrians on CARLA's walker AI), `ground_truth` (`semantic`, `instance`,
+`range`, `lidar_labels`: booleans, all on by default), `faults` (a list, each `tag` and `kind` — `rotation` with `deg`
+[yaw, pitch, roll] in the sensor's own frame, `translation` with `m` [x, y, z] in the vehicle frame, `clock_offset`
+with `ms`, `drop` with `rate` or `frames`, `freeze` with `from_s` and `to_s`, `range_bias` with `m` —; contracts in
+`vantage/sim/carla_bridge.py`), `scenario` (`name` — `free_drive`, `lead_vehicle_brake`, `cut_in`,
+`pedestrian_crossing`, `cyclist_crossing`, `parked` — and `params`, only the ones set), `actors` (an actors scene: each
+`id`, `kind` — `child`, `pedestrian`, `cyclist`, `car`, `truck`, `traffic_light`, `sign`, `cone`, `barrier` or
+`blueprint:<id>` — and `pose` `x`, `y`, `z` (m), `yaw` (°) in the vehicle frame), `spawn_point` (−1: a straight road
+chosen by the seed). Where CARLA is installed and its Python stay on the computer (the app's settings), never in
+the project; so do the live rig's cameras, render size and served size.
+
+`analysis.detection` (`DetectionSettings` in `detection_eval.py`): `recordings` (absolute paths of CARLA run folders
+with ground truth, the first the reference, as `drivelog.path`), the detector — `model` (`yolox_s`, `yolox_tiny`,
+`yolox_nano`, `yolox_m`; the model file itself is downloaded into the user's data folder, never into the project),
+`input_px` (0: each image at its own size), `max_input_px`, `keep_score`, `nms_iou`, `max_dets`, `fuse_riders`,
+`backend` (`cpu`, `opencl`), `threads` —, the matching — `score` (the operating point), `iou`, `iou_small`, `small_px`,
+`min_px`, `min_pixels`, `max_occluded`, `max_truncated` —, `range_edges` (m), `height_edges` (px), `classes`,
+`cameras` (tags; empty: every camera), `frame_step`, the pinhole views — `views` (`fisheye`, `pinhole`, `both`),
+`view_fov_deg`, `view_pitch_deg`, `view_yaws`, `view_width`, `view_aspect` —, the statistics — `bootstrap`, `block_s`,
+`confidence`, `seed`, `min_gt` —, and `cache` (keep the detections in each recording).
+
+`analysis.campaign` (`CampaignSettings` in `simcampaign.py`; empty: the fault-detectability template fitted to the
+active variant): `name`, `template` (`fault_detectability`, `weather_sweep`, `rig_ab`, `custom`), `variants` (uids;
+empty: the active one), `seeds`, `weathers` (CARLA presets or `vantage:<condition>`), `scenarios` (each `name` and
+`params`), `fault_sets` (each `kind` — as `analysis.sim.faults` —, `tags`, `axes` for rotations (`yaw`, `pitch`,
+`roll`) and translations (`x`, `y`, `z`), `magnitudes` in degrees, centimetres, milliseconds, per cent of the frames or
+seconds by kind, `signs` (`alternate`, `positive`, `negative`, `random`)), `clean` (a clean drive per seed and
+setting), `multiplex` (one condition per sensor per drive), `base` (`analysis.sim` keys over the project's for every
+drive), `evaluators` (of `drivelog`, `rig_health`, `asbuilt`, `detection`, `image_stats`, `returns`), `asbuilt_on`
+(`none`, `clean`, `all`), `drivelog`, `health` and `detection` (those checks' settings over their defaults),
+`target` (the detection probability a threshold is quoted at), `confidence`, `server` (`running`: one already on the
+port; `own`: started and stopped by the campaign), `out_dir` (empty: the working folder's
+`<project>/campaigns/<name>`), `max_drives`.
+
+`analysis.critical_carla` (`CriticalCarlaSettings` in `critical_carla.py`): `town`, `weather`, `spawn_points` (a
+list; −1: a straight road chosen by the seed), `seed`, `duration_s` (1–10), `image_scale` (0.1–1, default 0.5),
+`frames` (1–20, the last frames of each drive measured), `group` (targets that no camera sees overlap share a drive),
+`vehicle` (`auto` or a `vehicle.*` blueprint), `actors` (target uid → `auto`, `standin`, `none` or
+`blueprint:<id>`).
 
 ### Boards, obstacles, rig, ECU
 

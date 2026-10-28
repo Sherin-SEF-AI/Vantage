@@ -178,6 +178,48 @@ def _sim_rig_names(p, v):
     return ['carla/sim_rig.json', 'carla/sim_remap.npz']
 
 
+def _campaign_for(p, v):
+    """(settings, plan, folder) of the project's simulation campaign for the variant v (its own variants when it names
+    them)."""
+    from . import simcampaign as SC
+    st = SC.settings_of(p)
+    if not st.variants:
+        st = SC.CampaignSettings.from_dict(dict(st.to_dict(), variants=[v.uid]))
+    return st, SC.plan(p, st), SC.campaign_dir(p, st)
+
+
+_CAMPAIGN_FILES = ('campaign.json', 'campaign_observations.csv', 'campaign_detection_curves.csv',
+                   'campaign_thresholds.csv', 'campaign_false_alarms.csv', 'campaign_accuracy.csv', 'campaign_drives.csv',
+                   'campaign_report.html')
+
+
+def _sim_campaign_names(p, v):
+    """The project's simulation campaign (Simulate ▸ Simulation campaigns) as its drives and checks on disk stand, when
+    at least one drive is done: the analysis is made when exported, nothing is driven or checked then (the figures and
+    the weather tables come with it when the drives give them)."""
+    from . import simcampaign as SC
+    st, pl, out = _campaign_for(p, v)
+    if not os.path.isdir(os.path.join(out, 'drives')) or not SC.estimate(p, st, pl, out)['done']:
+        return []
+    return [f'sim_campaign/{n}' for n in _CAMPAIGN_FILES]
+
+
+def _detection_names(p, v):
+    """The detection quality of the project's recordings (Simulate ▸ Detection quality), when every one has ground
+    truth and the detector model is downloaded and verified: the detector runs when exported (its detections are
+    cached in each recording, so a second export takes seconds)."""
+    from . import detection as DT
+    from . import detection_eval as DE
+    from .groundtruth import INDEX
+    st = DE.settings_of(p)
+    if not st.recordings or not all(os.path.isfile(os.path.join(r, INDEX)) for r in st.recordings):
+        return []
+    if not DT.status(st.model)['verified']:
+        return []
+    return [f'detection_quality/{n}' for n in ('detection_quality.json', 'detection_quality.csv',
+                                               'detection_ranges.csv', 'detection_rig.csv', 'detection_quality.png')]
+
+
 GROUPS = ['Documents', 'Extrinsics', 'Calibration and robotics', 'Datasets', 'Surround view', 'Images', 'Mount points']
 
 FORMATS: list[ExportFormat] = [
@@ -235,6 +277,10 @@ FORMATS: list[ExportFormat] = [
                                'weather/weather.png'], 'binary', multi=True),
     ExportFormat('experiment', 'Documents', 'Designed experiment (sensitivity, uncertainty)', 'JSON, CSV, PNG',
                  _experiment_names, 'binary', multi=True, default=False),
+    ExportFormat('sim_campaign', 'Documents', 'Simulation campaign (CARLA)', 'JSON, CSV, PNG, HTML',
+                 _sim_campaign_names, 'binary', multi=True, default=False),
+    ExportFormat('detection_quality', 'Documents', 'Detection quality (CARLA drives)', 'JSON, CSV, PNG',
+                 _detection_names, 'binary', multi=True, default=False),
     ExportFormat('ci_templates', 'Documents', 'CI templates (GitHub Actions, GitLab CI)', 'YAML, MD',
                  lambda p, v: ['ci/github/vantage.yml', 'ci/gitlab/vantage.gitlab-ci.yml', 'ci/README.md'],
                  'text', multi=True),
@@ -3032,6 +3078,19 @@ def _render_files(fmt_id: str, ctx: _Ctx) -> list:
         st = EXP.settings_of(ctx.project)
         res = EXP.run(ctx.project, ctx.opts.engine or Engine(), st, variant=None if st.variant else ctx.variant)
         return [(f'experiment/{n}', d) for n, d in EXP.files(res, ctx.project)] if res is not None else []
+    if fmt_id == 'sim_campaign':
+        from . import simcampaign as SC
+        if not _sim_campaign_names(ctx.project, ctx.variant):
+            return []                                       # no drive of the campaign on disk
+        st, _, _ = _campaign_for(ctx.project, ctx.variant)
+        res = SC.run(ctx.project, ctx.opts.engine, st, phases=('analyse',))
+        return [(f'sim_campaign/{n}', d) for n, d in SC.files(res, ctx.project)] if res is not None else []
+    if fmt_id == 'detection_quality':
+        from . import detection_eval as DE
+        if not _detection_names(ctx.project, ctx.variant):
+            return []
+        res = DE.run(ctx.project, settings=DE.settings_of(ctx.project))
+        return [(f'detection_quality/{n}', d) for n, d in DE.files(res, ctx.project)] if res is not None else []
     if fmt_id == 'sim_rig':
         from . import simrig as SR
         if not _sim_rig_names(ctx.project, ctx.variant):
@@ -3387,6 +3446,38 @@ def preview(fmt_id: str, project: Project, result, opts: ExportOptions) -> tuple
         return (first, f'{EXP.DESIGN_LABEL[st.design]}: {n:,} design points, {len(st.factors)} factors, '
                        f'{len(st.responses)} responses · the experiment runs when exported (the page\'s Estimate '
                        f'times it) · {len(names)} files: ' + ', '.join(os.path.basename(x) for x in names), 0)
+    if fmt_id == 'sim_campaign':
+        from . import simcampaign as SC
+        st, pl, out = _campaign_for(project, ctx.variant)
+        if not names:
+            return first, (f'No drive of the campaign "{st.name}" on disk yet: run it on Simulate ▸ Simulation '
+                           'campaigns (it drives CARLA), then export it here.'), 0
+        est = SC.estimate(project, st, pl, out)
+        return (first, f'The campaign "{st.name}" analysed from its drives and checks on disk ({est["done"]} of '
+                       f'{est["drives"]} drives done): detection probability per fault size with Wilson intervals, '
+                       'thresholds, false alarms (a check that cannot judge on CARLA, the as-built check\'s mount '
+                       'verdict, listed apart and marked), accuracy, the weather tables when it has them, figures and '
+                       'an HTML report. Nothing is driven or checked when exported (Simulate ▸ Simulation campaigns '
+                       'runs it) · '
+                       f'{len(names)} files or more: ' + ', '.join(os.path.basename(x) for x in names), 0)
+    if fmt_id == 'detection_quality':
+        from . import detection as DT
+        from . import detection_eval as DE
+        st = DE.settings_of(project)
+        if not names:
+            if not st.recordings:
+                why = 'no recording chosen: add CARLA drives with ground truth on Simulate ▸ Detection quality.'
+            elif not DT.status(st.model)['verified']:
+                why = 'the detector model is not downloaded: Simulate ▸ Detection quality ▸ Download.'
+            else:
+                why = 'a recording has no ground truth (ground_truth/index.json).'
+            return first, 'Nothing to evaluate: ' + why, 0
+        return (first, f'The detector ({DT.MODELS[st.model].name}) on the {len(st.recordings)} recording'
+                       f'{"s" * (len(st.recordings) != 1)} of Simulate ▸ Detection quality against their ground '
+                       'truth: recall, precision, AP and the detection range per camera, class and range, the rig '
+                       'figure and the recordings compared, with bootstrap intervals. The detector runs when exported '
+                       '(minutes per drive; its detections are cached in each recording, a second export takes '
+                       f'seconds) · {len(names)} files or more: ' + ', '.join(os.path.basename(x) for x in names), 0)
     if fmt_id == 'sim_rig':
         if not names:
             return first, 'Nothing to simulate: no visible camera, lidar or radar in this variant.', 0

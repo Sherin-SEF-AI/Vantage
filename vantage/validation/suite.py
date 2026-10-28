@@ -49,6 +49,8 @@ MODELS = (
     ('lidar_calib', 'Lidar–camera calibration', 'vantage.core.lidar_calib', 'lidar-calib'),
     ('formats', 'Dataset calibration files', 'vantage.core.exporters', 'formats'),
     ('experiments', 'Designed experiments and sensitivity', 'vantage.core.experiments', 'experiments'),
+    ('recording', 'Recording checks: frozen cameras and capture skew', 'vantage.core.drivelog, vantage.core.rig_health',
+     'recording-checks'),
 )
 MODEL_IDS = tuple(m[0] for m in MODELS)
 LIMITS = {'seed': (0, 2 ** 31 - 1)}
@@ -247,7 +249,7 @@ def available_models() -> tuple:
 def specs(settings: ValidationSettings | None = None) -> list:
     """The registered checks the settings select, in MODELS order (models whose module is not installed left out)."""
     from . import checks_optics, checks_ranging, checks_environment, checks_vehicle, checks_rig, \
-        checks_calibration, checks_formats, checks_experiments  # noqa: F401  (registration)
+        checks_calibration, checks_formats, checks_experiments, checks_recording  # noqa: F401  (registration)
     st = settings or ValidationSettings()
     use = (set(st.models) if st.models else set(MODEL_IDS)) & set(available_models())
     order = {m: i for i, m in enumerate(MODEL_IDS)}

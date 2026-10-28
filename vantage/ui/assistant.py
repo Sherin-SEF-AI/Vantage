@@ -106,7 +106,9 @@ PAGES = {'viewports': '3D and top views', 'camviews': 'Camera views', 'tolerance
          'requirements': 'Requirements scorecard', 'lidar_calib': 'Lidar–camera calibration',
          'asbuilt': 'As-built check', 'critical': 'Critical targets', 'materials': 'Materials, glass and wipers',
          'automation': 'Automation', 'terrain': 'Road and body motion', 'harness': 'Cable harness',
-         'observability': 'Calibration observability', 'experiments': 'Experiments', 'sim': 'CARLA simulator'}
+         'observability': 'Calibration observability', 'experiments': 'Experiments', 'sim': 'CARLA simulator',
+         'detection': 'Detection quality', 'campaign': 'Simulation campaigns',
+         'critical_carla': 'Critical targets in CARLA'}
 
 
 # ============================================================================================ controller
@@ -346,6 +348,8 @@ class AssistantController(QObject):
                              getattr(vol, 'result', None), self._guidelines(), [c.tag for c in st.selected_cams()],
                              PAGES.get(page, page), st.revision, brief=self.brief(), rig_health=self._rig_health(),
                              drive_log=self._drive_log(), asbuilt=self._asbuilt(), experiment=self._experiment(),
+                             detection=self._page_summary('detection'), campaign=self._page_summary('campaign'),
+                             critical_carla=self._page_summary('critical_carla'), carla_live=self._carla_live(),
                              working_dir=workdir.get(self.ctx.settings))
 
     def _rig_health(self):
@@ -367,6 +371,18 @@ class AssistantController(QObject):
         w = self.ctx.window
         pg = getattr(w, '_page_widgets', {}).get('experiments') if w is not None else None
         return pg.summary() if pg is not None else None
+
+    def _page_summary(self, name):
+        """A page's last result in brief (its summary(): no paths), or None when the page was never opened."""
+        w = self.ctx.window
+        pg = getattr(w, '_page_widgets', {}).get(name) if w is not None else None
+        return pg.summary() if pg is not None and hasattr(pg, 'summary') else None
+
+    def _carla_live(self):
+        w = self.ctx.window
+        pg = getattr(w, '_page_widgets', {}).get('sim') if w is not None else None
+        live = getattr(pg, 'live', None)
+        return live.summary() if live is not None else None
 
     def _guidelines(self):
         try:

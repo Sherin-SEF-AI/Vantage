@@ -15,7 +15,9 @@ attenuated over the distance from the camera, stays above the detector's thresho
 height is lit (headlamps and ambient light) to the camera's minimum luminance. The far range then stops where the first
 threshold fails, interpolated between the samples (the pixel threshold as before, the weather margin linear in range).
 'Clear' runs exactly the geometry above. The geometry is computed once; every compared condition applies its
-thresholds on top (PerceptionResult.weather['compare']).
+thresholds on top (PerceptionResult.weather['compare']). The contrast threshold is the WMO's 5 % by default, a human
+observer's: a trained detector can lose objects whose contrast is well above it (core.weather's note on CARLA), so a
+far range in fog is what the camera resolves, an upper bound on what a detector finds.
 """
 from __future__ import annotations
 

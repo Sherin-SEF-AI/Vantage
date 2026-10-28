@@ -3,7 +3,10 @@
 Per stream, from the frames and the times they arrived: frame rate, interval jitter, dropped frames, the age of the
 newest frame, the resolution against the module's sensor, brightness and clipping, sharpness and frozen images; per
 rig, the spread of the cameras' capture times. Capture times are the software clock when a frame reached Vantage
-(``time.monotonic()``), not sensor timestamps: a network or encoder delay shows up in them.
+(``time.monotonic()``), not sensor timestamps: a network or encoder delay shows up in them. The spread is judged
+against the sync plan (core.timing): a rig synchronised to a spinning lidar fires its cameras round the sweep, so
+each camera's planned offset to the reference camera is taken out first (capture_offsets); without a plan for a
+camera it is expected to fire with the others.
 
 The drift check compares a live image with what the camera should see according to the plan: the body's silhouette
 and the horizon, computed through the camera's lens model. A camera that has rotated or moved shows its body edge
@@ -28,11 +31,13 @@ from .capture import LiveSource
 from .lens import resolve
 
 SCHEMA = 'vantage.rig_health/1'
+METHOD_REVISION = 2       # bumped when a check's method changes (2: the skew against the plan)
 SMALL_W = 320                      # width of the grey thumbnail the image statistics use
 PREVIEW_W = 640                    # width of the preview the UI shows (made at most PREVIEW_HZ times a second)
 PREVIEW_HZ = 10.0
 CLOCK_NOTE = ('capture times are when frames reached Vantage (software clock; a synthetic source stamps its own '
-              'schedule), not sensor timestamps: network and encoder delays are included')
+              'schedule), not sensor timestamps: network and encoder delays are included; the sync skew is judged '
+              'against the sync plan\'s trigger offsets when the cameras have them')
 
 
 @dataclass
@@ -220,21 +225,84 @@ def verdict(s: dict, settings: HealthSettings, started: float | None = None, now
     return worst, reasons
 
 
-def sync_skew(times: dict) -> tuple[float | None, str]:
-    """(median capture-time offset in ms of the worst camera to the first one, its key), from each camera's recent
-    capture times. Cameras that are triggered together show ~0; free-running ones up to half a frame interval."""
+def planned_offsets(project, variant=None) -> dict:
+    """{camera tag: (planned capture phase ms, frame cycle ms)} from the sync plan (core.timing): the trigger pulse each
+    camera on a trigger line is matched to (its exposure centre is that plus half the readout and the exposure, the
+    same for every camera), modulo its frame cycle. A rig synchronised to a spinning lidar staggers its cameras round
+    the sweep (31–34 ms apart at 10 Hz on the sample's data rig): that is the plan, not a skew. Cameras that free-run
+    (no trigger line or input, a rate that drifts against the lidar, no spinning lidar to follow) are left out: they
+    have no planned phase."""
+    try:
+        from . import timing as TM
+        plan = TM.plan(project, variant)
+    except Exception:                        # a project the plan cannot read: judged without one
+        return {}
+    return {e['tag']: (float(e['trigger_ms']), float(e['cycle_ms'])) for e in plan.cams
+            if e.get('trigger_ms') is not None and e.get('cycle_ms') and e.get('alignment') != 'drifts'}
+
+
+def schedule_offsets(rig_doc) -> dict:
+    """planned_offsets for a simulated rig (core.simrig's sim_rig.json, a CARLA recording's or the live rig's): each
+    camera's recorded exposure centre (the plan's, rounded to the simulation step) modulo its recorded frame period.
+    That is what the simulator delivers, which is the plan only where the step resolves it (a live rig stepping at
+    the cameras' own 10 Hz fires them together)."""
+    out = {}
+    for c in (rig_doc or {}).get('cameras', []):
+        cap = c.get('capture') or {}
+        hz, t = cap.get('recorded_hz') or cap.get('rate_hz'), cap.get('recorded_centre_s')
+        if hz and t is not None and c.get('tag'):
+            per = 1000.0 / float(hz)
+            out[c['tag']] = (float(t) * 1000.0 % per, per)
+    return out
+
+
+def capture_offsets(times: dict, planned: dict | None = None) -> tuple[dict, str | None]:
+    """({camera key: {'offset_ms', 'planned_ms', 'skew_ms'}}, reference key) from each camera's capture times (s):
+    the median offset of a camera's frames to the reference camera's nearest frame (signed, ms), the offset the plan
+    gives it (planned: planned_offsets / schedule_offsets; None without a plan for the pair) and its skew, the part
+    the plan does not account for: the median signed offset to the reference frame nearest to where the plan puts it
+    (with no plan, the median distance to the nearest reference frame, as unsynchronised cameras are judged:
+    triggered together ~0, free-running up to half a frame interval). The reference is the first camera the plan
+    phases, else the first; cameras with fewer than three frames are left out."""
+    planned = planned or {}
     keys = [k for k, t in times.items() if len(t) >= 3]
     if len(keys) < 2:
-        return None, ''
-    ref = np.sort(times[keys[0]])
-    worst, who = 0.0, ''
-    for k in keys[1:]:
+        return {}, None
+    ref = next((k for k in keys if k in planned), keys[0])
+    R = np.sort(np.asarray(times[ref], float))
+
+    def nearest(t):
+        i = np.clip(np.searchsorted(R, t), 1, len(R) - 1)
+        return np.where(np.abs(t - R[i - 1]) <= np.abs(t - R[i]), R[i - 1], R[i])
+    out = {ref: {'offset_ms': 0.0, 'planned_ms': 0.0 if ref in planned else None, 'skew_ms': 0.0}}
+    for k in keys:
+        if k == ref:
+            continue
         t = np.asarray(times[k], float)
-        i = np.clip(np.searchsorted(ref, t), 1, len(ref) - 1)
-        d = np.minimum(np.abs(t - ref[i - 1]), np.abs(t - ref[i]))
-        med = float(np.median(d)) * 1000
-        if med > worst:
-            worst, who = med, k
+        off = float(np.median(t - nearest(t))) * 1000.0
+        p = None
+        if ref in planned and k in planned:
+            (pr, cr), (pk, _) = planned[ref], planned[k]
+            p = float((pk - pr + cr / 2) % cr - cr / 2)          # folded into the reference's frame cycle
+            s = t - p / 1000.0
+            skew = float(np.median(s - nearest(s))) * 1000.0
+        else:
+            skew = float(np.median(np.abs(t - nearest(t)))) * 1000.0
+        out[k] = {'offset_ms': off, 'planned_ms': p, 'skew_ms': skew}
+    return out, ref
+
+
+def sync_skew(times: dict, planned: dict | None = None) -> tuple[float | None, str]:
+    """(the worst camera's capture-time skew in ms, its key): capture_offsets' skew, so against the sync plan's offsets
+    when planned gives them (the stagger of a lidar-synchronised rig is no skew), else the median distance of each
+    camera's frames to the first camera's nearest frame."""
+    offs, ref = capture_offsets(times, planned)
+    if ref is None:
+        return None, ''
+    worst, who = 0.0, ''
+    for k, o in offs.items():
+        if abs(o['skew_ms']) > worst:
+            worst, who = abs(o['skew_ms']), k
     return worst, who
 
 
@@ -404,17 +472,26 @@ class RigMonitor:
         self.unconfigured: list = []
         self.running = False
         self.t0 = 0.0
+        self.plan_mode = 'plan'
+        self.planned: dict = {}         # tag -> (planned capture phase ms, cycle ms): what the sync skew is judged by
 
     # ---------------------------------------------------------------- set-up
-    def configure(self, project, cams, engine_factory=None):
+    def configure(self, project, cams, engine_factory=None, planned='plan'):
         """cams: the cameras to watch; their sources come from project.streams[tag]. Cameras without one are listed
-        as not configured. engine_factory() gives an engine for synthetic sources (rendered on their own threads)."""
+        as not configured. engine_factory() gives an engine for synthetic sources (rendered on their own threads).
+        planned: what the capture-time skew is judged against: 'plan' the project's sync plan (planned_offsets,
+        followed as the project changes), a dict of such offsets (a simulated rig's schedule_offsets), or None / {}
+        for none (every camera expected to fire together)."""
         self.stop(wait=False)
         self.streams = {}
+        self.plan_mode = 'plan' if planned == 'plan' else 'given'
+        self.planned = {} if planned == 'plan' else dict(planned or {})
         self.update(project, cams, engine_factory)
 
     def update(self, project, cams, engine_factory=None):
         """Follow the project: streams whose source changed restart (when running), the others keep their state."""
+        if self.plan_mode == 'plan':
+            self.planned = planned_offsets(project)
         want = {c.tag: ((getattr(project, 'streams', {}) or {}).get(c.tag, '').strip(), c) for c in cams}
         for key in list(self.streams):
             if key not in want or want[key][0] != self.streams[key].spec:
@@ -539,7 +616,10 @@ class RigMonitor:
         for tag in self.unconfigured:
             cams[tag] = {'camera': tag, 'source': '', 'kind': '', 'status': 'off', 'reasons': ['no stream configured'],
                          'frames': 0}
-        skew, who = sync_skew(times)
+        offs, ref = capture_offsets(times, self.planned)
+        for key, o in offs.items():
+            cams[key].update(sync_offset_ms=o['offset_ms'], sync_planned_ms=o['planned_ms'], sync_skew_ms=o['skew_ms'])
+        skew, who = sync_skew(times, self.planned)
         live = [c for c in cams.values() if c['status'] in ('ok', 'warning')]
         fps = [(c['fps'], k) for k, c in cams.items() if c.get('frames') and c.get('fps')]
         rig = {'cameras': len(cams), 'streaming': len(live),
@@ -547,7 +627,8 @@ class RigMonitor:
                'warnings': sum(1 for c in cams.values() if c['status'] == 'warning'),
                'not_configured': sum(1 for c in cams.values() if c['status'] == 'off'),
                'worst_fps': min(fps)[0] if fps else None, 'worst_fps_camera': min(fps)[1] if fps else None,
-               'sync_skew_ms': skew, 'sync_skew_camera': who or None,
+               'sync_skew_ms': skew, 'sync_skew_camera': who or None, 'sync_reference': ref,
+               'sync_against': ('plan' if ref is not None and ref in self.planned else 'none'),
                'sync_status': None if skew is None else 'fault' if skew > st.sync_fault_ms else
                'warning' if skew > st.sync_warn_ms else 'ok',
                'seconds': now - self.t0 if self.running else 0.0, 'clock': CLOCK_NOTE}
@@ -674,11 +755,13 @@ def alignment(frame: np.ndarray, ev: ExpectedView, search=0.05, min_support=0.3)
 
 
 # ====================================================================================== batch
-def run_for(project, cams, seconds, settings=None, engine_factory=None, connect_timeout=20.0, progress=None) -> dict:
+def run_for(project, cams, seconds, settings=None, engine_factory=None, connect_timeout=20.0, progress=None,
+            planned='plan') -> dict:
     """Watch every configured stream for `seconds` (after the streams deliver their first frame, or the connect
-    timeout) and return the snapshot, with the drift indicator of each camera's last frame."""
+    timeout) and return the snapshot, with the drift indicator of each camera's last frame. planned: as
+    RigMonitor.configure."""
     mon = RigMonitor(settings)
-    mon.configure(project, cams, engine_factory)
+    mon.configure(project, cams, engine_factory, planned)
     mon.start()
     try:
         t_end = time.monotonic() + connect_timeout

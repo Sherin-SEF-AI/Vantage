@@ -560,6 +560,91 @@ EXTRA_METRICS = {
 }
 
 
+# ------------------------------------------------------------------ a CARLA-backed response: detection quality
+# The design point's variant driven in CARLA with ground truth (core.simrig and the bridge in CARLA's Python, on the
+# server already running on Simulate ▸ CARLA's port) and evaluated by the detector (core.detection_eval). One drive at a
+# time (one server, one world): the study holds a lock, so parallel workers queue. A point already driven with the same
+# rig file is reused, so a cancelled experiment resumes without driving again. Experiments only: the requirements
+# scorecard never drives CARLA.
+_CARLA_LOCK = threading.Lock()
+# typical seconds per design point of a study that drives CARLA, measured on the development machine (RTX 5080, the
+# sample's data rig at half size, a 12 s drive with ground truth: 99–107 s; YOLOX-S on its 720 fisheye images with
+# OpenCV 4.13 on the CPU: 2–3 min); estimate() states it rather than drive CARLA to time it
+CARLA_STUDY_S = {'detection': 260.0}
+
+
+def _run_detection(ev):
+    from . import detection as DT
+    from . import detection_eval as DE
+    from . import simrig as SR
+    from .. import workdir as WD
+    st = DE.settings_of(ev.p)
+    s = DT.status(st.model)
+    if not s['verified']:
+        raise RQ.NotEvaluated(s['text'] + ' Download it on Simulate ▸ Detection quality.')
+    if not any(c.visible for c in ev.v.cameras):
+        raise RQ.NotEvaluated('No visible camera in the variant.')
+    sim = SR.settings_of(ev.p)
+    key = hashlib.sha1(json.dumps([ev.v.to_dict(), sim.to_dict()], sort_keys=True, default=str).encode()).hexdigest()
+    out = WD.project_dir(ev.p, None, 'experiments', 'detection', key[:16])
+    with _CARLA_LOCK:
+        try:
+            res = DE.evaluate_variant(ev.p, ev.v, sim, st, out, progress=ev.sub_progress('detection'),
+                                      cancel=ev.cancel)
+        except (RuntimeError, ValueError, FileNotFoundError) as e:
+            raise RQ.NotEvaluated(str(e)) from None
+    if res is None:
+        raise RQ._Cancelled()
+    return res
+
+
+def _det_classes(p, v):
+    from . import detection as DT
+    return [(c, DT.CLASS_LABEL[c]) for c in ('vehicle',) + tuple(x for x in DT.EVAL_CLASSES if x != 'vehicle')]
+
+
+def _det_ranges(p, v):
+    from . import detection_eval as DE
+    return [(RQ.EVERY, 'every range')] + [(lab, lab) for lab in DE.bin_labels(DE.settings_of(p).range_edges)]
+
+
+def _det_metric(rig: bool):
+    def fn(ev, prm):
+        from . import detection as DT
+        res = ev.study('detection')
+        cls = prm.get('cls') or 'vehicle'
+        rb = prm.get('range') or 'all'
+        if rig:
+            r = next((x for x in res.rig if x['rec'] == 0 and x['class'] == cls and x['distance_bin'] == rb), None)
+            n, k = (r or {}).get('n', 0), (r or {}).get('detected', 0)
+        else:
+            r = res.row(0, res.modes()[0], prm.get('camera') or 'all', cls, rb)
+            n, k = (r or {}).get('n_gt', 0), (r or {}).get('detected', 0)
+        if not r or r.get('recall') is None:
+            raise RQ.NotEvaluated(f'No {DT.CLASS_LABEL.get(cls, cls).lower()} in the drive'
+                                  f'{" within " + rb if rb != "all" else ""}: nothing to detect.')
+        ci = r.get('recall_ci')
+        return 100.0 * r['recall'], {'detail': f'{k} of {n} objects' + (
+            f'; {res.settings.confidence * 100:g} % interval {ci[0] * 100:.0f}–{ci[1] * 100:.0f} %' if ci else '')}
+    return fn
+
+
+EXTRA_STUDIES['detection'] = RQ.Study(
+    id='detection', label='Detection quality (CARLA)', page='detection', menu='Simulate ▸ Detection quality…',
+    cost='study', run=_run_detection, figures=lambda r, ev: [], module='detection_eval', weight=5.0)
+EXTRA_METRICS['detection.recall'] = RQ.Metric(
+    'detection.recall', 'Detection recall (CARLA)', '%', 'detection', '>=', _det_metric(False),
+    (RQ.Param('cls', 'Class', _det_classes, 'vehicle'), RQ.Param('range', 'Range', _det_ranges),
+     RQ.Param('camera', 'Camera', RQ._tags('camera', 'every camera'))), 1,
+    'Objects the detector finds at its operating point, per camera image, in a CARLA drive of the design (each point '
+    'drives CARLA and runs the detector: about 4 minutes on an RTX 5080 with the sample\'s six cameras)')
+EXTRA_METRICS['detection.rig_recall'] = RQ.Metric(
+    'detection.rig_recall', 'Rig detection recall (CARLA)', '%', 'detection', '>=', _det_metric(True),
+    (RQ.Param('cls', 'Class', _det_classes, 'vehicle'), RQ.Param('range', 'Distance', _det_ranges)), 1,
+    'Objects any camera of the rig detects, each counted once per instant, by distance from the vehicle (a CARLA drive '
+    'and the detector per point)')
+
+
 def metric(mid) -> RQ.Metric | None:
     return RQ.METRICS.get(mid) or EXTRA_METRICS.get(mid)
 
@@ -1051,9 +1136,10 @@ def _mesh_key(m) -> str:
 def base_key(project, variant_uid='') -> str:
     """Everything the responses read, hashed: the evaluated variant, the analysis settings (the experiment's own and
     the scorecard's left out), the ROI, the rig, the library, targets, obstacles, the vehicle (mesh contents, wheels),
-    the frame and the code version. A design point's key adds its factor values."""
+    the frame and the code version. A design point's key adds its factor values. (The CARLA settings count: the
+    detection responses drive CARLA with them.)"""
     a = project.analysis.to_dict()
-    for k in ('requirements', 'assistant', 'live', 'heatmap', 'experiments', 'automation', 'sim'):
+    for k in ('requirements', 'assistant', 'live', 'heatmap', 'experiments', 'automation'):
         a.pop(k, None)
     v = project.variant_by_uid(variant_uid) or project.variant
     veh = project.vehicle
@@ -1955,7 +2041,10 @@ def estimate(project, engine=None, settings: ExperimentSettings | None = None, v
     keys = [point_key(bkey, factors, vals) for vals in values]
     cached = sum(cache.get(kk, rkeys) is not None for kk in keys)
     times, per_study = [], {}
-    todo = [None] + [i for i in range(design.n) if cache.get(keys[i], rkeys) is None][:probe]
+    # a study that drives CARLA is not timed by running it (a drive and the detector per point): its measured figure
+    carla = sorted({r.study for r in responses if r.study in CARLA_STUDY_S})
+    probed = [r for r in responses if r.study not in CARLA_STUDY_S]
+    todo = ([None] + [i for i in range(design.n) if cache.get(keys[i], rkeys) is None][:probe]) if probed else []
     for i in todo:
         if cancel is not None and cancel():
             break
@@ -1963,21 +2052,23 @@ def estimate(project, engine=None, settings: ExperimentSettings | None = None, v
         q, pose, _ = apply(p, v.uid, factors, vals)
         t0 = time.perf_counter()
         try:
-            y, why, secs = evaluate(q, eng, responses, pose, rq_st, cancel)
+            y, why, secs = evaluate(q, eng, probed, pose, rq_st, cancel)
         except _Cancel:
             break
         times.append(time.perf_counter() - t0)
-        if i is not None:
+        if i is not None and not carla:
             cache.put(keys[i], rkeys, y, why)
         for k_, s_ in secs.items():
             per_study.setdefault(k_, []).append(s_)
     # the first evaluation also warms the engine (cube maps): the later ones are what a point costs
     per = float(np.median(times[1:])) if len(times) > 1 else (times[0] if times else 0.0)
+    per += sum(CARLA_STUDY_S[s_] for s_ in carla)
     W = _workers(st, design.n)
     left = design.n - cached
-    speed = 1.0 + PARALLEL_GAIN * (W - 1)
+    speed = 1.0 if carla else 1.0 + PARALLEL_GAIN * (W - 1)     # one CARLA server: its points queue
     studies = [{'id': k_, 'label': study_of(k_).label if study_of(k_) else k_,
                 'seconds': float(np.median(s_[1:] if len(s_) > 1 else s_))} for k_, s_ in per_study.items()]
+    studies += [{'id': s_, 'label': study_of(s_).label, 'seconds': CARLA_STUDY_S[s_], 'typical': True} for s_ in carla]
     return {'points': design.n, 'cached': int(cached), 'per_point_s': per, 'total_s': per * left / speed,
             'workers': W, 'studies': sorted(studies, key=lambda s: -s['seconds']),
             'heavy': [s['label'] for s in studies if s['seconds'] > HEAVY_S]}

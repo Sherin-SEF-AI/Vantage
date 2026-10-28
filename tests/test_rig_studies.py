@@ -23,7 +23,9 @@ PAGES = {'power_budget': ('power', 'Analysis'), 'gnss_imu': ('gnss', 'Analysis')
          'materials': ('materials', 'Analysis'), 'weather': ('perception', 'Analysis'),
          'automation': ('automation', 'Export'), 'terrain': ('terrain', 'Analysis'),
          'cable_harness': ('harness', 'Analysis'), 'observability': ('observability', 'Calibrate'),
-         'experiments': ('experiments', 'Analysis'), 'carla': ('sim', 'Simulate')}
+         'experiments': ('experiments', 'Analysis'), 'carla': ('sim', 'Simulate'),
+         'carla_live': ('sim', 'Simulate'), 'detection': ('detection', 'Simulate'), 'campaign': ('campaign', 'Simulate'),
+         'critical_carla': ('critical_carla', 'Simulate')}
 FORMATS = {'power_budget': ['power_budget/power_budget.json', 'power_budget/power_budget.csv',
                             'power_budget/power_circuits.csv'],
            'gnss_imu': ['gnss_imu/gnss_imu.json', 'gnss_imu/ins_lever_arms.txt', 'gnss_imu/gnss_sky.png'],
@@ -886,3 +888,703 @@ def test_validation_from_the_help_menu_and_stamped_page_exports(app, win, tmp_pa
     assert len(paths) == 3
     win.set_page('viewports')
     settle(app, win)
+
+
+# ============================================================================ round 8: ground truth, faults, scenarios,
+# detection quality, campaigns, critical targets in CARLA, the live rig (against tests/fake_carla)
+FAKE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fake_carla')
+NARROW = 'h03r2'                    # a 37° lens: one pinhole view per frame
+
+
+def _fake_bridges(monkeypatch):
+    """Every bridge and live server the app starts runs against tests/fake_carla in this Python, unscoped."""
+    from vantage.core import carla_live as CL
+    from vantage.sim import server as SV
+    real = SV.bridge_command
+
+    def bridge(python, rig, out, args=(), **kw):
+        kw['scope'] = False
+        cmd, env = real(python, rig, out, args, **kw)
+        env['PYTHONPATH'] = FAKE_DIR + os.pathsep + env['PYTHONPATH']
+        return cmd, env
+    monkeypatch.setattr(SV, 'bridge_command', bridge)
+    real_live = CL.command
+
+    def live(python, rig_path, http_port=0, args=(), memory_gb=4.0, scope=True, extra_path=''):
+        return real_live(python, rig_path, http_port, args, memory_gb, False, FAKE_DIR)
+    monkeypatch.setattr(CL, 'command', live)
+
+
+class _Server:
+    """A listening socket on a free port standing for the CARLA server (the fake carla needs none)."""
+
+    def __enter__(self):
+        import socket
+        self.sock = socket.socket()
+        self.sock.bind(('127.0.0.1', 0))
+        self.sock.listen(16)
+        self.port = self.sock.getsockname()[1]
+        return self
+
+    def __exit__(self, *exc):
+        self.sock.close()
+
+
+def _free_port():
+    import socket
+    with socket.socket() as s:
+        s.bind(('127.0.0.1', 0))
+        return s.getsockname()[1]
+
+
+def _small(p, cams=('F',), lens=None, **sim):
+    """The data rig cut to a few cameras and its lidar (on a mast: no self-hits in the fake), small CARLA runs."""
+    v = p.variant
+    v.cameras[:] = [c for c in v.cameras if c.tag in cams]
+    if lens:
+        for c in v.cameras:
+            c.lens_id = lens
+    v.sensors[:] = [s for s in v.sensors if s.kind == 'lidar']
+    v.sensors[0].z = 2.0
+    p.analysis.sim = dict({'image_scale': 0.08, 'duration_s': 0.6, 'traffic': 4, 'warmup_s': 0.25, 'town': 'Town01'},
+                          **sim)
+    return p
+
+
+def _oracle(drive):
+    """A stand-in detector that finds every labelled object of a drive exactly (the wiring is under test)."""
+    import cv2
+    from vantage.core import detection as DT
+    from vantage.core import groundtruth as GT
+
+    class Oracle:
+        by = None
+
+        def detect(self, img):
+            if self.by is None:
+                doc = GT.read(drive)
+                self.by = {}
+                for c in doc['cameras'].values():
+                    for f in c['frames']:
+                        self.by[cv2.imread(GT.path_of(doc, f['image'])).tobytes()] = f['objects']
+            objs = [o for o in self.by.get(img.tobytes(), []) if DT.GT_TO_CLASS.get(o['class'])]
+            return {'boxes': np.array([o['bbox'] for o in objs], np.float32).reshape(-1, 4),
+                    'scores': np.full(len(objs), 0.9, np.float32),
+                    'cls': np.array([DT.CLASSES.index(DT.GT_TO_CLASS[o['class']]) for o in objs], np.int8),
+                    'coco': np.zeros(len(objs), np.int16), 'ms': 0.0, 'input': list(img.shape[1::-1])}
+
+        __call__ = detect
+
+        def describe(self):
+            return {'model': 'oracle', 'name': 'ground-truth oracle', 'sha256': 'oracle'}
+    return Oracle()
+
+
+@pytest.fixture(scope='module')
+def gt_drive(tmp_path_factory):
+    """A drive with ground truth recorded by the bridge in-process against the fake carla: the ego parked with a car
+    and a pedestrian stood ahead of F (an actors scene), so the ground truth has objects in view."""
+    import importlib.util
+    from vantage.core import simrig as SR
+    from vantage.sim import carla_bridge as CB
+    name = 'fake_carla_for_tests'
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, os.path.join(FAKE_DIR, 'carla', '__init__.py'))
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[name] = mod
+        spec.loader.exec_module(mod)
+    fc = sys.modules[name]
+    p = _small(_rig(), ('F',), lens=NARROW, traffic=0, duration_s=0.5)
+    p.variant.by_tag('F').pitch = 5.0                  # a narrow lens looking ahead: the actors in its view
+    p.analysis.sim['actors'] = [{'id': 'car1', 'kind': 'car', 'pose': {'x': 16.0, 'y': 0.0, 'yaw': 180.0}},
+                                {'id': 'ped1', 'kind': 'pedestrian', 'pose': {'x': 11.0, 'y': -1.0, 'yaw': 90.0}}]
+    root = tmp_path_factory.mktemp('gt')
+    rig = SR.build(p)
+    SR.export(rig, p, str(root / 'rig'))
+    out = str(root / 'drive')
+    fc.reset()
+    doc, remaps = CB.load_rig(str(root / 'rig' / 'sim_rig.json'))
+    a = CB.resolve_args(CB.parser().parse_args([str(root / 'rig' / 'sim_rig.json'), out]), doc)
+    CB.Bridge(fc, doc, remaps, out, a, None, None).run()
+    assert os.path.isfile(os.path.join(out, 'ground_truth', 'index.json'))
+    return {'p': p, 'dir': out}
+
+
+def test_round8_batch_modifiers_and_wanted():
+    from vantage import batch
+    from test_advanced import _args
+    for main in (('carla_live', ['5']), ('ground_truth_summary', ['d']), ('detection_quality', 'o'),
+                 ('campaign', 'o'), ('critical_carla', 'o')):
+        assert batch.wanted(_args(**{main[0]: main[1]})), main
+    for mod, v in (('carla_faults', 'f.json'), ('carla_scenario', 'cut_in'), ('carla_ground_truth', 'all'),
+                   ('live_fault', ['1:{}']), ('live_cameras', 'F'), ('detection_recording', ['d']),
+                   ('detection_download', True), ('campaign_template', 'rig_ab'), ('campaign_phase', 'drive'),
+                   ('critical_carla_drives', 'd')):
+        assert not batch.wanted(_args(**{mod: v})), mod                  # modifiers, like --variant
+        with pytest.raises(SystemExit):
+            batch.run(_args(**{mod: v}))                                 # … and never without their option
+    with pytest.raises(SystemExit):
+        batch.run(_args(carla_python='python3', campaign=None))
+    a = batch.parser().parse_args(['--sample', '--carla-live', '5', 'out', '--live-fault', '2:{"tag": "F"}',
+                                   '--live-fault', '3:{"tag": "R"}', '--campaign', 'c', '--campaign-phase', 'analyse'])
+    assert a.carla_live == ['5', 'out'] and len(a.live_fault) == 2 and a.campaign_phase == 'analyse'
+
+
+def test_batch_carla_options_ground_truth_summary_and_reproduce(tmp_path, capsys, monkeypatch):
+    """--carla-rig and --carla-run carry --carla-scenario, --carla-faults, --carla-actors, --carla-ground-truth,
+    --carla-walkers and --carla-spawn-point into the rig, each checked first (exit 2); a fake drive with them, its
+    ground truth read back by --ground-truth-summary (no project), which reproduces."""
+    from vantage import batch
+    from test_advanced import _args
+    p = _rig()
+    faults = tmp_path / 'faults.json'
+    faults.write_text(json.dumps([{'tag': 'F', 'kind': 'rotation', 'deg': [0, 0.5, 0]},
+                                  {'tag': 'L1', 'kind': 'range_bias', 'm': 0.05}]))
+    actors = json.dumps([{'id': 'c1', 'kind': 'child', 'pose': {'x': 2.5, 'y': 0.0}}])
+    out = tmp_path / 'rig'
+    assert _batch(tmp_path, p, carla_rig=str(out), carla_scenario='pedestrian_crossing',
+                  carla_scenario_params='{"distance_m": 25}', carla_faults=str(faults), carla_actors=actors,
+                  carla_ground_truth='semantic,range', carla_walkers=3, carla_spawn_point=7) == 0
+    rig = json.loads((out / 'sim_rig.json').read_text())
+    assert [(f['tag'], f['kind']) for f in rig['faults']] == [('F', 'rotation'), ('L1', 'range_bias')]
+    assert rig['faults'][0]['deg'] == [0.0, 0.5, 0.0]
+    assert rig['scenario']['name'] == 'pedestrian_crossing' and rig['scenario']['params']['distance_m'] == 25.0
+    assert rig['scenario']['walkers'] == 3
+    assert rig['ground_truth']['semantic'] and rig['ground_truth']['range'] and not rig['ground_truth']['instance']
+    assert [a['id'] for a in rig['actors']['items']] == ['c1'] and rig['actors']['spawn_point'] == 7
+    assert rig['provenance']['settings']['sim']['faults'][0]['tag'] == 'F'          # what the rig was built with
+    assert (out / 'faults.json').is_file() and (out / 'actors.json').is_file()
+    # each option is checked against the rig before anything is written
+    for kw, why in (({'carla_faults': '[{"tag": "NOPE", "kind": "drop", "rate": 0.1}]'}, 'no sensor NOPE'),
+                    ({'carla_faults': '[{"tag": "RD1", "kind": "range_bias", "m": 0.1}, '
+                                      '{"tag": "F", "kind": "range_bias", "m": 0.1}]'}, 'does not apply to F'),
+                    ({'carla_scenario': 'cut_in', 'carla_scenario_params': '{"nope": 1}'}, "no parameter 'nope'"),
+                    ({'carla_scenario_params': '{not json'}, 'neither a file nor JSON'),
+                    ({'carla_actors': '[{"id": "a", "kind": "dragon", "pose": {"x": 1, "y": 0}}]'}, 'unknown kind'),
+                    ({'carla_ground_truth': 'semantic,colour'}, 'unknown colour')):
+        assert _batch(tmp_path, p, carla_rig=str(tmp_path / 'bad'), **kw) == 2, kw
+        assert why in capsys.readouterr().err, kw
+    assert not (tmp_path / 'bad').exists()
+    # six fisheyes at full size with ground truth: over the bridge's render budget, refused before anything is written
+    big = _rig()
+    big.analysis.sim = {'image_scale': 1.0}
+    assert _batch(tmp_path, big, carla_run=str(tmp_path / 'big'), carla_python=sys.executable,
+                  carla_ground_truth='all') == 2
+    assert "over the bridge's budget of 200" in capsys.readouterr().err and not (tmp_path / 'big').exists()
+    # --carla-run against the fake: the options reach the drive (a fault injected, ground truth recorded)
+    _fake_bridges(monkeypatch)
+    q = _small(_rig(), ('F',), lens=NARROW)
+    drive = tmp_path / 'drive'
+    with _Server() as srv:
+        q.analysis.sim['port'] = srv.port
+        assert _batch(tmp_path, q, carla_run=str(drive), carla_python=sys.executable, carla_ground_truth='all',
+                      carla_faults='[{"tag": "F", "kind": "rotation", "deg": [0, 1, 0]}]', carla_walkers=0) == 0
+    err = capsys.readouterr().err
+    assert 'ground truth:' in err and 'fault F rotation' in err
+    run = json.loads((drive / 'run.json').read_text())
+    assert run['status'] == 'ok' and [f['tag'] for f in run['faults_injected']] == ['F']
+    assert run['faults_injected'][0]['pose_delta_deg'] == pytest.approx([0.0, 1.0, 0.0], abs=1e-6)
+    assert (drive / 'ground_truth' / 'index.json').is_file()
+    # its ground truth in brief, with no project; and it reproduces from the drive found by its name
+    gt = tmp_path / 'gt.json'
+    a = _args(ground_truth_summary=[str(drive), str(gt)])
+    a.sample = False
+    assert batch.run(a) == 0
+    doc = json.loads(gt.read_text())
+    assert doc['schema'] == 'vantage.ground_truth_summary/1' and doc['cameras']['F'] > 0 and doc['lidars']['L1'] > 0
+    assert doc['faults_injected'][0]['kind'] == 'rotation' and 'plan_pose' not in doc['faults_injected'][0]
+    assert doc['lidar_labels']['L1']['matched_in_order_share'] > 0.9 and 'car' in doc['classes']
+    pv = doc['provenance']
+    assert pv['project'] is None and pv['output']['option'] == '--ground-truth-summary'
+    assert pv['inputs'][0]['option'] == '--ground-truth-summary' and pv['inputs'][0]['kind'] == 'folder'
+    a = _args(reproduce=[str(gt), str(tmp_path / 'rep.json')])
+    a.sample = False
+    assert batch.run(a) == 0 and json.loads((tmp_path / 'rep.json').read_text())['verdict'] == 'reproduces'
+    a = _args(ground_truth_summary=[str(tmp_path)])                   # a folder without ground truth: exit 2
+    a.sample = False
+    assert batch.run(a) == 2 and 'has no ground truth' in capsys.readouterr().err
+
+
+def test_batch_detection_quality_and_its_export_format(gt_drive, tmp_path, capsys, monkeypatch):
+    """--detection-quality: 2 with nothing to evaluate, 8 without the model (or a failed download); with a stand-in
+    detector that finds every labelled object, recall and precision 1 and its files stamped. The export format
+    detection_quality writes the same evaluation when the model and the recordings are there."""
+    from vantage.core import detection as DT
+    from vantage.core import exporters as ex
+    p = _rig()
+    p.analysis.detection = {'cache': False, 'bootstrap': 50}
+    assert _batch(tmp_path, p, detection_quality=str(tmp_path / 'd0')) == 2           # no recording
+    assert 'no recording' in capsys.readouterr().err
+    assert _batch(tmp_path, p, detection_quality=str(tmp_path / 'd0'), detection_recording=[str(tmp_path)]) == 2
+    assert 'no ground truth' in capsys.readouterr().err
+    rec = gt_drive['dir']
+    assert _batch(tmp_path, p, detection_quality=str(tmp_path / 'd0'), detection_recording=[rec]) == 8
+    assert 'not downloaded' in capsys.readouterr().err
+
+    def fail(*a, **k):
+        raise OSError('network unreachable')
+    monkeypatch.setattr(DT, 'download', fail)
+    assert _batch(tmp_path, p, detection_quality=str(tmp_path / 'd0'), detection_recording=[rec],
+                  detection_download=True) == 8
+    assert 'the download failed: network unreachable' in capsys.readouterr().err
+    # the model there (a stand-in: the wiring is under test)
+    real = DT.status
+    monkeypatch.setattr(DT, 'status', lambda m=DT.DEFAULT_MODEL, folder=None: dict(real(m, folder), verified=True,
+                                                                                   present=True))
+    monkeypatch.setattr(DT, 'load', lambda settings=None, folder=None: _oracle(rec))
+    out = tmp_path / 'det'
+    assert _batch(tmp_path, p, detection_quality=str(out), detection_recording=[rec]) == 0
+    doc = json.loads((out / 'detection_quality.json').read_text())
+    assert doc['schema'] == 'vantage.detection_quality/1' and doc['provenance']['output']['option'] == \
+        '--detection-quality'
+    assert doc['provenance']['inputs'][0]['option'] == '--detection-recording'
+    rows = [r for r in doc['per_camera'] if r['camera'] == 'all' and r['range_bin'] == 'all' and r['n_gt']]
+    assert rows and all(r['recall'] == 1.0 and r['precision'] == 1.0 for r in rows), rows
+    assert {r['class'] for r in rows} >= {'car', 'pedestrian'}
+    assert 'recall 1.00' in capsys.readouterr().err
+    for n in ('detection_quality.csv', 'detection_ranges.csv', 'detection_rig.csv', 'detection_quality.png'):
+        assert (out / n).stat().st_size > 0, n
+    # the export format: nothing without recordings; the five files with them, the study's settings in provenance
+    f = ex.format_by_id('detection_quality')
+    assert f.group == 'Documents' and not f.default and ex._names(f, p, p.variant) == []
+    p.analysis.detection = {'cache': False, 'bootstrap': 50, 'recordings': [rec]}
+    names = ex._names(f, p, p.variant)
+    assert names == [f'detection_quality/{n}' for n in ('detection_quality.json', 'detection_quality.csv',
+                                                         'detection_ranges.csv', 'detection_rig.csv',
+                                                         'detection_quality.png')]
+    assert 'The detector' in ex.preview('detection_quality', p, None, ex.ExportOptions(out_dir=str(tmp_path)))[1]
+    paths = ex.export(['detection_quality'], p, None, ex.ExportOptions(out_dir=str(tmp_path / 'exp')))
+    got = {os.path.relpath(x, tmp_path / 'exp').replace(os.sep, '/') for x in paths}
+    assert set(names) <= got and any(g.startswith('detection_quality/detections/') for g in got)
+    edoc = json.loads((tmp_path / 'exp' / 'detection_quality' / 'detection_quality.json').read_text())
+    assert edoc['provenance']['study'] == 'detection_quality'
+    assert edoc['provenance']['settings']['detection']['bootstrap'] == 50
+
+
+def _campaign(out=None, **kw):
+    from vantage.core import simcampaign as SC
+    d = {'name': 'Batch drops', 'template': 'custom', 'seeds': [1],
+         'fault_sets': [{'kind': 'drop', 'tags': ['R'], 'magnitudes': [20.0]}], 'clean': True,
+         'evaluators': ['image_stats', 'returns'], 'base': {'image_scale': 0.08, 'duration_s': 0.8, 'traffic': 4,
+                                                            'warmup_s': 0.25, 'tick_hz': 40.0}}
+    if out:
+        d['out_dir'] = out
+    d.update(kw)
+    return SC.CampaignSettings.from_dict(d).to_dict()
+
+
+def test_batch_campaign_through_the_fake_bridge(tmp_path, capsys, monkeypatch):
+    """--campaign: the project's campaign driven (each drive a bridge process against the fake carla), checked,
+    analysed and exported (stamped); run again it reuses every drive; --campaign-phase analyse needs no server; the
+    export format sim_campaign writes the analysis from the drives on disk. Exit 2 for a design naming a sensor the
+    variant lacks, 7 without a server, 8 when its detection check has no model, 9 when a drive fails; it cannot be
+    reproduced (it drives CARLA)."""
+    from vantage import batch
+    from vantage.core import exporters as ex
+    from test_advanced import _args
+    _fake_bridges(monkeypatch)
+    p = _small(_rig(), ('F', 'R'), lens=NARROW)
+    p.analysis.campaign = _campaign()
+    out = tmp_path / 'camp'
+    with _Server() as srv:
+        p.analysis.sim['port'] = srv.port
+        assert _batch(tmp_path, p, campaign=str(out), carla_python=sys.executable) == 0
+        err = capsys.readouterr().err
+        assert '2 of 2 drives done, 0 failed' in err
+        doc = json.loads((out / 'campaign.json').read_text())
+        assert doc['schema'] == 'vantage.sim_campaign/1' and doc['provenance']['output']['option'] == '--campaign'
+        assert doc['provenance']['settings']['campaign']['name'] == 'Batch drops'
+        for n in ('campaign_observations.csv', 'campaign_drives.csv', 'campaign_report.html'):
+            assert (out / n).stat().st_size > 0, n
+        runs = sorted(os.listdir(out / 'drives' / 'drives'))
+        assert runs == ['d0001', 'd0002']
+        drop = json.loads((out / 'drives' / 'drives' / 'd0002' / 'run.json').read_text())['faults_injected']
+        assert drop[0]['tag'] == 'R' and drop[0]['kind'] == 'drop' and drop[0]['dropped_frames']
+        mtime = os.path.getmtime(out / 'drives' / 'drives' / 'd0002' / 'run.json')
+        assert _batch(tmp_path, p, campaign=str(out), carla_python=sys.executable) == 0     # everything reused
+        assert os.path.getmtime(out / 'drives' / 'drives' / 'd0002' / 'run.json') == mtime
+    capsys.readouterr()
+    assert _batch(tmp_path, p, campaign=str(out), campaign_phase='analyse') == 0             # no server needed
+    assert '2 of 2 drives done' in capsys.readouterr().err
+    a = _args(reproduce=[str(out / 'campaign.json'), str(tmp_path / 'rep.json')])
+    a.path, a.sample = None, True
+    assert batch.run(a) == 4                                       # it drives CARLA: not run again
+    # the export format: the campaign's drives on disk, analysed when exported (nothing driven)
+    f = ex.format_by_id('sim_campaign')
+    assert f.group == 'Documents' and not f.default
+    q = p.snapshot()
+    q.analysis.campaign = _campaign(str(out / 'drives'))
+    names = ex._names(f, q, q.variant)
+    assert names[0] == 'sim_campaign/campaign.json' and 'sim_campaign/campaign_report.html' in names
+    assert '2 of 2 drives done' in ex.preview('sim_campaign', q, None, ex.ExportOptions(out_dir=str(tmp_path)))[1]
+    paths = ex.export(['sim_campaign'], q, None, ex.ExportOptions(out_dir=str(tmp_path / 'exp')))
+    got = {os.path.relpath(x, tmp_path / 'exp').replace(os.sep, '/') for x in paths}
+    assert set(names) <= got
+    edoc = json.loads((tmp_path / 'exp' / 'sim_campaign' / 'campaign.json').read_text())
+    assert edoc['provenance']['study'] == 'sim_campaign' and len(edoc['drives']) == 2
+    q.analysis.campaign = _campaign(str(tmp_path / 'no-drives'))
+    assert ex._names(f, q, q.variant) == [] and 'No drive' in ex.preview('sim_campaign', q, None,
+                                                                          ex.ExportOptions(out_dir=str(tmp_path)))[1]
+    # the exits: a sensor the variant lacks (2), no server (7), the detection check without its model (8), a failed
+    # drive (9)
+    p.analysis.campaign = _campaign(fault_sets=[{'kind': 'drop', 'tags': ['NOPE'], 'magnitudes': [5.0]}])
+    assert _batch(tmp_path, p, campaign=str(tmp_path / 'c2')) == 2
+    assert 'no visible sensor NOPE' in capsys.readouterr().err
+    p.analysis.campaign = _campaign()
+    p.analysis.sim['port'] = _free_port()
+    assert _batch(tmp_path, p, campaign=str(tmp_path / 'c3'), carla_python=sys.executable) == 7
+    assert 'No CARLA server answers' in capsys.readouterr().err
+    p.analysis.campaign = _campaign(evaluators=['detection'])
+    assert _batch(tmp_path, p, campaign=str(tmp_path / 'c4'), carla_python=sys.executable) == 8
+    p.analysis.campaign = _campaign()
+    from vantage.sim import server as SV
+    monkeypatch.setattr(SV, 'bridge_command', lambda python, rig, o, args=(), **kw: (
+        [sys.executable, '-c', 'import sys; sys.exit(3)'], dict(os.environ)))
+    with _Server() as srv:
+        p.analysis.sim['port'] = srv.port
+        assert _batch(tmp_path, p, campaign=str(tmp_path / 'c5'), carla_python=sys.executable) == 9
+    assert '0 of 2 drives done, 2 failed' in capsys.readouterr().err
+
+
+def test_batch_critical_targets_in_carla(tmp_path, capsys, monkeypatch):
+    """--critical-carla: 2 with no target, or no drive in --critical-carla-drives; 7 with no server; one target
+    stood in the fake CARLA, compared and exported (stamped); compared again from its drives without CARLA, which
+    reproduces."""
+    from vantage import batch
+    from test_advanced import _args
+    p = _small(_rig(), ('F',))
+    assert _batch(tmp_path, p, critical_carla=str(tmp_path / 'c0')) == 2
+    assert 'no critical target' in capsys.readouterr().err
+    p = _with_targets(p, 'Child 2 m ahead')
+    p.analysis.critical_carla = {'image_scale': 0.08, 'spawn_points': [3], 'frames': 2, 'duration_s': 1.0}
+    (tmp_path / 'empty').mkdir()
+    assert _batch(tmp_path, p, critical_carla=str(tmp_path / 'c1'), critical_carla_drives=str(tmp_path / 'empty')) == 2
+    p.analysis.sim['port'] = _free_port()
+    assert _batch(tmp_path, p, critical_carla=str(tmp_path / 'c2'), carla_python=sys.executable) == 7
+    assert 'No CARLA server' in capsys.readouterr().err
+    _fake_bridges(monkeypatch)
+    out = tmp_path / 'crit'
+    with _Server() as srv:
+        p.analysis.sim['port'] = srv.port
+        code = _batch(tmp_path, p, critical_carla=str(out), carla_python=sys.executable)
+    err = capsys.readouterr().err
+    doc = json.loads((out / 'critical_carla.json').read_text())
+    assert doc['schema'] == 'vantage.critical_carla/1' and doc['provenance']['output']['option'] == '--critical-carla'
+    agree = doc['metrics']['agree'] == doc['metrics']['pairs']
+    assert code == (0 if agree else 3) and 'camera views compared in 1 drives' in err
+    assert (out / 'critical_carla.csv').is_file() and (out / 'critical_carla.png').is_file()
+    assert [d for d in os.listdir(out / 'drives') if os.path.isdir(out / 'drives' / d)]
+    # the drives compared again without CARLA: the same verdicts, and that result reproduces from its drives (found by
+    # their folder's name beside the project)
+    import shutil
+    shutil.copytree(out / 'drives', tmp_path / 'drives')
+    again = tmp_path / 'again'
+    assert _batch(tmp_path, p, critical_carla=str(again), critical_carla_drives=str(tmp_path / 'drives')) == code
+    d2 = json.loads((again / 'critical_carla.json').read_text())
+    assert d2['metrics']['agree'] == doc['metrics']['agree'] and d2['metrics']['pairs'] == doc['metrics']['pairs']
+    src = tmp_path / 'p.vantage'
+    a = _args(reproduce=[str(again / 'critical_carla.json'), str(tmp_path / 'rep.json')])
+    a.path, a.sample = str(src), False
+    assert batch.run(a) == 0 and json.loads((tmp_path / 'rep.json').read_text())['verdict'] == 'reproduces'
+    a = _args(reproduce=[str(out / 'critical_carla.json'), str(tmp_path / 'rep2.json')])
+    a.path, a.sample = str(src), False
+    assert batch.run(a) == 4                                        # the run that drove CARLA is not driven again
+
+
+def test_batch_carla_live_session(tmp_path, capsys, monkeypatch):
+    """--carla-live: the cameras live in the fake CARLA, rig health on their streams, a fault injected on time: a
+    frozen camera is a fault (exit 3), rig_health.json stamped; bad options 2, no server 7; never reproduced."""
+    import dataclasses
+    from vantage import batch
+    from test_advanced import _args
+    _fake_bridges(monkeypatch)
+    p = _rig()
+    p.modules['sturdecam31'] = dataclasses.replace(p.modules['sturdecam31'], fps=10.0)
+    _small(p, ('F', 'R'), lens=NARROW, traffic=0, warmup_s=0.1)
+    assert _batch(tmp_path, p, carla_live=['2', str(tmp_path / 'l0')], live_cameras='F,NOPE') == 2
+    assert 'no visible camera NOPE' in capsys.readouterr().err
+    assert _batch(tmp_path, p, carla_live=['2', str(tmp_path / 'l0')], live_fault=['1:{"tag": "F", "kind": "melt"}'],
+                  carla_python=sys.executable) == 2
+    assert 'Unknown fault kind' in capsys.readouterr().err
+    p.analysis.sim['port'] = _free_port()
+    assert _batch(tmp_path, p, carla_live=['2', str(tmp_path / 'l1')], carla_python=sys.executable) == 7
+    assert 'No CARLA server' in capsys.readouterr().err
+    out = tmp_path / 'live'
+    with _Server() as srv:
+        p.analysis.sim['port'] = srv.port
+        code = _batch(tmp_path, p, carla_live=['3', str(out)], live_scale=0.08, carla_python=sys.executable,
+                      live_fault=['1:{"tag": "R", "kind": "freeze"}'])
+    err = capsys.readouterr().err
+    assert code == 3 and 'fault at' in err and 'R    fault' in err
+    h = json.loads((out / 'rig_health.json').read_text())
+    assert h['cameras']['R']['status'] == 'fault' and any('frozen' in r for r in h['cameras']['R']['reasons'])
+    assert h['cameras']['F']['drift_against'] == 'carla_body'
+    assert h['provenance']['output']['option'] == '--carla-live'
+    live = json.loads((out / 'live.json').read_text())
+    assert live['fault_log'][0]['tag'] == 'R' and (out / 'rig' / 'sim_rig.json').is_file()
+    a = _args(reproduce=[str(out / 'rig_health.json'), str(tmp_path / 'rep.json')])
+    a.path, a.sample = str(tmp_path / 'p.vantage'), False
+    assert batch.run(a) == 4
+
+
+def test_assistant_reads_round8(gt_drive, tmp_path):
+    """The read-only tools of round 8: the pages' results when there are, else what is set up; a drive's ground truth
+    inside the working folder only; no URL or machine path ever."""
+    import shutil
+    from vantage.assistant import tools as T
+    from vantage.core.analysis import Engine
+    p = _rig()
+    for name in ('get_detection_quality', 'get_campaign', 'get_critical_carla', 'get_carla_live', 'get_ground_truth'):
+        assert T.BY_NAME[name].kind == 'read', name
+    tc = T.ToolContext(p.snapshot(), None, Engine(), working_dir=str(tmp_path))
+    d = json.loads(T.run(tc, 'get_detection_quality', {})[0])
+    assert d['evaluated'] is False and d['model']['verified'] is False and 'not run yet' in d['note']
+    assert str(tmp_path) not in json.dumps(d)
+    c = json.loads(T.run(tc, 'get_campaign', {})[0])
+    assert c['run'] is False and c['template'] == 'fault_detectability' and c['drives'] == 49 and c['cost']
+    assert {f['kind'] for f in c['fault_sets']} == {'rotation', 'clock_offset', 'drop', 'freeze'}
+    q = _with_targets(p.snapshot(), 'Child 2 m ahead', 'Kerb by the right front wheel')
+    cc = json.loads(T.run(T.ToolContext(q, None, Engine()), 'get_critical_carla', {})[0])
+    assert cc['compared'] is False and [t['stood_in'] for t in cc['targets']] == [True, False] and cc['drives'] >= 1
+    assert json.loads(T.run(tc, 'get_carla_live', {})[0])['state'] == 'off'
+    # the pages' results, as the controller hands them over (their summary(): no paths; a message may have one)
+    home = os.path.expanduser('~')
+    page = {'campaign': 'X', 'notes': [f'drive d0001 failed: see {home}/w/drives/d0001/bridge.log']}
+    tp = T.ToolContext(p.snapshot(), None, Engine(), campaign=page, detection={'recordings': []},
+                       critical_carla={'agreement_pct': 100.0},
+                       carla_live={'state': 'streaming', 'message': f'see {home}/x/live.log',
+                                   'cameras': {'F': {'reasons': ['no frame from http://127.0.0.1:5/F.mjpg']}}})
+    out = json.loads(T.run(tp, 'get_campaign', {})[0])
+    assert out['run'] and home not in json.dumps(out) and 'bridge.log' in json.dumps(out)
+    assert json.loads(T.run(tp, 'get_detection_quality', {})[0])['evaluated'] is True
+    assert json.loads(T.run(tp, 'get_critical_carla', {})[0])['agreement_pct'] == 100.0
+    lv = json.loads(T.run(tp, 'get_carla_live', {})[0])
+    assert 'http' not in json.dumps(lv) and home not in json.dumps(lv) and lv['state'] == 'streaming'
+    # a drive's ground truth: inside the working folder only
+    shutil.copytree(gt_drive['dir'], tmp_path / 'proj' / 'carla' / 'drive1')
+    g = json.loads(T.run(tc, 'get_ground_truth', {'run': 'proj/carla/drive1'})[0])
+    assert g['cameras'] == {'F': g['cameras']['F']} and g['objects'] > 0 and g['run'] == os.path.join(
+        'proj', 'carla', 'drive1')
+    assert {'car', 'pedestrian'} <= set(g['objects_by_class'])
+    assert 'error' in json.loads(T.run(tc, 'get_ground_truth', {'run': gt_drive['dir']})[0])     # outside it
+    assert 'error' in json.loads(T.run(tc, 'get_ground_truth', {'run': 'proj'})[0])               # no ground truth
+
+
+def test_experiments_detection_responses_drive_carla_per_point(gt_drive, tmp_path, monkeypatch):
+    """detection.recall and detection.rig_recall: in the catalogue with their parameters, CARLA-backed (an
+    experiment's estimate states their measured cost instead of driving CARLA); without the model each point says why;
+    with it every point is a drive (here the fake bridge in-process) evaluated by a stand-in detector."""
+    import importlib.util
+    from vantage import workdir
+    from vantage.core import detection as DT
+    from vantage.core import detection_eval as DE
+    from vantage.core import experiments as EX
+    from vantage.sim import carla_bridge as CB
+    p = gt_drive['p'].snapshot()
+    cat = {r['id']: r for r in EX.response_catalogue(p) if r['study'] == 'detection'}
+    assert set(cat) == {'detection.recall', 'detection.rig_recall'} and cat['detection.recall']['cost'] == 'study'
+    assert [q['key'] for q in cat['detection.recall']['params']] == ['cls', 'range', 'camera']
+    assert {c['value'] for c in cat['detection.recall']['params'][0]['choices']} >= {'vehicle', 'pedestrian', 'car'}
+    F = p.variant.by_tag('F')
+    st = EX.ExperimentSettings.from_dict({
+        'design': 'oat', 'levels': 2, 'workers': 2, 'bootstrap': 0,
+        'factors': [dict(EX.new_factor(p, p.variant, 'camera', F.uid, 'pitch'), lo=F.pitch, hi=F.pitch + 3.0,
+                         levels=2, mirror=False)],
+        'responses': [{'metric': 'detection.recall', 'params': {'cls': 'car'}},
+                      {'metric': 'detection.rig_recall', 'params': {'cls': 'pedestrian'}}]})
+    assert EX.errors(p, st) == []
+
+    def no_carla(*a, **k):
+        raise AssertionError('the estimate drove CARLA')
+    monkeypatch.setattr(DE, 'evaluate_variant', no_carla)
+    est = EX.estimate(p, None, st)
+    assert est['per_point_s'] >= EX.CARLA_STUDY_S['detection'] and est['workers'] >= 1
+    assert any(s['id'] == 'detection' and s.get('typical') for s in est['studies'])
+    assert est['total_s'] >= est['points'] * EX.CARLA_STUDY_S['detection']    # one server: the points queue
+    monkeypatch.undo()
+    # no model: every point says why, nothing driven
+    monkeypatch.setattr(DE, 'evaluate_variant', no_carla)
+    res = EX.run(p, None, st)
+    assert np.isnan(res.Y).all() and 'not downloaded' in ' '.join(res.reasons.values())
+    monkeypatch.undo()
+    # the model there: each design point driven (in-process against the fake) and evaluated
+    name = 'fake_carla_for_tests'
+    fc = sys.modules.get(name)
+    if fc is None:
+        spec = importlib.util.spec_from_file_location(name, os.path.join(FAKE_DIR, 'carla', '__init__.py'))
+        fc = importlib.util.module_from_spec(spec)
+        sys.modules[name] = fc
+        spec.loader.exec_module(fc)
+    drives = []
+
+    def runner(rig_json, out, progress, cancel):
+        drives.append(out)
+        fc.reset()
+        doc, remaps = CB.load_rig(rig_json)
+        a = CB.resolve_args(CB.parser().parse_args([rig_json, out]), doc)
+        CB.Bridge(fc, doc, remaps, out, a, None, cancel).run()
+    real = DE.evaluate_variant
+
+    def via_fake(project, variant, sim, det, out, **kw):
+        kw.pop('runner', None)
+        return real(project, variant, sim, det, out, runner=runner, detector=_oracle(out), **kw)
+    monkeypatch.setattr(DE, 'evaluate_variant', via_fake)
+    real_status = DT.status
+    monkeypatch.setattr(DT, 'status', lambda m=DT.DEFAULT_MODEL, folder=None: dict(real_status(m, folder),
+                                                                                   verified=True, present=True))
+    monkeypatch.setattr(workdir, 'default', lambda: str(tmp_path / 'work'))
+    p.analysis.detection = {'cache': False, 'bootstrap': 50}
+    res = EX.run(p, None, st)
+    assert res.n == 2 and len(drives) == 2 and all(d.startswith(str(tmp_path / 'work')) for d in drives)
+    assert np.allclose(res.Y, 100.0), (res.Y, res.reasons)          # the stand-in finds every labelled object
+    res2 = EX.run(p, None, st, cache=EX.PointCache())               # a re-run (no cached points) reuses both drives
+    assert len(drives) == 2 and np.allclose(res2.Y, 100.0)
+
+
+def test_round8_hooks_carla_guards_and_live_drift(app, win, gt_drive, tmp_path, monkeypatch):
+    """The CARLA page embeds the live rig panel (Simulate ▸ CARLA live rig shows it); the critical-targets page opens
+    Critical targets in CARLA; after a run with ground truth the CARLA page opens it in Detection quality; one CARLA
+    job at a time (a recording, the live rig, a campaign, critical targets) and stopping the server stops the live
+    rig; the Live rig page measures the drift of a live CARLA stream against CARLA's own car."""
+    import cv2
+    from vantage.core import carla_live as CL
+    from vantage.ui.workspaces.sim_live import SimLivePanel
+    win.actions_by_id['carla_live'].trigger()
+    pump(app, 0.3)
+    sim = win.page('sim')
+    assert win.page_name() == 'sim' and isinstance(sim.live, SimLivePanel) and sim.live.isVisible()
+    assert sim.live.host is sim and sim.right.sizes()[2] > 0
+    # Analysis ▸ Critical targets ▸ In CARLA…
+    win.set_page('critical')
+    pump(app, 0.2)
+    win.page('critical').b_carla.click()
+    pump(app, 0.3)
+    assert win.page_name() == 'critical_carla'
+    # the CARLA page after a run with ground truth: Detection quality opens it there
+    win.set_page('sim')
+    sim.python = sys.executable
+    sim.result, sim.out_dir = {'status': 'ok'}, gt_drive['dir']
+    sim._update_buttons()
+    assert sim.b_detect.isEnabled() and sim.b_drivelog.isEnabled()
+    n = win.store.undo.count()
+    sim.b_detect.click()
+    pump(app, 0.3)
+    det = win.page('detection')
+    assert win.page_name() == 'detection' and det.settings.recordings == [os.path.abspath(gt_drive['dir'])]
+    assert win.store.undo.count() == n + 1                                # one undoable edit
+    sim.result, sim.out_dir = None, ''
+    win.set_page('sim')
+    sim._update_buttons()
+    assert not sim.b_detect.isEnabled()
+    # one CARLA job at a time
+    camp, crit = win.page('campaign'), win.page('critical_carla')
+    assert win.carla_user() == ''
+    sim.live.state = 'streaming'                                           # (as while streaming)
+    try:
+        assert not sim.run() and 'Live streaming is on' in sim.g_status.text()
+        assert not camp.run() and 'live rig is streaming' in camp.status_text
+        assert not crit.run() and 'live rig is streaming' in crit.status_text
+        stopped = []
+        monkeypatch.setattr(sim.live, 'stop', lambda why='stopped': stopped.append(why) or True)
+        sim.stop_server()                                                  # the live rig goes first
+        assert stopped == ['the server is stopping']
+    finally:
+        sim.live.state = 'off'
+    camp.busy = True
+    try:
+        assert 'simulation campaign is running' in win.carla_user('sim')
+        assert not sim.run() and 'simulation campaign' in sim.g_status.text()
+        assert not sim.live.start() and 'simulation campaign' in sim.live.status_line.text.text()
+        assert not crit.run()
+        assert win.carla_user('campaign') == ''
+    finally:
+        camp.busy = False
+    sim.busy = True
+    try:
+        assert not camp.run() and 'CARLA recording is running' in camp.status_text
+    finally:
+        sim.busy = False
+    exp = win.page('experiments')                       # an experiment counts only while it drives CARLA
+    exp.busy, exp.uses_carla = True, False
+    try:
+        assert win.carla_user('sim') == ''
+        exp.uses_carla = True
+        assert 'designed experiment' in win.carla_user('sim')
+        assert not sim.run() and 'designed experiment' in sim.g_status.text()
+        assert win.carla_user('experiments') == ''
+    finally:
+        exp.busy, exp.uses_carla = False, False
+    # the Live rig page: a camera streamed by the live rig is compared with CARLA's own car (its body mask)
+    m = np.full((96, 120), 128, np.uint8)                                 # in the image (the lens circle)
+    m[60:, :] = 255                                                       # CARLA's bonnet in the lower part
+    ok, png = cv2.imencode('.png', m)
+    ev = CL.body_view(png.tobytes(), (1920, 1536), ('carla', 9, 'F'))
+    url = 'http://127.0.0.1:9/F.mjpg'
+    win.store.edit('streams', lambda pj: pj.streams.__setitem__('F', url), 'live test stream')
+    sim.live.state, sim.live._urls, sim.live.carla_views = 'streaming', {'F': url}, {'F': ev}
+    info = sim.live.info
+    try:
+        win.set_page('rig')
+        rig = win.page('rig')
+        pump(app, 0.2)
+        assert rig._live_views() == {'F': ev}
+        rig.show_edge.setChecked(True)
+        rig.views.pop('F', None)
+        _wait(app, lambda: (rig._drift_step(), rig.views.get('F') is ev)[1], 30)
+        assert rig.views['F'].horizon == [] and rig.views['F'].contours           # CARLA's outline, no horizon
+        # the sync skew of live CARLA streams is judged against the live rig's own schedule, not the plan's stagger
+        kept = dict(win.store.project.streams)
+        win.store.edit('streams', lambda pj: setattr(pj, 'streams', {'F': url}), 'only the live stream')
+        sim.live.info = dict(sim.live.info or {}, schedule={'F': (0.0, 100.0)})
+        assert rig._planned() == {'F': (0.0, 100.0)}
+        rig._judge_against()
+        assert rig.monitor.plan_mode == 'given' and rig.monitor.planned == {'F': (0.0, 100.0)}
+        rig.snap = {'cameras': {'F': {'sync_skew_ms': 0.0}, 'R': {'sync_offset_ms': 33.0, 'sync_planned_ms': 33.3,
+                                                                  'sync_skew_ms': -0.3}},
+                    'rig': {'sync_reference': 'F', 'sync_against': 'plan'}}
+        tip = rig._sync_tip(rig.snap['rig'])
+        assert 'live rig\'s schedule; reference F' in tip and 'R: offset +33.0 ms, planned +33.3 ms, skew -0.3 ms' in tip
+        win.store.edit('streams', lambda pj: setattr(pj, 'streams', dict(kept, F='synthetic')), 'not live')
+        assert rig._live_views() == {} and rig._planned() == 'plan'         # the stream is not the live rig's
+        rig._judge_against()
+        assert rig.monitor.plan_mode == 'plan'
+        rig.snap = None
+    finally:
+        sim.live.state, sim.live._urls, sim.live.carla_views, sim.live.info = 'off', {}, {}, info
+    # the assistant reads the pages through its context
+    tc = win.ctx.assistant._context()
+    assert tc.carla_live['state'] == 'off' and tc.detection is None and tc.campaign is None
+    win.set_page('viewports')
+    settle(app, win)
+
+
+def test_format_page_and_docs_name_round8():
+    """docs/project-format.md names every key of the new settings; README and docs.html name every new batch flag
+    and exit codes 8 and 9."""
+    import re
+    from vantage import batch
+    from vantage.core import critical_carla as CC
+    from vantage.core import detection_eval as DE
+    from vantage.core import simcampaign as SC
+    from vantage.core import simrig as SR
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    fmt = open(os.path.join(root, 'docs', 'project-format.md'), encoding='utf-8').read()
+    named = set(re.findall(r'`([A-Za-z_][\w]*)`', fmt))
+    for st in (DE.DetectionSettings(), SC.CampaignSettings(), CC.CriticalCarlaSettings(), SR.SimSettings()):
+        assert not [k for k in st.to_dict() if k not in named], type(st).__name__
+    readme = open(os.path.join(root, 'README.md'), encoding='utf-8').read()
+    docs = open(os.path.join(root, 'site', 'docs.html'), encoding='utf-8').read()
+    flags = [a.option_strings[-1] for a in batch.parser()._actions
+             if a.option_strings and a.dest in ('carla_live', 'live_cameras', 'live_scale', 'live_fault',
+                                                 'detection_quality', 'detection_recording', 'detection_download',
+                                                 'campaign', 'campaign_template', 'campaign_phase', 'critical_carla',
+                                                 'critical_carla_drives', 'ground_truth_summary', 'carla_scenario',
+                                                 'carla_scenario_params', 'carla_faults', 'carla_actors',
+                                                 'carla_ground_truth', 'carla_walkers', 'carla_spawn_point')]
+    assert len(flags) == 20
+    for f in flags:
+        assert f in readme and f in docs, f
+    assert '<td><code>8</code></td>' in docs and '<td><code>9</code></td>' in docs
+    assert '8 with\n`--detection-quality`' in readme and '9 with `--campaign`' in readme
+    for sec in ('carla-gt', 'carla-live', 'detection', 'campaigns', 'critical-carla'):
+        assert f'id="{sec}"' in docs and f'href="#{sec}"' in docs, sec

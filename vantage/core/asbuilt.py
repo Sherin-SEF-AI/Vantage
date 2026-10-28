@@ -1668,6 +1668,20 @@ def _lidar_estimates(project, var, path, overrides, st, engine, progress, cancel
     return {r['tag']: r for r in res.extrinsics}, ''
 
 
+def lidar_shown(lid) -> list | None:
+    """The drive-log estimate of a camera's rotation as the as-built check reports it: yaw, pitch, roll (deg) on the
+    axes the lidar's edges pin down, the others as planned (0, as the drive-log check's own correction); None when no
+    axis is pinned down. The drive-log check returns its search's optimum on every axis, also on one the edges in view
+    do not constrain (a mirror camera with 21 edge points in one frame read [−0.86, −0.89, −0.53]° on a fake CARLA
+    drive, 3.5° in another traffic): that number is no measurement and is never shown as one."""
+    if not lid or lid.get('delta_deg') is None:
+        return None
+    obs = lid.get('observable') or [False] * 3
+    if not any(obs):
+        return None
+    return [float(v) if o else 0.0 for v, o in zip(lid['delta_deg'], obs)]
+
+
 def _agree(row, lid) -> bool | None:
     """Whether the outline fit and the lidar estimate agree within their errors (2 sigma combined, plus 0.05°) on the
     axes both pin down; None when they share none."""
@@ -2107,7 +2121,8 @@ def summary(res: AsBuiltResult) -> dict:
                         'outline_mean_px': _r((r.get('outline_plan') or {}).get('mean_px'), 2),
                         'correction_ypr_deg': _rl(r['correction_deg'], 3) if r.get('apply') else None,
                         'stderr_ypr_deg': _rl((r.get('fit') or {}).get('stderr_deg'), 3),
-                        'lidar_ypr_deg': _rl((r.get('lidar') or {}).get('delta_deg'), 3), 'agree': r.get('agree'),
+                        'lidar_ypr_deg': _rl(lidar_shown(r.get('lidar')), 3),
+                        'lidar_confidence': (r.get('lidar') or {}).get('confidence'), 'agree': r.get('agree'),
                         'reason': r.get('reason') or None} for r in res.cameras],
         'coverage': [{'figure': row['label'], 'unit': row['unit'], 'plan': _r(row['plan'], 3),
                       'as_built': _r(row['as_built'], 3), 'delta': _r(row['delta'], 3), 'holds': row['holds']}
@@ -2154,7 +2169,9 @@ def _camera_doc(r) -> dict:
             'correction_ypr_deg': _rl(r['correction_deg'], 4), 'correction_shift_m': _rl(r.get('correction_m'), 5),
             'applied': bool(r.get('apply')), 'correction_source': r.get('source', 'outline') if r.get('apply') else None,
             'plan_ypr_deg': _rl(r['plan_deg'], 4), 'plan_position_m': _rl(r['plan_pos'], 4),
-            'lidar_estimate': {'ypr_deg': _rl(lid.get('delta_deg'), 4), 'stderr_ypr_deg': _rl(lid.get('stderr_deg'), 4),
+            'lidar_estimate': {'ypr_deg': _rl(lidar_shown(lid), 4),
+                               'search_optimum_ypr_deg': _rl(lid.get('delta_deg'), 4),
+                               'stderr_ypr_deg': _rl(lid.get('stderr_deg'), 4),
                                'constrained': lid.get('observable'), 'confidence': lid.get('confidence'),
                                'verdict': lid.get('verdict'), 'relative_to': lid.get('lidar'),
                                'reason': lid.get('reason') or None} if lid else None,

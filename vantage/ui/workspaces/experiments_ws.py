@@ -702,6 +702,7 @@ class ExperimentsPage(QWidget):
         self.result: EX.ExperimentResult | None = None
         self.estimate: dict | None = None
         self.busy = False
+        self.uses_carla = False                 # the running experiment drives CARLA (detection responses)
         self.est_busy = False
         self.status_text = ''
         self.sel = None                         # the picked point
@@ -1591,6 +1592,12 @@ class ExperimentsPage(QWidget):
         bad = EX.errors(p, st)
         if bad:
             self.status_text = bad[0]
+            self.refresh()
+            return False
+        self.uses_carla = any(r.study in EX.CARLA_STUDY_S for r in EX.responses_of(st, p))
+        other = win.carla_user('experiments') if self.uses_carla and hasattr(win, 'carla_user') else ''
+        if other:                                       # one client steps a synchronous CARLA world
+            self.status_text = other
             self.refresh()
             return False
         if confirm and self._est_for != self._spec_key(p):

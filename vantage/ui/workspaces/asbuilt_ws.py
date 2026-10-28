@@ -886,10 +886,16 @@ class AsBuiltPage(QWidget):
             pinned = [s for s, o in zip(se, cons) if o and s is not None]
             _cell(t, i, 9, _f(max(pinned), 3) if pinned and d is not None else '—', True)
             lid = r.get('lidar') or {}
-            ld = lid.get('delta_deg')
-            _cell(t, i, 10, ' / '.join(_f(v, 2, sign=True) for v in ld) if ld else '—', True,
+            ld = AB.lidar_shown(lid)            # only the axes the lidar's edges pin down: the rest is no measurement
+            obs = lid.get('observable') or [False] * 3
+            _cell(t, i, 10, ' / '.join(_f(v, 2, sign=True) if o else '–' for v, o in zip(ld, obs)) if ld else '—',
+                  True,
                   tip=(f'{lid.get("confidence") or "—"} confidence against {lid.get("lidar")}'
-                       + (f': {lid["reason"]}' if lid.get('reason') else '')) if lid else None)
+                       + (f': {lid["reason"]}' if lid.get('reason') else '')
+                       + ('' if ld is None or all(obs) else
+                          '\nAn axis shown – is not pinned down by the lidar\'s edges: left as planned')
+                       + ('\nNo axis pinned down by the lidar\'s edges: no estimate' if ld is None and
+                          lid.get('delta_deg') is not None else '')) if lid else None)
             ag = r.get('agree')
             _cell(t, i, 11, {True: 'Yes', False: 'No', None: '—'}[ag],
                   color=QColor(STATUS['good' if ag else 'warning']) if ag is not None else THEME.color('muted'))

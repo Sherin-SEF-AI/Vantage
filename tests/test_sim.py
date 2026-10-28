@@ -478,7 +478,11 @@ def test_weather_mapping():
     clear = simrig.carla_weather(p, simrig.SimSettings.from_dict({'weather': 'vantage:clear'}))['params']
     rain = simrig.carla_weather(p, simrig.SimSettings.from_dict({'weather': 'vantage:heavy_rain'}))['params']
     night = simrig.carla_weather(p, simrig.SimSettings.from_dict({'weather': 'vantage:night'}))
-    assert fog['fog_density'] > 70 and clear['fog_density'] <= 5 and clear['precipitation'] == 0
+    # fog: the density whose fog has the condition's MOR for road users, as measured on CARLA 0.9.16 (150 m → 46.7)
+    assert fog['fog_density'] == pytest.approx(simrig.FOG_MOR_M / 150.0, abs=0.06) and fog['fog_distance'] == 0.0
+    assert simrig.fog_mor_of(simrig.fog_density_for(150.0)) == pytest.approx(150.0, rel=1e-6)
+    assert simrig.fog_density_for(30.0) == simrig.FOG_DENSITY_MAX and simrig.fog_density_for(0.0) == 0.0
+    assert clear['fog_density'] <= 5 and clear['precipitation'] == 0
     assert rain['precipitation'] == 100.0 and rain['precipitation_deposits'] == 90.0
     assert night['params']['sun_altitude_angle'] == -90.0 and night['night']
     snow = simrig.carla_weather(p, simrig.SimSettings.from_dict({'weather': 'vantage:snow'}))
@@ -589,8 +593,9 @@ def test_lidar_ground_points_land_on_the_checker_they_hit_in_the_images(fake_run
     """End to end through independent paths: the fake's lidar (CARLA's ray-cast convention) and its cameras (CARLA's
     pinhole views of a 2 m ground checker), the frames conversion, the remap through Vantage's lens and the nuScenes
     calibration: lidar ground points (the bag's, each moved with the ego pose at its own firing time) projected into
-    camera F with cv2.fisheye fall on pixels of the checker colour their world position has. Within 12 m, where a
-    square spans many pixels of the 10 % images; farther the squares blur into a few pixels."""
+    camera F with cv2.fisheye fall on pixels of the checker colour their world position has. Within 10 m, where a
+    square spans several pixels of the 10 % images: camera F sits 0.62 m above the ground (the fake's cars rest on
+    it, as CARLA's do), and farther a pixel spans more than a 2 m square along the range."""
     import cv2
     from vantage.core import rosbag as RB
     out = fake_run['out']
@@ -624,7 +629,7 @@ def test_lidar_ground_points_land_on_the_checker_they_hit_in_the_images(fake_run
         cc, ec = cal[C['calibrated_sensor_token']], egos[C['ego_pose_token']]
         Pc = ((Pg - ec['translation']) @ _q2R(ec['rotation']) - cc['translation']) @ _q2R(cc['rotation'])
         rng = np.linalg.norm(Pc, axis=1)
-        sel = (Pc[:, 2] > 0.3) & (rng < 12.0)
+        sel = (Pc[:, 2] > 0.3) & (rng < 10.0)
         Pg, Pc, rng = Pg[sel], Pc[sel], rng[sel]
         if not len(Pc):
             continue
@@ -632,16 +637,23 @@ def test_lidar_ground_points_land_on_the_checker_they_hit_in_the_images(fake_run
         D = np.array(cc['vantage_distortion']['coefficients'], float)
         uv, _ = cv2.fisheye.projectPoints(Pc.reshape(-1, 1, 3), np.zeros(3), np.zeros(3), K, D)
         uv = uv.reshape(-1, 2)
-        img = cv2.imread(os.path.join(out, 'nuscenes', C['filename']), cv2.IMREAD_GRAYSCALE)
+        col = cv2.imread(os.path.join(out, 'nuscenes', C['filename']), cv2.IMREAD_COLOR).astype(int)
+        img = cv2.cvtColor(col.astype(np.uint8), cv2.COLOR_BGR2GRAY)
         h, w = img.shape
         world = Pg - off                                           # global = mirror(CARLA world) + offset
         xw, yw = world[:, 0], -world[:, 1]
         fx, fy = (xw / 2.0) % 1.0, (yw / 2.0) % 1.0
-        away = (np.minimum(fx, 1 - fx) > 0.1) & (np.minimum(fy, 1 - fy) > 0.1)
+        # not within 0.3 m of a square's edge: about two pixels of the 10 % images on the grazing ground camera F sees
+        # (at 30 % images, 0.2 m: 99.985 % agree within 8 m, so what the band leaves out is pixel size, not geometry)
+        away = (np.minimum(fx, 1 - fx) > 0.15) & (np.minimum(fy, 1 - fy) > 0.15)
         inside = (uv[:, 0] > 2) & (uv[:, 1] > 2) & (uv[:, 0] < w - 3) & (uv[:, 1] < h - 3) & away
         par = ((np.floor(xw / 2.0) + np.floor(yw / 2.0)) % 2 == 0)[inside]
-        g = img[np.round(uv[inside, 1]).astype(int), np.round(uv[inside, 0]).astype(int)]
-        keep = (g > 130) | (g < 95)                                # a checker pixel, not a body or sky one
+        iy, ix = np.round(uv[inside, 1]).astype(int), np.round(uv[inside, 0]).astype(int)
+        g = img[iy, ix]
+        sat = col[iy, ix].max(1) - col[iy, ix].min(1)
+        # a checker pixel (grey), not a car body or the sky (both coloured): the lidar on its mast sees ground the low
+        # cameras see a car in front of
+        keep = ((g > 130) | (g < 95)) & (sat < 30)
         ok = ((g > 110) == par) & keep
         agree += int(ok.sum())
         total += int(keep.sum())
@@ -714,6 +726,7 @@ def test_bridge_cancel_and_error_tidy_up(tmp_path):
         assert not fc.STATE['world']._actors                       # all destroyed
         assert fc.STATE['world'].applied[-1] == (False, None)      # settings restored
         assert not os.path.exists(os.path.join(out, 'nuscenes'))
+        assert not os.path.exists(os.path.join(out, 'ground_truth'))  # the ground truth too
         assert not os.listdir(os.path.join(out, 'rosbag')) if os.path.isdir(os.path.join(out, 'rosbag')) else True
 
 
@@ -734,6 +747,681 @@ def test_bridge_command_line_with_the_fake(tmp_path):
     assert lines and lines[-1]['progress'] == 1.0
     rep = json.load(open(tmp_path / 'out' / 'run.json'))
     assert rep['status'] == 'ok' and rep['town'] == 'Town01' and rep['weather'] == {'preset': 'ClearNoon'}
+
+
+# ======================================================================= round 8: ground truth, faults, scenarios, actors
+def _mini_run(tmp, settings=None, cams=('F',), radars=(), extra=False, lidar=True, seed=4, **kw):
+    """A small drive through the bridge against the fake carla: the cameras, radars and extras asked for, the lidar on
+    a mast. Returns {'out', 'report', 'rig', 'log', 'world', 'project'}."""
+    from vantage.core import simrig
+    from vantage.sim import carla_bridge as CB
+    fc = _fake()
+    fc.reset()
+    p = _project(lidar_z=2.0, extra=extra)
+    v = p.variant
+    v.cameras[:] = [c for c in v.cameras if c.tag in cams]
+    v.sensors[:] = [s for s in v.sensors if (s.kind == 'lidar' and lidar) or s.tag in radars or
+                    (extra and s.kind in ('imu', 'gnss'))]
+    d = {'image_scale': 0.08, 'duration_s': 1.2, 'traffic': 4, 'warmup_s': 0.25, 'seed': seed}
+    d.update(settings or {})
+    rig = simrig.build(p, simrig.SimSettings.from_dict(d))
+    out = str(tmp)
+    simrig.export(rig, p, os.path.join(out, 'rig'))
+    doc, remaps = CB.load_rig(os.path.join(out, 'rig', 'sim_rig.json'))
+    b = CB.Bridge(fc, doc, remaps, out, _args(doc, out, **kw), None, None)
+    rep = b.run()
+    return {'out': out, 'report': rep, 'rig': doc, 'log': list(fc.LOG), 'world': fc.STATE['world'], 'project': p,
+            'bridge': b}
+
+
+def _tables(out):
+    V = os.path.join(out, 'nuscenes', 'v1.0-vantage')
+    return {n[:-5]: json.load(open(os.path.join(V, n))) for n in os.listdir(V) if n.endswith('.json')}
+
+
+def _iou(a, b):
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    u = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - ix * iy
+    return ix * iy / u if u > 0 else 0.0
+
+
+def test_ground_truth_index_masks_objects_and_coco(fake_run):
+    """The index read back: every written camera frame has its label images at the image's size; the instance image
+    holds exactly the frame's objects (their pixel counts and tight boxes); objects are the spawned vehicles (their
+    actor ids), the map's parked car (by its level box), the traffic light's head (the light's actor id) and the sign;
+    the instance masks agree with the 3D boxes through the lens (the fake's objects are boxes); the COCO files say the
+    same."""
+    import cv2
+    from vantage.core import groundtruth as GT
+    out = fake_run['out']
+    d = GT.read(out)
+    assert d is not None and d['schema'] == GT.SCHEMA and [c['name'] for c in d['classes']][:3] == ['unlabelled',
+                                                                                                     'road', 'sidewalk']
+    ds = json.load(open(os.path.join(out, 'dataset.json')))
+    frames_of = {c['channel']: c['frames'] for c in ds['channels'] if c['kind'] == 'camera'}
+    spawned = {e[1] for e in fake_run['log'] if e[0] == 'spawn' and e[2].startswith('vehicle.')}
+    ego = next(e[1] for e in fake_run['log'] if e[0] == 'spawn' and e[3].get('role_name') == 'hero')
+    fc = _fake()
+    ious, kinds = [], set()
+    for tag, cam in d['cameras'].items():
+        assert len(cam['frames']) == frames_of[cam['channel']] > 0
+        for f in cam['frames'][::3]:
+            assert os.path.isfile(os.path.join(out, f['image'])) and f['sample_data_token']
+            sem, inst, rng = GT.load_semantic(d, f), GT.load_instance(d, f), GT.load_range(d, f)
+            assert sem.shape == inst.shape == rng.shape == (cam['height'], cam['width'])
+            assert set(np.unique(sem)) <= set(range(30)) and rng.max() < GT.RANGE_MAX_M
+            ids = set(np.unique(inst)) - {0}
+            assert ids == {o['id'] for o in f['objects']}
+            for o in f['objects']:
+                ys, xs = np.nonzero(inst == o['id'])
+                assert o['pixels'] == len(ys) and o['bbox'] == [xs.min(), ys.min(), xs.max() + 1, ys.max() + 1]
+                assert o['actor_id'] != ego
+                if o['id'] < 1000:
+                    assert o['actor_id'] in spawned and o['class'] == 'car' and o['category'].startswith('vehicle.')
+                    kinds.add('vehicle')
+                elif o['class'] == 'traffic_light':
+                    assert o['actor_id'] == fc.LIGHT_ID and o['category'] == 'static.manmade'
+                    kinds.add('light')
+                elif o['class'] == 'traffic_sign':
+                    assert o['actor_id'] is None
+                    kinds.add('sign')
+                else:
+                    assert o['class'] == 'car' and o['actor_id'] is None      # a parked car of the map
+                    kinds.add('parked')
+                if o['pixels'] >= 30 and o['occluded'] == 0 and o['truncated'] == 0:
+                    ious.append(_iou(o['bbox'], o['bbox_full']))
+                b = o['box3d']
+                assert len(b['center']) == 3 and len(b['size']) == 3 and o['range_m'] > 0
+    assert kinds == {'vehicle', 'light', 'sign', 'parked'}, kinds
+    assert len(ious) > 10 and np.median(ious) > 0.9 and min(ious) > 0.7, (len(ious), np.median(ious), min(ious))
+    # COCO: one image per frame, an annotation per object, its RLE the object's mask
+    coco = json.load(open(os.path.join(out, 'ground_truth', 'coco', 'CAM_F.json')))
+    fr = d['cameras']['F']['frames']
+    assert len(coco['images']) == len(fr) and len(coco['annotations']) == sum(len(f['objects']) for f in fr)
+    cats = {c['id']: c['name'] for c in coco['categories']}
+    k = 0
+    for i, f in enumerate(fr):
+        inst = GT.load_instance(d, f) if f['objects'] else None
+        for o in f['objects']:
+            a = coco['annotations'][k]
+            k += 1
+            x0, y0, x1, y1 = o['bbox']
+            assert a['image_id'] == i + 1 and a['bbox'] == [x0, y0, x1 - x0, y1 - y0] and cats[a['category_id']] == \
+                o['class'] and a['area'] == o['pixels'] and a['actor_id'] == o['actor_id']
+            assert np.array_equal(GT.rle_decode(a['segmentation']), inst == o['id'])
+    del cv2
+
+
+def test_range_image_matches_the_lidar(fake_run):
+    """The range images against the lidar, two independent paths: lidar points on the static ground (labelled so by
+    lidarseg), each moved into the global frame with the ego pose at its own firing time (the bag's t), then into
+    camera F at its nearest frame's time through the nuScenes poses and projected through the rig's lens: the range
+    PNG at their pixel is the distance along that pixel's ray to the ground through the lidar point."""
+    from vantage.core import groundtruth as GT
+    from vantage.core import rosbag as RB
+    out = fake_run['out']
+    d = GT.read(out)
+    T = _tables(out)
+    sens = {r['token']: r['channel'] for r in T['sensor']}
+    cal = {r['token']: dict(r, channel=sens[r['sensor_token']]) for r in T['calibrated_sensor']}
+    egos = {e['token']: e for e in T['ego_pose']}
+    ego = sorted(T['ego_pose'], key=lambda r: r['timestamp'])
+    et = np.array([e['timestamp'] for e in ego], float)
+    ex = np.array([e['translation'] for e in ego])
+    eyaw = np.unwrap([2 * math.atan2(e['rotation'][3], e['rotation'][0]) for e in ego])
+    sd = {r['token']: r for r in T['sample_data']}
+    cl = next(c for c in cal.values() if c['channel'] == 'LIDAR_L1')
+    cam = next(c for c in fake_run['rig']['cameras'] if c['tag'] == 'F')
+    lens = cam['lens']
+    from vantage.sim import carla_bridge as CB
+    _, remaps = CB.load_rig(os.path.join(out, 'rig', 'sim_rig.json'))
+    cg = GT.CameraGT(cam, remaps)                                  # each pixel's ray (the remap's own geometry)
+    frames = d['cameras']['F']['frames']
+    sweeps = {sd[s['sample_data_token']]['timestamp']: s for s in d['lidars']['L1']['sweeps']}
+    bag = os.path.join(out, 'rosbag', fake_run['rig']['output']['bag_name'])
+    noise = fake_run['rig']['output']['lidar_noise_cm'] / 100.0
+    errs, zs = [], []
+    for m in RB.BagReader(bag).messages(topics=['/l1/points']):
+        a = RB.pointcloud2_array(m[2])
+        stamp_us = RB.stamp_ns(m[2]['header']['stamp']) // 1000
+        lab = GT.load_lidarseg(d, sweeps[stamp_us])
+        assert len(lab) == len(a)
+        keep = np.isin(lab, [GT.NUSC_INDEX['flat.driveable_surface'], GT.NUSC_INDEX['flat.sidewalk']])
+        tus = stamp_us - 1e5 + a['t'][keep].astype(float) * 1e6     # each point's firing time
+        Pe = np.c_[a['x'], a['y'], a['z']][keep].astype(float) @ _q2R(cl['rotation']).T + cl['translation']
+        x = np.stack([np.interp(tus, et, ex[:, k]) for k in range(3)], -1)
+        yaw = np.interp(tus, et, eyaw)
+        c, s_ = np.cos(yaw), np.sin(yaw)
+        Pg = np.c_[c * Pe[:, 0] - s_ * Pe[:, 1], s_ * Pe[:, 0] + c * Pe[:, 1], Pe[:, 2]] + x
+        f = min(frames, key=lambda f: abs(f['timestamp'] - stamp_us))
+        C = sd[f['sample_data_token']]
+        cc, ec = cal[C['calibrated_sensor_token']], egos[C['ego_pose_token']]
+        Pc = ((Pg - ec['translation']) @ _q2R(ec['rotation']) - cc['translation']) @ _q2R(cc['rotation'])
+        u, v, _, ok = GT.project(lens, Pc)
+        rng = GT.load_range(d, f)
+        h, w = rng.shape
+        ok &= (u >= 1) & (v >= 1) & (u < w - 1) & (v < h - 1) & (np.linalg.norm(Pc, axis=1) < 20.0)
+        sem = GT.load_semantic(d, f)
+        iu, iv = u[ok].astype(int), v[ok].astype(int)
+        ground = np.isin(sem[iv, iu], [1, 2]) & (rng[iv, iu] > 0)
+        # the lidar point's ground plane (its normal: global z) along the pixel's own ray: the range there
+        R_gc = _q2R(ec['rotation']) @ _q2R(cc['rotation'])          # camera optical -> global
+        n = R_gc.T @ np.array([0.0, 0.0, 1.0])
+        dpx = cg.rays[iv, iu].astype(float)
+        r_exp = (Pc[ok] @ n) / (dpx @ n)
+        # the lidar's range noise moves the point along its own ray: its height by σ · u_z, the range along the
+        # camera's grazing ray by that / (n · d)
+        L_g = np.c_[c * cl['translation'][0] - s_ * cl['translation'][1],
+                    s_ * cl['translation'][0] + c * cl['translation'][1], np.full(len(c), cl['translation'][2])] + x
+        u_l = Pg - L_g
+        u_l /= np.linalg.norm(u_l, axis=1, keepdims=True)
+        sig = noise * np.abs(u_l[ok, 2]) / np.abs(dpx @ n) + 1.0 / GT.RANGE_SCALE
+        e = (rng[iv, iu] - r_exp)[ground]
+        errs.append(e)
+        zs.append(e / sig[ground])
+    e, z = np.concatenate(errs), np.concatenate(zs)
+    # no bias, and the scatter the lidar's noise predicts (|z| of a normal distribution: median 0.67, 90 % 1.64)
+    assert len(e) > 2000 and abs(np.median(e)) < 0.003, (len(e), np.median(e))
+    assert np.median(np.abs(z)) < 0.9 and np.percentile(np.abs(z), 90) < 2.0, \
+        (np.median(np.abs(z)), np.percentile(np.abs(z), 90))
+
+
+def test_lidarseg_and_panoptic_in_the_official_layout(fake_run):
+    """nuScenes-lidarseg and -panoptic as the devkit reads them (lidarseg.json / panoptic.json rows token =
+    sample_data_token, <token>_lidarseg.bin uint8 per point, <token>_panoptic.npz 'data' uint16 = index · 1000 +
+    instance, category.json with 'index'), and right: ground points are ground, the points in the annotated vehicles'
+    boxes are vehicles with their instance, the parked car's points vehicle.car with instance 500 + its index."""
+    from vantage.core import groundtruth as GT
+    out = fake_run['out']
+    T = _tables(out)
+    sd = {r['token']: r for r in T['sample_data']}
+    sens = {r['token']: r['channel'] for r in T['sensor']}
+    cal = {r['token']: sens[r['sensor_token']] for r in T['calibrated_sensor']}
+    lidar_sd = [r for r in T['sample_data'] if cal[r['calibrated_sensor_token']] == 'LIDAR_L1']
+    assert {r['sample_data_token'] for r in T['lidarseg']} == {r['token'] for r in lidar_sd}
+    cats = sorted(T['category'], key=lambda r: r['index'])
+    assert [c['index'] for c in cats][:32] == list(range(32)) and [c['name'] for c in cats][:32] == \
+        [n for _, n, _ in GT.NUSCENES_LIDARSEG]
+    assert {r['category_token'] for r in T['instance']} <= {c['token'] for c in cats}
+    ann = {}
+    for a in T['sample_annotation']:
+        ann.setdefault(a['sample_token'], []).append(a)
+    inst_cat = {r['token']: next(c['name'] for c in cats if c['token'] == r['category_token']) for r in T['instance']}
+    vehicle_ok = vehicle_n = ground_ok = ground_n = 0
+    for row, prow in zip(T['lidarseg'], T['panoptic']):
+        assert row['token'] == row['sample_data_token'] == prow['sample_data_token']
+        assert row['filename'] == f'lidarseg/v1.0-vantage/{row["token"]}_lidarseg.bin'
+        assert prow['filename'] == f'panoptic/v1.0-vantage/{prow["token"]}_panoptic.npz'
+        r = sd[row['sample_data_token']]
+        pts = np.fromfile(os.path.join(out, 'nuscenes', r['filename']), np.float32).reshape(-1, 5)
+        lab = np.fromfile(os.path.join(out, 'nuscenes', row['filename']), np.uint8)
+        with np.load(os.path.join(out, 'nuscenes', prow['filename'])) as z:
+            assert z.files == ['data'] and z['data'].dtype == np.uint16
+            pan = z['data']
+        assert len(lab) == len(pts) == len(pan) and np.array_equal(pan // 1000, lab)
+        inst = pan % 1000
+        assert np.all(inst[~np.isin(lab, list(GT.THING_INDICES))] == 0)
+        ground = pts[:, 2] < -2.0 + 0.05                       # the mast lidar 2 m above the ground (sensor frame)
+        ground_ok += int(np.isin(lab[ground], [24, 26]).sum())
+        ground_n += int(ground.sum())
+        if not r['is_key_frame']:
+            continue
+        # annotated vehicle boxes at the keyframe: their points are vehicles, one instance per box
+        cl = next(c for c in T['calibrated_sensor'] if c['token'] == r['calibrated_sensor_token'])
+        ep = next(e for e in T['ego_pose'] if e['token'] == r['ego_pose_token'])
+        Pg = (pts[:, :3] @ _q2R(cl['rotation']).T + cl['translation']) @ _q2R(ep['rotation']).T + ep['translation']
+        for a in ann.get(r['sample_token'], []):
+            W, Lg, H = a['size']
+            q = (Pg - a['translation']) @ _q2R(a['rotation'])
+            # on its surface (the box grown 5 cm), not the ground under it
+            m = (np.abs(q[:, 0]) < Lg / 2 + 0.05) & (np.abs(q[:, 1]) < W / 2 + 0.05) & (q[:, 2] > -H / 2 + 0.1) & \
+                (q[:, 2] < H / 2 + 0.05)
+            if m.sum() < 5:
+                continue
+            want = inst_cat[a['instance_token']]
+            vehicle_ok += int((lab[m] == GT.NUSC_INDEX[want]).sum())
+            vehicle_n += int(m.sum())
+            ids = set(inst[m][lab[m] == GT.NUSC_INDEX[want]].tolist())
+            assert len(ids) == 1 and ids.pop() > 0                 # one instance per box
+    assert ground_n > 1000 and ground_ok / ground_n > 0.99
+    assert vehicle_n > 50 and vehicle_ok / vehicle_n > 0.99, (vehicle_ok, vehicle_n)
+    d = GT.read(out)
+    assert [s['sample_data_token'] for s in d['lidars']['L1']['sweeps']] == [r['token'] for r in T['lidarseg']]
+    rep = fake_run['report']['ground_truth']['lidar_labels']['L1']
+    assert rep['matched_in_order_share'] == 1.0 and rep['max_direction_error_deg'] < 1e-4 and \
+        abs(rep['range_rms_diff_m'] - 0.015) < 0.002                # the ray-cast lidar's noise only
+
+
+def test_faults_change_what_carla_records_and_the_calibration_states_the_plan(tmp_path):
+    """Every fault kind on a small rig: the camera's views spawned at its rotated mount (the labels follow the image),
+    the radar moved; the calibration the plan's; the camera stamped 5 ms late with its ego pose at the stamp; lidar
+    sweeps 2 and 5 never written and its ranges 0.3 m long; the radar frozen (its scans repeat the last one before);
+    half the IMU's samples dropped; run.json says each as applied and README.md says the drive is faulty."""
+    from vantage.core import groundtruth as GT
+    from vantage.sim import frames as FR
+    from vantage.sim.carla_bridge import pose_matrix
+    faults = [{'tag': 'F', 'kind': 'rotation', 'deg': [0.0, 2.0, 0.0]}, {'tag': 'F', 'kind': 'clock_offset', 'ms': 5},
+              {'tag': 'L1', 'kind': 'drop', 'frames': [2, 5]}, {'tag': 'L1', 'kind': 'range_bias', 'm': 0.3},
+              {'tag': 'RD1', 'kind': 'freeze', 'from_s': 0.3, 'to_s': 0.7},
+              {'tag': 'RD1', 'kind': 'translation', 'm': [0.1, 0.0, 0.0]}, {'tag': 'IMU1', 'kind': 'drop', 'rate': 0.5}]
+    r = _mini_run(tmp_path / 'f', {'faults': faults}, radars=('RD1',), extra=True)
+    out, rep, rig = r['out'], r['report'], r['rig']
+    fi = {(f['tag'], f['kind']): f for f in rep['faults_injected']}
+    assert len(fi) == 7
+    rot = fi[('F', 'rotation')]
+    assert rot['pose_delta_deg'] == [0.0, 2.0, 0.0] and rot['angle_deg'] == pytest.approx(2.0)
+    assert rot['actual_pose']['pitch'] == pytest.approx(rot['plan_pose']['pitch'] + 2.0)
+    # the views CARLA spawned: the planned views turned by R_plan · R(fault) · R_plan⁻¹
+    cam = next(c for c in rig['cameras'] if c['tag'] == 'F')
+    Rp, Ra = pose_matrix(cam['pose_vehicle']), pose_matrix(rot['actual_pose'])
+    views = [e for e in r['log'] if e[0] == 'spawn' and e[2] == 'sensor.camera.rgb']
+    for e, v in zip(views, cam['views']):
+        got = FR.vantage_matrix(e[4][3], e[4][4], e[4][5])
+        rr = v['carla']['rotation']
+        assert np.allclose(got, Ra @ Rp.T @ FR.vantage_matrix(rr['pitch'], rr['yaw'], rr['roll']), atol=1e-6)
+    # the calibration states the plan: the rig's own rows, unchanged
+    T = _tables(out)
+    assert sorted(T['calibrated_sensor'], key=lambda x: x['token']) == \
+        sorted([x for x in rig['nuscenes']['calibrated_sensor'] if x['token'] in
+                {c['token'] for c in T['calibrated_sensor']}], key=lambda x: x['token'])
+    # the labels follow the image: objects' masks still match their boxes through the lens at the ACTUAL mount
+    d = GT.read(out)
+    ious = [_iou(o['bbox'], o['bbox_full']) for f in d['cameras']['F']['frames'] for o in f['objects']
+            if o['pixels'] >= 20 and o['occluded'] == 0 and o['truncated'] == 0]
+    assert ious and np.median(ious) > 0.85
+    # stamps: the camera's 5 ms late, its ego pose the one at its stamp (between the steps, interpolated)
+    sens = {s['token']: s['channel'] for s in T['sensor']}
+    cal = {c['token']: sens[c['sensor_token']] for c in T['calibrated_sensor']}
+    by_ch = {}
+    for s in T['sample_data']:
+        by_ch.setdefault(cal[s['calibrated_sensor_token']], []).append(s)
+    cam_c = r['bridge'].P['chans']
+    plan_cam = next(c for c in cam_c if c.kind == 'camera')
+    t_cam = sorted(s['timestamp'] for s in by_ch['CAM_F'])
+    epoch = rig['output']['epoch_us']
+    assert t_cam == [epoch + int(round(t * 1e6)) + 5000 for t in plan_cam.stamps]
+    from vantage.core import rosbag as RB
+    bag = os.path.join(out, 'rosbag', rig['output']['bag_name'])
+    odom = [(RB.stamp_ns(m[2]['header']['stamp']) / 1e3, m[2]['pose']['pose']['position'])
+            for m in RB.BagReader(bag).messages(topics=['/odom'])]
+    ot = np.array([o[0] for o in odom])
+    ox = np.array([[o[1]['x'], o[1]['y']] for o in odom])
+    ego = {e['token']: e for e in T['ego_pose']}
+    for s in by_ch['CAM_F']:
+        tr = ego[s['ego_pose_token']]['translation']
+        want = [np.interp(s['timestamp'], ot, ox[:, k]) for k in range(2)]
+        assert np.allclose(tr[:2], want, atol=0.03)                # (odometry at 50 Hz: within its interpolation)
+    # drops: L1's sweeps 2 and 5 never written; the IMU about half its samples
+    plan_l = next(c for c in cam_c if c.kind == 'lidar')
+    t_l = sorted(s['timestamp'] for s in by_ch['LIDAR_L1'])
+    assert t_l == [epoch + int(round(t * 1e6)) for k, t in enumerate(plan_l.stamps) if k not in (2, 5)]
+    ds = json.load(open(os.path.join(out, 'dataset.json')))
+    ch = {c['channel'] or c['topic']: c for c in ds['channels']}
+    assert ch['LIDAR_L1']['frames'] == ch['LIDAR_L1']['planned_frames'] - 2
+    assert 0.3 < ch['/imu1']['frames'] / ch['/imu1']['planned_frames'] < 0.7
+    assert fi[('IMU1', 'drop')]['dropped_frames'] and fi[('L1', 'drop')]['dropped_frames'] == [2, 5]
+    # the range bias: ground points (sensor 2 m above the ground) lie (r + 0.3) / r further along their rays
+    pts = []
+    for s in by_ch['LIDAR_L1']:
+        pts.append(np.fromfile(os.path.join(out, 'nuscenes', s['filename']), np.float32).reshape(-1, 5)[:, :3])
+    P = np.concatenate(pts).astype(float)
+    rr = np.linalg.norm(P, axis=1)
+    g = (P[:, 2] < -1.9) & (P[:, 2] > -2.6) & (rr < 15)
+    bias = rr[g] * (1.0 - 2.0 / -P[g, 2])                          # z = −2 r' / r, r' = r + b  ->  b = r' (1 − 2/|z|)
+    assert abs(np.median(bias) - 0.3) < 0.02, np.median(bias)
+    # the freeze: RD1's scans in the window are the scan just before it, byte for byte
+    rd = sorted(by_ch['RADAR_RD1'], key=lambda s: s['timestamp'])
+    data = [open(os.path.join(out, 'nuscenes', s['filename']), 'rb').read() for s in rd]
+    fz = fi[('RD1', 'freeze')]
+    assert fz['frozen_frames'] and all(data[k] == data[fz['held_frame']] for k in fz['frozen_frames'])
+    assert data[fz['frozen_frames'][-1] + 1] != data[fz['held_frame']]
+    assert fi[('RD1', 'translation')]['position_delta_m'] == [0.1, 0.0, 0.0]
+    assert 'deliberately faulty' in open(os.path.join(out, 'README.md')).read()
+    assert ds['faults_injected'] == rep['faults_injected']
+
+
+def test_scenarios_play_out_deterministically(tmp_path):
+    """Each built-in scenario on the fake: its actors where it puts them, its events when they happen; the same seed
+    gives the same drive; the ground truth names the scenario's actors (a walker is a pedestrian, a cyclist a
+    bicycle with its rider)."""
+    from vantage.core import groundtruth as GT
+    runs = {}
+    for name, params in (('lead_vehicle_brake', {'brake_at_s': 0.4, 'gap_m': 12.0}),
+                         ('cut_in', {'cut_at_s': 0.2, 'cutter_offset_m': 6.0, 'cut_gap_m': 0.0}),
+                         ('pedestrian_crossing', {'distance_m': 10.0, 'walk_speed_mps': 3.0, 'start_at_s': 0.0,
+                                                  'walker': 'child'}),
+                         ('cyclist_crossing', {'distance_m': 10.0, 'start_at_s': 0.0}),
+                         ('parked', {})):
+        runs[name] = _mini_run(tmp_path / name, {'scenario': {'name': name, 'params': params},
+                                                 'duration_s': 4.0 if name == 'cut_in' else 2.5, 'traffic': 3})
+    rep = runs['lead_vehicle_brake']['report']['scenario']
+    ev = {e['what']: e for e in rep['events']}
+    assert rep['actors'][0]['role'] == 'lead' and ev['lead_brake']['t_s'] == pytest.approx(0.4, abs=0.0125)
+    assert 11.0 < ev['lead_brake']['gap_m'] < 13.0 and ev['lead_stopped']['t_s'] > 0.4
+    assert rep['start']['straight_ahead_m'] > 30 and runs['lead_vehicle_brake']['report']['traffic'] == 0
+    rep = runs['cut_in']['report']['scenario']
+    ev = {e['what']: e for e in rep['events']}
+    assert ev['lane_change_ordered']['t_s'] == pytest.approx(0.2, abs=0.0125)
+    assert abs(ev['lane_change_ordered']['lateral_m']) == pytest.approx(3.5, abs=0.2)
+    assert ev['cut_in']['t_s'] > 0.2 and ev['cut_in']['longitudinal_m'] > 0
+    assert ev['cut_in_complete']['t_s'] > ev['cut_in']['t_s'] and abs(ev['cut_in_complete']['lateral_m']) < 0.3
+    for name, cls, cat in (('pedestrian_crossing', 'pedestrian', 'human.pedestrian.child'),
+                           ('cyclist_crossing', 'bicycle', 'vehicle.bicycle')):
+        rep = runs[name]['report']['scenario']
+        ev = {e['what']: e for e in rep['events']}
+        assert ev['start']['t_s'] == 0.0 and ev['enters_ego_lane']['t_s'] > 0.0
+        aid = rep['actors'][0]['actor_id']
+        d = GT.read(runs[name]['out'])
+        objs = [o for f in d['cameras']['F']['frames'] for o in f['objects'] if o['actor_id'] == aid]
+        assert objs and {o['class'] for o in objs} == {cls} and {o['category'] for o in objs} == {cat}
+        T = _tables(runs[name]['out'])
+        assert cat in {c['name'] for c in T['category'] if c['token'] in {i['category_token'] for i in T['instance']}}
+    # parked: the ego stands still, no traffic, no actors
+    T = _tables(runs['parked']['out'])
+    xy = np.array([e['translation'][:2] for e in T['ego_pose']])
+    assert np.ptp(xy, axis=0).max() < 1e-6 and runs['parked']['report']['traffic'] == 0
+    # the same seed, the same drive
+    again = _mini_run(tmp_path / 'again', {'scenario': {'name': 'lead_vehicle_brake', 'params': {
+        'brake_at_s': 0.4, 'gap_m': 12.0}}, 'duration_s': 2.5, 'traffic': 3})
+    a, b = runs['lead_vehicle_brake'], again
+    assert a['report']['scenario']['events'] == b['report']['scenario']['events']
+    assert _tables(a['out'])['ego_pose'] == _tables(b['out'])['ego_pose']
+
+
+def test_walkers_on_the_sidewalks(tmp_path):
+    """Pedestrians on CARLA's walker AI in a free drive: as many as asked, walking (their AI started, then stopped
+    before anything is destroyed), annotated and labelled as pedestrians; the same seed puts them in the same places."""
+    from vantage.core import groundtruth as GT
+    runs = [_mini_run(tmp_path / k, {'walkers': 4, 'traffic': 2}, cams=('F', 'R', 'ML', 'MR')) for k in ('a', 'b')]
+    r = runs[0]
+    assert r['report']['walkers'] == 4 and r['report']['traffic'] == 2
+    log = r['log']
+    ctrl = [e[1] for e in log if e[0] == 'spawn' and e[2] == 'controller.ai.walker']
+    started = [e[1] for e in log if e[0] == 'walker_ai_start']
+    stopped = [i for i, e in enumerate(log) if e[0] == 'walker_ai_stop']
+    destroyed = [i for i, e in enumerate(log) if e[0] == 'destroy']
+    assert len(ctrl) == 4 and sorted(started) == sorted(ctrl) and max(stopped) < min(destroyed)
+    assert ('pedestrians_seed', 4) in log
+    T = _tables(r['out'])
+    cats = {c['token']: c['name'] for c in T['category']}
+    peds = {i['token'] for i in T['instance'] if cats[i['category_token']].startswith('human.pedestrian')}
+    rows = [a for a in T['sample_annotation'] if a['instance_token'] in peds]
+    from vantage.sim.record import token
+    ped_attr = {token('vantage', 'attribute', n) for n in ('pedestrian.moving', 'pedestrian.standing')}
+    assert rows and all(len(a['attribute_tokens']) == 1 and a['attribute_tokens'][0] in ped_attr for a in rows)
+    assert any(a['attribute_tokens'][0] == token('vantage', 'attribute', 'pedestrian.moving') for a in rows)
+    d = GT.read(r['out'])
+    classes = {o['class'] for c in d['cameras'].values() for f in c['frames'] for o in f['objects']
+               if o['category'].startswith('human.pedestrian')}
+    assert classes == {'pedestrian'}
+    other = _tables(runs[1]['out'])
+    assert [a['translation'] for a in T['sample_annotation'] if a['instance_token'] in peds] == \
+        [a['translation'] for a in other['sample_annotation'] if a['instance_token'] in peds]
+
+
+def test_actors_scene_places_every_actor_and_labels_it(tmp_path):
+    """ACTORS.json around a still ego at a given spawn point: every actor where its pose says (box bottom centre and
+    heading in the ego's vehicle frame), a traffic light reported as not spawnable, no traffic; the ground truth names
+    each actor by its actor id with its category."""
+    from vantage.core import groundtruth as GT
+    actors = [{'id': 'kid', 'kind': 'child', 'pose': {'x': 7.0, 'y': 0.8, 'yaw': 90.0}},
+              {'id': 'man', 'kind': 'pedestrian', 'pose': {'x': -6.0, 'y': -1.0, 'yaw': 0.0}},
+              {'id': 'bike', 'kind': 'cyclist', 'pose': {'x': 4.0, 'y': 3.0, 'yaw': -90.0}},
+              {'id': 'car', 'kind': 'car', 'pose': {'x': 12.0, 'y': -0.5, 'yaw': 180.0}},
+              {'id': 'cone', 'kind': 'cone', 'pose': {'x': 5.0, 'y': -2.0}},
+              {'id': 'bar', 'kind': 'barrier', 'pose': {'x': 9.0, 'y': 2.5, 'yaw': 30.0}},
+              {'id': 'sign', 'kind': 'sign', 'pose': {'x': 3.0, 'y': -4.0, 'yaw': 90.0}},
+              {'id': 'tl', 'kind': 'traffic_light', 'pose': {'x': 15.0, 'y': 4.0}},
+              {'id': 'a2', 'kind': 'blueprint:vehicle.audi.a2', 'pose': {'x': -12.0, 'y': 0.0, 'z': 0.0, 'yaw': 0.0}},
+              {'id': 'mini', 'kind': 'blueprint:vehicle.mini.cooper_s', 'pose': {'x': -20.0, 'y': 2.0, 'yaw': 0.0}}]
+    r = _mini_run(tmp_path / 'scene', {'actors': actors, 'spawn_point': 3, 'traffic': 5},
+                  cams=('F', 'R', 'ML', 'MR'))
+    rep = r['report']
+    assert rep['traffic'] == 0 and rep['start']['spawn_point'] == 3 and rep['scenario']['name'] == 'actors'
+    rows = {x['id']: x for x in rep['actors']}
+    assert rows['tl']['actor_id'] is None and 'traffic-light' in rows['tl']['error']
+    for a in actors:
+        if a['kind'] == 'traffic_light':
+            continue
+        row = rows[a['id']]
+        assert row['actor_id'] is not None and row['error_m'] < 1e-3 and abs(row['error_z_m']) < 1e-3
+        assert abs(row['error_yaw_deg']) < 1e-3, row
+    assert rows['kid']['blueprint'] in ('walker.pedestrian.0009', 'walker.pedestrian.0010')
+    assert rows['a2']['blueprint'] == 'vehicle.audi.a2' and rows['cone']['blueprint'] == 'static.prop.trafficcone01'
+    assert rows['mini']['blueprint'] == 'vehicle.mini.cooper_s' and rows['mini']['error_m'] < 1e-3
+    # a turned prop: its own size, not the world-axes box CARLA 0.9.16 reports for it
+    assert rows['sign']['bbox']['size_lwh'] == [1.064, 0.128, 2.16]
+    T = _tables(r['out'])
+    xy = np.array([e['translation'][:2] for e in T['ego_pose']])
+    assert np.ptp(xy, axis=0).max() < 1e-6                         # the ego stands still
+    d = GT.read(r['out'])
+    seen = {}
+    for c in d['cameras'].values():
+        for f in c['frames']:
+            for o in f['objects']:
+                if o['actor_id'] is not None:
+                    seen.setdefault(o['actor_id'], set()).add((o['class'], o['category']))
+    want = {'kid': ('pedestrian', 'human.pedestrian.child'), 'man': ('pedestrian', 'human.pedestrian.adult'),
+            'bike': ('bicycle', 'vehicle.bicycle'), 'car': ('car', 'vehicle.car'),
+            'cone': ('dynamic', 'movable_object.trafficcone'), 'bar': ('static', 'movable_object.barrier'),
+            'sign': ('traffic_sign', 'static.manmade'), 'a2': ('car', 'vehicle.car')}
+    for k, (cls, cat) in want.items():
+        assert (cls, cat) in seen.get(rows[k]['actor_id'], set()), (k, seen.get(rows[k]['actor_id']))
+    sizes = {tuple(o['box3d']['size']) for c in d['cameras'].values() for f in c['frames'] for o in f['objects']
+             if o['actor_id'] == rows['sign']['actor_id']}
+    assert sizes == {(1.064, 0.128, 2.16)}                        # the turned sign's own box in the ground truth
+    cats = {c['token']: c['name'] for c in T['category']}
+    annotated = {cats[i['category_token']] for i in T['instance']}
+    assert {'human.pedestrian.child', 'human.pedestrian.adult', 'vehicle.bicycle', 'movable_object.trafficcone',
+            'movable_object.barrier'} <= annotated and 'static.manmade' not in annotated
+
+
+def test_the_bridge_never_hangs_on_a_dead_server(tmp_path, monkeypatch):
+    """A server that stops answering mid-run (the fake's tick never returns, as a crashed server's client call): the
+    watchdog ends the bridge after twice --timeout with run.json saying so (exit 4) and what was written removed; a
+    SIGTERM while it hangs ends it within the grace (exit 3); a run over the render budget is refused before it
+    starts (exit 2)."""
+    import signal as SG
+    from vantage.core import simrig
+    from vantage.sim import carla_bridge as CB
+    p = _project(lidar_z=2.0, extra=False)
+    p.variant.cameras[:] = p.variant.cameras[:1]
+    rig = simrig.build(p, simrig.SimSettings.from_dict({'image_scale': 0.05, 'duration_s': 3.0, 'traffic': 1,
+                                                        'warmup_s': 0.1}))
+    simrig.export(rig, p, str(tmp_path / 'rig'))
+    base = [sys.executable, '-m', 'vantage.sim.carla_bridge', str(tmp_path / 'rig' / 'sim_rig.json')]
+    env = dict(os.environ, PYTHONPATH=FAKE_DIR + os.pathsep + REPO, FAKE_CARLA_HANG_AT_TICK='60')
+    t0 = time.monotonic()
+    r = subprocess.run(base + [str(tmp_path / 'hang'), '--timeout', '2'], env=env, capture_output=True, text=True,
+                       timeout=120, cwd=str(tmp_path))
+    took = time.monotonic() - t0
+    rep = json.load(open(tmp_path / 'hang' / 'run.json'))
+    assert r.returncode == 4 and rep['status'] == 'failed' and 'stopped answering' in rep['error'] and took < 40
+    assert rep['server_stopped'] and not (tmp_path / 'hang' / 'nuscenes').exists()
+    pr = subprocess.Popen(base + [str(tmp_path / 'sig'), '--timeout', '60'], env=env, stdout=subprocess.DEVNULL,
+                          stderr=subprocess.PIPE, text=True, cwd=str(tmp_path))
+    end = time.monotonic() + 60
+    while time.monotonic() < end and not (tmp_path / 'sig' / 'nuscenes').exists():
+        time.sleep(0.2)
+    time.sleep(3.0)                                               # (hung at its 60th step by now)
+    t0 = time.monotonic()
+    pr.send_signal(SG.SIGTERM)
+    code = pr.wait(timeout=60)
+    assert code == 3 and time.monotonic() - t0 < CB.SIGNAL_GRACE_S + 10
+    assert json.load(open(tmp_path / 'sig' / 'run.json'))['status'] == 'cancelled'
+    r = subprocess.run(base + [str(tmp_path / 'big'), '--render-budget-mpx', '0.001'], env=env, capture_output=True,
+                       text=True, timeout=120, cwd=str(tmp_path))
+    assert r.returncode == 2 and 'over the budget' in r.stderr and not (tmp_path / 'big').exists()
+    monkeypatch.setattr(CB, 'RENDER_BUDGET_MPX', 0.001)          # the plan says so before the run is started
+    st = simrig.SimSettings.from_dict({'image_scale': 0.05, 'duration_s': 3.0, 'traffic': 1})
+    assert any('The bridge refuses this run' in n for n in simrig.build(p, st).notes)
+
+
+def test_tidying_up_stops_at_a_dead_server():
+    """A server that died mid-run times every call out (120 s each): the bridge's tidy-up asks once, then stops."""
+    from vantage.sim import carla_bridge as CB
+    calls = []
+
+    class Dead:
+        type_id = 'vehicle.audi.a2'
+
+        def __getattr__(self, name):
+            def call(*_a):
+                calls.append(name)
+                raise RuntimeError('time-out of 120000ms while waiting for the simulator')
+            return call
+
+    class World(Dead):
+        def get_settings(self):
+            calls.append('get_settings')
+            raise RuntimeError('time-out of 120000ms while waiting for the simulator')
+    b = CB.Bridge.__new__(CB.Bridge)
+    b.a = type('A', (), {'tm_port': 8200})()
+    b.actors = [Dead() for _ in range(16)]
+    b.sensors = [(Dead(), 'camera', {}, 0) for _ in range(30)]
+    b.tm, b.original = None, object()
+    b._tidy(World())
+    assert calls == ['get_settings']
+
+
+def test_tidy_after_a_killed_bridge(tmp_path):
+    """A bridge killed mid-run (no tidying) leaves the server synchronous with its actors; tidy_server (--tidy)
+    destroys what bridges spawned, by their role names, and nothing else, and puts the world back in asynchronous
+    mode."""
+    from vantage.core import simrig
+    from vantage.sim import carla_bridge as CB
+    fc = _fake()
+    fc.reset()
+    p = _project(lidar_z=2.0, extra=False)
+    p.variant.cameras[:] = p.variant.cameras[:1]
+    rig = simrig.build(p, simrig.SimSettings.from_dict({'image_scale': 0.05, 'duration_s': 1.0, 'traffic': 3,
+                                                        'walkers': 2, 'warmup_s': 0.1,
+                                                        'scenario': {'name': 'cyclist_crossing'}}))
+    out = str(tmp_path / 'killed')
+    simrig.export(rig, p, os.path.join(out, 'rig'))
+    doc, remaps = CB.load_rig(os.path.join(out, 'rig', 'sim_rig.json'))
+    b = CB.Bridge(fc, doc, remaps, out, _args(doc, out), None, None)
+    b._tidy = lambda world: None                                  # killed: nothing tidied
+
+    def killed(*_a, **_k):
+        raise SystemExit('killed')
+    b._loop = killed
+    with pytest.raises(SystemExit):
+        b.run()
+    w = fc.STATE['world']
+    lib = w.get_blueprint_library()
+    bp = lib.find('vehicle.tesla.model3')
+    bp.set_attribute('role_name', 'hero')                         # another client's car and sensor on the server
+    theirs = w.spawn_actor(bp, fc.Transform(fc.Location(120.0, 0.0, 0.3), fc.Rotation()))
+    cam = w.spawn_actor(lib.find('sensor.camera.rgb'), fc.Transform(), attach_to=theirs)
+    ours = [a for a in w._actors.values() if CB._role(a).startswith('vantage_')]
+    assert w.get_settings().synchronous_mode and len(ours) > 10
+    res = CB.tidy_server(fc, '127.0.0.1', 2100)
+    assert set(w._actors) == {theirs.id, cam.id} and not w.get_settings().synchronous_mode
+    n_veh = len([e for e in fc.LOG if e[0] == 'spawn' and e[2].startswith('vehicle.')]) - 1      # (not theirs)
+    assert res['was_synchronous'] and res['walkers'] == 2 and res['controllers'] == 2 and res['vehicles'] == n_veh == 2
+    assert res['sensors'] == len([e for e in fc.LOG if e[0] == 'spawn' and e[2].startswith('sensor.')]) - 1
+    # the command line: --tidy needs a port; with one it says what it did
+    env = dict(os.environ, PYTHONPATH=FAKE_DIR + os.pathsep + REPO)
+    base = [sys.executable, '-m', 'vantage.sim.carla_bridge', '--tidy']
+    r = subprocess.run(base, env=env, capture_output=True, text=True, timeout=120, cwd=str(tmp_path))
+    assert r.returncode == 2 and '--port' in r.stderr
+    r = subprocess.run(base + ['--port', '2100'], env=env, capture_output=True, text=True, timeout=120,
+                       cwd=str(tmp_path))
+    assert r.returncode == 0 and json.loads(r.stdout)['synchronous'] is False
+
+
+def test_bridge_command_line_flags(tmp_path):
+    """--faults, --scenario with --scenario-params, --ground-truth and --actors none on the command line over the
+    rig's settings; a fault naming no sensor of the rig fails before anything starts (exit 2)."""
+    from vantage.core import simrig
+    p = _project(lidar_z=2.0, extra=False)
+    p.variant.cameras[:] = p.variant.cameras[:1]
+    p.variant.sensors[:] = [s for s in p.variant.sensors if s.kind == 'lidar']
+    rig = simrig.build(p, simrig.SimSettings.from_dict({'image_scale': 0.05, 'duration_s': 0.8, 'traffic': 1,
+                                                        'warmup_s': 0.1, 'actors': [
+                                                            {'id': 'x', 'kind': 'cone', 'pose': {'x': 5, 'y': 0}}]}))
+    simrig.export(rig, p, str(tmp_path / 'rig'))
+    assert (tmp_path / 'rig' / 'actors.json').is_file() and not (tmp_path / 'rig' / 'faults.json').exists()
+    (tmp_path / 'faults.json').write_text(json.dumps([{'tag': 'L1', 'kind': 'drop', 'frames': [1]}]))
+    env = dict(os.environ, PYTHONPATH=FAKE_DIR + os.pathsep + REPO)
+    base = [sys.executable, '-m', 'vantage.sim.carla_bridge', str(tmp_path / 'rig' / 'sim_rig.json')]
+    r = subprocess.run(base + [str(tmp_path / 'out'), '--faults', str(tmp_path / 'faults.json'), '--scenario',
+                               'lead_vehicle_brake', '--scenario-params', '{"brake_at_s": 0.2}', '--ground-truth',
+                               'semantic,range', '--actors', 'none'], env=env, capture_output=True, text=True,
+                       timeout=600, cwd=str(tmp_path))
+    assert r.returncode == 0, r.stderr[-2000:]
+    rep = json.load(open(tmp_path / 'out' / 'run.json'))
+    assert rep['scenario']['name'] == 'lead_vehicle_brake' and rep['scenario']['params']['brake_at_s'] == 0.2
+    assert rep['actors'] == [] and [f['kind'] for f in rep['faults_injected']] == ['drop']
+    assert rep['ground_truth']['camera_kinds'] == ['semantic_segmentation', 'depth']
+    assert not rep['ground_truth']['lidar_labels'] and not (tmp_path / 'out' / 'nuscenes' / 'lidarseg').exists()
+    from vantage.core import groundtruth as GT
+    d = GT.read(str(tmp_path / 'out'))
+    f = d['cameras']['F']['frames'][0]
+    assert f['instance'] is None and f['objects'] == [] and f['semantic'] and f['range']
+    bad = tmp_path / 'bad.json'
+    bad.write_text(json.dumps([{'tag': 'NOPE', 'kind': 'drop', 'rate': 0.1}]))
+    r = subprocess.run(base + [str(tmp_path / 'out2'), '--faults', str(bad)], env=env, capture_output=True,
+                       text=True, timeout=120, cwd=str(tmp_path))
+    assert r.returncode == 2 and 'no sensor NOPE' in r.stderr and not (tmp_path / 'out2').exists()
+
+
+def test_range_only_ground_truth(tmp_path):
+    """Only the range asked for: the depth camera alone beside each view, range images and no labels or objects."""
+    from vantage.core import groundtruth as GT
+    r = _mini_run(tmp_path / 'r', {'ground_truth': {'semantic': False, 'instance': False, 'range': True,
+                                                    'lidar_labels': False}, 'duration_s': 0.5})
+    assert r['report']['ground_truth']['camera_kinds'] == ['depth']
+    kinds = {e[2] for e in r['log'] if e[0] == 'spawn' and e[2].startswith('sensor.')}
+    assert 'sensor.camera.depth' in kinds and not kinds & {'sensor.camera.instance_segmentation',
+                                                            'sensor.camera.semantic_segmentation',
+                                                            'sensor.lidar.ray_cast_semantic'}
+    d = GT.read(r['out'])
+    f = d['cameras']['F']['frames'][0]
+    assert f['semantic'] is None and f['instance'] is None and f['objects'] == [] and GT.load_range(d, f).max() > 1
+    assert d['lidars'] == {}
+
+
+def test_round8_settings_and_rig_blocks():
+    """SimSettings: ground truth, faults, the scenario and an actors scene, tolerant of junk; the rig's lens block,
+    the ground truth's cost, the faults checked against the rig's sensors."""
+    from vantage.core import simrig
+    st = simrig.SimSettings.from_dict({
+        'ground_truth': {'semantic': 'no', 'range': 0, 'junk': 1},
+        'faults': [{'tag': 'F', 'kind': 'rotation', 'deg': [0, 99, 0]}, {'tag': 'F', 'kind': 'warp'}, 'x',
+                   {'tag': 'L1', 'kind': 'drop', 'rate': 3}, {'tag': 'RD1', 'kind': 'freeze', 'from_s': 2, 'to_s': 1}],
+        'scenario': {'name': 'cut_in', 'params': {'speed_kmh': 900, 'side': 'up', 'nope': 1}},
+        'actors': [{'id': 'a', 'kind': 'child', 'pose': {'x': 1, 'y': 'q'}}, {'kind': 'cone', 'pose': {'x': 2, 'y': 0}},
+                   {'kind': 'tank', 'pose': {'x': 0, 'y': 0}}], 'spawn_point': -9})
+    assert st.ground_truth == {'semantic': False, 'instance': True, 'range': False, 'lidar_labels': True}
+    assert st.faults == [{'tag': 'F', 'kind': 'rotation', 'deg': [0.0, 30.0, 0.0]},
+                         {'tag': 'L1', 'kind': 'drop', 'rate': 0.9}]
+    assert st.scenario == {'name': 'cut_in', 'params': {'speed_kmh': 90.0, 'side': 'left'}}
+    assert st.actors == [{'id': 'a2', 'kind': 'cone', 'pose': {'x': 2.0, 'y': 0.0, 'z': 0.0, 'yaw': 0.0}}]
+    assert st.spawn_point == -1 and simrig.SimSettings.from_dict(st.to_dict()) == st
+    assert simrig.SimSettings.from_dict({'walkers': 999}).walkers == 300 and simrig.SimSettings().walkers == 0
+    assert simrig.SimSettings.from_dict({'scenario': 'parked'}).scenario == {'name': 'parked', 'params': {}}
+    p = _project(extra=False)
+    rig = simrig.build(p, simrig.SimSettings.from_dict({'image_scale': 0.1, 'faults': [
+        {'tag': 'F', 'kind': 'range_bias', 'm': 0.1}, {'tag': 'ZZ', 'kind': 'drop', 'rate': 0.1},
+        {'tag': 'RD1', 'kind': 'clock_offset', 'ms': 3}]}), tables=False)
+    d = rig.doc
+    assert d['faults'] == [{'tag': 'RD1', 'kind': 'clock_offset', 'ms': 3.0}]     # range_bias: no camera's; ZZ: none
+    assert any('does not apply to F' in n for n in rig.notes) and any('no sensor ZZ' in n for n in rig.notes)
+    g = d['ground_truth']
+    assert g['camera_kinds'] == ['instance_segmentation', 'depth']
+    assert g['gt_render_mpx'] == pytest.approx(2 * g['render_mpx'], abs=0.01)
+    assert all(c['lens']['model'] == 'lens' and c['gt_render_mpx'] == pytest.approx(2 * c['render_mpx'], abs=2e-3)
+               for c in d['cameras'])                              # (each rounded to 1 000 px)
+    assert d['scenario']['name'] == 'free_drive' and d['actors'] == {'items': [], 'spawn_point': -1,
+                                                                     'frame': d['actors']['frame']}
+    s = simrig.summary(rig)
+    assert s['ground_truth']['instance'] and s['scenario'] == 'free_drive' and s['faults'] == 1
+    rig2 = simrig.build(p, simrig.SimSettings.from_dict({'image_scale': 0.1, 'ground_truth': {
+        'semantic': True, 'instance': False, 'range': False, 'lidar_labels': False}}), tables=False)
+    assert rig2.doc['ground_truth']['camera_kinds'] == ['semantic_segmentation']
 
 
 # ======================================================================= tests against a real CARLA server
@@ -872,3 +1560,270 @@ def test_a_bridge_that_dies_without_its_report_leaves_no_half_recording(app, win
     assert sorted(os.listdir(out)) == ['bridge.log', 'rig', 'run.json'] and (out / 'rig' / 'sim_rig.json').exists()
     from vantage.ui.workspaces.sim_ws import short_path
     assert SR.read_run(str(out))['error'] == doc['error'] and doc['error'].endswith(short_path(str(out / 'bridge.log')))
+    assert 'tidied' not in doc                                      # (the server is gone: nothing to tidy)
+    # the server still up (a bridge killed by its memory cap): the page tidies it (carla_bridge --tidy)
+    import pytest as _pt
+    mp = _pt.MonkeyPatch()
+    try:
+        mp.setattr(SV, 'port_open', lambda *a, **k: True)
+        pg.python, pg.extra_pythonpath = sys.executable, FAKE_DIR
+        out2 = tmp_path / 'drive2'
+        (out2 / 'rig').mkdir(parents=True)
+        doc2 = pg._no_report(str(out2), -9, 2100)
+    finally:
+        mp.undo()
+    assert not doc2['server_stopped'] and doc2['tidied']['synchronous'] is False, doc2
+
+
+def test_sim_page_ground_truth_scenario_faults_and_actors(app, win, tmp_path):
+    """The page's round-8 sections driven like a user: a ground-truth switch, the scenario chooser and its fields,
+    the faults table (add, type values, change kind and sensor, remove), an actors scene from a file; every edit one
+    undo step; the command line says all of it."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+    from vantage.sim import carla_bridge as CB
+    from vantage.ui.workspaces.sim_ws import SimPage, fault_text, parse_fault
+    p = win.store.project
+    v = next(v for v in p.variants if v.sensors)
+
+    def activate(pj):
+        pj.active_uid = v.uid
+        pj.analysis.sim = {}
+    win.store.edit(['variants', 'analysis'], activate, 'data rig')
+    pump(app, 0.3)
+    pg = _open(win, 'sim', SimPage)
+    _wait(app, lambda: pg.rig is not None, 120)
+    assert 'Renders' in pg.gt_cost.text() and 'semantic lidar' in pg.gt_cost.text()
+    # ground truth: a switch as a user clicks it; undo puts it back
+    t = pg.gt_toggles['range']
+    assert t.isChecked()
+    t.click()
+    pump(app, 0.2)
+    assert pg.settings.ground_truth == {'semantic': True, 'instance': True, 'range': False, 'lidar_labels': True}
+    win.store.undo.undo()
+    pump(app, 0.2)
+    assert pg.settings.ground_truth['range'] and pg.gt_toggles['range'].isChecked()
+    # the scenario: cut-in, its fields appear; a speed typed, a side chosen
+    pg.scen.setCurrentIndex(pg.scen.findData('cut_in'))
+    pump(app, 0.2)
+    assert pg.settings.scenario == {'name': 'cut_in', 'params': {}} and set(pg.scen_fields) == \
+        set(CB.SCENARIOS['cut_in'][2]) and 'next lane' in pg.scen_about.text()
+    f = pg.scen_fields['speed_kmh']
+    f.lineEdit().selectAll()
+    QTest.keyClicks(f.lineEdit(), '50')
+    QTest.keyClick(f.lineEdit(), Qt.Key.Key_Return)
+    pump(app, 0.2)
+    pg.scen_fields['side'].buttons['right'].click()
+    pump(app, 0.2)
+    assert pg.settings.scenario == {'name': 'cut_in', 'params': {'speed_kmh': 50.0, 'side': 'right'}}
+    win.store.undo.undo()
+    pump(app, 0.2)
+    assert pg.settings.scenario['params'] == {'speed_kmh': 50.0} and pg.scen_fields['side'].value() == 'left'
+    # faults
+    pg.b_add_fault.click()
+    pump(app, 0.2)
+    first = next(c.tag for c in v.cameras if c.visible)
+    assert pg.settings.faults == [{'tag': first, 'kind': 'rotation', 'deg': [0.0, 0.5, 0.0]}]
+    assert pg.faults.rowCount() == 1
+    ed = pg.faults.cellWidget(0, 2)
+    ed.setText('0, 1.5, -0.2')
+    ed.editingFinished.emit()
+    pump(app, 0.2)
+    assert pg.settings.faults[0]['deg'] == [0.0, 1.5, -0.2]
+    ed = pg.faults.cellWidget(0, 2)
+    ed.setText('oops')
+    ed.editingFinished.emit()
+    pump(app, 0.2)
+    assert pg.settings.faults[0]['deg'] == [0.0, 1.5, -0.2] and '3 numbers' in pg.fault_status.text()
+    kc = pg.faults.cellWidget(0, 1)
+    kc.setCurrentIndex(kc.findData('drop'))
+    pump(app, 0.2)
+    assert pg.settings.faults == [{'tag': first, 'kind': 'drop', 'rate': 0.05}]
+    sc = pg.faults.cellWidget(0, 0)
+    sc.setCurrentIndex(sc.findData('L1'))
+    pump(app, 0.2)
+    assert pg.settings.faults == [{'tag': 'L1', 'kind': 'drop', 'rate': 0.05}]
+    kc = pg.faults.cellWidget(0, 1)
+    assert kc.findData('range_bias') >= 0                     # a lidar's kinds
+    pg.faults.cellWidget(0, 3).click()
+    pump(app, 0.2)
+    assert pg.settings.faults == [] and pg.faults.rowCount() == 0
+    win.store.undo.undo()
+    pump(app, 0.2)
+    assert pg.settings.faults == [{'tag': 'L1', 'kind': 'drop', 'rate': 0.05}] and pg.faults.rowCount() == 1
+    for f in ({'tag': 'F', 'kind': 'rotation', 'deg': [0.0, -0.5, 1.25]}, {'tag': 'F', 'kind': 'translation',
+              'm': [0.01, 0.0, -0.02]}, {'tag': 'F', 'kind': 'clock_offset', 'ms': -7.5},
+              {'tag': 'L1', 'kind': 'range_bias', 'm': 0.05}, {'tag': 'R', 'kind': 'drop', 'frames': [3, 7]},
+              {'tag': 'R', 'kind': 'drop', 'rate': 0.25}, {'tag': 'L1', 'kind': 'freeze', 'from_s': 2.0, 'to_s': 3.5}):
+        assert parse_fault(f['tag'], f['kind'], fault_text(f)) == f
+    # an actors scene from a file (an unknown kind left out)
+    path = tmp_path / 'ACTORS.json'
+    path.write_text(json.dumps([{'id': 'kid', 'kind': 'child', 'pose': {'x': 5, 'y': 0}},
+                                {'kind': 'tank', 'pose': {'x': 1, 'y': 1}}]))
+    assert pg.load_actors(str(path))
+    pump(app, 0.2)
+    assert pg.settings.actors == [{'id': 'kid', 'kind': 'child', 'pose': {'x': 5.0, 'y': 0.0, 'z': 0.0, 'yaw': 0.0}}]
+    assert '1 actors' in pg.actors_label.text() and '1 child' in pg.actors_label.text()
+    cmd = pg.command_line('/r/sim_rig.json')
+    assert '--actors /r/actors.json' in cmd and '--faults /r/faults.json' in cmd and '--scenario ' not in cmd
+    assert '--ground-truth semantic,instance,range,lidar_labels' in cmd
+    pg.b_clear_actors.click()
+    pump(app, 0.2)
+    cmd = pg.command_line('/r/sim_rig.json')
+    assert pg.settings.actors == [] and '--scenario cut_in' in cmd and \
+        """--scenario-params '{"speed_kmh":50.0}'""" in cmd and '--actors' not in cmd
+    # Export rig writes the lists the command line names
+    from vantage.core import simrig as SR
+    names = [n for n, _ in SR.files(SR.build(win.store.project.snapshot(), pg.settings, tables=False))]
+    assert names == ['sim_rig.json', 'sim_remap.npz', 'faults.json']
+    win.store.edit('analysis', lambda pj: setattr(pj.analysis, 'sim', {}), 'reset')
+    pump(app, 0.2)
+
+
+def test_open_run_shows_a_finished_drive_and_its_ground_truth(app, win, fake_run, tmp_path):
+    """Open run… on a drive recorded before (the bridge's own, as a headless --carla-run makes one): refused for a
+    folder without run.json or with another schema; else its report as after a run, the Drive-log check, As-built
+    check and Detection quality buttons on it, and the Ground truth tab: every camera with frames, each layer the
+    drive's own label images in colour pixel for pixel (checked against core.groundtruth), the boxes, the object table
+    sorted by range, a row or a click on an object highlighting it, the opacity blending, the lidar from above; a drive
+    without ground truth says so; a failed run shows its report with the checks off; a new project clears it."""
+    import shutil
+    from PyQt6.QtCore import QPointF, Qt
+    from PyQt6.QtGui import QImage
+    from vantage.core import groundtruth as GT
+    from vantage.ui import gtview as GV
+    from vantage.ui.workspaces.sim_ws import SimPage
+    out = fake_run['out']
+    pg = _open(win, 'sim', SimPage)
+    empty = tmp_path / 'empty'
+    empty.mkdir()
+    assert not pg.open_run(str(empty)) and 'holds no run.json' in pg.g_status.text()
+    (empty / 'run.json').write_text('{"schema": "something/1"}')
+    assert not pg.open_run(str(empty)) and 'not a CARLA run' in pg.g_status.text()
+    assert pg.result is None and not pg.b_drivelog.isEnabled() and pg.gt.canvas.img is None
+    # the drive: its report and its checks
+    assert pg.open_run(out)
+    pump(app, 0.2)
+    assert pg.out_dir == os.path.normpath(out) and pg.result['status'] == 'ok'
+    from vantage.core import simrig as SR
+    assert pg.out.toPlainText() == SimPage.report_text(SR.read_run(out)) and 'Ground truth:' in pg.out.toPlainText()
+    assert pg.b_drivelog.isEnabled() and pg.b_asbuilt.isEnabled() and pg.b_detect.isEnabled()
+    assert 'camera frames with ground truth' in pg.g_status.text()
+    # the ground truth: the tab given room, every camera that has frames
+    pg.show_ground_truth()
+    pump(app, 0.2)
+    assert pg.out_tabs.currentWidget() is pg.gt and pg.right.sizes()[1] >= 0.6 * sum(pg.right.sizes())
+    gt = pg.gt
+    doc = GT.read(out)
+    tags = [t for t, c in doc['cameras'].items() if c['frames']]
+    assert gt.cameras() == tags and len(tags) == 6
+    tag = tags[0]
+    assert gt.set_camera(tag)
+    k = gt.busiest_frame(1)
+    gt.set_frame(k)
+    f = GT.frames(doc, tag)[k]
+    assert f['objects'] and gt.frame_index() == k
+    img = GT.load_image(doc, f)
+
+    def shown():
+        q = gt.canvas.img.convertToFormat(QImage.Format.Format_RGB888)
+        a = np.frombuffer(q.constBits().asstring(q.sizeInBytes()), np.uint8).reshape(q.height(), q.bytesPerLine())
+        return a[:, :q.width() * 3].reshape(q.height(), q.width(), 3)
+    assert np.array_equal(shown(), img)
+    assert gt.set_layer('semantic')
+    sem = GT.load_semantic(doc, f)
+    assert np.array_equal(shown(), GT.colour_semantic(sem))
+    present = [c['name'] for c in GT.classes_in(sem)]
+    assert [t.split('  ')[0] for _, t, _ in gt.legend.rows] == [n.replace('_', ' ') for n in present]
+    assert gt.set_layer('instance')
+    inst = GT.load_instance(doc, f)
+    assert np.array_equal(shown(), GT.colour_instance(inst))
+    gt.set_opacity(40)                                           # 40 % of the labels over the image
+    blend = (img.astype(np.float32) * 0.6 + GT.colour_instance(inst).astype(np.float32) * 0.4).astype(np.uint8)
+    assert np.abs(shown().astype(int) - blend.astype(int)).max() <= 1
+    gt.set_opacity(100)
+    assert gt.set_layer('range')
+    rng = GT.load_range(doc, f)
+    near, far = GT.range_limits(rng)
+    t = GT.range_position(rng, near, far)
+    a = shown()
+    ok = ~np.isnan(t)
+    assert np.array_equal(a[ok], GV.RANGE_LUT[np.rint(t[ok] * 255).astype(int)])
+    assert gt.legend.bar is not None and gt.legend.bar[3].endswith(f'{near:g}–{far:g} m)')
+    # boxes: tight and full of every object, labelled in their class; the table nearest first
+    gt.set_layer('image')
+    gt.set_boxes('both')
+    objs = f['objects']
+    n_full = sum(1 for o in objs if o.get('bbox_full'))
+    assert len(gt.canvas.shapes) == len(objs) + n_full
+    assert sum(1 for s in gt.canvas.shapes if s['dashed']) == n_full
+    gt.set_boxes('none')
+    assert gt.canvas.shapes == []
+    gt.set_boxes('tight')
+    assert gt.table.rowCount() == len(objs)
+    ranges = [gt.table.item(r, 2).data(Qt.ItemDataRole.UserRole + 1) for r in range(gt.table.rowCount())]
+    assert ranges == sorted(ranges)
+    # a row clicked highlights its object: its box and its pixels
+    big = max(objs, key=lambda o: o['pixels'])
+    r = next(r for r in range(gt.table.rowCount()) if gt.table.item(r, 1).text() == str(big['id']))
+    gt.table.selectRow(r)
+    pump(app, 0.1)
+    assert gt.selected == big['id'] and [s['hi'] for s in gt.canvas.shapes].count(True) == 1
+    m = inst == big['id']
+    edge = GV.outline(m)                                       # outlined: its border and just outside it
+    assert (edge & m).any() and (edge & ~m).any() and (m & ~edge).any()
+    assert (shown()[edge] == 255).all() and (shown()[~edge] == img[~edge]).all()
+    # a click on another object in the image selects it; on no object clears it
+    other = next(o for o in sorted(objs, key=lambda o: -o['pixels']) if o['id'] != big['id'])
+    ys, xs = np.nonzero(inst == other['id'])
+    gt.canvas.picked.emit(float(xs[0]) + 0.5, float(ys[0]) + 0.5)
+    pump(app, 0.1)
+    assert gt.selected == other['id'] and gt.table.item(gt.table.selectionModel().selectedRows()[0].row(), 1).text() \
+        == str(other['id'])
+    ys, xs = np.nonzero(inst == 0)
+    gt.canvas.picked.emit(float(xs[0]) + 0.5, float(ys[0]) + 0.5)
+    pump(app, 0.1)
+    assert gt.selected is None and not gt.table.selectionModel().selectedRows()
+    # zoom: to a box and back
+    x0, y0, x1, y1 = big['bbox']
+    gt.canvas.zoom_to(x0, y0, x1, y1)
+    assert gt.canvas.zoom > 1.0
+    gt.canvas.reset_zoom()
+    assert gt.canvas.zoom == 1.0
+    # the lidar from above: the sweep nearest the frame, in its classes
+    assert gt.set_layer('lidar')
+    assert 'from above' in gt.canvas.caption and gt.legend.rows and len(gt.canvas.shapes) == \
+        sum(1 for o in objs if o.get('box3d'))
+    # the frames: the slider, loaded when shown, a few kept
+    for j in range(len(GT.frames(doc, tag))):
+        gt.set_frame(j)
+    assert len(gt._cache) <= GV.CACHE_FRAMES * 3
+    # Detection quality opens it
+    assert pg.open_detection() and win.page_name() == 'detection'
+    assert os.path.normpath(win.page('detection').settings.recordings[0]) == os.path.normpath(out)
+    # and the drive-log check reads it and runs
+    assert pg.open_in('drivelog') and win.page_name() == 'drivelog'
+    dl = win.page('drivelog')
+    _wait(app, lambda: dl.result is not None, 300)
+    assert dl.result.metrics['streams'] > 0
+    win.set_page('sim')
+    # a drive without ground truth: said
+    nogt = tmp_path / 'nogt'
+    nogt.mkdir()
+    shutil.copy(os.path.join(out, 'run.json'), nogt / 'run.json')
+    assert pg.open_run(str(nogt)) and not pg.gt.has_ground_truth()
+    assert pg.gt.canvas.empty == GV.EMPTY_NO_GT and pg.gt.canvas.img is None and 'no ground truth' in \
+        pg.g_status.text() and not pg.b_detect.isEnabled()
+    # a failed run: its report, no checks
+    bad = tmp_path / 'failed'
+    bad.mkdir()
+    (bad / 'run.json').write_text(json.dumps({'schema': 'vantage.sim_run/1', 'status': 'failed',
+                                              'error': 'the CARLA server stopped answering'}))
+    assert pg.open_run(str(bad)) and 'did not end well' in pg.g_status.text()
+    assert '"failed"' in pg.out.toPlainText() and not pg.b_drivelog.isEnabled() and pg.gt.canvas.img is None
+    # a new project: the drive goes
+    assert pg.open_run(out)
+    from vantage.core import samples
+    win.store.set_project(samples.tigor_sample_project())
+    pump(app, 0.3)
+    assert pg.result is None and pg.out_dir == '' and pg.gt.doc is None and pg.out.toPlainText() == ''

@@ -328,6 +328,7 @@ class RigPage(QWidget):
                 for uid in self.rows:
                     self._sync_row(uid)
             if self.running:
+                self._judge_against()
                 self.monitor.update(self.ctx.store.project, self._cams(), self._engine)
             self._repaint()
 
@@ -484,9 +485,33 @@ class RigPage(QWidget):
             self._set_stream(cam.tag, path)
 
     # ------------------------------------------------------------------ running
+    def _planned(self):
+        """What the capture-time skew is judged against (rig_health.RigMonitor.configure): the CARLA live rig's own
+        schedule (rig_health.schedule_offsets) when every camera with a stream is the live rig's, since it steps at the
+        cameras' rate and fires them as that schedule says whatever the plan's stagger; else the project's sync plan."""
+        w = self.ctx.window
+        sim = getattr(w, '_page_widgets', {}).get('sim') if w is not None else None
+        panel = getattr(sim, 'live', None)
+        if panel is None or panel.state != 'streaming':
+            return 'plan'
+        streams = self.ctx.store.project.streams
+        urls = getattr(panel, '_urls', {}) or {}
+        tags = [c.tag for c in self._cams() if streams.get(c.tag)]
+        if tags and all(urls.get(t) and streams.get(t) == urls[t] for t in tags):
+            return dict((getattr(panel, 'info', None) or {}).get('schedule') or {})
+        return 'plan'
+
+    def _judge_against(self):
+        """Follow _planned while streaming (a stream pointed at or away from the live rig), without a restart."""
+        pl = self._planned()
+        if pl == 'plan':
+            self.monitor.plan_mode = 'plan'                  # the monitor's update reads the plan again
+        else:
+            self.monitor.plan_mode, self.monitor.planned = 'given', pl
+
     def start(self):
         cams = self._cams()
-        self.monitor.configure(self.ctx.store.project, cams, self._engine)
+        self.monitor.configure(self.ctx.store.project, cams, self._engine, planned=self._planned())
         if not self.monitor.streams:
             self.ctx.msg('No camera has a stream yet: set one per camera (Synthetic, a URL, a device or a video file)',
                          6000)
@@ -500,6 +525,24 @@ class RigPage(QWidget):
         self._sync_buttons()
         self._summary()
         self._repaint()
+
+    def _sync_tip(self, r) -> str:
+        """The sync figures behind the summary: what the skew is judged against and each camera's offset to the
+        reference camera, its planned offset and its skew."""
+        if r.get('sync_reference') is None:
+            return 'Sync: fewer than two cameras streaming'
+        against = ('the CARLA live rig\'s schedule' if self.monitor.plan_mode == 'given' and self.monitor.planned else
+                   'the sync plan\'s trigger offsets') if r.get('sync_against') == 'plan' else \
+            'no plan (every camera expected to fire together)'
+        lines = [f'Sync skew judged against {against}; reference {r["sync_reference"]}']
+        for k, c in (self.snap or {}).get('cameras', {}).items():
+            if c.get('sync_skew_ms') is None or k == r['sync_reference']:
+                continue
+            pl = c.get('sync_planned_ms')
+            lines.append(f'{k}: offset {c["sync_offset_ms"]:+.1f} ms'
+                         + (f', planned {pl:+.1f} ms' if pl is not None else '')
+                         + f', skew {c["sync_skew_ms"]:+.1f} ms')
+        return '\n'.join(lines)
 
     def stop(self):
         """Stop every reader without waiting for it (a reader blocked in a network read exits when the read returns)."""
@@ -516,7 +559,11 @@ class RigPage(QWidget):
         """The current statistics (JSON-ready) while streaming, else None (for the assistant)."""
         if not self.running:
             return None
-        return rh.jsonable(self.monitor.snapshot())
+        snap = rh.jsonable(self.monitor.snapshot())
+        live = self._live_views()
+        for t, c in snap['cameras'].items():           # what the drift indicator compared the frame with
+            c['drift_against'] = 'carla_body' if t in live else 'project_body'
+        return snap
 
     def _tick(self):
         if not self.monitor.running:
@@ -544,6 +591,7 @@ class RigPage(QWidget):
         n_set = sum(1 for c in cams if streams.get(c.tag))
         if not self.running or self.snap is None:
             self.summary.setText(f'Stopped · {n_set} of {len(cams)} cameras have a stream')
+            self.summary.setToolTip('')
             self.status.setText('Stopped' if n_set else 'Set a stream per camera, then Start.')
             return
         r = self.snap['rig']
@@ -556,6 +604,7 @@ class RigPage(QWidget):
         if r['warnings']:
             parts.append(f'{r["warnings"]} warning{"s" if r["warnings"] != 1 else ""}')
         self.summary.setText(' · '.join(parts))
+        self.summary.setToolTip(self._sync_tip(r))
         self.status.setText(f'Streaming for {r["seconds"]:.0f} s')
 
     # ------------------------------------------------------------------ drift overlay
@@ -566,9 +615,27 @@ class RigPage(QWidget):
         self._drift_step()
         self._repaint()
 
+    def _live_views(self) -> dict:
+        """tag -> rig_health.ExpectedView of CARLA's own car, for the cameras whose stream is the CARLA live rig's
+        (Simulate ▸ CARLA ▸ Live rig): CARLA renders its own car, not the project's body, so the drift indicator is
+        measured against what the camera sees of that car at its planned mount (the live server renders it once)."""
+        w = self.ctx.window
+        sim = getattr(w, '_page_widgets', {}).get('sim') if w is not None else None
+        panel = getattr(sim, 'live', None)
+        if panel is None or panel.state != 'streaming':
+            return {}
+        streams = self.ctx.store.project.streams
+        urls = getattr(panel, '_urls', {}) or {}
+        return {t: ev for t, ev in dict(panel.carla_views).items() if urls.get(t) and streams.get(t) == urls[t]}
+
+    def _key_of(self, p, cam, live) -> tuple:
+        ev = live.get(cam.tag)
+        return ev.key if ev is not None else rh.view_key(p, cam)
+
     def _drift_step(self):
         """One camera per call, on a worker thread: its planned view (when missing or the plan changed) and, while
-        streaming, the alignment of its newest preview with it."""
+        streaming, the alignment of its newest preview with it. A camera streamed by the CARLA live rig is compared
+        with CARLA's own car instead (its body mask from the live server)."""
         if self._drift_busy or not self.isVisible():
             return
         if not (self.show_edge.isChecked() or self.show_horizon.isChecked() or self.show_score.isChecked()):
@@ -577,11 +644,14 @@ class RigPage(QWidget):
         if not cams:
             return
         p = self.ctx.store.project
-        if p.vehicle.mesh is None:
+        live = self._live_views()
+        if p.vehicle.mesh is None and not live:
             return
         todo = None
         for c in cams:
-            k = rh.view_key(p, c)
+            if c.tag not in live and p.vehicle.mesh is None:
+                continue
+            k = self._key_of(p, c, live)
             ev = self.views.get(c.tag)
             if (ev is None or ev.key != k) and self.view_fail.get(c.tag) != k:
                 todo = c
@@ -593,14 +663,16 @@ class RigPage(QWidget):
                 return
             todo = cams[self._rr % len(cams)]
             self._rr += 1
+            if todo.tag not in live and p.vehicle.mesh is None:
+                return
         frame = self.monitor.preview(todo.tag) if score else None
-        ev = self.views.get(todo.tag)
-        if ev is not None and ev.key != rh.view_key(p, todo):
+        key = self._key_of(p, todo, live)
+        ev = live.get(todo.tag) or self.views.get(todo.tag)
+        if ev is not None and ev.key != key:
             ev = None
         snap = p.snapshot() if ev is None else None
         eng = self._engine() if ev is None else None
         cam = copy.deepcopy(todo)
-        key = rh.view_key(p, todo)
         self._drift_busy = True
         self._drift_t = now
 

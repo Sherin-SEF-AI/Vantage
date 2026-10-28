@@ -104,6 +104,8 @@ _SETTINGS = {
     'weather': ('weather', 'settings_of'), 'harness': ('harness', 'settings_of'), 'fleet': ('fleet', 'settings_of'),
     'guidelines': ('guidelines', 'GuidelineSettings'), 'stitched': ('stitched_objects', 'Settings'),
     'bowl': ('bowl', 'BowlShape'), 'experiments': ('experiments', 'settings_of'), 'sim': ('simrig', 'settings_of'),
+    'detection': ('detection_eval', 'settings_of'), 'campaign': ('simcampaign', 'settings_of'),
+    'critical_carla': ('critical_carla', 'settings_of'),
 }
 # study (a schema's name or an export format id) -> the project.analysis settings it reads besides the base ones
 STUDY_SETTINGS = {
@@ -119,6 +121,9 @@ STUDY_SETTINGS = {
     'guidelines': ('guidelines',), 'bowl_mesh': ('bowl',), 'bowl': ('bowl',), 'reproduce': (),
     'experiment': ('experiments',), 'experiments': ('experiments',), 'experiment_spec': ('experiments',),
     'sim_rig': ('sim', 'weather'), 'sim_run': ('sim', 'weather'), 'validation': (),
+    'detection_quality': ('detection',), 'sim_campaign': ('campaign', 'sim', 'weather', 'detection'),
+    'critical_carla': ('critical_carla', 'critical', 'perception', 'sim'), 'ground_truth_summary': (),
+    'sim_live': ('sim',),
 }
 # a batch output's schema name -> the option that writes it
 SCHEMA_OPTION = {
@@ -133,6 +138,8 @@ SCHEMA_OPTION = {
     'batch_calibration': 'calibrate_lens', 'brackets': 'brackets', 'lidar_camera_calibration': 'lidar_calib',
     'dataset': 'dataset', 'reproduce': 'reproduce', 'experiments': 'experiment', 'experiment_spec': 'experiment',
     'sim_rig': 'carla_rig', 'sim_run': 'carla_run', 'validation': 'validate',
+    'detection_quality': 'detection_quality', 'sim_campaign': 'campaign', 'critical_carla': 'critical_carla',
+    'ground_truth_summary': 'ground_truth_summary', 'sim_live': 'carla_live',
 }
 
 
@@ -594,12 +601,16 @@ def current_batch() -> dict | None:
 
 
 _NAME_ARGS = {'variant', 'frame', 'units', 'angles', 'condition', 'formats', 'camera', 'board', 'serial', 'blend',
-              'lidar_calib_pair', 'template', 'validate_models'}
+              'lidar_calib_pair', 'template', 'validate_models', 'carla_scenario', 'carla_ground_truth',
+              'live_cameras', 'live_fault', 'campaign_template', 'campaign_phase'}
 _SKIP_ARGS = {'reproduce', 'tolerance', 'on_change', 'help', 'version'}
 # input options: which of their values are files or folders to hash
 INPUT_ARGS = {'path': 'all', 'install_check': 'all', 'calibrate_lens': 'all', 'import_calib': 'all',
               'suspension_data': 'all', 'drive_log': 'first', 'as_built_check': 'first', 'lidar_calib_folder': 'all',
-              'fleet_import': 'rest', 'watch': 'all', 'experiment': 'first'}
+              'fleet_import': 'rest', 'watch': 'all', 'experiment': 'first', 'ground_truth_summary': 'first',
+              'detection_recording': 'all', 'critical_carla_drives': 'all', 'carla_faults': 'json',
+              'carla_actors': 'json', 'carla_scenario_params': 'json'}
+# ('json': a file or the JSON itself on the command line; only a file is an input to hash)
 
 
 def command_of(args, parser) -> list:
@@ -615,7 +626,7 @@ def command_of(args, parser) -> list:
             continue
         vals = list(v) if isinstance(v, (list, tuple)) else [v]
         if a.dest not in _NAME_ARGS:
-            keep_first = a.dest in ('fleet_import', 'rig_health')       # a vehicle's name, a number of seconds
+            keep_first = a.dest in ('fleet_import', 'rig_health', 'carla_live')     # a vehicle's name, seconds
             vals = [x if (keep_first and i == 0) else reduce_path(x) for i, x in enumerate(vals)]
         vals = [str(x) for x in vals]
         if not a.option_strings:
@@ -633,6 +644,8 @@ def _input_values(args, dest):
         return []
     vals = list(v) if isinstance(v, (list, tuple)) else [v]
     how = INPUT_ARGS[dest]
+    if how == 'json':
+        return [x for x in vals if os.path.isfile(str(x))]
     return vals[:1] if how == 'first' else vals[1:] if how == 'rest' else vals
 
 

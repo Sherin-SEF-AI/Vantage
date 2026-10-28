@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -58,6 +59,10 @@ class ToolContext:
     drive_log: dict | None = None        # the Drive-log check page's last result (core.drivelog.summary)
     asbuilt: dict | None = None          # the As-built check page's last result (core.asbuilt.summary)
     experiment: dict | None = None       # the Experiments page's last run (core.experiments.summary)
+    detection: dict | None = None        # the Detection quality page's last result (core.detection_eval.summary)
+    campaign: dict | None = None         # the Simulation campaigns page's last result (core.simcampaign.summary)
+    critical_carla: dict | None = None   # the Critical targets in CARLA page's last result (core.critical_carla)
+    carla_live: dict | None = None       # the CARLA page's live rig panel (summary(): state, cameras, faults; no URLs)
     working_dir: str = ''                # where outputs go (workdir.get of the settings); never sent to the model
     _proposals: int = 0
 
@@ -514,7 +519,8 @@ def get_rig_health(tc, **_):
                 'note': 'not streaming: the health is measured on Calibrate ▸ Live rig… while it runs (Start)',
                 'configured_streams': {c.tag: describe(streams.get(c.tag, '')) or 'none' for c in _cams(tc.project)}}
     keep = ('status', 'reasons', 'kind', 'fps', 'nominal_fps', 'jitter_ms', 'dropped', 'dropped_share', 'age_s', 'size',
-            'expected_size', 'mean', 'clip_bright', 'clip_dark', 'sharpness', 'frozen_frames', 'drift_px', 'drift_checked')
+            'expected_size', 'mean', 'clip_bright', 'clip_dark', 'sharpness', 'frozen_frames', 'drift_px', 'drift_checked',
+            'drift_against')
     cams = {k: {f: (_r(v, 3) if isinstance(v, float) else v) for f, v in c.items() if f in keep}
             for k, c in h['cameras'].items()}
     for c in cams.values():                # a stream error names its URL: hosts and user names stay on this machine
@@ -947,6 +953,143 @@ def get_sim_rig(tc, variant=None, **_):
                        'size, each lidar on CARLA\'s channels (elevation error, oversampling, rays per second), the '
                        'radars and their zones, GNSS and IMUs, and the notes on what rounds or differs. Planning only: '
                        'the assistant cannot start CARLA'}
+
+
+_DETECTION_MEANING = (
+    'an off-the-shelf detector (YOLOX, COCO classes) on the camera images of CARLA drives with ground truth, matched to '
+    'the labelled objects as COCO\'s evaluation does: recall and precision as shares 0–1 at the operating score, AP50 '
+    'COCO-style, detection_range = the farthest range bin where half the objects are found, rig_recall = objects any '
+    'camera detects (each once per instant); differences against the first recording with block-bootstrap intervals '
+    '(paired when scenario and seed match). Synthetic images: compare rigs, cameras and formats, not a production '
+    'detector\'s figures')
+
+
+def get_detection_quality(tc, **_):
+    """The Detection quality page's last result, else what is set up: the model's state and the recordings."""
+    if tc.detection:
+        from ..core import provenance as PV
+        return {'evaluated': True, **PV.scrub(tc.detection), 'meaning': _DETECTION_MEANING}
+    from ..core import detection as DT
+    from ..core import detection_eval as DE
+    st = DE.settings_of(tc.project)
+    s = DT.status(st.model)
+    recs = []
+    for p in st.recordings:
+        i = DE.recording_info(p)
+        recs.append({'recording': i.get('label') or os.path.basename(str(p)), 'ok': i['ok'],
+                     'text': i['text'] if i['ok'] else 'not readable or without ground truth'})
+    folder = os.path.dirname(s.get('path') or '')
+    state = (s.get('text') or '').replace(folder, 'the models folder') if folder else s.get('text')
+    model = {'id': s['id'], 'name': s['name'], 'downloaded': s['present'], 'verified': s['verified'],
+             'licence': s['licence'], 'state': state}
+    return {'evaluated': False, 'model': model, 'recordings': recs, 'classes': list(st.classes), 'operating_score': st.score,
+            'note': 'not run yet: Simulate ▸ Detection quality ▸ Run (the detector runs for minutes on a drive); '
+                    'record drives with ground truth on Simulate ▸ CARLA'}
+
+
+def get_campaign(tc, **_):
+    """The Simulation campaigns page's last result, else the stored design and its cost estimate."""
+    if tc.campaign:
+        from ..core import provenance as PV
+        return {'run': True, **PV.scrub(tc.campaign),
+                'meaning': 'many CARLA drives each varied in one known way, checked by Vantage\'s own checks: per '
+                           'check, sensor and fault the smallest fault found at the target rate (empirical and from '
+                           'a logistic fit with its interval), false alarms on clean drives, estimation accuracy '
+                           '(bias, RMS, paired with the clean drive), and in a weather sweep the recall and R50 per '
+                           'class against Vantage\'s own weather model'}
+    from ..core import simcampaign as SC
+    st = SC.settings_of(tc.project)
+    pl = SC.plan(tc.project, st)
+    est = SC.estimate(tc.project, st, pl)
+    roles = {}
+    for d in pl.drives:
+        roles[d['role']] = roles.get(d['role'], 0) + 1
+    return {'run': False, 'campaign': st.name, 'template': st.template, 'seeds': list(st.seeds),
+            'weathers': list(st.weathers), 'scenarios': [x.get('name') for x in st.scenarios],
+            'fault_sets': [{'kind': f['kind'], 'sensors': f['tags'], 'axes': f.get('axes') or None,
+                            'magnitudes': f['magnitudes'], 'unit': SC.FAULT_UNIT[f['kind']]} for f in st.fault_sets],
+            'evaluators': list(st.evaluators), 'drives': len(pl.drives), 'drives_by_role': roles,
+            'done': est.get('done'), 'cost': est.get('text'), 'problems': pl.problems, 'notes': pl.notes,
+            'note': 'not run yet: Simulate ▸ Simulation campaigns ▸ Run (it drives CARLA; the assistant cannot)'}
+
+
+def get_critical_carla(tc, **_):
+    """The Critical targets in CARLA page's last comparison, else the plan: which actor stands in for each target."""
+    if tc.critical_carla:
+        from ..core import provenance as PV
+        return {'compared': True, **PV.scrub(tc.critical_carla),
+                'meaning': 'each critical target stood in CARLA as the actor nearest it and measured on CARLA\'s '
+                           'ground truth as the critical-targets study defines it (share seen, pixels across its '
+                           'height), against the study\'s prediction at the actor\'s size and place: agreement over '
+                           'camera views with a Wilson interval, the pixel error, and why each disagreement happens'}
+    from ..core import critical_carla as CC
+    pl = CC.plan(tc.project)
+    return {'compared': False,
+            'targets': [{'name': t['name'], 'kind': t['kind'], 'actor': t['actor']['blueprint'],
+                         'stood_in': t['actor']['spawnable'], 'why_not': t['actor']['why'] or None}
+                        for t in pl.targets],
+            'scenes': len(pl.groups), 'drives': len(pl.drives), 'notes': pl.notes,
+            'note': 'not run yet: Simulate ▸ Critical targets in CARLA ▸ Run (it drives CARLA; the assistant cannot)'}
+
+
+def get_carla_live(tc, **_):
+    """The CARLA live rig (the CARLA page's panel): its state, each camera's served rate, latency, faults and rig
+    health's verdict. Read-only: the assistant neither starts it nor injects faults."""
+    if not tc.carla_live:
+        return {'state': 'off', 'note': 'not streaming: Simulate ▸ CARLA live rig ▸ Start live'}
+    from ..core import provenance as PV
+    out = dict(tc.carla_live)
+    for c in (out.get('cameras') or {}).values():   # (no URLs are in the summary; reasons may name one)
+        c['reasons'] = [_URL_IN_TEXT.sub('<stream URL>', r) for r in c.get('reasons') or []]
+    if out.get('message'):                          # a failure's text can name this machine's folders
+        out['message'] = PV.scrub(_URL_IN_TEXT.sub('<URL>', str(out['message'])))
+    return {**out, 'meaning': 'the planned cameras driven in CARLA in real time and served as MJPEG streams to the '
+                              'Live rig page: served_fps and latency_ms from the live server, health/fps/drift from rig '
+                              'health on the streams (drift against CARLA\'s own car when drift_against is '
+                              'carla_body), the faults injected now, realtime_factor below 1 when CARLA is slower than '
+                              'real time'}
+
+
+def _run_folder(tc, path):
+    """A folder the user named, inside the working folder or the project's folder (never elsewhere), or None."""
+    from .. import workdir
+    if not path:
+        return None
+    roots = [os.path.abspath(tc.working_dir or workdir.default())]
+    if getattr(tc.project, 'path', ''):
+        roots.append(os.path.dirname(os.path.abspath(tc.project.path)))
+    p = str(path)
+    for c in ([p] if os.path.isabs(p) else [os.path.join(r, p) for r in roots]):
+        c = os.path.abspath(os.path.expanduser(c))
+        try:
+            inside = any(os.path.commonpath([c, r]) == r for r in roots)
+        except ValueError:
+            inside = False
+        if inside and os.path.isdir(c):
+            return c
+    return None
+
+
+def get_ground_truth(tc, run='', **_):
+    """A CARLA drive's ground truth in brief (vantage.batch.ground_truth_doc): counts, the lidar labels' match, the
+    lights and signs, the scenario's events, the faults injected."""
+    from .. import workdir
+    from ..batch import ground_truth_doc
+    d = _run_folder(tc, run)
+    if d is None:
+        return {'error': 'name a CARLA run folder inside the working folder or the project\'s folder (relative to the '
+                         'working folder, e.g. tigor/carla/data-rig-20261027-101500)'}
+    doc = ground_truth_doc(d)
+    if doc is None:
+        return {'error': f'{workdir.display(d, tc.working_dir or None)} has no ground truth (record it with ground '
+                         'truth on, Simulate ▸ CARLA)'}
+    doc['run'] = workdir.display(d, tc.working_dir or None)
+    return {**doc, 'meaning': 'per camera the frames labelled (semantic, instance, range images), per lidar the '
+                              'sweeps labelled (nuScenes-lidarseg, panoptic), the objects by class and the distinct '
+                              'actors; lidar_labels: the semantic lidar matched ray for ray against the recorded one; '
+                              'lights_and_signs: the share of their pixels CARLA had tagged right before Vantage '
+                              'claimed them; faults_injected: what was done to the rig (the calibration states the '
+                              'plan); scenario events in seconds from the start'}
 
 
 def get_requirements(tc, run=False, **_):
@@ -1876,6 +2019,29 @@ TOOLS = [
          'camera\'s views, each lidar on CARLA\'s channels, the radars, GNSS, IMUs and the notes. About a second.',
          {'variant': {'type': 'string', 'description': 'variant name or 1-based index (default: the active one)'}},
          get_sim_rig),
+    Tool('get_detection_quality', 'Read the detection quality',
+         'The last evaluation on Simulate ▸ Detection quality: per recording and class the recall, precision, AP50, '
+         'detection range and rig recall over every camera, the differences between rigs with their intervals, '
+         'fisheye against pinhole views; else the detector model\'s state and the recordings set up. Cheap.', {},
+         get_detection_quality),
+    Tool('get_campaign', 'Read the simulation campaign',
+         'The last campaign on Simulate ▸ Simulation campaigns: per check and sensor the smallest fault it finds 90 % '
+         'of the time, false alarms, estimation accuracy, the weather sweep\'s recall and range against Vantage\'s '
+         'weather model; else the stored design (fault sets, seeds, weathers, drives) and its cost estimate. Cheap.',
+         {}, get_campaign),
+    Tool('get_critical_carla', 'Read the critical targets in CARLA',
+         'The last comparison on Simulate ▸ Critical targets in CARLA: agreement of CARLA with the study per camera '
+         'view (with its interval), the pixel error, each disagreement and why; else which CARLA actor stands in for '
+         'each target and how many drives it takes. Cheap.', {}, get_critical_carla),
+    Tool('get_carla_live', 'Read the CARLA live rig',
+         'The CARLA live rig on Simulate ▸ CARLA: whether it streams, the real-time factor, per camera the served '
+         'frame rate, latency, faults injected and rig health\'s verdict and drift. Read-only. Cheap.', {},
+         get_carla_live),
+    Tool('get_ground_truth', 'Read a CARLA drive\'s ground truth',
+         'A CARLA drive recorded with ground truth: frames and sweeps labelled, objects by class, the semantic '
+         'lidar\'s match, traffic lights and signs, the scenario\'s events and the faults injected. run: the run '
+         'folder, relative to the working folder or the project\'s folder. Reads the files only.',
+         {'run': {'type': 'string'}}, get_ground_truth, 'read', ('run',)),
     Tool('get_requirements', 'Read the requirements scorecard',
          'The project\'s requirements with value, target, margin and pass/fail, and the verdict. Cheap metrics at once; '
          'run=true also runs the studies the others need (seconds).',
@@ -1941,7 +2107,7 @@ TOOLS = [
          'guidelines, frustums, sensors, critical, wipers, harness; on), open_page (viewports | camviews | volume | '
          'perception | tolerance | compare | rig | coverage | timing | recording | power | gnss | exposure | fleet | '
          'brackets | dataset | drivelog | asbuilt | requirements | lidar_calib | critical | materials | automation | '
-         'terrain | harness | observability | experiments | sim).',
+         'terrain | harness | observability | experiments | sim | detection | campaign | critical_carla).',
          {'action': {'type': 'string', 'enum': list(UI_ACTIONS)}, 'cameras': {'type': 'array', 'items': {'type': 'string'}},
           'x': {'type': 'number'}, 'y': {'type': 'number'}, 'heatmap': {'type': 'string'}, 'overlay': {'type': 'string'},
           'on': {'type': 'boolean'}, 'page': {'type': 'string'}}, show_in_app, 'ui', ('action',)),

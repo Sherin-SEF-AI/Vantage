@@ -217,6 +217,7 @@ def make_drive(path, p, v, eng, n_frames=N_FRAMES, odom=True):
                                               seed=j, noise=1.5)
         return renders[key]
     still = {}
+    noise_rng = np.random.default_rng(11)
     with RB.BagWriter(str(path), compression='none') as bw:
         types = {'image': None, 'lidar': 'sensor_msgs/msg/PointCloud2', 'radar': 'sensor_msgs/msg/PointCloud2',
                  'imu': 'sensor_msgs/msg/Imu', 'fix': 'sensor_msgs/msg/NavSatFix', 'odom': 'nav_msgs/msg/Odometry',
@@ -235,8 +236,9 @@ def make_drive(path, p, v, eng, n_frames=N_FRAMES, odom=True):
                 if j in exact[c.tag] or c.tag not in still:
                     img = render(c, j, ts)
                     still.setdefault(c.tag, img)
-                else:
-                    img = still[c.tag]
+                else:                      # the frames between: the still with fresh sensor noise (a real camera's
+                    img = still[c.tag]     # frames never repeat; a repeat is a frozen camera)
+                    img = np.clip(img.astype(np.int16) + noise_rng.integers(-2, 3, img.shape), 0, 255).astype(np.uint8)
                 fmt = enc[c.tag]
                 if fmt == 'rgb8':
                     msg = RB.image_msg(img, stamp, f'{c.tag}_optical_frame', 'rgb8')
@@ -726,6 +728,104 @@ def test_a_bag_without_odometry_or_point_times(drive, tmp_path):
     assert any('without travel compensation' in f['message'] for f in res.findings)
 
 
+# ============================================================================ round 8: freezes, the search, the gates
+def test_content_digests_ignore_the_header_and_frozen_runs_are_found():
+    rng = np.random.default_rng(5)
+    a, b = rng.integers(0, 256, 90_000, np.uint8).tobytes(), rng.integers(0, 256, 90_000, np.uint8).tobytes()
+    assert DL.content_digest(b'hdr1' + a, 4) == DL.content_digest(b'hdr2' + a, 4) != DL.content_digest(b'hdr1' + b, 4)
+    big = rng.integers(0, 256, 3_000_000, np.uint8).tobytes()        # beyond DIGEST_WHOLE: sampled blocks
+    big2 = rng.integers(0, 256, 3_000_000, np.uint8).tobytes()
+    assert DL.content_digest(big) == DL.content_digest(bytes(big)) != DL.content_digest(big2)
+    # stamp order decides; (held, first repeat, last repeat, repeats) in it; an unknown fingerprint (0) never counts
+    assert DL.frozen_runs(np.array([5, 1, 2, 3, 4, 6, 7]), [9, 1, 2, 2, 2, 9, 9]) == [(1, 2, 3, 2), (4, 5, 6, 2)]
+    assert DL.frozen_runs(np.arange(4), [0, 0, 0, 0]) == [] and DL.frozen_runs(np.arange(1), [3]) == []
+
+
+@pytest.fixture(scope='module')
+def frozen(drive, tmp_path_factory):
+    """The drive with F's driver stalled (its 10th to 14th frames are its 9th image again, at its own rate) and R
+    repeating one image once; checked."""
+    src = RB.BagReader(drive['path'])
+    out = tmp_path_factory.mktemp('frozen') / 'frozen'
+    seen, held = {'/F/image': [], '/R/image': []}, {}
+    with RB.BagWriter(str(out), compression='none') as bw:
+        for t in src.topics:
+            bw.add_topic(t, src.topics[t])
+        for topic, t, msg in src.messages():
+            if topic in seen:
+                k = len(seen[topic])
+                seen[topic].append(RB.stamp_ns(msg['header']['stamp']))
+                if (topic, k) in (('/F/image', 9), ('/R/image', 20)):
+                    held[topic] = msg['data']
+                elif (topic == '/F/image' and 10 <= k < 15) or (topic == '/R/image' and k == 21):
+                    msg = dict(msg, data=held[topic])
+            bw.write(topic, t, msg)
+    src.close()
+    return {'path': str(out), 'seen': seen, 'res': DL.run(drive['p'], str(out), drive['st'], engine=drive['eng'])}
+
+
+def test_a_frozen_camera_is_found_with_its_time_range(drive, frozen):
+    """F's driver stalls: its 10th to 14th frames are its 9th image again, at its own rate (the stamps stay regular,
+    so the rate and drop checks see nothing); R repeats one image once. F froze (a fault, with the time range), R gets
+    a warning, the other cameras nothing."""
+    res, seen = frozen['res'], frozen['seen']
+    f, r = res.stream('F'), res.stream('R')
+    assert f['frozen']['frames'] == 5 and f['frozen']['longest'] == 5 and f['status'] == 'fault'
+    t = (np.array(seen['/F/image']) - res.scan.start_ns) / 1e9
+    run = f['frozen']['runs'][0]
+    assert (run['held_s'], run['from_s'], run['to_s']) == pytest.approx((t[9], t[10], t[14]), abs=1e-6)
+    assert f['drops'] == 0 and f['rate_hz'] == pytest.approx(30.0, rel=1e-3)          # the stamps saw nothing
+    assert any(m.startswith('F froze: 5 frames') for m in f['problems'])
+    assert r['frozen']['frames'] == 1 and r['status'] == 'warning' and any('repeat' in m for m in r['problems'])
+    for tag in ('ML', 'MR'):
+        assert not res.stream(tag)['frozen']['frames']
+    assert res.metrics['frozen_frames'] == 6 and res.metrics['worst_freeze'] == 'F'
+    s = DL.summary(res)
+    assert s['frozen_frames'] == 6 and next(x for x in s['streams_table'] if x['sensor'] == 'F')['frozen_frames'] == 5
+    d = next(x for x in DL.to_doc(res, drive['p'])['streams'] if x['sensor'] == 'F')
+    assert d['frozen']['longest_run'] == 5 and len(d['frozen']['runs']) == 1
+    assert drive['res'].metrics['frozen_frames'] == 0              # the drive itself: every frame differs
+
+
+def test_the_search_finds_the_rotation_when_the_coarse_map_is_flat(drive, monkeypatch):
+    """On a textured scene nearly every pixel lies within the coarse width of a Canny edge and the coarse map goes
+    flat (on a CARLA drive a camera pitched 1° read −0.08° while only it seeded the search). With the coarse map
+    flattened outright, the fine map's own grid still finds ML's 0.6°."""
+    orig = DL._edge_maps
+
+    def flat(*a, **k):
+        m = orig(*a, **k)
+        return None if m is None else (np.full_like(m[0], 255), m[1])
+    monkeypatch.setattr(DL, '_edge_maps', flat)
+    r = DL.run(drive['p'], drive['path'], drive['st'], engine=drive['eng'], scan=drive['res'].scan).extrinsic('ML')
+    assert r['verdict'] == 'rotated' and r['confidence'] in ('high', 'medium')
+    assert r['delta_deg'][0] == pytest.approx(YAW_ERR['ML'], abs=0.15)
+
+
+def test_frames_split_between_two_rotations_are_found():
+    best, obs, tol = np.array([0.0, 0.85, 0.0]), np.array([True, True, True]), 0.3
+    main = [[0.0, 0.85 + d, 0.0] for d in np.linspace(-0.1, 0.1, 12)]
+    other = [[0.0, -0.30, 0.0], [0.02, -0.28, 0.0], [0.0, -0.33, 0.01], [0.0, -0.31, 0.0], [0.01, -0.29, 0.0]]
+    sp = DL._split_frames(np.array(main + other), best, obs, tol)
+    assert sp['n'] == 5 and sp['share'] == pytest.approx(5 / 17) and sp['centre_deg'][1] == pytest.approx(-0.30, abs=0.01)
+    assert sp['distance_deg'] == pytest.approx(1.15, abs=0.02)
+    assert DL._split_frames(np.array(main), best, obs, tol) is None
+    scattered = main + [[0.0, v, 0.0] for v in (-1.2, -0.6, 0.0, 0.3, 1.5)]            # away, but not together
+    assert DL._split_frames(np.array(scattered), best, obs, tol) is None
+    near = main + [[0.0, 0.85 - 0.45, 0.0]] * 5                                         # within twice the tolerance
+    assert DL._split_frames(np.array(near), best, obs, tol) is None
+    pitch_free = np.array([True, False, True])                                          # only pinned-down axes count
+    assert DL._split_frames(np.array(main + other), best, pitch_free, tol) is None
+
+
+def test_kerb_height_edges_are_left_out(drive):
+    """Lidar depth edges within GROUND_EDGE_M of the ground plane (kerbs, the feet of the garage's pillars and boxes
+    here) never reach the score; the rotations are found as before."""
+    rows = [drive['res'].extrinsic(t) for t in ('F', 'ML', 'MR', 'R')]
+    assert all(r['ground_edges_dropped'] > 0 for r in rows), [r.get('ground_edges_dropped') for r in rows]
+    assert DL.GROUND_EDGE_M == pytest.approx(0.4)
+
+
 # ============================================================================ nuScenes folders
 def _write_nuscenes(root, p, v, eng):
     """A small nuScenes folder by hand: CAM_F at 12 Hz with one sample missing, LIDAR_L1 at 10 Hz stamped at the sweep
@@ -907,3 +1007,62 @@ def test_page_opens_runs_shows_exports_applies_and_undoes(app, win, drive, tmp_p
     win.store.set_project(samples.tigor_sample_project())
     pump(app, 0.2)
     assert pg.result is None and pg.streams.rowCount() == 0
+
+
+def test_page_shows_a_frozen_camera_and_its_threshold_is_undoable(app, win, frozen):
+    """The frozen drive on the page: F's run on the timeline (amber, from the held frame to its last repeat, with its
+    times in the row's tip), its fault among the findings, the frozen frames on the drops tile; the freeze threshold
+    is a field (undoable), and raised above F's 5 repeats it turns F's fault into a warning."""
+    from PyQt6.QtGui import QColor, QImage
+    from vantage.ui.theme import STATUS
+    from vantage.ui.workspaces.drivelog_ws import DriveLogPage
+    p, _ = make_project()
+    win.store.set_project(p)
+    pump(app, 0.3)
+    pg = _open(win, 'drivelog', DriveLogPage)
+    pump(app, 0.2)
+    assert pg.open_path(frozen['path'])
+    pg._set('frames', frames_per_camera=N_FRAMES, camera_stamp='trigger')
+    f = pg.fields['freeze_frames']
+    assert f.value() == 3
+    f.set_value(6)
+    f.committed.emit(6.0)
+    assert pg.settings.freeze_frames == 6
+    win.store.undo.undo()
+    pump(app, 0.1)
+    assert pg.settings.freeze_frames == 3 and f.value() == 3
+
+    def check():
+        pg._scan = frozen['res'].scan          # the log is read already: only the checks run
+        assert pg.run()
+        t0 = time.time()
+        while (pg.busy or pg.result is None or pg.stale) and time.time() - t0 < 240:
+            pump(app, 0.1)
+        assert not pg.busy and not pg.stale
+        return pg.result
+    res = check()
+    run = frozen['res'].stream('F')['frozen']['runs'][0]
+    row = next(r for r in pg.timeline.rows if r['tag'] == 'F')
+    assert [(x['held_s'], x['to_s'], x['repeats']) for x in row['frozen']] == [(run['held_s'], run['to_s'], 5)]
+    assert '5 frozen frames' in row['tip']
+    assert not next(r for r in pg.timeline.rows if r['tag'] == 'ML')['frozen']
+    texts = [w.text.text() for w in pg.findings]
+    assert any(t.startswith('F froze: 5 frames') for t in texts) and any(t.startswith('R: 1 frame') for t in texts)
+    assert '6 frozen (F)' in pg.tiles['drops'].note
+    # the amber run is painted in F's row, nowhere in ML's
+    pg.timeline.resize(900, pg.timeline.minimumHeight())
+    img = QImage(pg.timeline.size(), QImage.Format.Format_RGB32)
+    pg.timeline.render(img)
+    amber = QColor(STATUS['warning']).rgb()
+
+    def amber_in(tag):
+        i = next(k for k, r in enumerate(pg.timeline.rows) if r['tag'] == tag)
+        y = pg.timeline.TOP + i * pg.timeline.ROW + pg.timeline.ROW // 2
+        return sum(img.pixel(x, y) == amber for x in range(pg.timeline.LEFT, img.width() - 12))
+    xa, xb = (pg.timeline._x(run['held_s']), pg.timeline._x(run['to_s']))
+    assert amber_in('F') >= max(int(xb - xa) - 2, 2) and amber_in('ML') == 0
+    # five repeats under a threshold of six: a warning
+    pg._set('freeze 6', freeze_frames=6)
+    assert pg.stale
+    res = check()
+    assert res.stream('F')['status'] == 'warning' and res.settings.freeze_frames == 6

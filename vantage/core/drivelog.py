@@ -20,7 +20,12 @@ Checks, each with findings ok / warning / fault:
    frames missing, the longest gap, the share of time missing), jitter, latency (log time − header stamp; negative
    means a clock problem), stamps going backwards, the share of the bag the stream covers, the image size against the
    module's sensor, the points per cloud against the model's points per frame; topics no sensor claims and visible
-   sensors without a topic.
+   sensors without a topic. A frozen camera (its sensor or driver stalled, the last image delivered again at the
+   stream's rate, so its stamps look healthy): every image message's content is fingerprinted in the same pass
+   (content_digest: the payload after the header, so the stamp does not count) and runs of images identical to the
+   one before are found with their times; freeze_frames repeats in a row or more is a fault, fewer a warning. A real
+   camera's noise makes every frame differ, so only an exact repeat counts (a noise-free source, a simulator, showing
+   a still scene repeats itself too).
 2. Data rate per topic (message bytes over the topic's span) against the recording budget (core.recording): for a
    camera the bits per pixel really recorded and the compression against raw pixels; the bag's GB per hour.
 3. Sync against the plan (core.timing). The reference lidar's azimuth over time is fitted per sampled sweep from the
@@ -45,15 +50,29 @@ Checks, each with findings ok / warning / fault:
    or within three widths of the refinement's smoothing of it, and those the vehicle hides from the camera (a mirror
    camera's own mirror hides building edges the roof lidar sees over it): an edge the image cannot show would
    otherwise pull the rotation away from the vehicle. The vehicle is the project's, with the variant's rig and
-   housings, whether or not the caller passes an engine. A rotation correction of the
-   camera (yaw, pitch, roll within ±search_deg; a coarse grid, then Nelder-Mead on the sharper map) maximises it over all
-   sampled frames, under a weak prior towards small corrections. The standard error is the larger of a cluster-robust
-   sandwich estimate (image regions as clusters) and the spread of each frame's own optimum; an axis whose score
-   peak is too flat (its width from central differences of at least a pixel), or whose error is over twice the
-   tolerance, is not pinned down and stays as planned. A camera is
-   'rotated' when a pinned-down axis exceeds the tolerance with high or medium confidence. Images whose pixel (at the
-   image centre) spans more than the tolerance — a sample dataset at a tenth of the sensor's size — give no verdict
-   ('uncertain', saying why): they cannot resolve the rotation they would be judged by.
+   housings, whether or not the caller passes an engine. Depth edges lower than GROUND_EDGE_M in the vehicle frame
+   are left out: kerbs (and the like) are seen at grazing incidence, where a roof lidar and a camera half a metre
+   lower see the step at different places, and the edge point (on the lidar's ray, at the nearer range) lies off the
+   kerb the camera sees by a parallax that grows as the kerb comes closer; on a CARLA drive past a long kerb across
+   the street they were 38 % of a side camera's edges and read a clean camera as pitched −0.32° (−0.09° without
+   them). A rotation correction of the
+   camera (yaw, pitch, roll within ±search_deg; a grid scored on both maps, then Nelder-Mead on the sharper map from
+   the best grid points of each) maximises it over all sampled frames, under a weak prior towards small corrections.
+   (Both maps, because on a textured scene nearly every pixel lies within the coarse width of some Canny edge: the
+   coarse map goes flat and its optimum stays at the plan, which on a CARLA drive left a camera pitched 1° reading
+   −0.08°, the frames' own optima split between +0.8° and −0.3°. The fine map's optimum replaces the coarse map's
+   only when significantly more frames score higher there, a one-sided sign test at SIGN_P: 16 or 17 of 20 frames
+   did on those drives, 2 of 3 did at a wrong rotation on a sample dataset.) The standard error is the larger of a
+   cluster-robust sandwich estimate (image regions as clusters) and the spread of each frame's own optimum (from the
+   joint optimum and from the frame's own best grid point); an axis whose score peak is too flat (its width from
+   central differences of at least a pixel), or whose error is over twice the tolerance, is not pinned down and stays
+   as planned. A rotation of the camera moves every frame alike, so a consistency gate: the frames' own optima
+   splitting into a second group (SPLIT_SHARE of them together, more than twice the tolerance from the joint
+   optimum) caps the confidence at medium and, at SPLIT_EVEN of the frames, gives no verdict. A camera is 'rotated'
+   when a pinned-down axis
+   exceeds the tolerance with high or medium confidence. Images whose pixel (at the image centre) spans more than the
+   tolerance — a sample dataset at a tenth of the sensor's size — give no verdict ('uncertain', saying why): they
+   cannot resolve the rotation they would be judged by.
 5. GNSS and IMU: the IMU's gravity magnitude and gyro bias when at rest (0.5 s windows with little rotation and
    steady acceleration), the gravity direction against the planned mounting, the fix status shares and the reported
    position error of each NavSatFix stream.
@@ -65,6 +84,7 @@ relative to the lidar.
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import math
@@ -80,6 +100,7 @@ from .mathutil import BODY_TO_OPTICAL, euler_zyx, rot_zyx
 from .pngtext import put_text
 
 SCHEMA = 'vantage.drive_log_check/1'
+METHOD_REVISION = 2       # bumped when a check's method changes (2: round 8): results cached on it are made again
 SEVERITIES = ('fault', 'warning', 'ok')
 STAMPS = ('mid_exposure', 'trigger', 'readout_end')
 STAMP_LABEL = {'mid_exposure': 'Exposure middle', 'trigger': 'Trigger', 'readout_end': 'End of readout'}
@@ -103,18 +124,26 @@ PRIOR_SCALE = 2.0           # the prior on a correction: a Gaussian of PRIOR_SCA
 THETA_SHARE = 0.97          # edges beyond this share of the lens circle's half angle are left out
 BODY_DIL = 7               # px (analysis): the own vehicle's pixels grown by this much hide image edges
 OBSERVABLE_DEG = 1.5        # an axis whose score peak is wider than this (1 sigma) is not pinned down
+SPLIT_SHARE = 0.2           # frames whose own optimum lies together elsewhere, this share of them (and 3): a split
+SPLIT_EVEN = 0.4            # … this share: the frames are split too evenly for a verdict
+GROUND_EDGE_M = 0.4         # lidar depth edges lower than this in the vehicle frame (kerbs) are left out
+SIGN_P = 0.05               # the fine map's optimum over the coarse map's: a one-sided sign test over the frames
 LIMITS = {'frames_per_camera': (2, 200), 'tolerance_deg': (0.01, 10.0), 'search_deg': (0.2, 5.0),
-          'drop_factor': (1.05, 10.0), 'sync_tol_ms': (0.05, 100.0), 'sync_sweeps': (5, 5000)}
-INTS = ('frames_per_camera', 'sync_sweeps')
+          'drop_factor': (1.05, 10.0), 'sync_tol_ms': (0.05, 100.0), 'sync_sweeps': (5, 5000),
+          'freeze_frames': (1, 10000)}
+INTS = ('frames_per_camera', 'sync_sweeps', 'freeze_frames')
 ASSUMPTIONS = (
     'Sync pulses are taken at multiples of the lidar period on the log\'s clock (PTP, top of the second), and lidar '
     'clouds in the lidar\'s own frame. Without a time per point, a sweep\'s header stamp is taken as the moment the '
     'head faces the cloud\'s first point (its last for a stamp at the sweep end). Camera stamps mark what the Camera '
     'stamps setting says, with the readout and exposure of the sync plan. The rotation check finds each camera\'s '
     'rotation relative to the lidar from depth edges against image edges: translation is not observable this way at '
-    'road distances, the edges of round objects move with the viewpoint, and a view without depth edges (open road) '
-    'gives no answer. Rolling-shutter skew is not modelled. Odometry poses are taken as the vehicle frame\'s; with only '
-    'an IMU the vehicle\'s turning is compensated, not its travel.')
+    'road distances, the edges of round objects move with the viewpoint (kerbs and other edges within 0.4 m of the '
+    'ground plane are left out for that reason: on a sloping road they may not be), moving objects are taken as '
+    'static, and a view without depth edges (open road) gives no answer. Rolling-shutter skew is not modelled. '
+    'Odometry poses are taken as the vehicle frame\'s; with only an IMU the vehicle\'s turning is compensated, not its '
+    'travel. A frozen camera is found by identical image content only (a noise-free source showing a still scene '
+    'repeats itself too).')
 
 STAMPED = {
     'sensor_msgs/msg/Image', 'sensor_msgs/msg/CompressedImage', 'sensor_msgs/msg/PointCloud2', 'sensor_msgs/msg/Imu',
@@ -144,6 +173,8 @@ class DriveLogSettings:
     tolerance_deg: float = 0.3         # a camera rotated by more than this is flagged
     search_deg: float = 2.0            # rotation corrections searched within ± this
     drop_factor: float = 1.5           # an interval this many times the nominal period is a drop
+    freeze_frames: int = 3             # a camera repeating one image this many times in a row is frozen (fewer: a
+                                       # warning)
     sync_tol_ms: float = 2.0           # sync offsets beyond this are flagged
     sync_sweeps: int = 300             # lidar sweeps fitted for the phase lock, spread over the drive
     mappings: dict = field(default_factory=dict)   # {bag path: {topic: tag ('' = no rig sensor)}}: the edits only
@@ -604,6 +635,51 @@ def jpeg_size(data, start: int = 0, end: int | None = None) -> tuple | None:
     return None
 
 
+DIGEST_WHOLE = 1 << 18         # image payloads up to this many bytes are fingerprinted whole …
+DIGEST_BLOCKS = 256            # … larger ones by this many evenly spaced 1 KiB blocks and their length
+
+
+def content_digest(buf, start: int = 0, end: int | None = None) -> int:
+    """A 64-bit fingerprint (BLAKE2b) of an image message's content: its encoded bytes or raw pixels after the header,
+    so a repeated image gives the same value whatever its stamp. A large payload is sampled (DIGEST_BLOCKS blocks
+    through it, and its length): two different frames of a camera differ throughout (sensor noise in raw pixels; the
+    entropy-coded stream of a JPEG changes from the first changed block on and its length with it)."""
+    mv = memoryview(buf)[start:end]
+    n = len(mv)
+    h = hashlib.blake2b(n.to_bytes(8, 'little'), digest_size=8)
+    if n <= DIGEST_WHOLE:
+        h.update(mv)
+    else:
+        step = n // DIGEST_BLOCKS
+        for i in range(DIGEST_BLOCKS):
+            h.update(mv[i * step:i * step + 1024])
+    return int.from_bytes(h.digest(), 'little')
+
+
+def file_digest(path) -> int:
+    """content_digest of an image file (0 when it cannot be read)."""
+    try:
+        with open(path, 'rb') as fh:
+            return content_digest(fh.read())
+    except OSError:
+        return 0
+
+
+def frozen_runs(stamps_ns, digests) -> list:
+    """Runs of messages (in stamp order) whose content repeats the one before: [(held index, first repeat, last
+    repeat, repeats)] as indices into the stamp-sorted messages. A camera whose sensor or driver stalls keeps
+    delivering its last image at its rate, so its stamps look healthy; only the content shows it. Messages whose
+    fingerprint is unknown (0) never count."""
+    d = np.asarray(digests, np.uint64)
+    if len(d) < 2:
+        return []
+    o = np.argsort(np.asarray(stamps_ns), kind='stable')
+    d = d[o]
+    same = np.r_[False, (d[1:] == d[:-1]) & (d[1:] != 0), False]      # same[i]: message i repeats message i − 1
+    edges = np.flatnonzero(np.diff(same.astype(np.int8)))                # a run of repeats is same[a + 1 … b]
+    return [(int(a), int(a + 1), int(b), int(b - a)) for a, b in zip(edges[::2], edges[1::2])]
+
+
 # =========================================================================== the scan
 @dataclass
 class TopicScan:
@@ -622,6 +698,7 @@ class TopicScan:
     data: dict = field(default_factory=dict)     # imu / fix / odom: decoded arrays
     stamp_ref: str = 'start'                # a cloud's stamp marks its sweep start (bags) or end (nuScenes)
     info: dict = field(default_factory=dict)     # camera_info: the first message's size and model
+    digests: np.ndarray | None = None       # images: a fingerprint of each message's content, log order (uint64)
 
 
 @dataclass
@@ -764,7 +841,7 @@ def _scan_bag(path, n_frames, sync_sweeps, progress, cancel) -> Scan | None:
         counts = dict(rd.counts)
         t0, t1 = int(rd.start_ns), int(rd.end_ns)
         tops = {t: TopicScan(t, ty, topic_kind(ty)) for t, ty in types.items()}
-        acc = {t: {'log': [], 'stamp': [], 'n': [], 'small': [], 'st': []} for t in types}
+        acc = {t: {'log': [], 'stamp': [], 'n': [], 'small': [], 'st': [], 'dig': []} for t in types}
         targets = [{'t_ns': t, 'images': {}, 'clouds': {}} for t in _targets(t0, t1, n_frames)]
         tt = np.array([t['t_ns'] for t in targets], np.int64)
         img_next = {t: 0 for t, ts in tops.items() if ts.kind == 'image'}
@@ -857,6 +934,7 @@ def _scan_bag(path, n_frames, sync_sweeps, progress, cancel) -> Scan | None:
                     ts.dims[wh] = ts.dims.get(wh, 0) + 1
                 else:
                     unsized[topic] = unsized.get(topic, 0) + 1
+                a['dig'].append(content_digest(raw, 4 + ((head[2] + 3) & ~3) if head is not None else 4))
                 k = img_next[topic]
                 if (k < len(targets) and t_ns >= tt[k]) or ts.count == 1:
                     msg = dec(topic, raw)
@@ -973,6 +1051,8 @@ def _finish_topics(tops, acc):
         a = acc[t]
         ts.log_ns = np.asarray(a['log'], np.int64)
         ts.stamp_ns = np.asarray(a['stamp'], np.int64) if len(a['stamp']) == len(a['log']) and a['stamp'] else None
+        if ts.kind == 'image' and a.get('dig') and len(a['dig']) == len(a['log']):
+            ts.digests = np.asarray(a['dig'], np.uint64)
         if ts.kind == 'points':
             ts.cloud_n = np.asarray(a['n'], np.int64)
         if ts.kind in SMALL_COLS and a['small']:
@@ -1058,6 +1138,7 @@ def _scan_nuscenes(nd, n_frames, sync_sweeps, progress, cancel) -> Scan | None:
                 key = (int(s.get('width') or 0), int(s.get('height') or 0))
                 if key[0] and key[1]:
                     ts.dims[key] = ts.dims.get(key, 0) + 1
+            ts.digests = np.array([file_digest(f) for f in files], np.uint64)
             for k, tg in enumerate(targets):
                 j = int(np.searchsorted(stamps, tg['t_ns']))
                 if j >= len(sds):
@@ -1369,6 +1450,15 @@ def _stream(project, var, uid, tag, kind, obj, topic, scan, st, engine, recorded
     if kind == 'camera' and ts.dims:
         e['sizes'] = sorted(ts.dims.items(), key=lambda kv: -kv[1])
         e['size'] = e['sizes'][0][0]
+    if kind == 'camera' and ts.digests is not None and len(ts.digests) == len(stamps):
+        srt = np.sort(stamps)
+        runs = [{'held_s': (int(srt[h]) - scan.start_ns) / 1e9, 'from_s': (int(srt[a]) - scan.start_ns) / 1e9,
+                 'to_s': (int(srt[b]) - scan.start_ns) / 1e9, 'repeats': n} for h, a, b, n in
+                frozen_runs(stamps, ts.digests)]
+        e['frozen'] = {'runs': runs, 'frames': int(sum(r['repeats'] for r in runs)),
+                       'longest': max((r['repeats'] for r in runs), default=0),
+                       'seconds': float(sum(r['to_s'] - r['held_s'] for r in runs)),
+                       'share': float(sum(r['repeats'] for r in runs)) / max(len(stamps), 1)}
     if ts.kind == 'points' and ts.cloud_n is not None and len(ts.cloud_n):
         cn = ts.cloud_n[ts.cloud_n >= 0]
         e['points'] = float(np.median(cn)) if len(cn) else None
@@ -1418,6 +1508,21 @@ def _judge_stream(e, st, scan, out):
     if e.get('nonmonotonic'):
         add('fault', f'{tag}: {e["nonmonotonic"]} stamp{"s" * (e["nonmonotonic"] != 1)} not after the one before '
                      '(duplicated or going back).')
+    fz = e.get('frozen')
+    if fz and fz['runs']:
+        long_ = [r for r in fz['runs'] if r['repeats'] >= st.freeze_frames]
+        show = (long_ or fz['runs'])[:4]
+        where = '; '.join(f'{r["from_s"]:.2f}–{r["to_s"]:.2f} s ({r["repeats"]} × the image of {r["held_s"]:.2f} s)'
+                          for r in show) + (' …' if len(long_ or fz['runs']) > len(show) else '')
+        if long_:
+            add('fault', f'{tag} froze: {sum(r["repeats"] for r in long_)} frames repeat the image before them in '
+                         f'{len(long_)} run{"s" * (len(long_) != 1)} of {st.freeze_frames} or more, '
+                         f'{sum(r["to_s"] - r["held_s"] for r in long_):.2f} s in all ({where}); its stamps kept '
+                         'their rate, so only the images show it.')
+        else:
+            add('warning', f'{tag}: {fz["frames"]} frame{"s" * (fz["frames"] != 1)} repeat the image before them '
+                           f'(identical content: {where}); a camera\'s own noise makes every real frame differ, so '
+                           'the driver delivered one image twice (or a noise-free source shows a still scene).')
     lat = e.get('latency_ms')
     if lat is not None:
         if lat['min'] < -1.0:
@@ -1977,6 +2082,43 @@ def _peak_width(fn, x, px_deg=0.0):
     return [float(v) for v in width], [bool(v <= OBSERVABLE_DEG) for v in width]
 
 
+def _picks(scores, grid, step, k):
+    """Indices of the k best grid points, each more than 1.5 steps from the others."""
+    picks = []
+    for i in np.argsort(-scores):
+        if all(np.abs(grid[i] - grid[j]).max() > 1.5 * step for j in picks):
+            picks.append(int(i))
+        if len(picks) == k:
+            break
+    return picks
+
+
+def _split_frames(per, best, obs, tol):
+    """A second mode among the frames' own optima (deg, per frame): the largest group of frames that lie together
+    (within tol of their median on the pinned-down axes) away from the joint optimum best, when it holds at least
+    SPLIT_SHARE of the frames (and 3) and its centre lies more than twice the tolerance from best. A rotation of the
+    camera moves every frame alike; a split means something else moves the edges in some frames (a moving object, a
+    repeated structure, a frame whose edges fit another rotation as well). {'n', 'share', 'centre_deg',
+    'distance_deg'} or None."""
+    o = np.asarray(obs, bool)
+    if len(per) < 3 or not o.any():
+        return None
+    far = per[np.any((np.abs(per - best) > tol) & o, axis=1)]
+    if len(far) < 3:
+        return None
+    near = np.max(np.abs(far[:, None, o] - far[None, :, o]), axis=2) <= tol
+    centre = np.median(far[near[int(np.argmax(near.sum(1)))]], axis=0)
+    grp = far[np.all(np.abs(far[:, o] - centre[o]) <= tol, axis=1)]
+    if len(grp) < max(3, SPLIT_SHARE * len(per)):
+        return None
+    centre = np.median(grp, axis=0)
+    dist = float(np.max(np.abs(centre - best)[o]))
+    if dist <= 2 * tol:
+        return None
+    return {'n': int(len(grp)), 'share': float(len(grp) / len(per)), 'centre_deg': [float(v) for v in centre],
+            'distance_deg': dist}
+
+
 def _nm(fn, x0, step, xatol=0.002):
     from scipy.optimize import minimize
     x0 = np.asarray(x0, float)
@@ -2170,6 +2312,7 @@ def _extrinsic(project, var, cam, topic, lid, lid_topic, scan, motion, st, conv_
     if mesh is not None and getattr(mesh, 'n_tris', 0):
         lo, hi = np.asarray(mesh.bbox[0], float) - 0.15, np.asarray(mesh.bbox[1], float) + 0.15
     frames, Qs, fis, mc, mf, dts = [], [], [], [], [], []
+    n_low = 0
     for k, smp in smps:
         if smp['ashape'] != ashape:
             continue
@@ -2183,6 +2326,9 @@ def _extrinsic(project, var, cam, topic, lid, lid_topic, scan, motion, st, conv_
             keep = ~np.all((E >= lo) & (E <= hi), axis=1)
             E, adt = E[keep], adt[keep]
             K = K[~np.all((K >= lo) & (K <= hi), axis=1)]
+        low = E[:, 2] < GROUND_EDGE_M                   # kerbs and the like: see GROUND_EDGE_M in the module doc
+        n_low += int(low.sum())
+        E, adt = E[~low], adt[~low]
         Qe, Qk = E - pos, K - pos
         ve, vk = _visible(Qe, Qk, W2O, intr, sx, sy, ha, wa, cube)
         if hide is not None:                            # an edge the image cannot show (its edges there are left out)
@@ -2231,27 +2377,49 @@ def _extrinsic(project, var, cam, topic, lid, lid_topic, scan, motion, st, conv_
     n = int(math.ceil(S / 0.5))
     g = np.linspace(-S, S, 2 * n + 1)
     grid = np.array(np.meshgrid(g, g, g, indexing='ij')).reshape(3, -1).T
-    pc = post(coarse, sel)
-    sc = np.array([pc(d) for d in grid])
-    picks = []
     step = g[1] - g[0] if len(g) > 1 else S
-    for i in np.argsort(-sc):
-        if all(np.abs(grid[i] - grid[j]).max() > 1.5 * step for j in picks):
-            picks.append(i)
-        if len(picks) == 3:
-            break
+    F = len(frames)
+    prior = np.exp(-np.sum(grid * grid, 1) / (2 * sp * sp))
+    fs = fi[sel]
+    n_f = np.maximum(np.bincount(fs, minlength=F), 1)
+    sc, sf, pf = np.empty(len(grid)), np.empty(len(grid)), np.empty((len(grid), F))
+    for k, d in enumerate(grid):                        # the grid on both maps; the fine one also frame by frame
+        sc[k] = coarse.values(d, sel).mean() * prior[k]
+        v = fine.values(d, sel)
+        sf[k] = v.mean() * prior[k]
+        pf[k] = np.bincount(fs, weights=v, minlength=F) / n_f * prior[k]
     starts = []
-    for i in picks:                                     # refine the best grid points on the coarse map …
+    for i in _picks(sc, grid, step, 3):                 # refine the best grid points on the coarse map …
         x, v = _nm(post(coarse, sel), grid[i], step / 2, 0.02)
         starts.append((v, x))
     starts.sort(key=lambda r: -r[0])
-    best, bval = None, -1.0
-    for v0, x in starts[:2]:                            # … and the best two on the fine map with every point
-        if best is not None and v0 < 0.9 * starts[0][0]:
-            break
-        x, v = _nm(post(fine), x, 0.1)
-        if v > bval:
-            best, bval = x, v
+    cands = [x for v0, x in starts[:2] if v0 >= 0.9 * starts[0][0]]
+    n_coarse = len(cands)
+    # … and the fine map's best grid points: on a textured scene (CARLA's town) nearly every pixel lies within a
+    # coarse width of some Canny edge, the coarse map is all but flat (0.894 at the plan, 0.88 half a degree off) and
+    # its optimum stays at the plan while the fine map's lies at the true rotation (a camera pitched 1° read −0.08°)
+    for i in _picks(sf, grid, step, 2):
+        if all(np.abs(grid[i] - x).max() > step / 2 for x in cands):
+            cands.append(grid[i])
+    refined = [_nm(post(fine), x0, 0.1) for x0 in cands]  # every candidate on the fine map with every point
+    a_x, a_v = max(refined[:n_coarse], key=lambda r: r[1])
+    b_x, b_v = max(refined, key=lambda r: r[1])
+    best = a_x
+    search = {'coarse_seeded_deg': [float(v) for v in a_x], 'chosen': 'coarse'}
+    if b_v > a_v and np.abs(b_x - a_x).max() > step / 2:
+        # the fine map's own optimum replaces the coarse map's only when significantly more frames prefer it (a
+        # one-sided sign test): a few frames of a scene with repeated structure can score higher at a wrong rotation
+        # (Vantage's own sample dataset, 3 frames: 2 preferred a point 1.2° off), a rotation moves them all (on the
+        # CARLA drives 16–17 of 20 frames preferred the true one)
+        prefs = [fine(b_x, fi == f) > fine(a_x, fi == f) for f in range(F) if np.count_nonzero(fi == f) >= 20]
+        k_, n_ = int(sum(prefs)), len(prefs)
+        p_ = sum(math.comb(n_, j) for j in range(k_, n_ + 1)) / 2.0 ** n_ if n_ else 1.0
+        search.update({'fine_seeded_deg': [float(v) for v in b_x], 'frames_preferring': k_, 'frames': n_,
+                       'sign_test_p': float(p_)})
+        if p_ < SIGN_P:
+            best = b_x
+            search['chosen'] = 'fine'
+    res['search'] = search
     s0, s1 = fine(np.zeros(3)), fine(best)
     res['score_plan'], res['score_corrected'] = s0, s1
     px_deg = 1.0 / max(ppd, 1e-9)               # one pixel's angle at the image centre
@@ -2259,12 +2427,17 @@ def _extrinsic(project, var, cam, topic, lid, lid_topic, scan, motion, st, conv_
     xs, ys, _ = fine.project(best, Q)
     clusters = fi * 64 + np.clip((xs / wa * 8).astype(int), 0, 7) * 8 + np.clip((ys / ha * 8).astype(int), 0, 7)
     se_sw = _sandwich(fine, best, clusters)
-    F = len(frames)
     per = []
-    for f in range(F):
-        m_ = fi == f
+    for f in range(F):                                  # each frame's own optimum: from the joint one and from the
+        m_ = fi == f                                    # frame's best grid point, whichever scores higher
         if m_.sum() >= 20:
-            x, _ = _nm(post(fine, m_), best, 0.1, 0.005)
+            pfm = post(fine, m_)
+            x, v = _nm(pfm, best, 0.1, 0.005)
+            gk = int(np.argmax(pf[:, f]))
+            if np.abs(grid[gk] - x).max() > step:
+                x2, v2 = _nm(pfm, grid[gk], 0.1, 0.005)
+                if v2 > v:
+                    x = x2
             per.append(x)
     per = np.array(per) if per else np.zeros((0, 3))
     tol = st.tolerance_deg
@@ -2277,14 +2450,17 @@ def _extrinsic(project, var, cam, topic, lid, lid_topic, scan, motion, st, conv_
         agree = float(np.mean(np.all((np.abs(per - best) <= tol) | ~obs, axis=1)))
     obs &= stderr <= 2 * tol
     observable = [bool(o) for o in obs]
+    split = _split_frames(per, best, obs, tol)
     res.update({'delta_deg': [float(v) for v in best], 'stderr_deg': [float(v) if np.isfinite(v) else None
                                                                        for v in stderr], 'agree': agree,
                 'width_deg': [float(v) for v in width], 'observable': [bool(o) for o in observable],
-                'per_frame_deg': per.tolist()})
+                'per_frame_deg': per.tolist(), 'split': split, 'ground_edges_dropped': n_low})
     se = float(np.max(stderr[obs])) if obs.any() else math.inf
     if not obs.any() or px_deg > tol:            # images coarser than the tolerance cannot judge it
         conf = 'low'
-    elif F >= 3 and agree is not None and agree >= 0.6 and se <= tol / 3 and s1 > s0 - 1e-9:
+    elif split is not None and split['share'] >= SPLIT_EVEN:
+        conf = 'low'                             # the frames split too evenly: no one rotation explains them
+    elif F >= 3 and agree is not None and agree >= 0.6 and se <= tol / 3 and s1 > s0 - 1e-9 and split is None:
         conf = 'high'
     elif F >= 2 and agree is not None and agree >= 0.4 and se <= tol / 1.5:
         conf = 'medium'
@@ -2293,6 +2469,11 @@ def _extrinsic(project, var, cam, topic, lid, lid_topic, scan, motion, st, conv_
     res['confidence'] = conf
     big = float(np.abs(np.where(obs, best, 0.0)).max())
     names = ('yaw', 'pitch', 'roll')
+
+    def split_text():
+        c = split['centre_deg']
+        return (f'the frames split: {split["n"]} of {len(per)} put it at ' +
+                ', '.join(f'{n_} {c[k]:+.2f}°' for k, n_ in enumerate(names) if obs[k]))
     if conf == 'low':
         res['verdict'] = 'uncertain'
         why = []
@@ -2300,6 +2481,8 @@ def _extrinsic(project, var, cam, topic, lid, lid_topic, scan, motion, st, conv_
             why.append(f'{F} frame{"s" * (F != 1)} with edges')
         if agree is not None and agree < 0.6:
             why.append(f'{agree * 100:.0f} % of the frames agree')
+        if split is not None and split['share'] >= SPLIT_EVEN:
+            why.append(split_text())
         if not obs.any():
             why.append('no axis is pinned down by the edges in view')
         if px_deg > tol:
@@ -2311,9 +2494,14 @@ def _extrinsic(project, var, cam, topic, lid, lid_topic, scan, motion, st, conv_
         res['verdict'] = 'rotated'
     else:
         res['verdict'] = 'ok'
-    if conf != 'low' and not obs.all():
-        res['reason'] = (', '.join(n_ for n_, o in zip(names, observable) if not o) +
+    if conf != 'low':
+        notes = []
+        if not obs.all():
+            notes.append(', '.join(n_ for n_, o in zip(names, observable) if not o) +
                          ' not pinned down by the edges in view (left as planned)')
+        if split is not None:
+            notes.append(split_text())
+        res['reason'] = '; '.join(notes)
     res['apply'] = conf in ('high', 'medium') and res['verdict'] == 'rotated'
     best = np.where(obs, best, 0.0)
     res['correction_deg'] = [float(v) for v in best]
@@ -2362,10 +2550,12 @@ def _extrinsics(project, var, rev, scan, motion, st, plan, engine, out, overlays
             axes = ', '.join(f'{n} {d[k]:+.2f}°' for k, n in enumerate(('yaw', 'pitch', 'roll')) if obs[k])
             loose = [n for k, n in enumerate(('yaw', 'pitch', 'roll')) if not obs[k]]
             agree = f', {r["agree"] * 100:.0f} % agree' if r.get('agree') is not None else ''
+            sp = r.get('split')
             _finding(out, sev, 'extrinsics',
                      f'{c.tag} is rotated against the plan (relative to {lid.tag}): {axes}'
                      + (f'; {" and ".join(loose)} not pinned down by the edges in view' if loose else '')
-                     + f' (tolerance {tol:g}°, {r["confidence"]} confidence, {r["frames"]} frames{agree}).',
+                     + f' (tolerance {tol:g}°, {r["confidence"]} confidence, {r["frames"]} frames{agree}'
+                     + (f'; {sp["n"]} frames put it {sp["distance_deg"]:.2f}° elsewhere' if sp else '') + ').',
                      [c.tag], [c.uid])
         elif r['verdict'] == 'uncertain':
             _finding(out, 'warning', 'extrinsics', f'{c.tag}: rotation not determined ({r["reason"]}).', [c.tag],
@@ -2592,6 +2782,7 @@ def run(project, path=None, settings: DriveLogSettings | None = None, progress=N
         L.pop('_t', None), L.pop('_phi', None), L.pop('_base_ns', None)
     n_bad = sum(e['status'] != 'ok' for e in streams)
     drops = [e for e in streams if e.get('drops')]
+    frozen = [e for e in streams if (e.get('frozen') or {}).get('frames')]
     synced = [r for r in sync['cameras'] if r.get('own_ms') is not None]
     rot = [r for r in ext if r.get('delta_deg') is not None and r.get('confidence') in ('high', 'medium')]
     metrics = {
@@ -2600,6 +2791,8 @@ def run(project, path=None, settings: DriveLogSettings | None = None, progress=N
         'drops': int(sum(e['drops'] for e in drops)),
         'worst_drop': (max(drops, key=lambda e: e['drop_share'])['tag'] if drops else None),
         'worst_drop_share': max((e['drop_share'] for e in drops), default=0.0),
+        'frozen_frames': int(sum(e['frozen']['frames'] for e in frozen)),
+        'worst_freeze': (max(frozen, key=lambda e: e['frozen']['longest'])['tag'] if frozen else None),
         'worst_sync_ms': (max((abs(r['own_ms']) for r in synced), default=None)),
         'worst_sync_tag': (max(synced, key=lambda r: abs(r['own_ms']))['tag'] if synced else None),
         'lidar_phase_error_deg': sync['lidar']['phase_error_deg'] if sync.get('lidar') else None,
@@ -2689,13 +2882,15 @@ def summary(res: DriveLogResult) -> dict:
         'streams_ok': m['streams_ok'], 'streams': m['streams'], 'missing': m['missing'],
         'dropped_frames': m['drops'], 'worst_drop': m['worst_drop'],
         'worst_drop_pct': _r(m['worst_drop_share'] * 100, 2),
+        'frozen_frames': m.get('frozen_frames', 0), 'worst_freeze': m.get('worst_freeze'),
         'gb_per_hour': _r(m['gb_per_hour'], 2), 'planned_gb_per_hour': _r(m['planned_gb_per_hour'], 2),
         'lidar_phase_error_deg': _r(m['lidar_phase_error_deg'], 2),
         'worst_sync_ms': _r(m['worst_sync_ms'], 2), 'worst_sync_camera': m['worst_sync_tag'],
         'worst_rotation_deg': _r(m['worst_rotation_deg'], 3), 'worst_rotation_camera': m['worst_rotation_tag'],
         'streams_table': [{'sensor': e['tag'], 'kind': e['kind'], 'topic': e['topic'], 'status': e['status'],
                            'rate_hz': _r(e.get('rate_hz'), 3), 'expected_hz': e.get('expected_hz'),
-                           'drops': e.get('drops', 0)} for e in res.streams],
+                           'drops': e.get('drops', 0), 'frozen_frames': (e.get('frozen') or {}).get('frames', 0)}
+                          for e in res.streams],
         'sync': [{'camera': r['tag'], 'planned_ms': _r(r.get('planned_ms'), 2), 'offset_ms': _r(r.get('offset_ms'), 2),
                   'own_ms': _r(r.get('own_ms'), 2), 'skew_ms': _r(r.get('skew_ms'), 2)}
                  for r in res.sync['cameras'] if r.get('topic')],
@@ -2720,7 +2915,12 @@ def _stream_doc(e):
             'image_size': list(e['size']) if e.get('size') else None,
             'expected_size': list(e['expected_size']) if e.get('expected_size') else None,
             'points_per_cloud': _r(e.get('points'), 1), 'points_expected': _r(e.get('points_expected'), 1),
-            'blocked_share_planned': _r(e.get('blocked_share'), 4), 'problems': e['problems'], 'notes': e['notes']}
+            'blocked_share_planned': _r(e.get('blocked_share'), 4),
+            'frozen': None if not e.get('frozen') else {
+                'frames': e['frozen']['frames'], 'longest_run': e['frozen']['longest'],
+                'seconds': _r(e['frozen']['seconds'], 3),
+                'runs': [{k: (_r(v, 3) if k != 'repeats' else v) for k, v in r.items()} for r in e['frozen']['runs']]},
+            'problems': e['problems'], 'notes': e['notes']}
 
 
 def to_doc(res: DriveLogResult, project=None) -> dict:
@@ -2922,8 +3122,8 @@ def overlay_png(project, var, res: DriveLogResult, uid, k=None) -> bytes | None:
 
 
 def timeline_png(res: DriveLogResult, var=None, width=1200) -> bytes:
-    """One row per stream over the drive: where it has data, its drops (red, at least 1 px wide) and a missing stream
-    as a hatched row."""
+    """One row per stream over the drive: where it has data, its drops (red, at least 1 px wide), the time a camera
+    repeated one image (amber, from the held frame to its last repeat) and a missing stream as a hatched row."""
     import cv2
     rows = res.streams
     head, rh, left = 40, 22, 90
@@ -2933,7 +3133,8 @@ def timeline_png(res: DriveLogResult, var=None, width=1200) -> bytes:
     dur = max(res.span['duration_s'], 1e-6)
     x0, x1 = left, width - 16
     X = lambda s: int(round(x0 + (x1 - x0) * s / dur))          # noqa: E731
-    put_text(img, f'Drops and gaps per stream  {os.path.basename(res.path)}  {dur:.1f} s', (12, 24), font, 0.55,
+    put_text(img, f'Drops, gaps and frozen images per stream  {os.path.basename(res.path)}  {dur:.1f} s', (12, 24),
+             font, 0.55,
                 (236, 235, 230), 1, aa)
     for i, e in enumerate(rows):
         y = head + i * rh
@@ -2948,6 +3149,9 @@ def timeline_png(res: DriveLogResult, var=None, width=1200) -> bytes:
         for g0, g1 in e.get('gaps', []):
             ga, gb = X(g0), X(g1)
             cv2.rectangle(img, (ga, y + 3), (max(gb, ga + 1), y + 19), SEV_BGR['fault'], -1)
+        for r in (e.get('frozen') or {}).get('runs', []):
+            ga, gb = X(r['held_s']), X(r['to_s'])
+            cv2.rectangle(img, (ga, y + 3), (max(gb, ga + 1), y + 19), SEV_BGR['warning'], -1)
     yb = head + rh * max(len(rows), 1) + 8
     cv2.line(img, (x0, yb), (x1, yb), (129, 135, 137), 1)
     step = next(s for s in (0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 600, 1800, 3600, 1e9) if dur / s <= 12)

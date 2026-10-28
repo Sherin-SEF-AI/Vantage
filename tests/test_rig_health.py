@@ -124,6 +124,98 @@ def test_sync_skew():
     assert len(st.recent_times(1.0)) == 30
 
 
+def test_sync_skew_is_judged_against_the_plan():
+    """A lidar-synchronised rig fires its cameras round the sweep (the CARLA fault campaign's rig: R 31.25 ms before F,
+    MR 34.4 ms after it): that stagger is the plan, not a skew; a camera off its planned phase is."""
+    t = np.arange(50) * 0.1 + 500.0
+    rng = np.random.default_rng(2)
+    planned = {'F': (93.75, 100.0), 'R': (62.5, 100.0), 'MR': (28.125, 100.0)}
+
+    def times(late=None):
+        return {k: t + ((v[0] - 93.75) + (late or {}).get(k, 0.0)) / 1000.0 + rng.normal(0, 2e-4, len(t))
+                for k, v in planned.items()}
+    skew, who = rh.sync_skew(times())                              # without the plan: the stagger itself
+    assert skew == pytest.approx(34.375, abs=0.2) and who == 'MR'
+    skew, who = rh.sync_skew(times(), planned)
+    assert skew < 0.3
+    offs, ref = rh.capture_offsets(times({'R': 5.0}), planned)
+    assert ref == 'F' and offs['F'] == {'offset_ms': 0.0, 'planned_ms': 0.0, 'skew_ms': 0.0}
+    assert offs['R']['planned_ms'] == pytest.approx(-31.25) and offs['R']['offset_ms'] == pytest.approx(-26.25, abs=0.2)
+    assert offs['R']['skew_ms'] == pytest.approx(5.0, abs=0.2) and abs(offs['MR']['skew_ms']) < 0.2
+    assert offs['MR']['planned_ms'] == pytest.approx(34.375)       # −65.6 folded into F's 100 ms cycle
+    assert rh.sync_skew(times({'R': 5.0}), planned) == (pytest.approx(5.0, abs=0.2), 'R')
+    # a camera the plan does not phase is judged as before (nearest frame), the planned ones against the plan
+    offs, _ = rh.capture_offsets(dict(times(), QL=t + 0.012), planned)
+    assert offs['QL']['planned_ms'] is None and offs['QL']['skew_ms'] == pytest.approx(12.0, abs=0.1)
+    # the reference is the first camera the plan phases
+    assert rh.capture_offsets({'X': t, 'F': t + 0.05, 'R': t + 0.01875}, planned)[1] == 'F'
+
+
+def test_planned_offsets_from_the_sync_plan_and_a_simulated_rig():
+    from vantage.core import samples
+    p = samples.tigor_sample_project()
+    p.active_uid = next(v for v in p.variants if v.sensors).uid
+    pl = rh.planned_offsets(p)
+    assert set(pl) == {c.tag for c in p.variant.cameras if c.visible}
+    # at 30 fps (3 frames per 10 Hz rotation) the one trigger line fires every camera together, modulo its cycle
+    assert {round(ms % cyc, 6) for ms, cyc in pl.values()} == {round(pl['F'][0] % pl['F'][1], 6)}
+    assert all(cyc == pytest.approx(100.0 / 3) for _, cyc in pl.values())
+    p.modules['sturdecam31'].fps = 10.0                          # one frame per rotation, one line: one pulse
+    pl10 = rh.planned_offsets(p)
+    assert pl10['F'][1] == pytest.approx(100.0) and len({round(v[0], 3) for v in pl10.values()}) == 1
+    for i, c in enumerate(p.variant.cameras):                     # a line each: every camera as the sweep crosses it
+        c.sync = 'ABCDEFGH'[i]
+    pl10 = rh.planned_offsets(p)
+    assert len({round(v[0], 3) for v in pl10.values()}) == len(pl10) == 6
+    doc = {'cameras': [{'tag': 'F', 'capture': {'recorded_hz': 10.0, 'recorded_centre_s': 0.09375}},
+                       {'tag': 'R', 'capture': {'recorded_hz': 10.0, 'recorded_centre_s': 0.0625}},
+                       {'tag': 'X', 'capture': {}}]}
+    assert rh.schedule_offsets(doc) == {'F': (pytest.approx(93.75), 100.0), 'R': (pytest.approx(62.5), 100.0)}
+    assert rh.planned_offsets(object()) == {}                       # a project the plan cannot read: no plan
+
+
+class _Src:
+    running, error = True, ''
+
+    def stop(self, wait=True):
+        pass
+
+    def start(self):
+        pass
+
+
+def test_the_monitor_judges_the_skew_against_the_plan():
+    from vantage.core import samples
+    p = samples.tigor_sample_project()
+    p.active_uid = next(v for v in p.variants if v.sensors).uid
+    p.modules['sturdecam31'].fps = 10.0
+    for i, c in enumerate(p.variant.cameras):                     # a trigger line each: staggered round the sweep
+        c.sync = 'ABCDEFGH'[i]
+    cams = [c for c in p.variant.cameras if c.tag in ('F', 'R', 'MR')]
+    plan = rh.planned_offsets(p)
+    for planned, want in (('plan', 'plan'), ({}, 'none')):
+        mon = rh.RigMonitor()
+        mon.configure(p, cams, planned=planned)
+        assert mon.planned == (plan if planned == 'plan' else {})
+        mon.unconfigured = []                                     # the streams are fed by hand below
+        now = 100.0
+        for c in cams:                                            # frames at the planned phases, R 4 ms late
+            st = rh.StreamStats(10.0, None, mon.settings)
+            ph = ((plan[c.tag][0] - plan['F'][0]) % 100.0 + (4.0 if c.tag == 'R' else 0.0)) / 1000.0
+            for k in range(30):
+                st.add(np.full((48, 64), 100 + k % 7, np.uint8), now - 3.0 + k * 0.1 + ph)
+            mon.streams[c.tag] = rh._Stream(c.tag, c.uid, 'test', _Src(), st, started=now - 4.0)
+        snap = mon.snapshot(now=now)
+        r = snap['rig']
+        assert r['sync_against'] == want and r['sync_reference'] == 'F'
+        if want == 'plan':
+            assert r['sync_skew_ms'] == pytest.approx(4.0, abs=0.01) and r['sync_skew_camera'] == 'R'
+            assert r['sync_status'] == 'ok' and snap['cameras']['R']['sync_skew_ms'] == pytest.approx(4.0, abs=0.01)
+            assert snap['cameras']['R']['sync_planned_ms'] is not None
+        else:                                                     # without the plan the stagger reads as skew
+            assert r['sync_skew_ms'] > 25 and r['sync_status'] in ('warning', 'fault')
+
+
 # ----------------------------------------------------------------------------- the project
 def test_streams_are_saved_and_undoable(tmp_path):
     from vantage.core import samples

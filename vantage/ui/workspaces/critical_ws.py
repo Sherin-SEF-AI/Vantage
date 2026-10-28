@@ -1032,6 +1032,11 @@ class CriticalPage(QWidget):
         ll.addWidget(self.bar)
         bl = QHBoxLayout()
         bl.addStretch(1)
+        self.b_carla = button('In CARLA…', 'ghost', 'play', 'Stand these targets in the CARLA simulator and compare '
+                                                           'what each camera sees there with this study (Simulate ▸ '
+                                                           'Critical targets in CARLA)')
+        self.b_carla.clicked.connect(lambda: self.ctx.window.set_page('critical_carla') if self.ctx.window else None)
+        bl.addWidget(self.b_carla)
         self.b_export = button('Export…', None, 'export', 'Every target, what each camera sees of it and its '
                                                           'envelopes as JSON and CSV, the mechanical sheet '
                                                           '(mounting_envelopes.csv, .png) and the plan')

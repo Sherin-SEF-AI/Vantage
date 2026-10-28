@@ -191,11 +191,11 @@ def test_desktop_shortcut(tmp_path, monkeypatch):
 
 # ---------------------------------------------------------------------------------------------------- the release
 def test_version_tops_the_changelog():
-    """The version (0.3.0: experiments, CARLA, validation, provenance) is the CHANGELOG's top entry, which the release job
+    """The version (0.4.0: CARLA ground truth, faults, detection quality, campaigns, live rig) is the CHANGELOG's top entry, which the release job
     publishes as the notes, with the sections a user needs before downloading."""
     from vantage import __version__
     release = _packaging_module('release')
-    assert __version__ == '0.3.0' == release.version()
+    assert __version__ == '0.4.0' == release.version()
     entries = release.changelog()
     assert entries and entries[0][0] == __version__
     assert len({v for v, _, _ in entries}) == len(entries)                  # one entry per version
@@ -258,7 +258,8 @@ def test_spec_data_files():
     # the CARLA bridge runs in CARLA's own Python from the bundle's folder: every source it imports is a plain file,
     # including each file vantage.sim.server.vantage_source() looks for
     import ast
-    bridge = {'vantage/__init__.py', 'vantage/core/__init__.py', 'vantage/core/rosbag.py', 'vantage/core/mathutil.py'}
+    bridge = {'vantage/__init__.py', 'vantage/core/__init__.py', 'vantage/core/rosbag.py', 'vantage/core/mathutil.py',
+              'vantage/core/groundtruth.py'}
     bridge |= {f'vantage/sim/{n}' for n in os.listdir(os.path.join(ROOT, 'vantage', 'sim')) if n.endswith('.py')}
     assert bridge <= src and not [f for f in src if f.endswith('.py') and f not in bridge
                                   and f != 'vantage/runtime/bev_stitch.py']

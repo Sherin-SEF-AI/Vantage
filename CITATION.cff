@@ -8,10 +8,10 @@ abstract: >-
   resolution, timing, data rates and calibration are analysed, and the rig is checked against live streams and
   recordings before and after the hardware is fitted.
 authors:
-  - name: "Sherin-SEF-AI"
+  - name: "Sherin Joseph Roy"
     website: "https://github.com/Sherin-SEF-AI"
-version: "0.3.0"
-date-released: "2026-10-27"
+version: "0.4.0"
+date-released: "2026-10-28"
 license: GPL-3.0-or-later
 repository-code: "https://github.com/Sherin-SEF-AI/Vantage"
 url: "https://sherin-sef-ai.github.io/Vantage/"

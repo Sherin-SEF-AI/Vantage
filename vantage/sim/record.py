@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import datetime as _dt
 import hashlib
+import io
 import json
 import os
 import shutil
 
 import numpy as np
 
+from ..core import groundtruth as GT
 from ..core import rosbag as RB
 from . import frames as FR
 
@@ -80,13 +82,28 @@ class Channel:
         self.written = {}              # planned index -> (timestamp us, filename, is_key, width, height, ego token)
         self.frames = 0
         self.bytes = 0
+        # injected faults (carla_bridge FAULT_KINDS): planned indices never written, a clock offset, a stuck window
+        self.dropped = set()
+        self.offset_s = 0.0
+        self.freeze = None             # (from_s, to_s)
+        self.range_bias = 0.0
+
+    def frozen(self, k: int) -> bool:
+        return self.freeze is not None and self.freeze[0] - 1e-9 <= float(self.stamps[k]) < self.freeze[1] - 1e-9
 
 
 class Recorder:
     """Writes one drive. events(): planned stamps per channel are given up front (the simulation's schedule)."""
 
-    def __init__(self, rig: dict, out_dir: str, plan: dict, run_key: str, extra: dict, nuscenes=True, rosbag=True):
+    def __init__(self, rig: dict, out_dir: str, plan: dict, run_key: str, extra: dict, nuscenes=True, rosbag=True,
+                 gt=None):
         self.rig = rig
+        self.gt = gt or {}
+        self.gt_frames = {}                           # camera tag -> [frame entry] (ground_truth/index.json)
+        self.gt_sweeps = {}                           # lidar tag -> [sweep entry]
+        self.coco_items = {}                          # camera tag -> [(frame entry, [RLE per object])]
+        self.lidarseg_rows, self.panoptic_rows = [], []
+        self.trajectory_t, self.trajectory_T = [], []   # every step's ego pose (clock-offset stamps' ego poses)
         self.out_dir = os.path.abspath(out_dir)
         out = rig['output']
         self.epoch_us = int(out['epoch_us'])
@@ -124,9 +141,15 @@ class Recorder:
     # ------------------------------------------------------------------ folders
     def _prepare(self):
         os.makedirs(self.out_dir, exist_ok=True)
+        gt_dir = os.path.join(self.out_dir, 'ground_truth')
+        if os.path.isdir(gt_dir) and os.path.isfile(os.path.join(gt_dir, 'index.json')):
+            shutil.rmtree(gt_dir, ignore_errors=True)   # (only one Vantage wrote: it holds its index)
+        if self.gt.get('enabled'):
+            os.makedirs(gt_dir, exist_ok=True)
+            self.created.append(gt_dir)
         if self.do_nus:
             if os.path.isdir(self.nus):
-                for sub in ('samples', 'sweeps', 'maps', VERSION):
+                for sub in ('samples', 'sweeps', 'maps', VERSION, GT.LIDARSEG_DIR, GT.PANOPTIC_DIR):
                     shutil.rmtree(os.path.join(self.nus, sub), ignore_errors=True)
             os.makedirs(os.path.join(self.nus, VERSION), exist_ok=True)
             with open(os.path.join(self.nus, MARKER), 'w') as fh:
@@ -170,7 +193,7 @@ class Recorder:
                 pass
         for path in self.created:
             if os.path.basename(path) == 'nuscenes':
-                for sub in ('samples', 'sweeps', 'maps', VERSION, MARKER):
+                for sub in ('samples', 'sweeps', 'maps', VERSION, MARKER, GT.LIDARSEG_DIR, GT.PANOPTIC_DIR):
                     q = os.path.join(path, sub)
                     if os.path.isdir(q):
                         shutil.rmtree(q, ignore_errors=True)
@@ -194,6 +217,46 @@ class Recorder:
             fh.write(data)
         self.nbytes['nuscenes'] += len(data)
 
+    def _out_file(self, rel, data):
+        """A file under the output folder (the ground truth), counted apart."""
+        path = os.path.join(self.out_dir, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'wb') as fh:
+            fh.write(data)
+        self.nbytes['ground_truth'] = self.nbytes.get('ground_truth', 0) + len(data)
+
+    # ------------------------------------------------------------------ the ego's trajectory
+    def pose(self, t: float, T_ego):
+        """The ego pose (global <- ego) at every step, for the ego poses of clock-offset stamps."""
+        self.trajectory_t.append(float(t))
+        self.trajectory_T.append(np.asarray(T_ego, float).copy())
+
+    def pose_at(self, t: float) -> np.ndarray:
+        """The ego pose at t, interpolated between the steps around it (position linearly, rotation by normalised
+        quaternion interpolation); the end poses beyond the trajectory."""
+        ts = self.trajectory_t
+        if not ts:
+            return np.eye(4)
+        j = int(np.searchsorted(ts, t))
+        if j <= 0:
+            return self.trajectory_T[0].copy()
+        if j >= len(ts):
+            return self.trajectory_T[-1].copy()
+        a = (t - ts[j - 1]) / max(ts[j] - ts[j - 1], 1e-12)
+        A, B = self.trajectory_T[j - 1], self.trajectory_T[j]
+        qa, qb = np.array(FR.quat_wxyz(A[:3, :3])), np.array(FR.quat_wxyz(B[:3, :3]))
+        if qa @ qb < 0:
+            qb = -qb
+        q = (1 - a) * qa + a * qb
+        q /= np.linalg.norm(q)
+        w, x, y, z = q
+        T = np.eye(4)
+        T[:3, :3] = [[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+                     [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+                     [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]]
+        T[:3, 3] = (1 - a) * A[:3, 3] + a * B[:3, 3]
+        return T
+
     # ------------------------------------------------------------------ sample_data
     def _sd(self, c: Channel, k: int, t: float, ext: str, data: bytes, T_ego, width=0, height=0) -> bool:
         """One sample_data file and its rows; T_ego: 4x4 global <- ego at t. True for a keyframe."""
@@ -205,16 +268,22 @@ class Recorder:
         rel = f'{"samples" if is_key else "sweeps"}/{c.channel}/{self.logname}__{c.channel}__{us}.{ext}'
         self._file(rel, data)
         tok = c.tokens[k]
-        self.ego_rows.append({'token': tok, 'timestamp': us, 'rotation': [_r(q, 10) for q in FR.quat_wxyz(T_ego[:3, :3])],
-                              'translation': [_r(q, 6) for q in T_ego[:3, 3]]})
+        if T_ego is None:                             # a clock-offset stamp: the ego pose at the stamp, at the end
+            self.ego_rows.append({'token': tok, 'timestamp': us, '_t': float(t)})
+        else:
+            self.ego_rows.append({'token': tok, 'timestamp': us,
+                                  'rotation': [_r(q, 10) for q in FR.quat_wxyz(T_ego[:3, :3])],
+                                  'translation': [_r(q, 6) for q in T_ego[:3, 3]]})
         c.written[k] = (us, rel, is_key, int(width), int(height), ext)
         return is_key
 
-    def camera(self, c: Channel, k: int, t: float, jpeg: bytes, T_ego):
+    def camera(self, c: Channel, k: int, t: float, jpeg: bytes, T_ego) -> str | None:
+        """Writes a frame; returns its image's path from the output folder (None without nuScenes)."""
         c.frames += 1
         c.bytes += len(jpeg)
         im = c.doc['image']
         self._sd(c, k, t, 'jpg', jpeg, T_ego, im['width'], im['height'])
+        rel = c.written.get(k, (None, None))[1] if self.do_nus else None
         if self.bag is not None:
             t_ns = self.ns(t)
             frame = c.doc['frame_id']
@@ -222,6 +291,50 @@ class Recorder:
             self.bag.write(c.topic + '/camera_info', t_ns, RB.camera_info(
                 im['width'], im['height'], im['distortion_model'], im['D'], np.array(im['K'], float), None, None,
                 t_ns, frame))
+        return f'nuscenes/{rel}' if rel else None
+
+    # ------------------------------------------------------------------ ground truth
+    def gt_camera(self, c: Channel, k: int, t: float, gt: dict, image_rel):
+        """A camera frame's label images and objects (ground_truth/<CHANNEL>/<name>.<kind>.png)."""
+        us = self.us(t)
+        chan = c.channel or ('CAM_' + c.doc['safe_tag'].upper())
+        base = os.path.splitext(os.path.basename(image_rel))[0] if image_rel else f'{self.logname}__{chan}__{us}'
+        paths = {}
+        for kind in ('semantic', 'instance', 'range'):
+            data = gt.get(kind)
+            if data is None:
+                paths[kind] = None
+                continue
+            rel = f'ground_truth/{chan}/{base}.{kind}.png'
+            self._out_file(rel, data)
+            paths[kind] = rel
+        frame = {'sample_data_token': c.tokens[k] if (self.do_nus and c.tokens) else None, 'timestamp': us,
+                 'image': image_rel, 'semantic': paths['semantic'], 'instance': paths['instance'],
+                 'range': paths['range'], 'objects': gt['objects']}
+        if self.bag is not None:
+            frame['bag'] = {'topic': c.topic + '/image_raw/compressed', 'stamp_ns': self.ns(t)}
+        if c.frozen(k):
+            frame['frozen'] = True                    # the image repeats an earlier frame; the labels are the truth
+        self.gt_frames.setdefault(c.doc['tag'], []).append(frame)
+        self.coco_items.setdefault(c.doc['tag'], []).append((frame, gt.get('coco') or []))
+
+    def gt_lidar(self, c: Channel, k: int, lidarseg: np.ndarray, panoptic: np.ndarray):
+        """A lidar sweep's nuScenes-lidarseg and -panoptic files (keyframes and sweeps alike)."""
+        if not (self.do_nus and c.channel and k in c.written):
+            return
+        tok = c.tokens[k]
+        rel_l = f'{GT.LIDARSEG_DIR}/{VERSION}/{tok}_lidarseg.bin'
+        rel_p = f'{GT.PANOPTIC_DIR}/{VERSION}/{tok}_panoptic.npz'
+        self._file(rel_l, np.ascontiguousarray(lidarseg, np.uint8).tobytes())
+        buf = io.BytesIO()
+        np.savez_compressed(buf, data=np.ascontiguousarray(panoptic, np.uint16))
+        self._file(rel_p, buf.getvalue())
+        self.lidarseg_rows.append({'token': tok, 'sample_data_token': tok, 'filename': rel_l})
+        self.panoptic_rows.append({'token': tok, 'sample_data_token': tok, 'filename': rel_p})
+        us, _, is_key = c.written[k][:3]
+        self.gt_sweeps.setdefault(c.doc['tag'], []).append({
+            'sample_data_token': tok, 'timestamp': us, 'is_key_frame': bool(is_key), 'points': int(len(lidarseg)),
+            'lidarseg': f'nuscenes/{rel_l}', 'panoptic': f'nuscenes/{rel_p}'})
 
     def lidar(self, c: Channel, k: int, t_end: float, xyz, intensity, ring, tpt, T_ego) -> bool:
         """A sweep stamped at its end; points in the sensor frame, tpt seconds from the sweep start."""
@@ -341,6 +454,16 @@ class Recorder:
         counts = {'samples': len(self.samples), 'sample_data': 0, 'ego_poses': len(self.ego_rows),
                   'annotations': len(annotations), 'instances': len(instances),
                   'bag_messages': bag_res['messages'] if bag_res else 0}
+        for row in self.ego_rows:                     # clock-offset stamps: the ego pose at the stamp
+            if '_t' in row:
+                T = self.pose_at(row.pop('_t'))
+                row['rotation'] = [_r(q, 10) for q in FR.quat_wxyz(T[:3, :3])]
+                row['translation'] = [_r(q, 6) for q in T[:3, 3]]
+        gt_doc = self._write_ground_truth(instances) if self.gt.get('enabled') else None
+        if gt_doc is not None:
+            counts['gt_frames'] = sum(len(v) for v in self.gt_frames.values())
+            counts['gt_objects'] = sum(len(f['objects']) for v in self.gt_frames.values() for f in v)
+            counts['lidarseg'] = len(self.lidarseg_rows)
         if self.do_nus:
             sd = []
             for c in self.chans:
@@ -374,8 +497,7 @@ class Recorder:
                 'attribute': [{'token': token('vantage', 'attribute', n), 'name': n, 'description': d}
                               for n, d in nus['attributes']],
                 'calibrated_sensor': self.extra['cal_rows'],
-                'category': [{'token': token('vantage', 'category', n), 'name': n, 'description': d}
-                             for n, d in nus['categories']],
+                'category': GT.nuscenes_categories(lambda n: token('vantage', 'category', n), nus['categories']),
                 'ego_pose': sorted(self.ego_rows, key=lambda r: r['timestamp']),
                 'instance': instances,
                 'log': [{'token': log_tok, 'logfile': self.logname,
@@ -398,6 +520,9 @@ class Recorder:
                 'sensor': self.extra['sensor_rows'],
                 'visibility': [{'token': t, 'level': lv, 'description': d} for t, lv, d in nus['visibility']],
             }
+            if self.lidarseg_rows:                    # nuScenes-lidarseg and -panoptic (devkit 1.1+)
+                tables['lidarseg'] = self.lidarseg_rows
+                tables['panoptic'] = self.panoptic_rows
             for name, rows in tables.items():
                 self._file(f'{VERSION}/{name}.json', (json.dumps(rows, indent=1) + '\n').encode('utf-8'))
         channels = [{'kind': c.kind, 'tag': c.doc['tag'], 'channel': c.channel, 'topic': c.topic, 'frames': c.frames,
@@ -418,7 +543,11 @@ class Recorder:
                         'rosbag': os.path.relpath(self.bag_dir, self.out_dir) if bag_res is not None else None},
             'settings': settings, 'scene': scene_doc, 'counts': counts,
             'bytes': {'nuscenes': self.nbytes['nuscenes'], 'rosbag': self.nbytes['rosbag'],
-                      'total': self.nbytes['nuscenes'] + self.nbytes['rosbag']},
+                      'ground_truth': self.nbytes.get('ground_truth', 0),
+                      'total': self.nbytes['nuscenes'] + self.nbytes['rosbag'] + self.nbytes.get('ground_truth', 0)},
+            'ground_truth': ({'index': GT.INDEX, 'schema': GT.SCHEMA, 'cameras': sorted(self.gt_frames),
+                              'lidars': sorted(self.gt_sweeps)} if gt_doc is not None else None),
+            'faults_injected': run_doc.get('faults_injected', []),
             'channels': channels, 'bag_topics': (bag_res or {}).get('topics', {}),
             'conventions': {
                 'global_frame': 'CARLA\'s world with y mirrored (x east, y north, z up, metres), shifted by '
@@ -455,11 +584,97 @@ class Recorder:
         return doc
 
 
+    def _write_ground_truth(self, instances) -> dict:
+        """ground_truth/index.json (vantage.ground_truth/1) and the COCO files; an object's instance token is kept
+        only when nuScenes has the instance (it was annotated at a keyframe)."""
+        valid = {r['token'] for r in instances}
+        cams = {}
+        chans = {c.doc['tag']: c for c in self.chans}
+        for tag, frames in self.gt_frames.items():
+            for f in frames:
+                for o in f['objects']:
+                    if o.get('instance_token') not in valid:
+                        o['instance_token'] = None
+            c = chans[tag]
+            im = c.doc['image']
+            cams[tag] = {'channel': c.channel or ('CAM_' + c.doc['safe_tag'].upper()), 'width': im['width'],
+                         'height': im['height'], 'frames': frames}
+        lids = {tag: {'channel': chans[tag].channel, 'sweeps': sw} for tag, sw in self.gt_sweeps.items()}
+        notes = list(self.gt.get('notes', []))
+        doc = {'schema': GT.SCHEMA, 'project': self.rig['project'], 'variant': self.rig['variant'],
+               'classes': GT.classes_doc(), 'cameras': cams, 'lidars': lids,
+               'nuscenes_lidarseg_categories': [{'index': i, 'name': n} for i, n, _ in GT.NUSCENES_LIDARSEG],
+               'conventions': {
+                   'paths': 'relative to this drive\'s folder (the one holding ground_truth/ and nuscenes/)',
+                   'pixels': 'output image pixel edges: pixel (i, j) covers [i, i+1) × [j, j+1); bbox [x0, y0, x1, y1]',
+                   'semantic': 'uint8 PNG, the class id per pixel (classes)',
+                   'instance': 'uint16 PNG, 0 = no object, else the object\'s id (objects[].id: stable over the drive; '
+                               'an actor the bridge spawned 1, 2, … in spawn order, a map object 1000 + its index)',
+                   'range': f'uint16 PNG = round(range_m · {GT.RANGE_SCALE:g}) along the pixel\'s own ray from the '
+                            f'camera\'s optical centre, 0 = nothing within {GT.RANGE_MAX_M:.1f} m; the views\' planar '
+                            'depth read at the ray\'s exact position (inverse depth interpolated within one surface, the ground\'s '
+                            'meshes (road, lines, sidewalk) one: exact on planes; the nearest view pixel\'s across '
+                            'an object\'s edge)',
+                   'box3d': 'vehicle frame (ISO 8855, rear axle on the ground) at the frame\'s capture time: centre, '
+                            'size [length, width, height] m, yaw degrees',
+                   'bbox_full': 'the 3D box\'s edges through the lens model, not clipped to the image (null when '
+                                'none of the box is within the lens\'s field)',
+                   'truncated': 'share of the 3D box\'s surface outside the image or the lens\'s field',
+                   'occluded': 'of the pixels whose ray meets the 3D box, the share hidden by something nearer (from '
+                               'the range image): hidden / (visible + hidden)',
+                   'range_m': 'camera optical centre to the 3D box\'s centre',
+                   'mount': 'the camera\'s actual mount: with a rotation or translation fault the labels match the '
+                            'image (the calibration states the plan)',
+                   'lidarseg': 'nuScenes-lidarseg: uint8 category index per point of the sweep\'s .pcd.bin (its '
+                               'order); panoptic: uint16 index · 1000 + instance (a spawned actor its spawn index, a '
+                               'map\'s parked vehicle 500 + its index, stuff 0)'},
+               'notes': notes}
+        self._out_file(GT.INDEX, (json.dumps(doc, indent=1, default=_json_default) + '\n').encode('utf-8'))
+        cats = [{'id': c[0], 'name': c[1], 'supercategory': c[3].split('.')[0]} for c in GT.CLASSES if c[0] > 0]
+        for tag, items in self.coco_items.items():
+            images, anns = [], []
+            for i, (f, rles) in enumerate(items):
+                images.append({'id': i + 1, 'file_name': f['image'] or f['semantic'], 'width': cams[tag]['width'],
+                               'height': cams[tag]['height'], 'sample_data_token': f['sample_data_token'],
+                               'timestamp': f['timestamp']})
+                for o, rle in zip(f['objects'], rles):
+                    x0, y0, x1, y1 = o['bbox']
+                    anns.append({'id': len(anns) + 1, 'image_id': i + 1, 'category_id': GT.CLASS_ID[o['class']],
+                                 'bbox': [x0, y0, x1 - x0, y1 - y0], 'area': o['pixels'], 'iscrowd': 0,
+                                 'segmentation': rle, 'object_id': o['id'], 'actor_id': o['actor_id'],
+                                 'instance_token': o['instance_token'], 'nuscenes_category': o['category'],
+                                 'occluded': o['occluded'], 'truncated': o['truncated']})
+            coco = {'info': {'description': f'Vantage CARLA drive {self.rig["project"]} / {self.rig["variant"]}, '
+                                            f'{cams[tag]["channel"]}', 'version': GT.SCHEMA},
+                    'images': images, 'annotations': anns, 'categories': cats}
+            self._out_file(f'ground_truth/coco/{cams[tag]["channel"]}.json',
+                           (json.dumps(coco, separators=(',', ':'), default=_json_default) + '\n').encode('utf-8'))
+        return doc
+
+
+def _json_default(o):
+    if isinstance(o, np.ndarray):
+        return o.tolist()
+    if isinstance(o, (np.floating, np.integer)):
+        return o.item()
+    return str(o)
+
+
 def _readme(doc, rec: Recorder) -> str:
     rows = '\n'.join(f'| {c["channel"] or c["topic"]} | {c["kind"]} | {c["frames"]} | {c["keyframes"]} |'
                      for c in doc['channels'])
     sc = doc['scene']
     lines = []
+    faults = doc.get('faults_injected') or []
+    if faults:
+        lines.append('**This drive is deliberately faulty** (fault injection with known answers): '
+                     + '; '.join(_fault_text(f) for f in faults) + '. The calibration (nuScenes calibrated_sensor, '
+                     'tf, dataset.json, the bag) states the PLAN, as a real faulty rig\'s would; run.json '
+                     '`faults_injected` has each fault as applied.\n')
+    if doc.get('ground_truth'):
+        lines.append(f'- Ground truth: `{doc["ground_truth"]["index"]}` (schema `{doc["ground_truth"]["schema"]}`): per '
+                     'camera frame semantic, instance and range images and the objects with their boxes; COCO files '
+                     'in `ground_truth/coco/`; nuScenes-lidarseg and -panoptic per lidar sweep.')
     if rec.do_nus:
         lines.append(f'- nuScenes: `nuscenes/` version `{VERSION}`: {doc["counts"]["samples"]} samples, '
                      f'{doc["counts"]["sample_data"]} sample_data, {doc["counts"]["annotations"]} annotations of '
@@ -468,6 +683,13 @@ def _readme(doc, rec: Recorder) -> str:
     if doc['written']['rosbag']:
         lines.append(f'- ROS 2 bag: `{doc["written"]["rosbag"]}/` ({doc["counts"]["bag_messages"]} messages): '
                      f'`ros2 bag info {doc["written"]["rosbag"]}`')
+    scen = (doc.get('carla') or {}).get('scenario') or {}
+    if scen.get('name') and scen['name'] != 'free_drive':
+        lines.append(f'- Scenario: {scen["name"]} ({", ".join(f"{k} {v}" for k, v in scen.get("params", {}).items())}); '
+                     f'events in run.json `scenario.events`.')
+    if (doc.get('carla') or {}).get('actors'):
+        lines.append(f'- An actors scene: {len(doc["carla"]["actors"])} actors around the ego, which stands still '
+                     '(run.json `actors`).')
     return f"""# Vantage CARLA drive · {doc['project']} / {doc['variant']}
 
 A {sc.get('duration_s', 0):g} s drive in CARLA {sc.get('carla_version', '')} ({sc.get('town', '')}, weather
@@ -486,3 +708,20 @@ measured of the vehicle, every note).
 
 {doc['assumptions']}
 """
+
+
+def _fault_text(f) -> str:
+    k = f.get('kind')
+    if k == 'rotation':
+        return f'{f["tag"]} rotated by {f["deg"]} ° (yaw, pitch, roll in its own frame)'
+    if k == 'translation':
+        return f'{f["tag"]} moved by {f["m"]} m'
+    if k == 'clock_offset':
+        return f'{f["tag"]} stamped {f["ms"]:+g} ms off'
+    if k == 'drop':
+        return f'{f["tag"]} dropped {len(f.get("dropped_frames", f.get("frames", [])))} frames'
+    if k == 'freeze':
+        return f'{f["tag"]} frozen from {f["from_s"]:g} s to {f["to_s"]:g} s'
+    if k == 'range_bias':
+        return f'{f["tag"]} ranges {f["m"]:+g} m'
+    return str(k)

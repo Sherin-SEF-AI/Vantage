@@ -34,6 +34,15 @@ Cameras
 * Lens drops (rain, snow): a heuristic share of the image under drops, ∝ √(rate) × the lens's dirt and spray exposure
   score (core.exposure's model, reused), times the share of the view the wipers do not clear for a camera behind the
   windscreen (core.wipers via core.materials' study). Drops do not shorten the range; they hide part of the image.
+* Against CARLA 0.9.16 (the round-8 campaign, re-run with core.simrig's measured fog calibration): in a 150 m fog
+  (its MOR measured for road users), YOLOX-S on the sample rig's fisheyes kept its pedestrian recall (0–20 m) but
+  lost cars at 10–20 m (46 → 19 %) and traffic lights at 10–20 m (71 → 53 %), where this model predicts no loss
+  (the cars' contrast range, 115 m, lies beyond their pixel range). The contrast threshold ε is the WMO's, for a
+  human observer and a large black object; a trained detector needs more, by an amount that depends on the detector,
+  the class and its size in the image, so ε is a setting and the far ranges in fog are an upper bound. CARLA's rain
+  is water on the lens (measured: contrast −12, −21, −34 % at every range for precipitation 30, 60, 100, the image
+  centre blurred to a third of its sharpness, no extinction with range): here that is the lens-drop share
+  (15–20 % of the front and rear fisheyes' images, 4–5 % of the side ones', at 25 mm/h on the sample), not range.
 
 Lidar
 -----
@@ -92,7 +101,9 @@ ASSUMPTIONS = (
     'and fog after ITU-R P.840 with Kunkel\'s liquid-water relation; a typical UN R112-shaped headlamp pattern; the '
     'camera\'s minimum luminance from a photon budget with a typical quantum efficiency, read noise and required '
     'signal-to-noise ratio; object contrasts and reflectances are typical. Lens drops and lidar false returns are '
-    'heuristics. Not modelled: veiling light from the own headlamps in fog, oncoming glare, wet-road reflections, '
+    'heuristics. The 5 % contrast threshold is a human observer\'s: a trained detector can lose objects of more '
+    'contrast (on CARLA, a 150 m fog cut YOLOX\'s car recall at 10–20 m from 46 to 19 %), so far ranges in fog are an '
+    'upper bound. Not modelled: veiling light from the own headlamps in fog, oncoming glare, wet-road reflections, '
     'spray from other vehicles, a wet radar fascia, rain clutter, street lights as visible sources.')
 
 # Typical inherent contrast against the background (day) and diffuse reflectance (night) per object class. A
