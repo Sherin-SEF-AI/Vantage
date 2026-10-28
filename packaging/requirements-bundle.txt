@@ -20,6 +20,8 @@ PyYAML==6.0.3
 opencv-python-headless==5.0.0.93   # the same OpenCV without its own GUI and the copy of Qt 5 that comes with it
 certifi==2026.10.23
 keyring==25.7.0                    # the assistant's API key in the OS keyring
+anthropic==2.3.0                   # the assistant's Claude provider (Anthropic's official Python SDK; it brings
+                                   # httpx2, pydantic, jiter, anyio, docstring-parser, sniffio, opentelemetry-api)
 zstandard==0.25.0                  # zstd-compressed ROS 2 bags (MCAP chunks, rosbag2 message compression)
 lz4==4.4.5                         # lz4-compressed MCAP chunks
 tzdata==2026.5                     # named time zones for the sun glare study where the system has none (Windows)

@@ -829,9 +829,16 @@ class CampaignPage(QWidget):
                 pass
         return None
 
-    def run(self) -> bool:
+    def run(self, plan=None) -> bool:
         if self.busy:
             return False
+        if isinstance(plan, dict):              # reached from a Copilot plan: only with its approval record
+            from ...assistant import copilot as CP
+            ok, why = CP.gate(self.ctx.store.project, plan, 'campaign', self.settings.to_dict())
+            if not ok:
+                self.status_text = why
+                self.refresh()
+                return False
         win = self.ctx.window
         other = win.carla_user('campaign') if win is not None and hasattr(win, 'carla_user') else ''
         if other:                                     # one client steps a synchronous CARLA world

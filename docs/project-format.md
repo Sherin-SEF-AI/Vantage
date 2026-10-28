@@ -194,6 +194,7 @@ drop mm, rear axle drop mm]), `live` and `heatmap` (view settings), and one obje
 | `detection` | detection quality per rig on simulated drives (`detection_eval.py`) |
 | `campaign` | simulation campaigns: injected faults, weather sweeps, rig comparisons (`simcampaign.py`) |
 | `critical_carla` | critical targets placed as CARLA scenes (`critical_carla.py`) |
+| `copilot` | the Copilot's approval records: the plans the user approved and their runs (`vantage/assistant/copilot.py`) |
 
 Each module's settings class (its `from_dict`) reads its object tolerantly: unknown keys are dropped, numbers clamped
 to the module's `LIMITS`, missing ones defaulted.
@@ -261,6 +262,19 @@ list; −1: a straight road chosen by the seed), `seed`, `duration_s` (1–10), 
 `vehicle` (`auto` or a `vehicle.*` blueprint), `actors` (target uid → `auto`, `standin`, `none` or
 `blueprint:<id>`).
 
+`analysis.copilot` (`vantage/assistant/copilot.py`): `plans`, the approval records of the plans the user approved
+(newest last, at most 60), each `vantage.copilot_record/1`: `id` (the plan's, kept by its revisions), `version`,
+`title`, `rationale`, `request` (the user's words that led to it), `provider` (`groq`, `claude`), `model`, `steps`
+(each `kind` — `carla_run`, `campaign`, `detection`, `critical_carla`, `carla_live`, `experiment`,
+`sample_dataset`, `study`, `export` —, `label`, `settings`: the full settings of the page that runs it as its settings
+class keeps them, `sources`: per flat key where the value came from, `request`, `default`, `copilot` or `limit`, with
+a reason, `warnings`, `notes`, `estimate`, and `settings_sha256` of `{kind, settings}`), `settings_sha256` of the
+steps' `[{kind, settings}]`, `approved_utc`, `status` (`approved`, `running`, `done`, `failed`, `cancelled`) and
+`runs` (each `started_utc`, `finished_utc`, `via`: `app`, `rerun` or `batch`, `status`, and per step `status`,
+`message`, `output`, `summary`). A page's Run reached from a plan runs only when the record verifies (both hashes
+match its steps) and its step's settings are exactly the page's; batch `--run-plan ID` runs one. The records are an
+audit trail: undo never removes one, and the content hash leaves them out (their runs change as they run).
+
 ### Boards, obstacles, rig, ECU
 
 A **target** (calibration board on the ground): `uid`, `name`, centre `x`, `y` (m), `yaw` (°), `pattern`
@@ -306,8 +320,9 @@ integral numbers as integers) of the project as Vantage holds it in memory, with
 its object (`variants[4].cameras[2]`: so a sample or template built twice hashes the same), the mesh arrays hashed by
 dtype, shape and bytes, and stream URLs without passwords. Left out as volatile or specific to one computer:
 `saved_at`, the `created` times, `log`, `active` (the variant is recorded on its own), the view settings
-`analysis.live` and `analysis.heatmap`, `analysis.assistant`, `analysis.automation`, `vehicle.source`, `photos.source`
-and `photos.current`. The block also gives one shorter hash per section (`vehicle`, `mesh`, `library`, `variants`,
+`analysis.live` and `analysis.heatmap`, `analysis.assistant`, `analysis.copilot`, `analysis.automation`,
+`vehicle.source`, `photos.source` and `photos.current`. The block's `plan` field names the Copilot plan that produced
+an output (`{plan, version, step}`), else null. The block also gives one shorter hash per section (`vehicle`, `mesh`, `library`, `variants`,
 `roi`, `analysis`, …), so `vantage PROJECT --reproduce RESULT.json` can say which part of a project differs.
 
 An imported or generated body is held in memory with 64-bit vertices and stored with 32-bit ones, so a project's

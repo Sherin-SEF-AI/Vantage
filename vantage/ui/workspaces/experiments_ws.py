@@ -1582,11 +1582,19 @@ class ExperimentsPage(QWidget):
                     return
             self.run(confirm=False)
 
-    def run(self, confirm=True) -> bool:
-        """Run the experiment (a background job). confirm: estimate first and ask when it will take long."""
+    def run(self, confirm=True, plan=None) -> bool:
+        """Run the experiment (a background job). confirm: estimate first and ask when it will take long. plan: the
+        Copilot's ticket when an approved plan runs it (no question asked: the plan was approved with its cost)."""
         win = self.ctx.window
         if self.busy:
             return False
+        if isinstance(plan, dict):              # reached from a Copilot plan: only with its approval record
+            from ...assistant import copilot as CP
+            ok, why = CP.gate(self.ctx.store.project, plan, 'experiment', self.settings.to_dict())
+            if not ok:
+                self.status_text = why
+                self.refresh()
+                return False
         p = self.ctx.store.project
         st = self.settings
         bad = EX.errors(p, st)

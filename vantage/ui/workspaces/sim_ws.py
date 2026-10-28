@@ -21,7 +21,7 @@ import time
 import traceback
 
 from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
-from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QFileDialog, QGridLayout, QHBoxLayout,
+from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
                              QHeaderView, QLineEdit, QPlainTextEdit, QProgressBar, QScrollArea, QSplitter,
                              QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
@@ -170,6 +170,24 @@ def _item(text, tip='', num=False):
         it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         it.setFont(mono(12))
     return it
+
+
+def _pane(w, min_h):
+    """A pane of the page's column, in a scroll area. The splitter sizes a pane by its minimumSizeHint, which knows
+    nothing of wrapped text's height for the pane's width, and the three panes' minimums together exceed a 900 px
+    window's column: the splitter then squeezed a pane below its contents and its layout drew the fixed-height tiles
+    over the heading below them (and the live panel's notes over its fault row). In a scroll area the contents keep
+    their real height (the scroll area honours height-for-width) and scroll when the pane is short. Across, they
+    still fit the column as before (a narrow column squeezes them a little rather than scrolling sideways)."""
+    sc = QScrollArea()
+    sc.setObjectName('panel')
+    sc.setFrameShape(QFrame.Shape.NoFrame)
+    sc.setWidgetResizable(True)
+    sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    w.setMinimumWidth(1)                    # an explicit minimum: the scroll area sizes it to the column's width
+    sc.setWidget(w)
+    sc.setMinimumHeight(min_h)
+    return sc
 
 
 class SimPage(QWidget):
@@ -492,10 +510,12 @@ class SimPage(QWidget):
         for c in range(len(SENSOR_COLS) - 1):
             hh.setSectionResizeMode(c, QHeaderView.ResizeMode.ResizeToContents)
         hh.setSectionResizeMode(len(SENSOR_COLS) - 1, QHeaderView.ResizeMode.Stretch)
+        self.table.setMinimumHeight(ROW_H * 4)          # the header and three sensors, whatever the notes take
         tl.addWidget(self.table, 1)
         self.p_status = label('', muted=True, small=True, wrap=True)
         tl.addWidget(self.p_status)
-        right.addWidget(tw)
+        self.top_area = _pane(tw, 76 + 16 + 8)              # at least the tiles
+        right.addWidget(self.top_area)
         gw = QWidget()
         gw.setObjectName('panel')
         gl = QVBoxLayout(gw)
@@ -565,13 +585,30 @@ class SimPage(QWidget):
                                        'images, the boxes and the objects, a lidar sweep from above')
         self.out_tabs.currentChanged.connect(self._out_tab)
         gl.addWidget(self.out_tabs, 1)
-        right.addWidget(gw)
+        right.addWidget(_pane(gw, 120))
         from .sim_live import SimLivePanel
         self.live = SimLivePanel(self.ctx, self)          # Live rig: the cameras streamed live, faults injected
-        right.addWidget(self.live)
+        right.addWidget(_pane(self.live, 120))
         right.setSizes([440, 300, 460])
         self.right = right
+        self._fitted = False
         return right
+
+    def _fit_right(self):
+        """Once the page has its real height: the plan pane gets the height its contents need at its width (at most
+        40 % of the column), the run and the live rig share the rest as before (300 : 460)."""
+        sizes = self.right.sizes()
+        total = sum(sizes)
+        if self._fitted or self.rig is None or total < 200 or not self.isVisible():
+            return
+        self._fitted = True
+        tw = self.top_area.widget()
+        need = tw.heightForWidth(self.top_area.viewport().width()) if tw.hasHeightForWidth() else -1
+        need = max(need, tw.minimumSizeHint().height(), self.top_area.minimumHeight())
+        top = min(need, int(0.4 * total))
+        rest = total - top
+        mid = int(rest * 300 / 760)
+        self.right.setSizes([top, mid, rest - mid])
 
     # ------------------------------------------------------------------ settings
     @property
@@ -1048,6 +1085,8 @@ class SimPage(QWidget):
             self.table.setItem(i, 4, _item(note, note))
         self.p_status.setText(' '.join(rig.notes))
         self._update_buttons()
+        if not self._fitted:
+            QTimer.singleShot(0, self._fit_right)       # the first plan: its notes decide the pane's height
 
     # ------------------------------------------------------------------ state
     def _on_change(self, *_):
@@ -1072,6 +1111,8 @@ class SimPage(QWidget):
 
     def showEvent(self, e):
         super().showEvent(e)
+        if not self._fitted:
+            QTimer.singleShot(0, self._fit_right)       # after the layout gives the page its height
         self.activate()
 
     def activate(self):
@@ -1231,10 +1272,19 @@ class SimPage(QWidget):
         self._update_buttons()
         return True
 
-    def run(self, folder=None) -> bool:
-        """Write the rig into <folder>/rig and run the bridge into folder as a background job."""
+    def run(self, folder=None, plan=None) -> bool:
+        """Write the rig into <folder>/rig and run the bridge into folder as a background job. plan: the Copilot's
+        ticket (assistant.copilot.ticket) when an approved plan runs it: refused unless the project holds the plan's
+        approval record with exactly these settings."""
         if self.busy:
             return False
+        if isinstance(plan, dict):              # reached from a Copilot plan: only with its approval record
+            from ...assistant import copilot as CP
+            ok, why = CP.gate(self.ctx.store.project, plan, 'carla_run', self.settings.to_dict())
+            if not ok:
+                self.g_status.setText(why)
+                self.ctx.msg(why, 6000)
+                return False
         if getattr(self, 'live', None) is not None and self.live.running:
             self.g_status.setText('Live streaming is on: stop it first (Live rig ▸ Stop live).')
             self.ctx.msg(self.g_status.text(), 5000)
@@ -1530,6 +1580,7 @@ class SimPage(QWidget):
         if len(sizes) == 3 and total > 0 and sizes[1] < 0.6 * total:
             live = int(total * 0.2) if self.live.running else 0
             top = int(total * 0.16)
+            self._fitted = True                         # an explicit layout: the first-show fit must not undo it
             self.right.setSizes([top, total - top - live, live])
 
     def show_live(self):
@@ -1537,6 +1588,7 @@ class SimPage(QWidget):
         sizes = self.right.sizes()
         if len(sizes) == 3 and sizes[2] < 200:
             total = sum(sizes)
+            self._fitted = True
             self.right.setSizes([int(total * 0.3), int(total * 0.25), total - int(total * 0.3) - int(total * 0.25)])
         self.live.setFocus()
 

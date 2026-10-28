@@ -1,17 +1,38 @@
-"""Where the API key lives: the GROQ_API_KEY environment variable if set, else the system keyring (when the optional
-keyring package and a keyring service are available), else a private file in the user's settings folder that only the
-user can read. Never in project files or the settings file."""
+"""Where the API keys live, one per provider (Groq, Claude): the provider's environment variable if set
+(GROQ_API_KEY, ANTHROPIC_API_KEY), else the system keyring (when the optional keyring package and a keyring service are
+available), else a private file in the user's settings folder that only the user can read. Never in project files or
+the settings file."""
 from __future__ import annotations
 
 import os
 import sys
 
-ENV = 'GROQ_API_KEY'
-SERVICE, ACCOUNT = 'Vantage', 'groq-api-key'
-FILE = 'assistant-key'
+PROVIDERS = ('groq', 'claude')
+# provider -> (environment variable, keyring account, file name in the settings folder)
+WHERE = {'groq': ('GROQ_API_KEY', 'groq-api-key', 'assistant-key'),
+         'claude': ('ANTHROPIC_API_KEY', 'anthropic-api-key', 'assistant-key-anthropic')}
+ENV = WHERE['groq'][0]
+SERVICE, ACCOUNT = 'Vantage', WHERE['groq'][1]
+FILE = WHERE['groq'][2]
 
-SOURCES = {'environment': f'from the {ENV} environment variable', 'keyring': 'in the system keyring',
-           'file': 'in a private file in your settings folder (readable only by you)'}
+
+def sources(provider='groq') -> dict:
+    env = WHERE[_p(provider)][0]
+    return {'environment': f'from the {env} environment variable', 'keyring': 'in the system keyring',
+            'file': 'in a private file in your settings folder (readable only by you)'}
+
+
+def _p(provider) -> str:
+    if provider not in WHERE:
+        raise KeyError(f'unknown provider {provider!r}')
+    return provider
+
+
+SOURCES = sources('groq')
+
+
+def env_name(provider='groq') -> str:
+    return WHERE[_p(provider)][0]
 
 
 def config_dir() -> str:
@@ -24,8 +45,8 @@ def config_dir() -> str:
     return os.path.join(root, 'Vantage')
 
 
-def _path() -> str:
-    return os.path.join(config_dir(), FILE)
+def _path(provider='groq') -> str:
+    return os.path.join(config_dir(), WHERE[_p(provider)][2])
 
 
 def _keyring():
@@ -41,21 +62,22 @@ def _keyring():
         return None
 
 
-def load() -> tuple[str | None, str | None]:
+def load(provider='groq') -> tuple[str | None, str | None]:
     """(key, source) — source is 'environment', 'keyring', 'file' or None."""
-    k = os.environ.get(ENV, '').strip()
+    env, account, _ = WHERE[_p(provider)]
+    k = os.environ.get(env, '').strip()
     if k:
         return k, 'environment'
     kr = _keyring()
     if kr is not None:
         try:
-            k = (kr.get_password(SERVICE, ACCOUNT) or '').strip()
+            k = (kr.get_password(SERVICE, account) or '').strip()
             if k:
                 return k, 'keyring'
         except Exception:
             pass
     try:
-        with open(_path(), encoding='utf-8') as f:
+        with open(_path(provider), encoding='utf-8') as f:
             k = f.read().strip()
         if k:
             return k, 'file'
@@ -64,19 +86,20 @@ def load() -> tuple[str | None, str | None]:
     return None, None
 
 
-def save(key: str) -> str:
+def save(key: str, provider='groq') -> str:
     """Store the key; returns where it went."""
     key = key.strip()
+    _, account, _ = WHERE[_p(provider)]
     kr = _keyring()
     if kr is not None:
         try:
-            kr.set_password(SERVICE, ACCOUNT, key)
-            _remove_file()
+            kr.set_password(SERVICE, account, key)
+            _remove_file(provider)
             return 'keyring'
         except Exception:
             pass
     os.makedirs(config_dir(), exist_ok=True)
-    path = _path()
+    path = _path(provider)
     tmp = path + '.tmp'
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, 'w', encoding='utf-8') as f:
@@ -89,19 +112,20 @@ def save(key: str) -> str:
     return 'file'
 
 
-def delete():
+def delete(provider='groq'):
+    _, account, _ = WHERE[_p(provider)]
     kr = _keyring()
     if kr is not None:
         try:
-            kr.delete_password(SERVICE, ACCOUNT)
+            kr.delete_password(SERVICE, account)
         except Exception:
             pass
-    _remove_file()
+    _remove_file(provider)
 
 
-def _remove_file():
+def _remove_file(provider='groq'):
     try:
-        os.remove(_path())
+        os.remove(_path(provider))
     except OSError:
         pass
 

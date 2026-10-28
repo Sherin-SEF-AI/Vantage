@@ -507,22 +507,27 @@ def test_working_folder_paths(tmp_path):
     assert workdir.put(st, '') == workdir.default()
 
 
-def test_assistant_writes_a_sample_dataset_into_the_working_folder(tmp_path):
+def test_a_sample_dataset_is_a_plan_step_the_user_approves(tmp_path):
+    """The assistant cannot write a dataset: it plans one (the Copilot's sample_dataset step, written after the user
+    approves it, tests/test_copilot.py); the dataset the page writes is one the drive-log check knows."""
+    from vantage.assistant import copilot as CP
     from vantage.assistant import tools as T
+    from vantage.core import dataset as DSET
     from vantage.core.analysis import Engine
+    assert 'generate_sample_dataset' not in T.BY_NAME and 'get_sample_dataset' in T.BY_NAME
     p = _rig()
     p.analysis.dataset = {'image_scale': 0.1}
-    shown = []
     tc = T.ToolContext(p.snapshot(), None, Engine(), working_dir=str(tmp_path))
-    tc.on_ui = shown.append
-    text, ok = T.run(tc, 'generate_sample_dataset', {'duration_s': 0.6, 'speed_kmh': 20})
-    out = json.loads(text)
-    assert ok and out['written'] and out['samples'] >= 1 and out['settings']['duration_s'] == 0.6
-    assert str(tmp_path) not in text and out['folder_in_working_folder'].startswith(os.path.join('tigor-ev-svm',
-                                                                                                'datasets'))
-    folder = tmp_path / out['folder_in_working_folder']
+    assert 'sample_dataset step' in json.loads(T.run(tc, 'get_sample_dataset', {})[0])['meaning']
+    st = CP.resolve_step(p, 'sample_dataset', [{'key': 'duration_s', 'value': '0.6', 'source': 'request',
+                                                'reason': 'short'},
+                                               {'key': 'speed_kmh', 'value': '20', 'source': 'request', 'reason': ''}],
+                         working_dir=str(tmp_path))
+    assert st.ok and st.settings['duration_s'] == 0.6 and st.settings['image_scale'] == 0.1
+    assert not any(os.scandir(tmp_path))                                  # planning writes nothing
+    folder = tmp_path / 'ds'
+    res = DSET.generate(p, Engine(), DSET.DatasetSettings.from_dict(st.settings), str(folder))
     assert (folder / 'nuscenes' / 'v1.0-vantage' / 'sample.json').is_file() and (folder / 'rosbag').is_dir()
-    assert shown and shown[0]['action'] == 'dataset_written' and shown[0]['result'].out_dir == str(folder)
     # the drive-log check knows a drive Vantage wrote: judged by the rate and size it was written with, it is clean
     from vantage.core import drivelog as DL
     bag = next((folder / 'rosbag').iterdir())
@@ -530,10 +535,7 @@ def test_assistant_writes_a_sample_dataset_into_the_working_folder(tmp_path):
     chk = DL.run(p, str(bag), engine=Engine())
     assert chk.metrics['streams_faulty'] == 0 and chk.metrics['faults'] == 0, [f['message'] for f in chk.findings]
     assert any('sample dataset Vantage wrote' in f['message'] for f in chk.findings)
-    # a second run makes a new folder; the first stays
-    out2 = json.loads(T.run(tc, 'generate_sample_dataset', {'duration_s': 0.6})[0])
-    assert out2['folder_in_working_folder'] != out['folder_in_working_folder'] and folder.is_dir()
-    assert T.BY_NAME['generate_sample_dataset'].kind == 'compute'
+    assert res.out_dir == str(folder)
 
 
 def test_dataset_page_and_preferences_use_the_working_folder(app, win, tmp_path):
@@ -823,17 +825,19 @@ def test_assistant_reads_experiments_validation_provenance_and_the_carla_rig(tmp
     from vantage.core import exporters as ex
     from vantage.core.analysis import Engine
     p = _rig()
-    for name in ('get_experiment', 'run_experiment', 'run_validation', 'list_validation_checks', 'check_result',
-                 'get_sim_rig'):
+    for name in ('get_experiment', 'run_validation', 'list_validation_checks', 'check_result', 'get_sim_rig'):
         assert name in T.BY_NAME, name
+    assert 'run_experiment' not in T.BY_NAME                    # an experiment runs as an approved plan's step
     tc = T.ToolContext(p.snapshot(), None, Engine(), working_dir=str(tmp_path))
     assert 'Experiments' in json.loads(T.run(tc, 'get_experiment', {})[0])['error']          # no page result
-    assert 'Add a factor' in json.loads(T.run(tc, 'run_experiment', {})[0])['error']          # none set up
     q = p.snapshot()
     _with_experiment(q)
-    tq = T.ToolContext(q, None, Engine(), working_dir=str(tmp_path))
-    assert 'more than 2' in json.loads(T.run(tq, 'run_experiment', {'max_points': 2})[0])['error']
-    e = json.loads(T.run(tq, 'run_experiment', {})[0])
+    from vantage.assistant import copilot as CP
+    from vantage.core import experiments as EXP
+    st = CP.resolve_step(q, 'experiment', [], working_dir=str(tmp_path))
+    assert st.ok and st.estimate['points'] == 3
+    assert not CP.resolve_step(p, 'experiment', [], working_dir=str(tmp_path)).ok            # none set up
+    e = EXP.summary(EXP.run(q, Engine(), EXP.settings_of(q)))
     assert e['points'] == 3 and e['design'] == 'oat' and {r['key'] for r in e['responses']} >= {'coverage.blind_m2'}
     page = {**e, 'stale': False}
     assert json.loads(T.run(T.ToolContext(q, None, Engine(), experiment=page), 'get_experiment', {})[0])['points'] == 3

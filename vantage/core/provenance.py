@@ -13,6 +13,8 @@ Every JSON object the exporters write (core.exporters) and every batch output (v
   section (to say what differs), and in batch mode input_sha256 when the command changed the project before the study
   ran (--import-calib, --calibrate-lens, --suspension-data, --condition, --fleet-import).
 - variant: name, 1-based index, uid and its own content hash.
+- plan: the Copilot plan that produced the output ({'plan', 'version', 'step'}: an approval record in the project's
+  analysis.copilot, vantage.assistant.copilot), else None.
 - study, output (the option or export format and the file's name inside its folder), settings (the study's own
   settings with every default filled in, plus the base analysis settings and the region of interest), seeds (every
   random seed in those settings), command (batch: the command line with every path reduced to its file name; the
@@ -24,7 +26,8 @@ sorted, no spaces, UTF-8, integral numbers written as integers (so 2 and 2.0 has
 place its object has in the project ('variants[4].cameras[2]': uids are random identities, so a sample or template
 built twice hashes the same), the vehicle mesh as its arrays (dtype, shape and bytes), stream URLs without passwords.
 Left out as volatile or machine-specific: saved_at, created times, the log, the active variant (recorded on its own),
-the view toggles (analysis.live, analysis.heatmap), the assistant's brief, the automation settings, where the vehicle
+the view toggles (analysis.live, analysis.heatmap), the assistant's brief, the Copilot's plan records (their runs'
+status changes as they run), the automation settings, where the vehicle
 model and the photos came from (vehicle.source, photos.source: paths of this machine) and the photo shown.
 
 Result hash (result_sha256): SHA-256 of the canonical JSON of the document without its provenance block, with every
@@ -86,7 +89,7 @@ _UID = re.compile(r'(?<![0-9a-f])[0-9a-f]{10}(?![0-9a-f])')
 # an absolute path inside a string (not a URL): its folders are dropped, its last part kept
 _ABS = re.compile(r'(?<![\w:/.\\-])(?:[A-Za-z]:[\\/]|~[\\/]|/)(?:[^\s"\'<>|*?\\/]+[\\/])+([^\s"\'<>|*?\\/]*)')
 _PATH_KEYS = ('path', 'source', 'file', 'folder', 'dir', 'out_dir', 'project_file')
-_UI_ONLY = ('live', 'heatmap', 'assistant', 'automation')
+_UI_ONLY = ('live', 'heatmap', 'assistant', 'automation', 'copilot')
 _BASE_ANALYSIS = ('cell_m', 'min_density', 'target_density', 'obstacle_mode', 'tol_deg', 'tol_mm', 'load_cases')
 
 # project.analysis key -> (core module, settings accessor): a function of the project or a settings class
@@ -743,12 +746,13 @@ def _utc(when=None) -> str:
 
 
 def block(project, doc=None, *, variant=None, study: str | None = None, export: dict | None = None,
-          output: dict | None = None, when=None, cache: dict | None = None) -> dict:
+          output: dict | None = None, when=None, cache: dict | None = None, plan: dict | None = None) -> dict:
     """The provenance block for doc (a JSON object) computed from project (None: a result of no project, such as a
     validation run: no project, variant or settings). study: a schema's name or an export format id (default: the
     doc's schema); export: {'format', 'frame', 'units', 'angles'} for an exported file; output: where it was written;
     when: the time of the run (aware datetime; default now); cache: a dict kept for the files of one export (the
-    project hash is computed once)."""
+    project hash is computed once); plan: the Copilot plan that produced it ({'plan', 'version', 'step'}; in batch
+    mode --run-plan sets it for the whole run)."""
     env = environment()
     b = current_batch()
     study = study or _schema_stem(doc) or ''
@@ -784,6 +788,7 @@ def block(project, doc=None, *, variant=None, study: str | None = None, export: 
         'output': output,
         'settings': settings,
         'seeds': seeds_of(settings),
+        'plan': plan_field(plan if plan is not None else (b.get('plan') if b else None)),
         'command': list(b['command']) if b else None,
         'inputs': [dict(x) for x in b['inputs']] if b else [],
         'created_utc': _utc(when),
@@ -793,6 +798,17 @@ def block(project, doc=None, *, variant=None, study: str | None = None, export: 
     }
     path = getattr(project, 'path', '') if project is not None else ''
     return scrub(out, extra=(os.path.dirname(os.path.abspath(path)),) if path else ())
+
+
+def plan_field(plan) -> dict | None:
+    """{'plan': id, 'version': n, 'step': i (0-based; -1: the plan as a whole)} or None."""
+    if not isinstance(plan, dict) or not plan.get('plan'):
+        return None
+    try:
+        return {'plan': str(plan['plan'])[:32], 'version': int(plan.get('version') or 0),
+                'step': int(plan.get('step', -1))}
+    except (TypeError, ValueError):
+        return None
 
 
 def stamp(doc: dict, project, **kw) -> dict:

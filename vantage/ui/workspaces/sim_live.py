@@ -412,9 +412,16 @@ class SimLivePanel(QWidget):
             b.setChecked(t in set(tags))
 
     # ------------------------------------------------------------------ start
-    def start(self) -> bool:
+    def start(self, plan=None) -> bool:
+        """Start streaming. plan: the Copilot's ticket when an approved plan starts it: refused unless the project
+        holds the plan's approval record for these cameras at this scale."""
         if self.running:
             return False
+        if isinstance(plan, dict):              # reached from a Copilot plan: only with its approval record
+            from ...assistant import copilot as CP
+            ok, why = CP.gate(self.ctx.store.project, plan, 'carla_live', {'cameras': self.chosen(), 'scale': round(self.scale_value(), 4)})
+            if not ok:
+                return self._refuse(why)
         p = self.ctx.store.project
         st = SR.settings_of(p)
         tags = self.chosen()

@@ -2,6 +2,160 @@
 
 Versions follow [semantic versioning](https://semver.org). The top entry is what the release notes on GitHub show.
 
+## 0.5.0 — 2026-10-28
+
+The assistant becomes the Copilot: say what you want run, and it answers with a plan you check, change and approve
+before anything runs. And it can now run on Claude as well as Groq.
+
+**What's new**
+
+- **The Copilot** (Window ▸ Assistant, `/plan …`; Window ▸ Copilot plans… lists every plan). Ask for a run in plain words, for example *a 10 s drive in Town10
+  at dusk in rain, 30 cars, 10 walkers, a pedestrian crossing, ground truth on, half-size images*, and the Copilot
+  answers with a **plan**: one or more steps, each a CARLA drive, a simulation campaign, detection quality, critical
+  targets in CARLA, the CARLA live rig (with faults on a schedule), a designed experiment, a sample dataset, a study
+  or an export. The plan card shows:
+  - every value, grouped by section, with where it came from (*your request*, *default*, *chosen by the Copilot*,
+    *forced by a limit*) and why;
+  - the documented limits that apply (*CARLA's lidar ignores rain*, *the as-built check cannot judge mounts on
+    CARLA*, an image scale lowered to fit the bridge's render budget);
+  - an estimate from Vantage's own estimators: CARLA minutes (from this machine's measured drives when there are
+    any), frames and labels, disk, drives, design points;
+  - what changed after a follow-up (*more rain*, *only F*, *halve it* revise the plan; they do not start over).
+
+  Every value is said in words, the page's own: *F pitch 25–45° (5 levels) · F lens h05r2, h03r2*, *Blind ground in
+  the ROI (m²), less is better*, *F turned pitch +1°*, *at 2 s: QR frozen* (the JSON stays in the value's tooltip).
+  *Forced by a limit* means the page changed what was asked (*F pitch 25–95° → 25–90°*, *asked 200; the scenario
+  allows 5–90, so 90*); the page filling in its defaults or writing a camera's tag as its uid is still *your request*.
+  A setting the step's design, scenario or study does not use (samples on a full factorial, a free drive's traffic in
+  a scenario, the step-rate range with a fixed step) is greyed in its own *Not used* section, never forced and not a
+  decision of the plan. A follow-up's changes are listed one per setting: *Traffic 30 → 20 vehicles*, *Weather
+  HardRainSunset → Vantage fog*, *Factors: added F lens h05r2, h03r2*.
+
+  Double-click a value to change it with the page's own kind of field. A plan that does not validate (the page's
+  rules, the render budget, the memory free, a CARLA port of 2000–2010 that is not the project's own, a missing
+  detector model) cannot be approved.
+- **Nothing runs until you approve.** **Approve and run** checks the plan again, writes an approval record into the
+  project (`analysis.copilot`: the plan, your words, the provider and model, the settings and their SHA-256, the time,
+  the status) and runs each step through its page's own Run; a CARLA step starts the CARLA page's server as the page
+  does, on the project's port. A page's Run reached from a plan refuses without the record. An approved plan never
+  changes: an edit is a new version that needs approval again. Undo never removes a record. **Open on its page** fills
+  the page's fields as one undo step and runs nothing.
+- **Runs you can trace and repeat.** Every output's provenance names the plan (a new `plan` field), and the plan's
+  folder holds `copilot_plan.json` with each step's result. **More ▸ Copilot plans** runs an approved plan again from
+  its stored settings without asking the model; batch **`--run-plan ID [OUT_DIR]`** does the same headless (exit 10
+  when there is no approved, intact plan of that ID or a step no longer validates).
+- **Claude as a provider** (Preferences ▸ Assistant ▸ Provider), beside Groq, each with its own key, models, usage and
+  cost. Claude runs through Anthropic's official Python SDK: `claude-opus-5-5` by default or `claude-sonnet-5-5`,
+  adaptive thinking at effort high when planning and medium for questions, strict tools whose every input is checked
+  before it runs, prompt caching (the usage line shows the cache reads), an append-only conversation that passes the
+  model's thinking back unchanged, and, on by default, Anthropic's server-side fallback when a request is declined. A
+  refusal is shown with its reason and runs nothing.
+- **Privacy and cost.** **More ▸ What was sent** shows the last request as it left, with this computer's folders shown
+  as `~`; images, recordings, point clouds, keys, stream passwords and the automation command are never sent. The
+  first question to a provider asks once. The usage line shows tokens and an estimated cost per conversation (Claude's
+  prices built in with their source date; Groq's entered in Preferences); an optional daily token cap stops sending
+  when it is used up.
+
+**Changed**
+
+- A Copilot plan puts traffic asked for with a CARLA scenario into the scenario's own Other traffic, the one the
+  drive uses: *30 cars and a pedestrian crossing* drives with 30 cars (the page's Traffic is a free drive's and shows
+  as not used).
+- The assistant no longer writes a sample dataset or runs an experiment itself: both are plan steps you approve.
+- The downloads include Anthropic's Python SDK (`anthropic` 2.3.0). From source: `pip install --user
+  "anthropic==2.3.0"` or the new `[claude]` extra (where the system Python is externally managed, as on Ubuntu 23.04
+  and later, `pip install --user` is refused: use a virtual environment); without it the Groq provider works as
+  before.
+
+**Fixed**
+
+- The assistant's lookups showed `&#x27;` for an apostrophe in their names (*Read the Copilot's catalogue*).
+
+- The CARLA page's top tiles no longer cover *The rig in CARLA* (and the live rig's notes no longer cover its fault
+  row) in a 900 px window or with the assistant open: each pane of the column scrolls when it is short, and the plan
+  pane gets the height its notes need when the first plan shows.
+
+**What it does**
+
+Everything in 0.4.0 and before (below): place cameras, lidars, radars, GNSS antennas and IMUs on the vehicle and the
+rig; prove what they record; calibrate and check them against recordings; hand the calibration to the data pipeline;
+drive the rig in CARLA with ground truth, faults, detection quality and campaigns. Now the Copilot plans any of it
+from your words, and nothing runs until you approve the plan. Free software under the GNU General Public License,
+version 3 or later.
+
+**Downloads**
+
+| System | File | Needs |
+|---|---|---|
+| Windows | `Vantage-0.5.0-windows-x64-setup.exe` (installer), or the `.zip` | Windows 10 or 11, x64 |
+| macOS | `Vantage-0.5.0-macos-arm64.zip` | macOS 14 or later, Apple silicon |
+| Linux x86_64 | `Vantage-0.5.0-linux-x86_64.tar.gz` | glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer) |
+| Linux arm64 | `Vantage-0.5.0-linux-arm64.tar.gz` | glibc 2.35 or later: NVIDIA Jetson Orin with JetPack 6, Ubuntu 22.04 arm64 and newer |
+
+`SHA256SUMS.txt` lists each file's SHA-256. Every bundle carries its own Python and libraries and can check itself
+on your machine: the *Vantage self-test* entry in the Start menu on Windows, `vantage --self-test` on Linux once
+installed, `/Applications/Vantage.app/Contents/MacOS/vantage-cli --self-test` on macOS. On a Jetson, GStreamer
+camera pipelines need `gst-launch-1.0` (JetPack installs it; else `sudo apt install gstreamer1.0-tools`).
+
+**Unsigned builds**
+
+The downloads are not code-signed, so the system warns the first time:
+
+- **Windows** (SmartScreen, "Windows protected your PC"): choose *More info*, then *Run anyway*.
+- **macOS** ("Vantage cannot be opened" or "Apple could not verify Vantage"): open *System Settings ▸ Privacy &
+  Security* and choose *Open Anyway* next to the message about Vantage (on macOS 14 you can instead Control-click the
+  app and choose *Open*). If macOS says the app is damaged, run in Terminal:
+  `xattr -dr com.apple.quarantine /Applications/Vantage.app`.
+- **Linux**: nothing to approve; check the download against `SHA256SUMS.txt`.
+
+**Known limits**
+
+- Validated in simulation and on synthetic captures only; the first fitted rig will tell how close the planned poses,
+  the installation check and the calibrations come in practice.
+- Lidar, radar, GNSS and IMU figures in the library are nominal datasheet values (the radars are typical classes, not
+  specific products); check them against your units.
+- The drift indicator of the live rig health is an indicator, not a measurement: it misses a rotation along a body
+  edge (a mirror camera's yaw) and featureless edges, and frame times are when frames reached Vantage, not sensor time.
+- STEP import needs the optional gmsh package, which the downloads do not include: run from source with
+  `pip install .[step]` for it.
+- No Intel Mac or Windows on Arm build (Windows on Arm runs the x64 build emulated); run from source there.
+- The Linux arm64 bundle needs glibc 2.35 or later: JetPack 6 on a Jetson (Ubuntu 22.04), not JetPack 5 (Ubuntu
+  20.04; run from source there). It carries Qt 6.7 rather than 6.11, because PyQt6's later arm64 builds need Ubuntu
+  24.04; the whole test suite passes on both. It was built and self-tested on GitHub's arm64 machines, not yet on a
+  Jetson; on a Jetson, OpenGL comes from NVIDIA's driver.
+- Without OpenGL 2.1 the 3D view falls back to a slower software renderer.
+- ROS 2 bags: rosbag2's whole-file compression (`.mcap.zstd`) is not read (`ros2 bag decompress` first), nor XCDR2
+  messages.
+- The assistant sends what it reads of the design (figures, issues, the project brief) to Groq; it is off until you
+  give it a key, and it proposes design changes for you to apply rather than making them.
+- Since 0.2.0: the road surface is used by the coverage analysis and the road study; the optimiser, tolerance study,
+  perception range, stitched-objects study, installation check and critical targets still assume flat ground. The
+  material, weather, headlamp and cable figures are typical values with their sources stated, not measurements of your
+  vehicle, parts or units. The automation command runs with your own permissions, unsandboxed.
+- Since 0.3.0: CARLA's cameras need a GPU. CARLA's lidar has no reflectivity and its radar no cross-section.
+- Since 0.4.0:
+  - CARLA renders a fisheye's views one after another: all six live fisheyes reach about 2.8 fps. One camera at a small
+    size keeps real time.
+  - **CARLA's car is not your vehicle's body.** The as-built check cannot judge mounts on a CARLA drive. The cameras
+    share a small common pitch of −0.04 to −0.10° there.
+  - **CARLA's lidar and radar ignore weather.**
+  - **Ground truth at full image size** exceeds the render budget, so use image scale 0.5.
+  - **The fog calibration** covers one town and CARLA 0.9.16.
+  - **Detector:** YOLOX sees fisheye images as they are; pinhole views cut from them find more cars.
+- New in 0.5.0:
+  - Groq's prices are not bundled: a Groq conversation shows a cost only once you enter Groq's prices in Preferences.
+  - An estimate is an estimate: CARLA minutes come from this machine's earlier drives (the development machine's
+    figures before the first one), the disk from the sample dataset's estimator for the same rig with the ground truth
+    as uncompressed PNG (an upper bound).
+  - In batch mode a CARLA step needs a server already running (`--run-plan` never starts one), and a live-rig step with
+    no duration watches until 5 s after its last fault (10 s without faults).
+  - Claude's effort changes between a planning turn and a question; Anthropic documents that a change of the top-level
+    effort invalidates the prompt cache of the conversation's messages, so such a turn reads fewer cached tokens.
+  - Tested against Groq's real API in a recorded session and against a local stand-in of Anthropic's API: the first
+    real Claude request (its betas, strict tools and streamed tool input) has not been made in development.
+- The validation suite checks the models on the cases it builds against independent references; it does not
+  replace measuring a fitted rig.
+
 ## 0.4.0 — 2026-10-28
 
 The rig in CARLA as a source of labelled training data and as a test bench: ground truth for every sensor, faults

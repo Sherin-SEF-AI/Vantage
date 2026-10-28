@@ -44,6 +44,7 @@
     vantage project.vantage --detection-quality detection/ --detection-recording drive/ --detection-download
     vantage project.vantage --campaign campaign/ --campaign-template fault_detectability
     vantage project.vantage --critical-carla critical/
+    vantage project.vantage --run-plan P3F9A21C plan-run/
 
 Every JSON object a batch run writes (and every JSON the exporters write) carries a "provenance" block
 (core.provenance): the version and code, the libraries, the project's and variant's content hashes, the study's
@@ -80,8 +81,10 @@ truth), 8 when the detector model is missing or does not verify (or its download
 design has nothing to drive or names a sensor the variant lacks, 8 when its detection check needs the detector model
 and it is missing, 9 when a drive failed or is still to do (run it again: what is done is reused). With
 --critical-carla: 3 when a camera view disagrees with the study (each printed with why), 2 when there is nothing to
-compare (no target can be stood in CARLA, no drive in --critical-carla-drives). Ctrl+C during a CARLA run returns 130
-after CARLA was tidied up.
+compare (no target can be stood in CARLA, no drive in --critical-carla-drives). With --run-plan: 10 when the project
+holds no approved, intact plan of that ID or a step no longer validates (approve it again in the app), else the first
+failing step's own code (a step reporting findings, 3, 5 or 6, lets the plan go on; any other stops it). Ctrl+C during
+a CARLA run returns 130 after CARLA was tidied up.
 """
 from __future__ import annotations
 
@@ -833,11 +836,177 @@ def _run(args) -> int:
         code = max(code, _critical_carla(project, args))
     if args.campaign:
         code = max(code, _campaign(project, args))
+    if args.run_plan:
+        code = max(code, _run_plan(project, eng, res, issues, args))
     if args.validate is not None:
         code = max(code, _validate(args, project, eng))
     if args.save:
         project.save(args.save)
         print(f'saved {args.save}', file=sys.stderr)
+    return code
+
+
+RUN_PLAN_FINDINGS = (3, 5, 6)           # a step's exit code that reports findings: the plan goes on to the next step
+
+
+def _run_plan(project, eng, res, issues, args) -> int:
+    """--run-plan ID [OUT_DIR]: run a Copilot plan the user approved in the app, from the approval record in the
+    project (analysis.copilot): each step's stored settings written into the project and run through the batch
+    option that runs that kind (--carla-run, --campaign, --detection-quality, --critical-carla, --carla-live,
+    --experiment, --dataset, a study, --export), into OUT_DIR/step-<n>-<kind>; no model is asked. ID is the plan's id,
+    with :VERSION for an earlier version (default: the newest approved one). Exit 10 when there is no approved, intact
+    record of it or a step no longer validates (approve it again in the app); else the first failing step's own exit
+    code: a step that reports findings (3, 5, 6) lets the plan go on, any other stops it; 0 when every step ran."""
+    import argparse
+    import copy as _copy
+    from . import workdir
+    from .assistant import copilot as CP
+    from .core import provenance as PV
+    spec = args.run_plan
+    pid, _, ver = str(spec[0]).partition(':')
+    try:
+        version = int(ver) if ver else None
+    except ValueError:
+        raise SystemExit(f'--run-plan takes ID or ID:VERSION, not {spec[0]!r}.')
+    if len(spec) > 2:
+        raise SystemExit('--run-plan takes the plan\'s ID and at most one OUT_DIR.')
+    rec = CP.find(project, pid, version)
+    if rec is None:
+        known = ', '.join(f'{r.get("id")} v{r.get("version")}' for r in CP.records(project)[-6:]) or 'none'
+        print(f'run plan: no approved plan {spec[0]} in this project (approved: {known})', file=sys.stderr)
+        return CP.EXIT_REFUSED
+    if not CP.verify(rec):
+        print(f'run plan: the approval record of {rec.get("id")} v{rec.get("version")} does not verify (changed after '
+              'approval): approve the plan again in the app', file=sys.stderr)
+        return CP.EXIT_REFUSED
+    try:
+        from PyQt6.QtCore import QSettings
+        base = workdir.get(QSettings('Vantage', 'Vantage'))
+    except Exception:                       # noqa: BLE001 — no settings: the default working folder
+        base = workdir.default()
+    out = os.path.abspath(spec[1]) if len(spec) > 1 else CP.run_folder(project, rec, base)
+    os.makedirs(out, exist_ok=True)
+    b = PV.current_batch()
+    run = CP.start_run(rec, 'batch')
+    print(f'run plan: {rec["id"]} v{rec["version"]} "{rec["title"]}", {len(rec["steps"])} steps → {out}',
+          file=sys.stderr)
+    code, status = 0, 'done'
+    for i, s in enumerate(rec['steps']):
+        kind, settings = s['kind'], _copy.deepcopy(s['settings'])
+        tk = CP.ticket(rec, i)
+        if b is not None:
+            b['plan'] = tk                  # every output's provenance names the plan and the step
+        st_run = run['steps'][i]
+        st_run['status'] = 'running'
+        again = CP.revalidate(project, CP.Plan(rec['id'], rec['version'], rec['title'], steps=[CP.Step.from_dict(s)]),
+                              base, eng)
+        if not again.ok:
+            for e in again.steps[0].errors:
+                print(f'run plan: step {i + 1}: {e}', file=sys.stderr)
+            st_run.update(status='failed', message=' '.join(again.steps[0].errors[:3]))
+            code, status = CP.EXIT_REFUSED, 'failed'
+            break
+        slot = CP.KIND_SLOT.get(kind)
+        if slot:
+            setattr(project.analysis, slot, _copy.deepcopy(settings))
+        now = CP.defaults(kind, project) if slot else settings
+        ok, why = CP.gate(project, tk, kind, now)
+        if not ok:
+            print(f'run plan: step {i + 1}: {why}', file=sys.stderr)
+            st_run.update(status='failed', message=why)
+            code, status = CP.EXIT_REFUSED, 'failed'
+            break
+        step_out = os.path.join(out, f'step-{i + 1}-{kind}')
+        ns = argparse.Namespace(**vars(args))
+        for k in ('carla_run', 'carla_rig', 'campaign', 'detection_quality', 'critical_carla', 'carla_live',
+                  'experiment', 'carla_scenario', 'carla_scenario_params', 'carla_faults', 'carla_actors',
+                  'carla_ground_truth', 'carla_walkers', 'carla_spawn_point', 'detection_recording',
+                  'campaign_template', 'campaign_phase', 'critical_carla_drives', 'live_cameras', 'live_scale',
+                  'live_fault'):
+            setattr(ns, k, None)
+        ns.detection_download = False
+        print(f'run plan: step {i + 1} of {len(rec["steps"])}: {CP.KIND_LABEL.get(kind, kind)}'
+              + (f' · {s.get("label")}' if s.get('label') else ''), file=sys.stderr)
+        rc = 0
+        if kind == 'carla_run':
+            ns.carla_run = step_out
+            rc = _carla_run(project, ns)
+        elif kind == 'campaign':
+            ns.campaign = step_out
+            rc = _campaign(project, ns)
+        elif kind == 'detection':
+            ns.detection_quality = step_out
+            rc = _detection(project, ns)
+        elif kind == 'critical_carla':
+            ns.critical_carla = step_out
+            rc = _critical_carla(project, ns)
+        elif kind == 'carla_live':
+            last = max([float(f['at_s']) for f in settings.get('faults') or []], default=0.0)
+            secs = float(settings.get('duration_s') or 0.0) or (last + 5.0 if settings.get('faults') else 10.0)
+            ns.carla_live = [f'{secs:g}', step_out]
+            ns.live_cameras = ','.join(settings.get('cameras') or [])
+            ns.live_scale = float(settings.get('scale') or CP.LIVE_SCALE)
+            ns.live_fault = [f'{f["at_s"]:g}:{json.dumps(f["fault"])}' for f in settings.get('faults') or []]
+            rc = _carla_live(project, ns)
+        elif kind == 'experiment':
+            from .core import experiments as EXP
+            os.makedirs(step_out, exist_ok=True)
+            spec_path = os.path.join(step_out, 'experiment_spec.json')
+            with open(spec_path, 'w', encoding='utf-8') as fh:
+                json.dump({'schema': EXP.SPEC_SCHEMA, 'settings': settings}, fh, indent=1)
+            ns.experiment = (spec_path, step_out)
+            rc = _experiment(project, eng, ns)
+        elif kind == 'sample_dataset':
+            from .core import dataset as DSET
+            try:
+                dres = DSET.generate(project, eng, None, step_out,
+                                     lambda f, text='': print(f'\r  dataset {f * 100:5.1f} % {text:<28}', end='',
+                                                              file=sys.stderr))
+                print(file=sys.stderr)
+                _stamped([os.path.join(dres.out_dir, 'dataset.json')], '--run-plan', dres.out_dir)
+                sm = DSET.summary(dres)
+                print(f'  dataset: {sm["samples"]} samples, {sm["size_mb"]["total"]} MB → {dres.out_dir}',
+                      file=sys.stderr)
+            except ValueError as e:
+                print(f'  dataset: {e}', file=sys.stderr)
+                rc = 4
+        elif kind == 'study':
+            from .assistant import tools as T
+            tc = T.ToolContext(project, res, eng, issues)
+            sdoc = T.run_study(tc, **{k: v for k, v in settings.items() if v not in (None, '')})
+            if 'error' in sdoc:
+                print(f'  study: {sdoc["error"]}', file=sys.stderr)
+                rc = 4
+            else:
+                os.makedirs(step_out, exist_ok=True)
+                _out({'schema': 'vantage.copilot_study/1', **sdoc}, os.path.join(step_out, f'{settings["study"]}.json'))
+        elif kind == 'export':
+            from .core import exporters as ex
+            dest = os.path.join(base, settings['folder']) if settings.get('folder') else step_out
+            opts = ex.ExportOptions(out_dir=dest, frame=settings['frame'], units=settings['units'],
+                                    angles=settings['angles'], issues=issues, engine=eng)
+            try:
+                for pth in ex.export(settings['formats'], project, res, opts):
+                    print(pth)
+            except ValueError as e:
+                print(f'  export: {e}', file=sys.stderr)
+                rc = 4
+        st_run.update(status='done' if rc in (0,) + RUN_PLAN_FINDINGS else 'failed',
+                      message='' if rc == 0 else f'exit {rc}', output=os.path.basename(step_out))
+        if rc and not code:
+            code = rc
+        if rc and rc not in RUN_PLAN_FINDINGS:
+            status = 'failed' if rc != 130 else 'cancelled'
+            break
+    for st_run in run['steps']:
+        if st_run['status'] == 'pending':
+            st_run['status'] = 'not run'
+    CP.finish_run(rec, status)
+    path = CP.write_run_file(project, rec, out)
+    if b is not None:
+        b['plan'] = None                    # what this command writes after the plan is not the plan's
+    print(path)
+    print(f'run plan: {status}' + (f' (exit {code})' if code else ''), file=sys.stderr)
     return code
 
 
@@ -1491,7 +1660,7 @@ _PRODUCERS = ('analyse', 'load_cases', 'blind_volume', 'perception_range', 'sens
               'campaign', 'carla_live')
 # what a re-run never does: save a project, write files beside the result, watch a project, run a command
 _NEVER = ('report', 'lut_out', 'as_built', 'calib_out', 'save', 'watch', 'on_change', 'reproduce', 'tolerance',
-          'carla_run', 'carla_python', 'detection_download')
+          'carla_run', 'carla_python', 'detection_download', 'run_plan')
 # producers whose input comes first and their output second
 _IN_OUT = ('drive_log', 'as_built_check', 'experiment', 'ground_truth_summary')
 
@@ -1935,6 +2104,12 @@ def add_arguments(ap):
                         'when no server answers or a drive fails')
     g.add_argument('--critical-carla-drives', metavar='DIR',
                    help='with --critical-carla: compare the drives in DIR (recorded before) without CARLA')
+    g.add_argument('--run-plan', nargs='+', metavar=('ID', 'OUT_DIR'),
+                   help='run a Copilot plan approved in the app (its approval record in the project; ID or '
+                        'ID:VERSION) from its stored settings, each step through the option that runs it, into OUT_DIR '
+                        '(default: the plan\'s folder in the working folder); no model is asked; exit 10 when there '
+                        'is no approved, intact plan of that ID or a step no longer validates, else the first failing '
+                        'step\'s own code (3, 5, 6 let the plan go on)')
     g.add_argument('--reproduce', nargs='+', metavar=('RESULT.json', 'OUT.json'),
                    help='run again what wrote RESULT.json (a batch output or an exported JSON, from its provenance '
                         'block; give the same project first, input files next to the result or in this folder) and '
@@ -1961,4 +2136,5 @@ def wanted(args) -> bool:
                                                                'weather', 'watch', 'on_change', 'ci_templates',
                                                                'reproduce', 'experiment', 'validate', 'carla_rig',
                                                                'carla_run', 'carla_live', 'ground_truth_summary',
-                                                               'detection_quality', 'campaign', 'critical_carla'))
+                                                               'detection_quality', 'campaign', 'critical_carla',
+                                                               'run_plan'))

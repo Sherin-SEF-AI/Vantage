@@ -742,11 +742,18 @@ class CriticalCarlaPage(QWidget):
             self.status_text = 'Failed: ' + msg.splitlines()[0]
         self.refresh()
 
-    def run(self) -> bool:
+    def run(self, plan=None) -> bool:
         """Every scene driven in CARLA (drives already there from the same rig reused) and compared: a background
         job."""
         if self.busy:
             return False
+        if isinstance(plan, dict):              # reached from a Copilot plan: only with its approval record
+            from ...assistant import copilot as CP
+            ok, why = CP.gate(self.ctx.store.project, plan, 'critical_carla', self.settings.to_dict())
+            if not ok:
+                self.status_text = why
+                self.refresh()
+                return False
         from ...sim import server as SV
         win = self.ctx.window
         other = win.carla_user('critical_carla') if win is not None and hasattr(win, 'carla_user') else ''

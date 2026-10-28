@@ -342,6 +342,8 @@ class AnalysisSettings:
     detection: dict = field(default_factory=dict)     # detection quality per rig (core.detection_eval)
     campaign: dict = field(default_factory=dict)      # simulation campaigns: faults, weather sweeps (core.simcampaign)
     critical_carla: dict = field(default_factory=dict)   # critical targets as CARLA scenes (core.critical_carla)
+    copilot: dict = field(default_factory=dict)       # the Copilot's approval records: {'plans': [record, ...]}
+                                                      # (vantage.assistant.copilot; an audit trail: undo keeps it)
 
     def to_dict(self):
         return asdict(self)
@@ -637,7 +639,9 @@ class Project:
         elif key == 'roi':
             self.roi = ROI.from_dict(state)
         elif key == 'analysis':
+            keep = self.analysis.copilot           # approval records are an audit trail: undo never drops one
             self.analysis = AnalysisSettings.from_dict(state)
+            self.analysis.copilot = keep
         elif key == 'targets':
             self.targets = [Target.from_dict(t) for t in state['targets']]
             self.target_settings = TargetSettings.from_dict(state['settings'])

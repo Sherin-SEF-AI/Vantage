@@ -646,10 +646,18 @@ class DatasetPage(QWidget):
             self._show_where()
             self.ctx.msg(f'Working folder: {short_path(folder)}', 4000)
 
-    def generate(self, folder=None) -> bool:
-        """Write the dataset into folder (default: a new folder in the working folder) as a background job."""
+    def generate(self, folder=None, plan=None) -> bool:
+        """Write the dataset into folder (default: a new folder in the working folder) as a background job. plan: the
+        Copilot's ticket when an approved plan runs it."""
         if self.busy:
             return False
+        if isinstance(plan, dict):              # reached from a Copilot plan: only with its approval record
+            from ...assistant import copilot as CP
+            ok, why = CP.gate(self.ctx.store.project, plan, 'sample_dataset', self.settings.to_dict())
+            if not ok:
+                self.g_status.setText(why)
+                self.ctx.msg(why, 6000)
+                return False
         if folder is None:
             folder = workdir.dataset_dir(self.ctx.store.project, base=self.working())
         p = self.ctx.store.project

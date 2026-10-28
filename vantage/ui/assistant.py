@@ -1,31 +1,38 @@
-"""The Assistant dock: a chat with a Groq-hosted model about the open design.
+"""The Assistant dock: a chat about the open design with a cloud model (Groq or Claude, chosen in Preferences ▸
+Assistant), and the Copilot: plans for runs that the user approves before anything runs.
 
-The model reads the design only through vantage.assistant.tools (text summaries; never the vehicle model, images or
-files) and can only *propose* camera changes: each proposal shows the change and its predicted effect, and the user
-applies it as one undo step or discards it. The API key is set in Preferences ▸ Assistant."""
+The model reads the design only through vantage.assistant.tools (text summaries; never the vehicle model, images,
+recordings, point clouds or files) and can only *propose*: camera changes (each shows its predicted effect, and the
+user applies it as one undo step or discards it) and plans (the plan card shows every value with where it came from,
+the warnings and the estimate; Approve and run writes an approval record into the project and runs each step through
+the page's own Run, which refuses a plan without its record). The API keys are set in Preferences ▸ Assistant."""
 from __future__ import annotations
 
+import copy
 import html
 import json
 import math
+import os
 import re
 import threading
 import time
 
 from PyQt6.QtCore import QObject, QPointF, QRectF, QSize, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices, QFont, QFontMetricsF, QPainter, QPen, QTextOption
-from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
-                             QLabel, QLayout, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QScrollArea,
+from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QGridLayout,
+                             QHBoxLayout, QLabel, QLayout, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QScrollArea,
                              QSizePolicy, QTextBrowser, QToolButton, QVBoxLayout, QWidget)
 
 from .. import workdir
 from ..assistant import agent as A
 from ..assistant import client as C
+from ..assistant import copilot as CP
+from ..assistant import providers as PR
 from ..assistant import secrets as K
 from ..assistant import tools as T
 from . import icons
 from .theme import THEME, mono, sans
-from .widgets import SegmentedControl, button, label, tool_button
+from .widgets import ScrubSpinBox, SegmentedControl, button, label, tool_button
 
 SUGGESTIONS = [
     ('Summarise this design', 'Summarise this design: coverage, weak spots and what to look at first.'),
@@ -36,6 +43,8 @@ SUGGESTIONS = [
     ('Explain the issues', 'Explain each item in the Issues list and suggest a fix for each.'),
     ('Write a design review', 'Write a short design review of this camera rig for a colleague: strengths, risks, '
                               'and recommended changes with their measured effect.'),
+    ('Plan a CARLA drive', 'Plan a 10 s CARLA drive in Town10 at dusk in light rain with 30 cars and ground truth on, '
+                           'for my approval.'),
 ]
 AGENT_GOALS = [
     ('Close every blind patch', 'Get the blind ground to zero without lowering the minimum density anywhere. Keep '
@@ -55,6 +64,7 @@ SLASH = [  # command, what it does, completion
     ('/show', 'Show something in the app, e.g. /show the blind spots', '/show '),
     ('/review', 'Write a design review', '/review'),
     ('/issues', 'Explain the issues and suggest fixes', '/issues'),
+    ('/plan', 'Plan a run for your approval, e.g. /plan a 10 s drive in Town10 in rain', '/plan '),
     ('/brief', 'Edit the project brief', '/brief'),
     ('/new', 'Start a new conversation', '/new'),
 ]
@@ -74,6 +84,8 @@ def expand_slash(text: str):
         return '', None, 'brief'
     if cmd == '/goal':
         return (rest, True, None) if rest else ('', None, 'agent')
+    if cmd == '/plan':
+        return (f'Plan this for my approval with propose_plan: {rest}' if rest else ''), False, None
     if cmd in ('/optimise', '/optimize'):
         tag = rest.split()[0] if rest else ''
         what = f'camera {tag}' if tag else 'the camera that limits the design most'
@@ -113,11 +125,13 @@ PAGES = {'viewports': '3D and top views', 'camviews': 'Camera views', 'tolerance
 
 # ============================================================================================ controller
 class AssistantController(QObject):
-    """Settings, the conversation and its worker thread, and the proposals (applied on the UI thread)."""
+    """Settings, the conversation and its worker thread, the proposals (applied on the UI thread) and the Copilot's
+    plans (approved, recorded and run on the UI thread)."""
     event = pyqtSignal(object)          # agent.Event, on the UI thread, for the current conversation only
     changed = pyqtSignal()              # set-up, model or busy state
     reset = pyqtSignal()                # a new conversation started
     proposal_state = pyqtSignal(int)    # a proposal was applied, discarded, undone or measured
+    plan_state = pyqtSignal(str)        # a plan was edited, approved, rejected, or one of its steps moved on
     agent_changed = pyqtSignal(bool)
     _raw = pyqtSignal(object)           # (thread id, Event) from the worker
     _ui_req = pyqtSignal(object)        # (thread id, request) from a show_in_app call
@@ -126,11 +140,14 @@ class AssistantController(QObject):
         super().__init__()
         self.ctx = ctx
         self.s = ctx.settings
-        self.key, self.key_source = K.load()
-        self.session: A.Session | None = None
+        self.keys = {p: K.load(p) for p in PR.PROVIDERS}
+        self.session: A.BaseSession | None = None
         self.busy = False
         self.status = ''
         self.proposals: dict = {}       # id -> {'p': Proposal, 'state': str, 'undo_index': int}
+        self.plans: dict = {}           # plan id -> {'plan': the latest copilot.Plan, 'versions': {n: Plan}}
+        self.current_plan: CP.Plan | None = None    # the plan on screen a follow-up revises
+        self.runner: PlanRunner | None = None
         self.last_question = ''
         self._tid = 0
         self._cancel = None
@@ -144,15 +161,36 @@ class AssistantController(QObject):
 
     # ---------------------------------------------------------------- settings
     @property
+    def provider(self) -> str:
+        v = str(self.s.value('assistant/provider', PR.GROQ) or PR.GROQ)
+        return v if v in PR.PROVIDERS else PR.GROQ
+
+    @property
+    def key(self) -> str | None:
+        return self.keys.get(self.provider, (None, None))[0]
+
+    @property
+    def key_source(self) -> str | None:
+        return self.keys.get(self.provider, (None, None))[1]
+
+    @property
     def enabled(self) -> bool:
         return self.s.value('assistant/enabled', False, type=bool)
 
     @property
+    def available(self) -> bool:
+        """The provider can be used here (Claude needs the anthropic SDK)."""
+        return self.provider != PR.CLAUDE or PR.claude_available()
+
+    @property
     def ready(self) -> bool:
-        return self.enabled and bool(self.key)
+        return self.enabled and bool(self.key) and self.available
 
     @property
     def model(self) -> str:
+        if self.provider == PR.CLAUDE:
+            m = str(self.s.value('assistant/claude_model', PR.CLAUDE_DEFAULT) or PR.CLAUDE_DEFAULT)
+            return m if m in PR.CLAUDE_MODELS else PR.CLAUDE_DEFAULT
         return str(self.s.value('assistant/model', C.DEFAULT_MODEL) or C.DEFAULT_MODEL)
 
     @property
@@ -163,7 +201,31 @@ class AssistantController(QObject):
     def show_reasoning(self) -> bool:
         return self.s.value('assistant/show_reasoning', True, type=bool)
 
+    @property
+    def fallbacks(self) -> bool:
+        return self.s.value('assistant/claude_fallbacks', True, type=bool)
+
+    @property
+    def daily_cap(self) -> int:
+        try:
+            return max(0, int(self.s.value('assistant/daily_cap', 0) or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    def groq_prices(self) -> dict | None:
+        try:
+            i = float(self.s.value('assistant/groq_price_in', 0) or 0)
+            o = float(self.s.value('assistant/groq_price_out', 0) or 0)
+        except (TypeError, ValueError):
+            return None
+        return {'input': i, 'output': o} if i > 0 and o > 0 else None
+
+    def info(self, model=None):
+        return PR.model_info(self.provider, model or self.model)
+
     def models(self) -> list:
+        if self.provider == PR.CLAUDE:
+            return list(PR.CLAUDE_MODELS)
         v = self.s.value('assistant/models', [])
         ids = [v] if isinstance(v, str) else list(v or [])
         ids = [i for i in ids if i]
@@ -175,26 +237,73 @@ class AssistantController(QObject):
 
     def set_option(self, **kw):
         for k, v in kw.items():
+            if k == 'model' and self.provider == PR.CLAUDE:
+                k = 'claude_model'
             self.s.setValue(f'assistant/{k}', v)
         if self.session is not None:
-            self.session.settings = self._settings()
+            if self.session.provider != self.provider:
+                self.new_chat()
+            else:
+                self.session.settings = self._settings()
         self.changed.emit()
 
     def reload(self):
-        """After Preferences: re-read the key and the model."""
-        self.key, self.key_source = K.load()
+        """After Preferences: re-read the keys, the provider and the model (another provider: a new conversation)."""
+        self.keys = {p: K.load(p) for p in PR.PROVIDERS}
         if self.session is not None:
-            self.session.client = C.Client(self.key or '')
-            self.session.settings = self._settings()
+            if self.session.provider != self.provider:
+                self.new_chat()
+            elif self.provider == PR.GROQ:
+                self.session.client = C.Client(self.key or '')
+                self.session.settings = self._settings()
+            else:
+                self.session = None          # a new client with the new key; the history stays with the old one
         self.changed.emit()
 
-    def _settings(self, agent=False) -> A.Settings:
-        return A.Settings(self.model, self.effort, self.show_reasoning, agent=agent)
+    def _settings(self, agent=False, planning=False) -> A.Settings:
+        return A.Settings(self.model, self.effort, self.show_reasoning, agent=agent, planning=planning,
+                          fallbacks=self.fallbacks)
 
     def set_agent(self, on: bool):
         if on != self.agent_mode:
             self.agent_mode = bool(on)
             self.agent_changed.emit(self.agent_mode)
+
+    # ---------------------------------------------------------------- consent and the daily cap
+    def consented(self, provider=None) -> bool:
+        return self.s.value(f'assistant/consent_{provider or self.provider}', False, type=bool)
+
+    def give_consent(self, provider=None):
+        self.s.setValue(f'assistant/consent_{provider or self.provider}', True)
+        self.changed.emit()
+
+    def tokens_today(self, provider=None) -> int:
+        day = time.strftime('%Y-%m-%d')
+        if str(self.s.value('assistant/day', '')) != day:
+            return 0
+        if provider is None:
+            return sum(self.tokens_today(p) for p in PR.PROVIDERS)
+        try:
+            return int(self.s.value(f'assistant/day_tokens_{provider}', 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _count_tokens(self, provider, n):
+        day = time.strftime('%Y-%m-%d')
+        if str(self.s.value('assistant/day', '')) != day:
+            self.s.setValue('assistant/day', day)
+            for p in PR.PROVIDERS:
+                self.s.setValue(f'assistant/day_tokens_{p}', 0)
+        self.s.setValue(f'assistant/day_tokens_{provider}', self.tokens_today(provider) + int(n))
+
+    def blocked(self) -> str:
+        """Why a question cannot be sent now ('' when it can): consent not given, the daily cap reached."""
+        if not self.consented():
+            return 'consent'
+        cap = self.daily_cap
+        if cap and self.tokens_today() >= cap:
+            return 'cap'
+        return ''
 
     # ---------------------------------------------------------------- project brief (saved with the project)
     def brief(self) -> str:
@@ -213,15 +322,21 @@ class AssistantController(QObject):
     # ---------------------------------------------------------------- conversation
     def ask(self, text: str, agent: bool | None = None) -> bool:
         text = text.strip()
-        if not text or self.busy or not self.ready:
+        if not text or self.busy or not self.ready or self.blocked():
             return False
         agent = self.agent_mode if agent is None else agent
-        if self.session is None:
-            self.session = A.Session(self.key, self._settings(agent))
-        self.session.settings = self._settings(agent)
+        planning = CP.is_plan_request(text) or self.current_plan is not None and self.current_plan.status == 'draft'
+        if self.session is None or self.session.provider != self.provider:
+            try:
+                self.session = A.new_session(self.provider, self.key, self._settings(agent, planning))
+            except C.ApiError as e:
+                self._fail_now(e)
+                return False
+        self.session.settings = self._settings(agent, planning)
         self.agent_running = agent
         tc = self._context()
         tc.agent = agent
+        tc.request = text
         tid_next = self._tid + 1
         tc.on_ui = lambda req: self._post_ui(tid_next, req)
         self.last_question = text
@@ -230,12 +345,17 @@ class AssistantController(QObject):
         self._tid += 1
         tid, session, cancel = self._tid, self.session, self._cancel
         self.busy, self.status, self._started = True, '', time.perf_counter()
+        self._tokens0 = session.usage.tokens
         self.changed.emit()
 
         def work():
             session.run_turn(text, tc, lambda ev: self._post(tid, ev), cancel)
         threading.Thread(target=work, daemon=True, name='assistant').start()
         return True
+
+    def _fail_now(self, e):
+        self.event.emit(A.Event('error', {'kind': e.kind, 'message': e.message}))
+        self.event.emit(A.Event('done', {'ok': False}))
 
     def _post(self, tid, ev):
         try:
@@ -277,11 +397,6 @@ class AssistantController(QObject):
             elif a == 'open_page':
                 if req.get('page') in w.PAGE_DOCKS:
                     w.set_page(req['page'])
-            elif a == 'dataset_written':
-                res = req.get('result')
-                w.page('dataset').show_written(res)            # the page shows it (and the project's log has it)
-                if res is not None:
-                    self.ctx.msg(f'The assistant wrote a sample dataset to {res.out_dir}', 8000)
             elif a == 'propose_requirements':
                 w.set_page('requirements')
                 w.page('requirements').show_proposals(req.get('items', []))
@@ -295,11 +410,16 @@ class AssistantController(QObject):
         if ev.kind == 'proposal':
             p = ev.data['proposal']
             self.proposals[p.id] = {'p': p, 'state': 'pending', 'undo_index': -1}
+        elif ev.kind == 'copilot':
+            self._add_plan(ev.data['plan'])
         elif ev.kind == 'status':
             self.status = ev.data['text']
         elif ev.kind == 'done':
             self.busy, self.status = False, ''
             ev.data['seconds'] = time.perf_counter() - self._started
+            if self.session is not None:
+                self._count_tokens(self.session.provider, max(0, self.session.usage.tokens -
+                                                              getattr(self, '_tokens0', 0)))
         self.event.emit(ev)
         if ev.kind == 'done':
             self.changed.emit()
@@ -310,13 +430,17 @@ class AssistantController(QObject):
             return
         self._cancel.set()
         old = self.session
-        fresh = A.Session(self.key, self._settings())
-        fresh.messages = list(old.messages[:self._mark])
-        fresh.usage = old.usage
+        try:
+            fresh = A.new_session(old.provider, self.key, self._settings())
+        except C.ApiError:
+            fresh = None
+        if fresh is not None:
+            fresh.messages = list(old.messages[:self._mark])
+            fresh.usage = old.usage
         self.session = fresh
         self._tid += 1
         self.busy, self.status = False, ''
-        self.event.emit(A.Event('done', {'ok': False, 'stopped': True, 'usage': fresh.usage,
+        self.event.emit(A.Event('done', {'ok': False, 'stopped': True, 'usage': old.usage,
                                          'seconds': time.perf_counter() - self._started}))
         self.changed.emit()
 
@@ -327,6 +451,8 @@ class AssistantController(QObject):
             self.busy = False
         self.session = None
         self.proposals.clear()
+        self.plans.clear()
+        self.current_plan = None
         self.last_question = ''
         self.reset.emit()
         self.changed.emit()
@@ -336,6 +462,17 @@ class AssistantController(QObject):
 
     def usage(self):
         return self.session.usage if self.session is not None else None
+
+    def usage_line(self) -> str:
+        u = self.usage()
+        return u.line(self.groq_prices()) if u is not None else ''
+
+    def last_sent(self) -> str:
+        """The last request's payload as it was sent, masked (keys are never in it; machine paths shown as ~)."""
+        s = self.session
+        if s is None or s.last_payload is None:
+            return ''
+        return A.mask(json.dumps(s.last_payload, indent=1, ensure_ascii=False, default=str))
 
     def _context(self) -> T.ToolContext:
         ctx, st, an = self.ctx, self.ctx.store, self.ctx.analysis
@@ -350,7 +487,8 @@ class AssistantController(QObject):
                              drive_log=self._drive_log(), asbuilt=self._asbuilt(), experiment=self._experiment(),
                              detection=self._page_summary('detection'), campaign=self._page_summary('campaign'),
                              critical_carla=self._page_summary('critical_carla'), carla_live=self._carla_live(),
-                             working_dir=workdir.get(self.ctx.settings))
+                             working_dir=workdir.get(self.ctx.settings), plan=self.current_plan,
+                             provider=self.provider, model=self.model)
 
     def _rig_health(self):
         w = self.ctx.window
@@ -524,6 +662,475 @@ class AssistantController(QObject):
             self.ctx.store.undo.undo()
             self.proposals[pid]['state'] = 'pending'
             self.proposal_state.emit(pid)
+
+    # ---------------------------------------------------------------- the Copilot's plans
+    def _add_plan(self, plan: CP.Plan):
+        e = self.plans.setdefault(plan.id, {'versions': {}})
+        e['versions'][plan.version] = plan
+        e['plan'] = plan
+        if plan.parent is not None and plan.parent in e['versions']:
+            old = e['versions'][plan.parent]
+            if old.status == 'draft':
+                old.status = 'superseded'
+                self.plan_state.emit(plan.id)
+        self.current_plan = plan
+
+    def plan_of(self, pid, version=None) -> CP.Plan | None:
+        e = self.plans.get(pid)
+        if e is None:
+            return None
+        return e['versions'].get(version) if version is not None else e.get('plan')
+
+    def _engine(self):
+        try:
+            return self.ctx.analysis.engine.share()
+        except Exception:                                   # noqa: BLE001
+            return None
+
+    def edit_plan(self, plan: CP.Plan, step: int, key: str, value):
+        """The user changed a value on the plan card: a new version (an approved plan never changes), checked by the
+        page's own rules; (the new plan, '') or (None, why not)."""
+        try:
+            new = CP.edit_value(self.ctx.store.project.snapshot(), plan, step, key, value,
+                                workdir.get(self.ctx.settings), self._engine())
+        except (IndexError, KeyError, ValueError) as e:
+            return None, str(e)
+        new.provider, new.model = plan.provider, plan.model
+        if plan.status == 'draft':
+            plan.status = 'superseded'
+        self._add_plan(new)
+        self.plan_state.emit(plan.id)
+        return new, ''
+
+    def reject_plan(self, plan: CP.Plan):
+        if plan.status == 'draft':
+            plan.status = 'rejected'
+            if self.current_plan is plan:
+                self.current_plan = None
+            self.plan_state.emit(plan.id)
+
+    def _apply_step(self, rec_or_plan, i, text):
+        """Write a step's settings into its page's slot of the project as one undo step (nothing runs)."""
+        steps = rec_or_plan['steps'] if isinstance(rec_or_plan, dict) else [s.to_dict() for s in rec_or_plan.steps]
+        s = steps[i]
+        slot = CP.KIND_SLOT.get(s['kind'])
+        if slot is None:
+            return False
+        settings = copy.deepcopy(s['settings'])
+
+        def fn(p):
+            setattr(p.analysis, slot, settings)
+        self.ctx.store.edit('analysis', fn, text)
+        return True
+
+    def open_on_page(self, plan: CP.Plan, step: int = 0) -> bool:
+        """Fill the step's page with its settings as one undo step and show the page; runs nothing."""
+        if not 0 <= step < len(plan.steps):
+            return False
+        s = plan.steps[step]
+        page = CP.KIND_PAGE.get(s.kind)
+        self._apply_step(plan, step, f'Copilot · {plan.title} · on its page')
+        w = self.ctx.window
+        if page and w is not None:
+            w.set_page(page)
+            if s.kind == 'carla_live':
+                live = getattr(w.page('sim'), 'live', None)
+                if live is not None:
+                    live.set_cameras(s.settings.get('cameras') or [])
+                    live.scale.set_value(100.0 * float(s.settings.get('scale', CP.LIVE_SCALE)))
+        self.ctx.msg(f'{CP.KIND_LABEL[s.kind]} filled in from the plan (Edit ▸ Undo reverts it); nothing was run.', 6000)
+        return True
+
+    def approve_plan(self, plan: CP.Plan) -> str:
+        """Approve and run: validated again now, the approval record written into the project (with the first step's
+        settings, one undo step; undo never removes the record), then the steps run through their pages' own Run.
+        '' when it started, else why not."""
+        if self.runner is not None and self.runner.running:
+            return 'Another plan is running: wait for it or stop it first.'
+        p = self.ctx.store.project
+        rec, errors = CP.approve(p.snapshot(), plan, plan.provider or self.provider, plan.model or self.model,
+                                 workdir.get(self.ctx.settings), self._engine())
+        if rec is None:
+            return ' '.join(errors[:3])
+
+        def fn(pj):
+            CP.add_record(pj, rec)
+        self.ctx.store.edit('analysis', fn, f'Copilot · approved plan {rec["id"]} v{rec["version"]}')
+        plan.status = 'approved'
+        self.plan_state.emit(plan.id)
+        return self.run_record(rec['id'], rec['version'], via='app')
+
+    def run_record(self, pid, version, via='rerun') -> str:
+        """Run a plan from its approval record (the stored settings; the model is not asked)."""
+        if self.runner is not None and self.runner.running:
+            return 'Another plan is running: wait for it or stop it first.'
+        rec = CP.find(self.ctx.store.project, pid, version)
+        if rec is None or not CP.verify(rec):
+            return 'No intact approval record of that plan in this project.'
+        self.runner = PlanRunner(self, pid, int(version), via)
+        self.runner.progress.connect(lambda pid=pid: self.plan_state.emit(pid))
+        self.runner.finished.connect(lambda _st, pid=pid: self.plan_state.emit(pid))
+        self.runner.start()
+        return ''
+
+    def stop_plan(self):
+        if self.runner is not None and self.runner.running:
+            self.runner.cancel()
+
+    def records(self) -> list:
+        return list(reversed(CP.records(self.ctx.store.project)))
+
+
+# ============================================================================================ running a plan
+class PlanRunner(QObject):
+    """Runs an approved plan's steps one after another on the UI thread, each through its page's own Run with the
+    plan's ticket (the page refuses it without the approval record), polling the page until it is done; the record's
+    run and copilot_plan.json in the plan's folder say how each step went."""
+    progress = pyqtSignal()
+    finished = pyqtSignal(str)
+    POLL_MS = 250
+    SERVER_WAIT_S = 300.0
+
+    def __init__(self, ctl, pid, version, via='app'):
+        super().__init__()
+        self.ctl, self.ctx = ctl, ctl.ctx
+        self.id, self.version, self.via = pid, int(version), via
+        self.i = -1
+        self.running = False
+        self.status = ''
+        self._job = None
+        self._phase = ''
+        self._t0 = 0.0
+        self._project = ctl.ctx.store.project
+        self.folder = ''
+        self.timer = QTimer(self)
+        self.timer.setInterval(self.POLL_MS)
+        self.timer.timeout.connect(self._tick)
+
+    def rec(self):
+        return CP.find(self._project, self.id, self.version)
+
+    def start(self):
+        rec = self.rec()
+        self.running = True
+        CP.start_run(rec, self.via)
+        self.folder = CP.run_folder(self._project, rec, workdir.get(self.ctx.settings))
+        self._write()
+        self._next()
+
+    def _write(self, step=None, summary=None):
+        try:
+            CP.write_run_file(self._project, self.rec(), self.folder, step, summary)
+        except OSError as e:
+            self.ctx.msg(f'The plan\'s record could not be written to its folder: {e}', 6000)
+
+    def _step_run(self):
+        return self.rec()['runs'][-1]['steps'][self.i]
+
+    def _fail(self, why):
+        st = self._step_run()
+        st.update(status='failed', message=str(why)[:600])
+        self._write(self.i)
+        self._finish('failed')
+
+    def _finish(self, status):
+        self.timer.stop()
+        self.running = False
+        rec = self.rec()
+        if rec is not None:
+            for s in rec['runs'][-1]['steps']:
+                if s['status'] in ('pending', 'running') and status != 'done':
+                    s['status'] = 'not run' if s['status'] == 'pending' else status
+            CP.finish_run(rec, status)
+        self.status = status
+        self._write()
+        self.ctx.msg(f'Plan {self.id} v{self.version}: {status}', 6000)
+        self.finished.emit(status)
+
+    def cancel(self):
+        if not self.running:
+            return
+        job = self._job or {}
+        pg = job.get('page')
+        try:
+            if job.get('kind') == 'carla_live' and pg is not None:
+                pg.stop('the plan was stopped')
+            elif pg is not None and hasattr(pg, 'cancel'):
+                pg.cancel()
+        except Exception:                                   # noqa: BLE001 — stopping must not raise
+            pass
+        st = self._step_run()
+        st.update(status='cancelled', message='stopped by you')
+        self._finish('cancelled')
+
+    def _next(self):
+        rec = self.rec()
+        if rec is None:
+            self.running = False
+            self.finished.emit('failed')
+            return
+        self.i += 1
+        if self.i >= len(rec['steps']):
+            self._finish('done')
+            return
+        step = rec['steps'][self.i]
+        self._step_run().update(status='running')
+        self.progress.emit()
+        p = self.ctx.store.project
+        if p is not self._project:
+            self._fail('The project was replaced while the plan ran.')
+            return
+        # checked again now: the project, the server, the memory or the model may have changed since approval
+        again = CP.revalidate(p.snapshot(), CP.Plan(rec['id'], rec['version'], rec['title'],
+                                                    steps=[CP.Step.from_dict(step)]),
+                              workdir.get(self.ctx.settings), self.ctl._engine())
+        if not again.ok:
+            self._fail('It does not validate now: ' + ' '.join(again.steps[0].errors[:3]))
+            return
+        self.ctl._apply_step(rec, self.i, f'Copilot · {rec["title"]} · step {self.i + 1}')
+        tk = CP.ticket(rec, self.i)
+        try:
+            job = self._make_job(step['kind'], step['settings'], tk)
+        except Exception as e:                              # noqa: BLE001 — a step that cannot start says why
+            self._fail(f'{type(e).__name__}: {e}')
+            return
+        self._job = job
+        self._phase = 'server' if job.get('port') else 'start'
+        self._t0 = time.monotonic()
+        if job.get('port'):
+            from ..sim import server as SV
+            if SV.port_open('127.0.0.1', job['port']):
+                self._phase = 'start'
+            else:
+                sim = self.ctx.window.page('sim')
+                if not sim.start_server():
+                    self._fail(f'No CARLA server answers on port {job["port"]} and the CARLA page could not start '
+                               'one: choose the CARLA folder on Simulate ▸ CARLA.')
+                    return
+        self._tick()
+        if self.running and self._job is job:
+            self.timer.start()
+
+    def _tick(self):
+        job = self._job
+        if job is None or not self.running:
+            return
+        try:
+            if self._phase == 'server':
+                from ..sim import server as SV
+                if SV.port_open('127.0.0.1', job['port']):
+                    self._phase = 'start'
+                elif time.monotonic() - self._t0 > self.SERVER_WAIT_S:
+                    self._fail(f'The CARLA server did not answer on port {job["port"]} within '
+                               f'{self.SERVER_WAIT_S:.0f} s.')
+                    return
+                else:
+                    return
+            if self._phase == 'start':
+                ok, why = job['start']()
+                if not ok:
+                    self._fail(why or 'The page refused to run it.')
+                    return
+                self._phase = 'running'
+                self._t0 = time.monotonic()
+                return
+            if self._phase == 'running':
+                if not job['done']():
+                    return
+                ok, message, summary, out, files = job['result']()
+                st = self._step_run()
+                st.update(status='done' if ok else 'failed', message=str(message or '')[:600],
+                          output=workdir.display(out, workdir.get(self.ctx.settings)) if out else '',
+                          summary=self._scrub(summary))
+                rec = self.rec()
+                if out and os.path.isdir(out):
+                    CP.stamp_outputs(self._project, rec, self.i, files, out)
+                    try:
+                        CP.write_run_file(self._project, rec, out, self.i, summary)
+                    except OSError:
+                        pass
+                self._write(self.i, summary)
+                self.progress.emit()
+                self._job = None
+                self.timer.stop()
+                if not ok:
+                    self._finish('failed')
+                    return
+                self._next()
+        except Exception as e:                              # noqa: BLE001 — a failed step is said, never silent
+            self._fail(f'{type(e).__name__}: {e}')
+
+    @staticmethod
+    def _scrub(summary):
+        from ..core import provenance as PV
+        try:
+            return json.loads(json.dumps(PV.scrub(summary), default=str)) if summary is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    # ---------------------------------------------------------------- each kind: through its page's own Run
+    def _make_job(self, kind, settings, tk) -> dict:
+        w = self.ctx.window
+        p = self.ctx.store.project
+        if kind == 'carla_run':
+            pg = w.page('sim')
+
+            def start():
+                ok = pg.run(plan=tk)
+                return ok, '' if ok else pg.g_status.text()
+
+            def result():
+                doc = pg.result or {}
+                out = pg.out_dir
+                ok = doc.get('status') == 'ok'
+                summ = {k: doc.get(k) for k in ('status', 'performance', 'scene', 'scenario', 'faults_injected',
+                                                 'notes', 'error') if k in doc}
+                files = [os.path.join(out, n) for n in ('run.json', 'dataset.json')] if out else []
+                return ok, pg.g_status.text(), summ, out, files
+            return {'kind': kind, 'page': pg, 'port': SR_port(settings), 'start': start, 'done': lambda: not pg.busy,
+                    'result': result}
+        if kind in ('campaign', 'detection', 'critical_carla', 'experiment'):
+            name = CP.KIND_PAGE[kind]
+            pg = w.page(name)
+            before = pg.result
+            mod = {'campaign': 'simcampaign', 'detection': 'detection_eval', 'critical_carla': 'critical_carla',
+                   'experiment': 'experiments'}[kind]
+
+            def start():
+                ok = pg.run(confirm=False, plan=tk) if kind == 'experiment' else pg.run(plan=tk)
+                return ok, '' if ok else (getattr(pg, 'status_text', '') or 'The page did not start it.')
+
+            def result():
+                import importlib
+                M = importlib.import_module(f'..core.{mod}', __package__)
+                res = pg.result
+                if res is None or res is before:
+                    return False, getattr(pg, 'status_text', '') or 'It did not finish.', None, '', []
+                ok = bool(getattr(res, 'complete', True))
+                out = ''
+                if kind == 'campaign':
+                    from ..core import simcampaign as SC
+                    out = SC.campaign_dir(p, SC.settings_of(p), workdir.get(self.ctx.settings))
+                return ok, getattr(pg, 'status_text', ''), M.summary(res), out, []
+            port = None
+            if kind == 'critical_carla' and pg.runner is None:
+                port = SR_port(None, p)
+            if kind == 'campaign' and settings.get('server', 'running') == 'running' and pg.runner is None:
+                port = SR_port((settings.get('base') or {}), p)
+            return {'kind': kind, 'page': pg, 'port': port, 'start': start, 'done': lambda: not pg.busy,
+                    'result': result}
+        if kind == 'sample_dataset':
+            pg = w.page('dataset')
+
+            def start():
+                ok = pg.generate(plan=tk)
+                return ok, '' if ok else pg.g_status.text()
+
+            def result():
+                from ..core import dataset as DSET
+                res = pg.result
+                if res is None:
+                    return False, pg.g_status.text(), None, '', []
+                return True, pg.g_status.text(), DSET.summary(res), res.out_dir, [os.path.join(res.out_dir,
+                                                                                            'dataset.json')]
+            return {'kind': kind, 'page': pg, 'start': start, 'done': lambda: not pg.busy, 'result': result}
+        if kind == 'carla_live':
+            pg = w.page('sim').live
+            job = {'kind': kind, 'page': pg, 'faults': list(settings.get('faults') or []), 'streaming_at': None,
+                   'sent': [], 'replies': []}
+
+            def start():
+                pg.set_cameras(settings.get('cameras') or [])
+                pg.scale.set_value(100.0 * float(settings.get('scale', CP.LIVE_SCALE)))
+                ok = pg.start(plan=tk)
+                return ok, '' if ok else (pg.status_line.text.text() or 'The live rig did not start.')
+
+            def done():
+                if pg.state == 'failed' or (pg.state == 'off' and job['streaming_at'] is None and
+                                            time.monotonic() - self._t0 > 2.0):
+                    return True
+                if pg.state == 'streaming' and job['streaming_at'] is None:
+                    job['streaming_at'] = time.monotonic()
+                if job['streaming_at'] is None:
+                    return False
+                t = time.monotonic() - job['streaming_at']
+                for f in job['faults']:
+                    if f not in job['sent'] and t >= float(f['at_s']):
+                        job['sent'].append(f)
+                        pg.inject(dict(f['fault']))
+                dur = float(settings.get('duration_s') or 0.0)
+                if dur and t >= dur:
+                    if pg.running:
+                        pg.stop('the plan\'s duration is over')
+                    return not pg.running
+                return len(job['sent']) == len(job['faults']) and not dur
+
+            def result():
+                ok = job['streaming_at'] is not None and pg.state != 'failed'
+                summ = pg.summary() if hasattr(pg, 'summary') else None
+                msg = (f'streamed {", ".join(settings.get("cameras") or [])}; {len(job["sent"])} fault'
+                       + ('s' if len(job['sent']) != 1 else '') + ' injected on time'
+                       + ('' if settings.get('duration_s') else '; still streaming (stop it on Simulate ▸ CARLA)'))
+                return ok, msg if ok else (pg.message or 'the live rig did not start'), summ, pg.folder, []
+            job.update(start=start, done=done, result=result)
+            return job
+        if kind == 'study':
+            ok, why = CP.gate(p, tk, 'study', settings)
+            if not ok:
+                raise RuntimeError(why)
+            box = {}
+            tc = self.ctl._context()
+            args = {k: v for k, v in settings.items() if v not in (None, '')}
+
+            def work():
+                try:
+                    box['out'] = T.run_study(tc, **args)
+                except Exception as e:                      # noqa: BLE001
+                    box['out'] = {'error': f'{type(e).__name__}: {e}'}
+
+            def start():
+                threading.Thread(target=work, daemon=True, name='copilot-study').start()
+                return True, ''
+
+            def result():
+                out = box.get('out') or {}
+                return 'error' not in out, out.get('error', f'{settings["study"]} computed'), out, '', []
+            return {'kind': kind, 'start': start, 'done': lambda: 'out' in box, 'result': result}
+        if kind == 'export':
+            ok, why = CP.gate(p, tk, 'export', settings)
+            if not ok:
+                raise RuntimeError(why)
+            from ..core import exporters as ex
+            base = workdir.get(self.ctx.settings)
+            out = os.path.join(base, settings['folder']) if settings.get('folder') else \
+                workdir.project_dir(p, base, 'exports', f'{self.id}-v{self.version}')
+            box = {}
+
+            def start():
+                an = self.ctx.analysis
+                opts = ex.ExportOptions(out_dir=out, frame=settings['frame'], units=settings['units'],
+                                        angles=settings['angles'], issues=list(an.issues), engine=an.engine)
+                try:
+                    with an._lock:
+                        box['paths'] = ex.export(settings['formats'], p, an.result, opts)
+                except Exception as e:                      # noqa: BLE001 (shown)
+                    return False, f'The export failed: {e}'
+                p.add_log('export', f'{len(box["paths"])} files to {out} (Copilot plan {self.id})')
+                return True, ''
+
+            def result():
+                paths = box.get('paths') or []
+                return bool(paths), f'{len(paths)} files written', {'files': [os.path.basename(x) for x in paths]}, \
+                    out, [x for x in paths if x.endswith('.json')]
+            return {'kind': kind, 'start': start, 'done': lambda: 'paths' in box, 'result': result}
+        raise KeyError(kind)
+
+
+def SR_port(settings=None, project=None) -> int:
+    """The CARLA port a step uses: its own settings' (a CARLA drive), else the CARLA page's."""
+    from ..core import simrig as SR
+    base = SR.settings_of(project).to_dict() if project is not None else {}
+    return int(SR.SimSettings.from_dict(dict(base, **(settings or {}))).port)
 
 
 # ============================================================================================ markdown
@@ -884,7 +1491,7 @@ def _arg_summary(name, args):
 class ToolRow(QFrame):
     """One tool call: what it did, and on click exactly what the model asked and what was sent back to Groq."""
     KIND_ICON = {'read': 'search', 'simulate': 'play', 'propose': 'sparkle', 'compute': 'tolerance', 'ui': 'frame',
-                 'plan': 'check'}
+                 'plan': 'check', 'copilot': 'sparkle'}
     NAME_ICON = {'optimise_camera': 'optimise', 'compare_variants': 'compare', 'run_study': 'report'}
 
     def __init__(self, data, parent=None):
@@ -906,6 +1513,7 @@ class ToolRow(QFrame):
         summ = _arg_summary(self.name, self.args)
         self.title = QLabel(f'{html.escape(data["label"])}' + (f'<span style="color:{THEME.tok["muted"]}">'
                                                                  f' · {html.escape(summ)}</span>' if summ else ''))
+        self.title.setTextFormat(Qt.TextFormat.RichText)     # always: an escaped label alone (no span) is not auto-detected
         self.title.setFont(sans(11))
         self.title.setWordWrap(True)
         self.title.setMinimumWidth(60)
@@ -1237,6 +1845,552 @@ class ProposalCard(QFrame):
         self.setEnabled(True)
 
 
+# ============================================================================================ the Copilot's plan card
+SOURCE_LABEL = {'request': 'your request', 'default': 'default', 'copilot': 'chosen by the Copilot',
+                'limit': 'forced by a limit', 'unused': 'not used'}
+STATUS_LABEL = {'draft': 'Plan · needs your approval', 'approved': 'Approved', 'running': 'Running', 'done': 'Done',
+                'failed': 'Failed', 'cancelled': 'Stopped', 'rejected': 'Rejected', 'superseded': 'Superseded'}
+
+
+def _sections(kind):
+    """[(section, [keys or key prefixes])] for the plan card's table (the CARLA page's own groups for a drive)."""
+    if kind == 'carla_run':
+        from .workspaces.sim_ws import FIELDS, TOGGLES
+        groups = {}
+        for g, key, *_ in FIELDS:
+            groups.setdefault(g, []).append(key)
+        for g, rows in TOGGLES.items():
+            groups.setdefault(g, []).extend(k for k, *_ in rows)
+        groups.setdefault('Cameras', []).extend(['camera_rate', 'exposure', 'channel_names'])
+        groups.setdefault('Server', []).extend(['quality', 'timeout_s'])
+        out = [('World', ['town', 'weather', 'vehicle'])]
+        out += [('Scenario', groups.pop('Scenario', []) + ['scenario.', 'actors'])]
+        out += [('Faults', ['faults']), ('Ground truth', ['ground_truth.'])]
+        out += [(g, ks) for g, ks in groups.items()]
+        return out
+    return [('Settings', [])]
+
+
+def _field_labels(kind) -> dict:
+    """{flat key: (label, unit, scale)}: the page's own labels and units where it has them."""
+    if kind == 'carla_run':
+        from ..sim import carla_bridge as CB
+        from .workspaces.sim_ws import FIELDS, GT_TOGGLES, SCENARIO_LABELS, TOGGLES
+        out = {key: (label, unit, scale) for _g, key, label, unit, _d, _st, scale, *_ in FIELDS}
+        for rows in TOGGLES.values():
+            for key, label, *_ in rows:
+                out[key] = (label, '', 1.0)
+        for key, label, _tip in GT_TOGGLES:
+            out[f'ground_truth.{key}'] = (label, '', 1.0)
+        for _name, (_lab, _about, params) in CB.SCENARIOS.items():
+            for k, spec in params.items():
+                out.setdefault(f'scenario.params.{k}', (SCENARIO_LABELS.get(k, CP._human(k).capitalize()),
+                                                        spec[4] if spec[0] == 'num' else '', 1.0))
+        out.update({'town': ('Town', '', 1.0), 'weather': ('Weather', '', 1.0), 'vehicle': ('Vehicle', '', 1.0),
+                    'scenario.name': ('Scenario', '', 1.0), 'faults': ('Faults', '', 1.0),
+                    'actors': ('Actors', '', 1.0)})
+        return out
+    if kind == 'experiment':
+        from .workspaces.experiments_ws import DESIGN_FIELDS
+        out = {key: (label, '', 1.0) for key, label, *_ in DESIGN_FIELDS}
+        out.update({'name': ('Name', '', 1.0), 'variant': ('Variant', '', 1.0), 'factors': ('Factors', '', 1.0),
+                    'responses': ('Responses', '', 1.0), 'design': ('Design', '', 1.0)})
+        return out
+    if kind == 'carla_live':
+        return {'cameras': ('Cameras', '', 1.0), 'scale': ('Render', '%', 100.0), 'duration_s': ('Duration', 's', 1.0),
+                'faults': ('Faults', '', 1.0)}
+    return {}
+
+
+def _label_of(labels, key):
+    return labels.get(key, (key.split('.')[-1].replace('_', ' ').capitalize(), '', 1.0))
+
+
+def _fmt(v, unit='', scale=1.0, kind='', key='', project=None) -> str:
+    """A value as the card shows it: in words (copilot.value_text), never raw JSON."""
+    return CP.value_text(kind, key, v, project, unit, scale)
+
+
+def change_lines(plan: CP.Plan, project=None) -> list:
+    """One line per changed setting in words ('Traffic 30 → 20 vehicles'; for a list, what was added or removed)."""
+    out = []
+    many = len(plan.steps) > 1
+    for d in plan.diff:
+        pre = f'Step {d["step"] + 1} · ' if many else ''
+        if 'added' in d:
+            out.append(f'Step {d["step"] + 1} added: {CP.KIND_LABEL.get(d["added"], d["added"])}')
+            continue
+        if 'removed' in d:
+            out.append(f'Step {d["step"] + 1} removed: {CP.KIND_LABEL.get(d["removed"], d["removed"])}')
+            continue
+        st = plan.steps[d['step']] if d['step'] < len(plan.steps) else None
+        kind = st.kind if st is not None else ''
+        lab, unit, scale = _label_of(_field_labels(kind), d['key'])
+        u = CP.unused_of(d['key'], CP.unused(kind, st.settings, project)) if st is not None else None
+        out.append(pre + CP.change_text(kind, d['key'], d['before'], d['after'], project, lab, unit, scale)
+                   + (f' ({u[0]})' if u else ''))
+    return out
+
+
+def plan_rows(step: CP.Step, project=None) -> list:
+    """[(section, key, label, value text, source, reason)] grouped by section, the page's own labels where it has
+    them, every value in words. Settings the step does not use (another design's, a free drive's traffic in a
+    scenario) come last, in their own section, with source 'unused' and why."""
+    flat = CP.flatten(step.settings)
+    if step.kind == 'carla_run':
+        from ..sim import carla_bridge as CB
+        sc = step.settings.get('scenario') or {}
+        full = CB.clean_scenario(sc.get('name'), sc.get('params'))[0]['params']
+        for k, v in full.items():
+            flat.setdefault(f'scenario.params.{k}', v)
+        flat.pop('scenario.params', None)
+    labels = _field_labels(step.kind)
+    secs = _sections(step.kind)
+    used, rows = set(), []
+    for sec, keys in secs:
+        for k in sorted(flat, key=lambda x: (next((i for i, kk in enumerate(keys) if x == kk or (kk.endswith('.') and
+                                                                                             x.startswith(kk))), 99), x)):
+            if k in used or not any(k == kk or (kk.endswith('.') and k.startswith(kk)) for kk in keys):
+                continue
+            used.add(k)
+            rows.append((sec, k, flat[k]))
+    for k in flat:
+        if k not in used:
+            sec = k.split('.')[0].replace('_', ' ').capitalize() if '.' in k else 'Settings'
+            rows.append((sec, k, flat[k]))
+    out, later = [], []
+    un = CP.unused(step.kind, step.settings, project)
+    for sec, k, v in rows:
+        lab, unit, scale = _label_of(labels, k)
+        src = step.sources.get(k) or step.sources.get(k.split('.')[0]) or {'source': 'default', 'reason': ''}
+        text = _fmt(v, unit, scale, step.kind, k, project)
+        u = CP.unused_of(k, un)
+        if u is not None:
+            later.append((u[0][:1].upper() + u[0][1:], k, lab, text, 'unused', u[1]))
+        else:
+            out.append((sec, k, lab, text, src.get('source', 'default'), src.get('reason', '')))
+    return out + sorted(later, key=lambda r: r[0])
+
+
+class CopilotCard(QFrame):
+    """A plan: the summary, the steps, every value with where it came from (editable in place, the page's own rules
+    checking it), the warnings and the estimate, the changes from the previous version; Approve and run, Open on its
+    page, Reject."""
+
+    def __init__(self, ctl: AssistantController, plan: CP.Plan, parent=None):
+        super().__init__(parent)
+        self.ctl, self.plan = ctl, plan
+        self.setObjectName('copilot')
+        self.v = QVBoxLayout(self)
+        self.v.setContentsMargins(12, 10, 12, 10)
+        self.v.setSpacing(7)
+        head = QHBoxLayout()
+        head.setSpacing(8)
+        ico = QLabel()
+        ico.setPixmap(icons.pixmap('sparkle', THEME.tok['ink'], 14))
+        head.addWidget(ico)
+        self.title = QLabel('')
+        self.title.setFont(sans(12, QFont.Weight.DemiBold))
+        self.title.setWordWrap(True)
+        head.addWidget(self.title, 1)
+        self.badge = QLabel('')
+        self.badge.setFont(sans(10, QFont.Weight.DemiBold))
+        head.addWidget(self.badge, 0, Qt.AlignmentFlag.AlignTop)
+        self.v.addLayout(head)
+        self.body = QWidget()
+        self.bv = QVBoxLayout(self.body)
+        self.bv.setContentsMargins(0, 0, 0, 0)
+        self.bv.setSpacing(6)
+        self.v.addWidget(self.body)
+        self.note = label('', small=True, wrap=True)
+        self.note.hide()
+        self.v.addWidget(self.note)
+        b = QHBoxLayout()
+        b.setSpacing(6)
+        self.state_lbl = label('', muted=True, small=True, wrap=True)
+        b.addWidget(self.state_lbl, 1)
+        self.b_reject = button('Reject', 'ghost')
+        self.b_reject.clicked.connect(self.reject)
+        self.b_open = button('Open on its page', 'ghost', None, 'Fill the page\'s fields with this plan as one undo '
+                                                             'step; nothing runs')
+        self.b_open.clicked.connect(self.open_on_page)
+        self.b_stop = button('Stop', 'ghost', 'stop')
+        self.b_stop.clicked.connect(ctl.stop_plan)
+        self.b_approve = button('Approve and run', 'primary', None, 'Check it again, record your approval in the '
+                                                                     'project and run each step on its page')
+        self.b_approve.clicked.connect(self.approve)
+        for w in (self.b_reject, self.b_open, self.b_stop, self.b_approve):
+            b.addWidget(w)
+        self.v.addLayout(b)
+        self.tables = []
+        ctl.plan_state.connect(self._sync)
+        self._restyle()
+        self.set_plan(plan)
+
+    # ---------------------------------------------------------------- contents
+    def set_plan(self, plan: CP.Plan):
+        self.plan = plan
+        while self.bv.count():
+            it = self.bv.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.hide()
+                w.setParent(None)
+                w.deleteLater()
+        self.tables = []
+        self.title.setText(html.escape(plan.title or 'Plan') + f'  <span style="color:{THEME.tok["muted"]}">'
+                           f'{plan.id} · v{plan.version}</span>')
+        if plan.rationale:
+            r = label(plan.rationale, ink2=True, small=True, wrap=True)
+            self.bv.addWidget(r)
+        if plan.diff:
+            lines = change_lines(plan, self._project())
+            more = [f'… and {len(lines) - 14} more'] if len(lines) > 14 else []
+            self.change_items = lines
+            dl = QLabel(f'Changed from v{plan.parent}:' + ''.join(f'<br>· {html.escape(x)}' for x in lines[:14] + more))
+            dl.setTextFormat(Qt.TextFormat.RichText)
+            dl.setWordWrap(True)
+            dl.setFont(sans(10))
+            dl.setToolTip(json.dumps(plan.diff, indent=1, ensure_ascii=False, default=str)[:4000])
+            dl.setObjectName('diff')
+            self.diff_lbl = dl
+            self.bv.addWidget(dl)
+        else:
+            self.diff_lbl = None
+            self.change_items = []
+        tok = THEME.tok
+        for i, st in enumerate(plan.steps):
+            h = QLabel(f'<b>{i + 1} · {html.escape(CP.KIND_LABEL.get(st.kind, st.kind))}</b>'
+                       + (f' · {html.escape(st.label)}' if st.label and st.label != CP.KIND_LABEL.get(st.kind) else ''))
+            h.setFont(sans(11))
+            h.setWordWrap(True)
+            self.bv.addWidget(h)
+            if st.estimate.get('text'):
+                e = label('Estimate: ' + st.estimate['text'] + (f' ({st.estimate["basis"]})' if st.estimate.get('basis')
+                                                                 else ''), muted=True, small=True, wrap=True)
+                self.bv.addWidget(e)
+            for txt, sev in [(x, 'critical') for x in st.errors] + [(x, 'warning') for x in st.warnings]:
+                col = THEME.color(sev).name()
+                m = QLabel(f'<span style="color:{col}">{"✕" if sev == "critical" else "!"}</span> '
+                           f'<span style="color:{tok["ink2"]}">{html.escape(txt)}</span>')
+                m.setWordWrap(True)
+                m.setFont(sans(10))
+                self.bv.addWidget(m)
+            for txt in st.notes[:6]:
+                self.bv.addWidget(label(txt, muted=True, small=True, wrap=True))
+            self.bv.addWidget(self._table(i, st))
+        self._sync(plan.id)
+
+    def _table(self, i, st):
+        from PyQt6.QtWidgets import QAbstractItemView, QHeaderView, QTableWidget, QTableWidgetItem
+        rows = plan_rows(st, self._project())
+        flat = CP.flatten(st.settings)
+        t = QTableWidget(0, 4)
+        t.setHorizontalHeaderLabels(['Setting', 'Value', 'From', 'Why'])
+        t.verticalHeader().hide()
+        t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        t.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        t.setWordWrap(False)
+        t.setFont(sans(10))
+        keys = []
+        last = None
+        tok = THEME.tok
+        for sec, key, lab, val, src, why in rows:
+            if sec != last:
+                r = t.rowCount()
+                t.insertRow(r)
+                it = QTableWidgetItem(sec)
+                it.setFont(sans(10, QFont.Weight.DemiBold))
+                it.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                t.setItem(r, 0, it)
+                t.setSpan(r, 0, 1, 4)
+                keys.append(None)
+                last = sec
+            r = t.rowCount()
+            t.insertRow(r)
+            cells = (lab, val, SOURCE_LABEL.get(src, src), why)
+            raw = CP.get_path(st.settings, key, flat.get(key))
+            for c, text in enumerate(cells):
+                it = QTableWidgetItem(text)
+                if c == 1 and isinstance(raw, (list, dict)):          # in words, then as the settings hold it
+                    it.setToolTip(f'{key}: {text}\n\n' + json.dumps(raw, indent=1, ensure_ascii=False,
+                                                                     default=str)[:4000])
+                else:
+                    it.setToolTip(f'{key}: {text}' if c < 2 else text)
+                if src == 'unused':                                  # greyed: not a decision of the plan
+                    it.setForeground(QColor(tok['muted']))
+                elif c == 2 and src != 'default':
+                    it.setForeground(QColor(THEME.color('warning' if src == 'limit' else 'good').name()))
+                if c == 1:
+                    it.setFont(mono(10))
+                t.setItem(r, c, it)
+            keys.append(key)
+        t.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        t.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        t.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        t.horizontalHeader().setStretchLastSection(True)
+        t.resizeColumnToContents(1)                 # values in words: as wide as they need, within reason
+        t.setColumnWidth(1, min(max(t.columnWidth(1), 120), 320))
+        t.verticalHeader().setDefaultSectionSize(20)
+        t.setMinimumHeight(min(260, 26 + 20 * max(t.rowCount(), 1)))
+        t.setMaximumHeight(260)
+        t.keys = keys
+        t.step = i
+        t.cellDoubleClicked.connect(lambda r, c, t=t: self._edit_cell(t, r))
+        t.setToolTip('Double-click a value to change it (a new version of the plan, checked by the page\'s rules)')
+        self.tables.append(t)
+        return t
+
+    def _project(self):
+        try:
+            return self.ctl.ctx.store.project
+        except AttributeError:
+            return None
+
+    def _edit_cell(self, t, r):
+        key = t.keys[r] if 0 <= r < len(t.keys) else None
+        if key is None or self.plan.status not in ('draft', 'approved', 'done', 'failed', 'cancelled'):
+            return None
+        st = self.plan.steps[t.step]
+        cur = CP.get_path(st.settings, key, CP.flatten(st.settings).get(key))
+        if cur is None and key.startswith('scenario.params.'):
+            from ..sim import carla_bridge as CB
+            sc = st.settings.get('scenario') or {}
+            cur = CB.clean_scenario(sc.get('name'), sc.get('params'))[0]['params'].get(key.split('.')[-1])
+        ed = self.editor_for(t.step, st.kind, key, cur)
+        t.setCellWidget(r, 1, ed)
+        ed.setFocus()
+        return ed
+
+    def editor_for(self, step, kind, key, cur):
+        """The page's own kind of field for a value: a number field, a choice, a switch or JSON text."""
+        from ..assistant import copilot_tools as CT
+        choices = CT._choices(kind, key)
+        lim = CT._limits(kind).get(key)
+        if isinstance(cur, bool):
+            w = QCheckBox()
+            w.setChecked(cur)
+            w.toggled.connect(lambda on, k=key: self.edit(step, k, bool(on)))
+            return w
+        if isinstance(cur, (int, float)):
+            w = ScrubSpinBox('', 'plain', 0 if isinstance(cur, int) else 3, '')
+            if lim:
+                w.setRange(float(lim[0]), float(lim[1]))
+            w.set_value(float(cur))
+            w.committed.connect(lambda v, k=key, ints=isinstance(cur, int):
+                                self.edit(step, k, int(round(v)) if ints else float(v)))
+            return w
+        if isinstance(cur, str) and choices:
+            w = QComboBox()
+            w.setEditable(True)
+            for c in choices:
+                w.addItem(str(c))
+            w.setCurrentText(cur)
+            w.activated.connect(lambda _i, w=w, k=key: self.edit(step, k, w.currentText()))
+            return w
+        w = QLineEdit(json.dumps(cur, ensure_ascii=False) if not isinstance(cur, str) else cur)
+        w.setFont(mono(10))
+
+        def commit(w=w, k=key, was_text=isinstance(cur, str)):
+            txt = w.text()
+            val = txt if was_text else CP.parse_value(txt)
+            self.edit(step, k, val)
+        w.returnPressed.connect(commit)
+        return w
+
+    def edit(self, step: int, key: str, value) -> bool:
+        """Change one value: a new version of the plan (approval again), shown here with what changed."""
+        new, why = self.ctl.edit_plan(self.plan, step, key, value)
+        if new is None:
+            self.note.setText(why)
+            self.note.show()
+            return False
+        self.note.hide()
+        self.set_plan(new)
+        return True
+
+    # ---------------------------------------------------------------- actions
+    def approve(self):
+        why = self.ctl.approve_plan(self.plan)
+        if why:
+            self.note.setText(why)
+            self.note.show()
+        self._sync(self.plan.id)
+
+    def reject(self):
+        self.ctl.reject_plan(self.plan)
+
+    def open_on_page(self):
+        self.ctl.open_on_page(self.plan, 0)
+
+    def _record(self):
+        return CP.find(self.ctl.ctx.store.project, self.plan.id, self.plan.version)
+
+    def _sync(self, pid):
+        if pid != self.plan.id:
+            return
+        try:
+            self._sync_now()
+        except RuntimeError:            # the window is closing
+            pass
+
+    def _sync_now(self):
+        rec = self._record() if self.plan.status not in ('draft', 'rejected', 'superseded') else None
+        status = rec['status'] if rec is not None else self.plan.status
+        running = self.ctl.runner is not None and self.ctl.runner.running and self.ctl.runner.id == self.plan.id \
+            and self.ctl.runner.version == self.plan.version
+        self.badge.setText(STATUS_LABEL.get(status, status) if self.plan.ok or status != 'draft' else 'Invalid')
+        draft = status == 'draft'
+        self.b_approve.setVisible(draft)
+        self.b_approve.setEnabled(self.plan.ok)
+        self.b_approve.setToolTip('' if self.plan.ok else 'Not valid: the errors above must be fixed first')
+        self.b_reject.setVisible(draft)
+        self.b_open.setVisible(status not in ('rejected', 'superseded'))
+        self.b_stop.setVisible(running)
+        if rec is not None and rec.get('runs'):
+            run = rec['runs'][-1]
+            parts = []
+            for i, s in enumerate(run['steps']):
+                parts.append(f'{i + 1} {s["status"]}' + (f' ({s["message"]})' if s.get('message') else ''))
+            self.state_lbl.setText(f'Approved {rec["approved_utc"]} · recorded in the project · ' + '; '.join(parts))
+        elif draft:
+            self.state_lbl.setText('Nothing runs until you approve it. Double-click a value to change it.'
+                                   if self.plan.ok else 'This plan is not valid and cannot be approved.')
+        elif status == 'superseded':
+            self.state_lbl.setText('A newer version of this plan replaces it.')
+        elif status == 'rejected':
+            self.state_lbl.setText('Rejected: nothing was run.')
+        else:
+            self.state_lbl.setText('')
+
+    def _restyle(self):
+        t = THEME.tok
+        self.setStyleSheet(_qss_frame('copilot', t['raised'], t['strong'], 6))
+        self.badge.setStyleSheet(f'color: {t["ink2"]}; border: 1px solid {t["strong"]}; border-radius: 3px; '
+                                 f'padding: 0 5px;')
+
+
+class ConsentCard(QFrame):
+    """The first question to a provider asks once, naming it and what is sent."""
+
+    def __init__(self, ctl: AssistantController, on_ok, parent=None):
+        super().__init__(parent)
+        self.ctl = ctl
+        self.setObjectName('consent')
+        v = QVBoxLayout(self)
+        v.setContentsMargins(12, 10, 12, 10)
+        v.setSpacing(6)
+        who = PR.LABEL[ctl.provider]
+        t = QLabel(f'Send this question to {who}?')
+        t.setFont(sans(12, QFont.Weight.DemiBold))
+        v.addWidget(t)
+        v.addWidget(label(f'Your question, the plan settings and small tool results (camera poses, lens and module '
+                          f'names, analysis figures, run summaries) go to {who} under its terms, with your own API '
+                          f'key. Never sent: images, recordings, point clouds, keys, stream passwords, the automation '
+                          f'command or this computer\'s folders (shown as ~). Asked once for {who}.', ink2=True,
+                          small=True, wrap=True))
+        r = QHBoxLayout()
+        r.addStretch(1)
+        self.b_no = button('Not now', 'ghost')
+        self.b_ok = button(f'Allow {who}', 'primary')
+        r.addWidget(self.b_no)
+        r.addWidget(self.b_ok)
+        v.addLayout(r)
+        self.b_ok.clicked.connect(lambda: (ctl.give_consent(), self.hide(), on_ok()))
+        self.b_no.clicked.connect(self.hide)
+        tk = THEME.tok
+        self.setStyleSheet(_qss_frame('consent', tk['raised'], tk['strong'], 6, THEME.color('warning').name()))
+
+
+class SentDialog(QDialog):
+    """What was sent: the last request's payload, masked, as it left the app."""
+
+    def __init__(self, ctl: AssistantController, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('What was sent')
+        self.resize(720, 560)
+        v = QVBoxLayout(self)
+        text = ctl.last_sent()
+        who = PR.LABEL[ctl.session.provider] if ctl.session is not None else PR.LABEL[ctl.provider]
+        v.addWidget(label(f'The last request to {who}, as sent (machine folders shown as ~; the API key goes in a '
+                          'header and is never part of it).' if text else 'Nothing has been sent in this '
+                                                                           'conversation yet.', ink2=True, wrap=True))
+        self.text = QPlainTextEdit(text)
+        self.text.setReadOnly(True)
+        self.text.setFont(mono(10))
+        v.addWidget(self.text, 1)
+        b = QHBoxLayout()
+        b.addStretch(1)
+        c = button('Copy', 'ghost', 'copy')
+        c.clicked.connect(lambda: QApplication.clipboard().setText(self.text.toPlainText()))
+        ok = button('Close', 'primary')
+        ok.clicked.connect(self.accept)
+        b.addWidget(c)
+        b.addWidget(ok)
+        v.addLayout(b)
+
+
+class PlansDialog(QDialog):
+    """The project's approved plans: each with its status and runs; Run again re-runs one from its stored settings
+    (the model is not asked)."""
+
+    def __init__(self, ctl: AssistantController, parent=None):
+        super().__init__(parent)
+        from PyQt6.QtWidgets import QAbstractItemView, QHeaderView, QTableWidget
+        self.ctl = ctl
+        self.setWindowTitle('Copilot plans')
+        self.resize(760, 420)
+        v = QVBoxLayout(self)
+        v.addWidget(label('Plans approved in this project, newest first. Run again uses the settings stored with the '
+                          'approval; the model is not asked.', ink2=True, wrap=True))
+        self.t = QTableWidget(0, 5)
+        self.t.setHorizontalHeaderLabels(['Plan', 'Title', 'Steps', 'Status', 'Approved'])
+        self.t.verticalHeader().hide()
+        self.t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.t.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.t.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        v.addWidget(self.t, 1)
+        self.info = label('', small=True, wrap=True)
+        v.addWidget(self.info)
+        b = QHBoxLayout()
+        b.addStretch(1)
+        self.b_run = button('Run again', 'primary', None, 'Run this plan again from its stored settings')
+        self.b_run.clicked.connect(self.run_again)
+        close = button('Close', 'ghost')
+        close.clicked.connect(self.accept)
+        b.addWidget(self.b_run)
+        b.addWidget(close)
+        v.addLayout(b)
+        self.refresh()
+
+    def refresh(self):
+        from PyQt6.QtWidgets import QTableWidgetItem
+        self.rows = self.ctl.records()
+        self.t.setRowCount(0)
+        for r in self.rows:
+            i = self.t.rowCount()
+            self.t.insertRow(i)
+            ok = CP.verify(r)
+            for c, text in enumerate((f'{r.get("id")} v{r.get("version")}', r.get('title', ''),
+                                      ', '.join(CP.KIND_LABEL.get(s['kind'], s['kind']) for s in r.get('steps') or []),
+                                      r.get('status', '') + ('' if ok else ' · does not verify'),
+                                      r.get('approved_utc', ''))):
+                self.t.setItem(i, c, QTableWidgetItem(str(text)))
+        if self.rows:
+            self.t.selectRow(0)
+        self.b_run.setEnabled(bool(self.rows))
+
+    def run_again(self) -> str:
+        i = self.t.currentRow()
+        if not 0 <= i < len(self.rows):
+            return 'nothing chosen'
+        r = self.rows[i]
+        why = self.ctl.run_record(r['id'], r['version'], via='rerun')
+        self.info.setText(why or f'Running plan {r["id"]} v{r["version"]} again from its stored settings…')
+        return why
+
+
 class Notice(QFrame):
     """An error or a note inside a turn, with what to do about it."""
     settings = pyqtSignal()
@@ -1248,7 +2402,8 @@ class Notice(QFrame):
         h = QHBoxLayout(self)
         h.setContentsMargins(10, 8, 10, 8)
         h.setSpacing(8)
-        sev = 'warning' if kind in ('rate', 'rounds', 'network') else 'critical'
+        sev = 'warning' if kind in ('rate', 'rounds', 'network', 'overloaded', 'refusal', 'cap', 'truncated') \
+            else 'critical'
         ico = QLabel()
         ico.setPixmap(icons.status_icon(sev, 14).pixmap(14, 14))
         h.addWidget(ico, 0, Qt.AlignmentFlag.AlignTop)
@@ -1256,11 +2411,11 @@ class Notice(QFrame):
         m.setWordWrap(True)
         m.setFont(sans(11))
         h.addWidget(m, 1)
-        if kind in ('auth', 'model', 'permission'):
+        if kind in ('auth', 'model', 'permission', 'unavailable', 'billing', 'cap'):
             b = button('Settings…', 'ghost')
             b.clicked.connect(self.settings.emit)
             h.addWidget(b, 0, Qt.AlignmentFlag.AlignTop)
-        if kind not in ('auth', 'cancelled'):
+        if kind not in ('auth', 'cancelled', 'refusal', 'unavailable', 'billing', 'cap'):
             b = button('Retry', 'ghost', 'refresh')
             b.clicked.connect(self.retry.emit)
             h.addWidget(b, 0, Qt.AlignmentFlag.AlignTop)
@@ -1308,7 +2463,7 @@ class AssistantTurn(QWidget):
         name = QLabel('Assistant')
         name.setFont(sans(11, QFont.Weight.DemiBold))
         head.addWidget(name)
-        self.model_lbl = label(C.model_info(ctl.model).label, muted=True, small=True)
+        self.model_lbl = label(f'{ctl.info().label} · {PR.LABEL[ctl.provider]}', muted=True, small=True)
         head.addWidget(self.model_lbl)
         head.addStretch(1)
         self.prog = label('', muted=True, small=True)
@@ -1322,6 +2477,7 @@ class AssistantTurn(QWidget):
         self.text_w: Rich | None = None
         self.tools = {}
         self.texts = []
+        self.copilot_cards = []
         self._pending = False
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
@@ -1389,6 +2545,10 @@ class AssistantTurn(QWidget):
                 self.prog.setText(f'· agent · step {d["round"] + 1} of {d["max"]} · {d["elapsed"]:.0f} s')
         elif k == 'proposal':
             self._insert(ProposalCard(self.ctl, d['proposal']))
+        elif k == 'copilot':
+            card = CopilotCard(self.ctl, d['plan'])
+            self.copilot_cards.append(card)
+            self._insert(card)
         elif k == 'status':
             self.status.setText(d['text'])
             self.status.show()
@@ -1564,13 +2724,17 @@ class Composer(QFrame):
         m.clear()
         cur = self.ctl.model
         for mid in self.ctl.models():
-            info = C.model_info(mid)
+            info = self.ctl.info(mid)
             a = m.addAction(f'{info.label}    {info.note}' if info.note else info.label)
             a.setCheckable(True)
             a.setChecked(mid == cur)
             a.triggered.connect(lambda _=False, x=mid: self.ctl.set_option(model=x))
-        info = C.model_info(cur)
-        if info.efforts:
+        info = self.ctl.info(cur)
+        if info.efforts and self.ctl.provider == PR.CLAUDE:
+            m.addSeparator()
+            hdr = m.addAction('Thinking: adaptive · effort high when planning, medium for questions')
+            hdr.setEnabled(False)
+        elif info.efforts:
             m.addSeparator()
             hdr = m.addAction('Reasoning effort')
             hdr.setEnabled(False)
@@ -1598,9 +2762,10 @@ class Composer(QFrame):
         self.go.setStyleSheet(f'QToolButton, QToolButton:disabled {{ background: {bg}; border: none; '
                               f'border-radius: 13px; min-width: 26px; min-height: 26px; }}'
                               f'QToolButton:hover {{ background: {t["ink2"]}; }}')
-        info = C.model_info(self.ctl.model)
+        info = self.ctl.info()
         eff = self.ctl.effort if self.ctl.effort in info.efforts else info.default_effort
-        self.model_btn.setText(info.label + (f' · {eff}' if info.efforts else '') + '  ▾')
+        claude = self.ctl.provider == PR.CLAUDE
+        self.model_btn.setText(info.label + (f' · {eff}' if info.efforts and not claude else '') + '  ▾')
         self.model_btn.setStyleSheet(f'QToolButton {{ color: {t["ink2"]}; border: none; padding: 2px 4px; '
                                      f'border-radius: 3px; }} QToolButton:hover {{ background: {t["sel"]}; }}'
                                      f'QToolButton::menu-indicator {{ image: none; width: 0; }}')
@@ -1795,6 +2960,8 @@ class AssistantPanel(QWidget):
         m = QMenu(self.b_more)
         m.addAction(icons.icon('report', 16), 'Project brief…', lambda: edit_brief(self.ctl, self))
         self.a_export = m.addAction(icons.icon('export', 16), 'Save conversation…', self._export)
+        self.a_plans = m.addAction(icons.icon('report', 16), 'Copilot plans…', self.show_plans)
+        self.a_sent = m.addAction(icons.icon('eye', 16), 'What was sent…', self.show_sent)
         m.addSeparator()
         m.addAction(icons.icon('gear', 16), 'Assistant settings…', lambda: open_settings(self.ctx))
         self.b_more.setMenu(m)
@@ -1839,6 +3006,7 @@ class AssistantPanel(QWidget):
         v.addWidget(bottom)
         self._stick = True
         self.empty = None
+        self.consent = None
         self._empty_ready = None
         self.ctl.event.connect(self._event)
         self.ctl.changed.connect(self._sync)
@@ -1862,22 +3030,27 @@ class AssistantPanel(QWidget):
 
     def _sync(self):
         c = self.ctl
-        info = C.model_info(c.model)
-        if not c.enabled or not c.key:
-            col, text = THEME.tok['muted'], 'Not set up'
+        info = c.info()
+        who = PR.LABEL[c.provider]
+        if not c.enabled or not c.key or not c.available:
+            col, text = THEME.tok['muted'], 'Not set up' if c.available else f'{who}: the SDK is not installed'
         elif c.busy:
             col, text = THEME.color('warning').name(), f'{info.label} · working…'
         else:
-            col, text = THEME.color('good').name(), f'{info.label} · Groq'
+            col, text = THEME.color('good').name(), f'{info.label} · {who}'
         self.dot.setText(f'<span style="color:{col}">●</span>')
         self.title.setText(text)
         self.a_export.setEnabled(bool(c.transcript()))
+        self.a_sent.setEnabled(bool(c.last_sent()))
         self._brief_btn()
-        u = c.usage()
-        tok = f' · {u.prompt / 1000:.1f}k tokens in, {u.completion / 1000:.1f}k out' if u and u.prompt else ''
-        self.foot.setText(('Answers are computed from Vantage\'s analysis by a model hosted on Groq and can be wrong; '
-                           'check a proposal\'s effect before applying it.' if c.ready else
-                           'The assistant is off until you add a Groq API key in Preferences ▸ Assistant.') + tok)
+        line = c.usage_line()
+        cap = c.daily_cap
+        today = f' · today {c.tokens_today() / 1000:.1f}k of {cap / 1000:.0f}k tokens' if cap else ''
+        self.foot.setText((f'Answers are computed from Vantage\'s analysis by a model hosted by {who} and can be wrong; '
+                           'check a proposal\'s effect before applying it, and a plan before approving it.' if c.ready
+                           else PR.INSTALL if not c.available else
+                           f'The assistant is off until you add a {who} API key in Preferences ▸ Assistant.')
+                          + (f' · {line}' if line else '') + today)
         if self.empty is not None and self._empty_ready != c.ready:
             self._show_empty()              # set up, or the key was removed: swap the welcome for the other one
 
@@ -1938,7 +3111,8 @@ class AssistantPanel(QWidget):
             v.addWidget(t)
             s = label('The assistant reads Vantage\'s own analysis (coverage, density, seams, the studies), runs '
                       'studies and checks what a change would do. It proposes changes; nothing changes until you '
-                      'apply one. Type / for commands, or switch on Agent for goals.', ink2=True, wrap=True)
+                      'apply one. Ask for a run and the Copilot plans it: nothing runs until you approve the plan. '
+                      'Type / for commands, or switch on Agent for goals.', ink2=True, wrap=True)
             v.addWidget(s)
             n = len(self.ctx.analysis.issues)
             items = [(f'Explain the {n} issue' + ('s' if n != 1 else ''), prompt) if text == 'Explain the issues'
@@ -1951,13 +3125,18 @@ class AssistantPanel(QWidget):
             t = QLabel('Connect the assistant')
             t.setFont(sans(15, QFont.Weight.DemiBold))
             v.addWidget(t)
+            who = PR.LABEL[self.ctl.provider]
             v.addWidget(label('Ask questions about this design in plain language: why ground is blind, which camera '
-                              'matters most, what a change would do. The assistant runs on a model hosted by Groq '
-                              'with your own API key.', ink2=True, wrap=True))
-            v.addWidget(label('When you ask a question, sensor poses, lens, module and sensor model names, analysis '
-                              'figures, the fleet\'s vehicle names and offsets (no VINs) and your requirements are '
-                              'sent to Groq. The vehicle model, images, point clouds and files are never sent.',
-                              muted=True, small=True, wrap=True))
+                              'matters most, what a change would do; or ask for a run ("a 10 s drive in Town10 at '
+                              'dusk in rain") and the Copilot plans it for your approval. The assistant runs on a '
+                              f'cloud model, Groq or Claude (Preferences ▸ Assistant), with your own API key.',
+                              ink2=True, wrap=True))
+            v.addWidget(label(f'When you ask a question, sensor poses, lens, module and sensor model names, analysis '
+                              f'figures, plan settings, the fleet\'s vehicle names and offsets (no VINs) and your '
+                              f'requirements are sent to {who}. The vehicle model, images, recordings, point clouds, '
+                              f'keys, stream passwords and files are never sent.', muted=True, small=True, wrap=True))
+            if not self.ctl.available:
+                v.addWidget(label(PR.INSTALL, small=True, wrap=True))
             b = button('Set up…', 'primary', 'key')
             b.clicked.connect(lambda: open_settings(self.ctx))
             r = QHBoxLayout()
@@ -1982,6 +3161,18 @@ class AssistantPanel(QWidget):
             open_settings(self.ctx)
             return
         if self.ctl.busy:
+            return
+        why = self.ctl.blocked()
+        if why == 'consent':
+            if self.consent is None or not self.consent.isVisible():
+                self.consent = ConsentCard(self.ctl, lambda t=text: self._send(t))
+                self._add(self.consent)
+            return
+        if why == 'cap':
+            n = Notice('cap', f'Today\'s token cap ({self.ctl.daily_cap:,} tokens, Preferences ▸ Assistant) is used up: '
+                              'nothing was sent.')
+            n.settings.connect(lambda: open_settings(self.ctx))
+            self._add(n)
             return
         prompt, agent, local = expand_slash(text)
         if local is not None:
@@ -2031,6 +3222,16 @@ class AssistantPanel(QWidget):
         if self._stick:
             self.area.verticalScrollBar().setValue(hi)
 
+    def show_plans(self):
+        d = PlansDialog(self.ctl, self)
+        d.show()
+        return d
+
+    def show_sent(self):
+        d = SentDialog(self.ctl, self)
+        d.show()
+        return d
+
     def _export(self):
         text = self.ctl.transcript()
         if not text:
@@ -2048,14 +3249,20 @@ def open_settings(ctx):
 
 # ============================================================================================ preferences
 class AssistantPrefs(QWidget):
-    """Preferences ▸ Assistant: turn it on, the API key (tested), the model and the reasoning effort."""
+    """Preferences ▸ Assistant: turn it on, the provider (Groq or Claude), each provider's API key (tested), its model,
+    the reasoning, Claude's refusal fallback, a daily token cap and the prices the cost estimate uses."""
     _tested = pyqtSignal(object)
 
     def __init__(self, settings, parent=None):
         super().__init__(parent)
         self.s = settings
-        self.key, self.source = K.load()
-        self._new_key = None            # None: unchanged, '': remove
+        self.keys = {p: K.load(p) for p in PR.PROVIDERS}
+        self.new_keys = {p: None for p in PR.PROVIDERS}      # None: unchanged, '': remove
+        self.chosen_models = {PR.GROQ: str(self.s.value('assistant/model', C.DEFAULT_MODEL) or C.DEFAULT_MODEL),
+                              PR.CLAUDE: str(self.s.value('assistant/claude_model', PR.CLAUDE_DEFAULT) or
+                                             PR.CLAUDE_DEFAULT)}
+        prov = str(self.s.value('assistant/provider', PR.GROQ) or PR.GROQ)
+        self.prov = prov if prov in PR.PROVIDERS else PR.GROQ
         g = QGridLayout(self)
         g.setContentsMargins(14, 12, 14, 12)
         g.setVerticalSpacing(7)
@@ -2072,6 +3279,13 @@ class AssistantPrefs(QWidget):
         self.on = QCheckBox('Use the assistant')
         self.on.setChecked(self.s.value('assistant/enabled', False, type=bool))
         row('Assistant', self.on)
+        self.provider = SegmentedControl([(PR.GROQ, 'Groq'), (PR.CLAUDE, 'Claude')], self.prov)
+        self.provider.setToolTip('The cloud model the assistant and the Copilot use; each has its own key and models')
+        self.provider.changed.connect(self._provider_changed)
+        row('Provider', self.provider)
+        self.sdk = label('', small=True, wrap=True)
+        g.addWidget(self.sdk, r, 1, 1, 2)
+        r += 1
         kw = QWidget()
         kh = QHBoxLayout(kw)
         kh.setContentsMargins(0, 0, 0, 0)
@@ -2079,19 +3293,17 @@ class AssistantPrefs(QWidget):
         self.key_edit = QLineEdit()
         self.key_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.key_edit.setFont(mono(11))
-        self.key_edit.setPlaceholderText('gsk_…  paste your Groq API key')
         self.key_edit.textEdited.connect(self._edited)
         self.eye = tool_button('eye', 'Show the key', checkable=True, size=24, icon_size=14)
         self.eye.toggled.connect(lambda on: self.key_edit.setEchoMode(QLineEdit.EchoMode.Normal if on else
                                                                       QLineEdit.EchoMode.Password))
-        self.test = button('Test', None, None, 'Check the key with Groq and load the models it may use')
+        self.test = button('Test', None, None, 'Check the key with the provider and load the models it may use')
         self.test.clicked.connect(self._test)
         kh.addWidget(self.key_edit, 1)
         kh.addWidget(self.eye)
         kh.addWidget(self.test)
         row('API key', kw)
         self.key_note = label('', muted=True, small=True, wrap=True)
-        self.key_note.setOpenExternalLinks(True)
         self.key_note.setTextFormat(Qt.TextFormat.RichText)
         g.addWidget(self.key_note, r, 1, 1, 2)
         r += 1
@@ -2106,36 +3318,118 @@ class AssistantPrefs(QWidget):
                                        str(self.s.value('assistant/effort', 'medium')))
         self.effort_row = r
         row('Reasoning', self.effort)
+        self.effort_note = label('', muted=True, small=True, wrap=True)
+        g.addWidget(self.effort_note, r, 1, 1, 2)
+        r += 1
         self.show_r = QCheckBox("Show the model's reasoning in the answers")
         self.show_r.setChecked(self.s.value('assistant/show_reasoning', True, type=bool))
         g.addWidget(self.show_r, r, 1, 1, 2)
         r += 1
+        self.fallbacks = QCheckBox('When Claude declines a request, retry it on Anthropic\'s recommended model '
+                                   '(server-side fallback)')
+        self.fallbacks.setChecked(self.s.value('assistant/claude_fallbacks', True, type=bool))
+        self.fallbacks.setToolTip('fallbacks: "default" (beta server-side-fallback-2026-07-01): a request a safety '
+                                  'classifier declines is re-run on the model Anthropic recommends for that category')
+        g.addWidget(self.fallbacks, r, 1, 1, 2)
+        r += 1
+        cw = QWidget()
+        ch = QHBoxLayout(cw)
+        ch.setContentsMargins(0, 0, 0, 0)
+        ch.setSpacing(6)
+        self.cap = ScrubSpinBox('', 'plain', 0, 'k tokens', step=10.0, width=130)
+        self.cap.setRange(0, 100000)
+        try:
+            cap = int(self.s.value('assistant/daily_cap', 0) or 0)
+        except (TypeError, ValueError):
+            cap = 0
+        self.cap.set_value(cap / 1000.0)
+        ch.addWidget(self.cap)
+        ch.addWidget(label('a day, all providers (0: no cap)', muted=True, small=True), 1)
+        row('Daily cap', cw)
+        pw = QWidget()
+        ph = QHBoxLayout(pw)
+        ph.setContentsMargins(0, 0, 0, 0)
+        ph.setSpacing(6)
+        self.price_in = ScrubSpinBox('', 'plain', 3, '$ in', step=0.01, width=110)
+        self.price_out = ScrubSpinBox('', 'plain', 3, '$ out', step=0.01, width=110)
+        for w, k in ((self.price_in, 'assistant/groq_price_in'), (self.price_out, 'assistant/groq_price_out')):
+            w.setRange(0, 1000)
+            try:
+                w.set_value(float(self.s.value(k, 0) or 0))
+            except (TypeError, ValueError):
+                w.set_value(0.0)
+            ph.addWidget(w)
+        ph.addWidget(label('per million tokens, for the cost line (0: not estimated)', muted=True, small=True), 1)
+        row('Groq prices', pw)
+        self.price_note = label('Claude\'s prices are built in: ' + '; '.join(
+            f'{PR.CLAUDE_MODELS[m].label} ${p["input"]:g} in, ${p["output"]:g} out, cache reads ${p["cache_read"]:g}'
+            for m, p in PR.PRICES.items()) + f' per million tokens ({PR.PRICE_SOURCE[PR.CLAUDE]}).',
+            muted=True, small=True, wrap=True)
+        g.addWidget(self.price_note, r, 1, 1, 2)
+        r += 1
         g.addWidget(label('What is sent', ink2=True), r, 0, Qt.AlignmentFlag.AlignTop)
-        g.addWidget(label('With each question: camera poses, lens and module names, and the analysis figures the '
-                          'assistant looks up (each lookup is shown in the conversation). Never the vehicle model, '
-                          'images, captures or files. Groq processes them under its own terms.',
-                          muted=True, small=True, wrap=True), r, 1, 1, 2)
+        self.sent_note = label('', muted=True, small=True, wrap=True)
+        g.addWidget(self.sent_note, r, 1, 1, 2)
         r += 1
         g.setRowStretch(r, 1)
         g.setColumnStretch(1, 1)
         self._tested.connect(self._on_tested)
+        self._provider_changed(self.prov)
+
+    # ---------------------------------------------------------------- the provider shown
+    @property
+    def key(self):
+        return self.keys[self.prov][0]
+
+    @property
+    def source(self):
+        return self.keys[self.prov][1]
+
+    @property
+    def _new_key(self):
+        return self.new_keys[self.prov]
+
+    def _provider_changed(self, prov):
+        if self.model.count():
+            self.chosen_models[self.prov] = self.model.currentData() or self.chosen_models[self.prov]
+        self.prov = prov if prov in PR.PROVIDERS else PR.GROQ
+        claude = self.prov == PR.CLAUDE
+        self.key_edit.clear()
+        self.key_edit.setPlaceholderText(PR.KEY_HINT[self.prov])
+        self.status.setText('')
+        ok = PR.claude_available()
+        self.sdk.setVisible(claude)
+        self.sdk.setText(('<span style="color:%s">●</span> Anthropic\'s Python SDK is installed.' %
+                          THEME.color('good').name()) if ok else
+                         ('<span style="color:%s">●</span> %s' % (THEME.color('warning').name(), html.escape(PR.INSTALL))))
+        self.fallbacks.setVisible(claude)
+        self.test.setEnabled(not claude or ok)
+        who = PR.LABEL[self.prov]
+        self.sent_note.setText(f'With each question: your words, camera poses, lens and module names, plan settings '
+                               f'and the analysis figures the assistant looks up (each lookup is shown in the '
+                               f'conversation; the panel\'s More ▸ What was sent shows the last request). Never the '
+                               f'vehicle model, images, recordings, point clouds, keys, stream passwords, the '
+                               f'automation command or this computer\'s folders. {who} processes them under its own '
+                               f'terms; the first question asks once.')
         self._fill_models()
         self._key_ui()
 
     def _key_ui(self):
         a = f'style="color:{THEME.tok["ink2"]}"'
-        link = f'<a {a} href="{C.KEYS_URL}">Create a key at console.groq.com ↗</a>'
+        link = f'<a {a} href="{PR.KEYS_URL[self.prov]}">Create a key ({PR.LABEL[self.prov]}) ↗</a>'
+        env = K.env_name(self.prov)
         if self._new_key == '':
             self.key_edit.clear()
             self.key_note.setText('The key will be removed when you apply. · ' + link)
         elif self.source == 'environment':
-            self.key_edit.setPlaceholderText(f'Set by {K.ENV}: {K.mask(self.key)}')
-            self.key_note.setText(f'The {K.ENV} environment variable takes precedence over a saved key. · ' + link)
+            self.key_edit.setPlaceholderText(f'Set by {env}: {K.mask(self.key)}')
+            self.key_note.setText(f'The {env} environment variable takes precedence over a saved key. · ' + link)
         elif self.key and self._new_key is None:
             self.key_edit.setPlaceholderText(f'Saved: {K.mask(self.key)}  (type to replace)')
-            self.key_note.setText(f'Saved {K.SOURCES.get(self.source, "")}. · <a {a} href="remove">Remove the key</a>'
-                                  f' · ' + link)
+            self.key_note.setText(f'Saved {K.sources(self.prov).get(self.source, "")}. · '
+                                  f'<a {a} href="remove">Remove the key</a> · ' + link)
         else:
+            self.key_edit.setPlaceholderText(PR.KEY_HINT[self.prov])
             self.key_note.setText('Stored in the system keyring when there is one, otherwise in a private file in '
                                   'your settings folder; never in projects. · ' + link)
         self.key_note.setOpenExternalLinks(False)
@@ -2147,13 +3441,13 @@ class AssistantPrefs(QWidget):
 
     def _link(self, href):
         if href == 'remove':
-            self._new_key = ''
+            self.new_keys[self.prov] = ''
             self._key_ui()
         else:
             QDesktopServices.openUrl(QUrl(href))
 
     def _edited(self, text):
-        self._new_key = text.strip() or None
+        self.new_keys[self.prov] = text.strip() or None
         self.status.setText('')
 
     def current_key(self):
@@ -2162,24 +3456,30 @@ class AssistantPrefs(QWidget):
         return self._new_key or self.key
 
     def _fill_models(self, ids=None):
-        cur = self.model.currentData() or str(self.s.value('assistant/model', C.DEFAULT_MODEL))
-        v = self.s.value('assistant/models', [])
-        ids = ids or ([v] if isinstance(v, str) else list(v or [])) or list(C.KNOWN)
-        if cur not in ids:
+        cur = self.chosen_models[self.prov]
+        if self.prov == PR.CLAUDE:
+            ids = ids or list(PR.CLAUDE_MODELS)
+        else:
+            v = self.s.value('assistant/models', [])
+            ids = ids or ([v] if isinstance(v, str) else list(v or [])) or list(C.KNOWN)
+        if cur not in ids and (self.prov == PR.GROQ or cur in PR.CLAUDE_MODELS):
             ids = [cur] + list(ids)
-        ids = sorted(dict.fromkeys(ids), key=lambda i: (C.model_info(i).rank, i))
+        ids = sorted(dict.fromkeys(ids), key=lambda i: (PR.model_info(self.prov, i).rank, i))
         self.model.blockSignals(True)
         self.model.clear()
         for i in ids:
-            info = C.model_info(i)
+            info = PR.model_info(self.prov, i)
             self.model.addItem(f'{info.label}  —  {info.note}' if info.note else info.label, i)
         self.model.setCurrentIndex(max(0, self.model.findData(cur)))
         self.model.blockSignals(False)
         self._model_changed()
 
     def _model_changed(self, *_):
-        info = C.model_info(self.model.currentData() or C.DEFAULT_MODEL)
-        opts = [(e, e.capitalize()) for e in info.efforts] if info.efforts else [('medium', 'Medium')]
+        mid = self.model.currentData() or PR.default_model(self.prov)
+        self.chosen_models[self.prov] = mid
+        info = PR.model_info(self.prov, mid)
+        claude = self.prov == PR.CLAUDE
+        opts = [(e, e.capitalize()) for e in info.efforts] if info.efforts and not claude else [('medium', 'Medium')]
         cur = self.effort.value()
         lay = self.layout()
         new = SegmentedControl(opts, cur if cur in dict(opts) else (info.default_effort or opts[0][0]))
@@ -2188,8 +3488,12 @@ class AssistantPrefs(QWidget):
         self.effort.setParent(None)
         self.effort.deleteLater()
         self.effort = new
-        new.setEnabled(bool(info.efforts))
+        new.setEnabled(bool(info.efforts) and not claude)
+        new.setVisible(not claude)
         new.setToolTip('' if info.efforts else 'This model does not take a reasoning effort')
+        self.effort_note.setVisible(claude)
+        self.effort_note.setText('Adaptive thinking (always on): effort high when the Copilot plans a run, medium '
+                                 'for questions.')
 
     def _test(self):
         key = self.current_key()
@@ -2197,16 +3501,31 @@ class AssistantPrefs(QWidget):
             self.status.setText('Enter a key first.')
             return
         self.test.setEnabled(False)
-        self.status.setText('Checking the key with Groq…')
+        prov = self.prov
+        self.status.setText(f'Checking the key with {PR.LABEL[prov]}…')
 
         def work():
             try:
-                ids = C.Client(key, timeout=20).models()
-                self._emit(('ok', ids))
+                if prov == PR.CLAUDE:
+                    import anthropic
+                    from ..assistant import claude as CL
+                    cl = anthropic.Anthropic(api_key=key, base_url=CL.base_url(), timeout=20.0, max_retries=0)
+                    ids = [m.id for m in cl.models.list()]
+                    ids = [i for i in ids if i in PR.CLAUDE_MODELS] or ids
+                else:
+                    ids = C.Client(key, timeout=20).models()
+                self._emit(('ok', prov, ids))
             except C.ApiError as e:
-                self._emit(('err', e.message))
+                self._emit(('err', prov, e.message))
             except Exception as e:
-                self._emit(('err', f'{type(e).__name__}: {e}'))
+                msg = str(e)
+                try:
+                    from ..assistant import claude as CL
+                    msg = CL.map_error(e).message if CL.anthropic is not None and \
+                        isinstance(e, CL.anthropic.AnthropicError) else msg
+                except Exception:                           # noqa: BLE001
+                    pass
+                self._emit(('err', prov, msg))
         threading.Thread(target=work, daemon=True).start()
 
     def _emit(self, v):
@@ -2217,23 +3536,36 @@ class AssistantPrefs(QWidget):
 
     def _on_tested(self, v):
         self.test.setEnabled(True)
-        kind, val = v
+        kind, prov, val = v
+        if prov != self.prov:
+            return
         if kind == 'ok':
             col = THEME.color('good').name()
             self.status.setText(f'<span style="color:{col}">●</span> Connected · {len(val)} chat models available')
-            if val:
+            if val and prov == PR.GROQ:
                 self.s.setValue('assistant/models', val)
                 self._fill_models(val)
+            elif val:
+                self._fill_models([i for i in val if i in PR.CLAUDE_MODELS] or None)
         else:
             col = THEME.color('critical').name()
             self.status.setText(f'<span style="color:{col}">●</span> {html.escape(val)}')
 
     def apply(self):
+        self.chosen_models[self.prov] = self.model.currentData() or self.chosen_models[self.prov]
         self.s.setValue('assistant/enabled', self.on.isChecked())
-        self.s.setValue('assistant/model', self.model.currentData() or C.DEFAULT_MODEL)
-        self.s.setValue('assistant/effort', self.effort.value())
+        self.s.setValue('assistant/provider', self.prov)
+        self.s.setValue('assistant/model', self.chosen_models[PR.GROQ] or C.DEFAULT_MODEL)
+        self.s.setValue('assistant/claude_model', self.chosen_models[PR.CLAUDE] or PR.CLAUDE_DEFAULT)
+        if self.prov == PR.GROQ:
+            self.s.setValue('assistant/effort', self.effort.value())
         self.s.setValue('assistant/show_reasoning', self.show_r.isChecked())
-        if self._new_key == '':
-            K.delete()
-        elif self._new_key:
-            K.save(self._new_key)
+        self.s.setValue('assistant/claude_fallbacks', self.fallbacks.isChecked())
+        self.s.setValue('assistant/daily_cap', int(round(self.cap.value() * 1000)))
+        self.s.setValue('assistant/groq_price_in', float(self.price_in.value()))
+        self.s.setValue('assistant/groq_price_out', float(self.price_out.value()))
+        for p, k in self.new_keys.items():
+            if k == '':
+                K.delete(p)
+            elif k:
+                K.save(k, p)

@@ -275,6 +275,8 @@ from test_gui import app, win, pump, _wait  # noqa: E402,F401  (fixtures)
 def _ready(win, srv):
     K.save('test-key')
     win.ctx.settings.setValue('assistant/enabled', True)
+    win.ctx.settings.setValue('assistant/provider', 'groq')
+    win.ctx.settings.setValue('assistant/consent_groq', True)       # asked once per provider (test_copilot covers it)
     win.ctx.settings.setValue('assistant/model', 'openai/gpt-oss-120b')
     win.ctx.assistant.reload()
 
@@ -370,6 +372,8 @@ def test_preferences_test_the_key_and_save_it(app, win, srv):
 def test_wrong_key_shows_what_to_do(app, win, srv):
     K.save('wrong-key')
     win.ctx.settings.setValue('assistant/enabled', True)
+    win.ctx.settings.setValue('assistant/provider', 'groq')
+    win.ctx.settings.setValue('assistant/consent_groq', True)
     win.ctx.assistant.reload()
     win.ask_assistant('Hello?')
     _wait_idle(app, win)

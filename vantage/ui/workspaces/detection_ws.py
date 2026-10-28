@@ -939,9 +939,16 @@ class DetectionPage(QWidget):
             self.status_text = 'Failed: ' + msg.splitlines()[0]
         self.refresh()
 
-    def run(self) -> bool:
+    def run(self, plan=None) -> bool:
         if self.busy:
             return False
+        if isinstance(plan, dict):              # reached from a Copilot plan: only with its approval record
+            from ...assistant import copilot as CP
+            ok, why = CP.gate(self.ctx.store.project, plan, 'detection', self.settings.to_dict())
+            if not ok:
+                self.status_text = why
+                self.refresh()
+                return False
         st = self.settings
         if not st.recordings:
             self.status_text = 'Add a recording with ground truth first.'

@@ -619,7 +619,8 @@ CV_USES_RNG = {'kmeans', 'randu', 'randn', 'randShuffle', 'findChessboardCorners
 SCIPY_SEEDED = {'differential_evolution', 'dual_annealing', 'basinhopping', 'Sobol', 'LatinHypercube', 'Halton',
                 'PoissonDisk', 'MultivariateNormalQMC', 'bootstrap', 'permutation_test', 'monte_carlo_test', 'rvs',
                 'shgo'}
-IDENTITIES = {('core/project.py', 'uuid4'), ('core/automation.py', 'token_hex')}   # identities, never numbers
+IDENTITIES = {('core/project.py', 'uuid4'), ('core/automation.py', 'token_hex'),        # identities, never numbers
+              ('assistant/copilot.py', 'uuid4')}                                     # (a Copilot plan's id)
 # calls whose result is thrown away may be listed here; none are now (the SB detector's warm-up and the self-test's
 # check seed OpenCV's generator like every real call)
 CV_DISCARDED: set = set()

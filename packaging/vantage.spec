@@ -34,9 +34,14 @@ hiddenimports += ['OpenGL.EGL', 'OpenGL.GLX', 'OpenGL.WGL']
 # assistant's key, IANA time zones where the system has none (Windows); their PyInstaller hooks collect the rest
 OPTIONAL = {'zstandard': 'zstd-compressed ROS 2 bags', 'lz4': 'lz4-compressed ROS 2 bags',
             'keyring': "the assistant's key in the OS keyring", 'tzdata': 'named time zones on Windows',
-            'certifi': "the assistant's HTTPS certificates"}
+            'certifi': "the assistant's HTTPS certificates", 'anthropic': "the assistant's Claude provider"}
 have = [m for m in OPTIONAL if importlib.util.find_spec(m) is not None]
 hiddenimports += have + (['lz4.frame'] if 'lz4' in have else [])
+# the Claude provider imports the SDK only when it is chosen, and the SDK loads parts of itself lazily: collect all of
+# it (and its HTTP client and models) so the bundle never meets a missing module on a user's machine
+if 'anthropic' in have:
+    for mod in ('anthropic', 'httpx2', 'httpcore2', 'pydantic', 'pydantic_core', 'jiter', 'anyio'):
+        hiddenimports += collect_submodules(mod, on_error='ignore')
 print('vantage.spec: optional modules bundled: ' + (', '.join(have) or 'none')
       + ''.join(f'; MISSING {m} ({why})' for m, why in OPTIONAL.items() if m not in have))
 

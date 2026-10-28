@@ -12,6 +12,9 @@ os.environ['XDG_DATA_HOME'] = tempfile.mkdtemp(prefix='vantage-test-data-')     
 os.environ['VANTAGE_NO_KEYRING'] = '1'
 os.environ.pop('GROQ_API_KEY', None)
 os.environ.pop('VANTAGE_ASSISTANT_URL', None)
+# ... and never a real Anthropic key, token or endpoint (the Claude tests talk to tests/fake_anthropic.py)
+for _k in ('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'VANTAGE_CLAUDE_URL'):
+    os.environ.pop(_k, None)
 
 import pytest
 

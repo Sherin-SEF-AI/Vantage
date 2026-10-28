@@ -1488,6 +1488,76 @@ def _open(win, name, cls):
     return win._page_widgets[name]
 
 
+def _stacked_overlaps(root) -> list:
+    """Items of every visible top-to-bottom layout under root that overlap the item above them (widget geometries)."""
+    from PyQt6.QtWidgets import QBoxLayout
+    bad = []
+    for lay in root.findChildren(QBoxLayout):
+        w = lay.parentWidget()
+        if w is None or not w.isVisible() or lay.direction() != QBoxLayout.Direction.TopToBottom:
+            continue
+        prev = None
+        for i in range(lay.count()):
+            it = lay.itemAt(i)
+            g = it.geometry()
+            if it.isEmpty() or g.height() <= 0 or (it.widget() is not None and not it.widget().isVisible()):
+                continue
+            if prev is not None and g.top() < prev.top() + prev.height():
+                bad.append((type(w).__name__, w.objectName(), i, prev.top() + prev.height(), g.top()))
+            prev = g
+    return bad
+
+
+def test_sim_page_tiles_heading_and_table_never_overlap(app, win):
+    """The demo showed the top tiles over "The rig in CARLA": the splitter squeezed the pane below its contents'
+    height (its minimum hint knows nothing of the wrapped notes). At the demo's 1600 × 900 with the assistant open,
+    the tests' 1600 × 1000, 1920 × 1080 and a narrow 1280 × 720, the tiles, the heading, the table and the notes stand
+    one under the other, and no pane of the column draws one widget over another."""
+    from PyQt6.QtCore import QPoint
+    from PyQt6.QtWidgets import QLabel
+    from vantage.ui.workspaces.sim_ws import SimPage
+    p = win.store.project
+    v = next(v for v in p.variants if v.sensors)
+
+    def fn(pj):
+        pj.active_uid = v.uid
+        pj.analysis.sim = {'weather': 'vantage:fog', 'port': 2300, 'traffic': 20, 'walkers': 10,
+                           'scenario': {'name': 'pedestrian_crossing'}}      # the demo's drive: long notes
+    win.store.edit(['variants', 'analysis'], fn, 'demo drive')
+    pump(app, 0.3)
+    pg = _open(win, 'sim', SimPage)
+    _wait(app, lambda: pg.rig is not None, 120)
+    pump(app, 0.3)
+    assert pg._fitted and pg.p_status.text()
+    heading = next(x for x in pg.top_area.widget().findChildren(QLabel) if x.text() == 'The rig in CARLA')
+
+    def span(w):
+        y = w.mapTo(pg, QPoint(0, 0)).y()
+        return y, y + w.height()
+    try:
+        for size, dock in (((1600, 900), True), ((1600, 1000), False), ((1920, 1080), True), ((1280, 720), True)):
+            win.docks['assistant'].setVisible(dock)
+            win.resize(*size)
+            pump(app, 0.4)
+            tiles = [span(t) for t in pg.tiles.values()]
+            h, tb, st = span(heading), span(pg.table), span(pg.p_status)
+            assert all(t[1] <= h[0] for t in tiles), (size, tiles, h)
+            assert h[1] <= tb[0] and tb[1] <= st[0], (size, h, tb, st)
+            assert pg.table.height() >= pg.table.minimumHeight() and h[1] - h[0] >= heading.sizeHint().height()
+            assert not _stacked_overlaps(pg.right), (size, _stacked_overlaps(pg.right))
+            assert all(pg.right.widget(i).height() > 0 for i in range(3))
+        # the first plan gave the plan pane the height its notes need (at most 40 % of the column)
+        win.docks['assistant'].setVisible(False)
+        win.resize(1600, 1000)
+        pump(app, 0.4)
+        sz = pg.right.sizes()
+        assert sz[0] <= 0.4 * sum(sz) + 2
+    finally:
+        win.docks['assistant'].setVisible(False)
+        win.resize(1600, 1000)
+        pump(app, 0.2)
+
+
 def test_sim_page_plan_edit_undo_run_and_open_checks(app, win, tmp_path, monkeypatch):
     from vantage.sim import server as SV
     from vantage.ui.workspaces.sim_ws import SimPage

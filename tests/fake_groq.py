@@ -4,6 +4,7 @@
     srv = FakeGroq(key='test-key').start()       # srv.url -> http://127.0.0.1:PORT/openai/v1
     srv.script.append(srv.tool_call('get_coverage', {}))
     srv.script.append(srv.answer('The design is fine.', reasoning='Looked at coverage.'))
+    srv.raw                                      # (headers, body bytes) of every request, to scan what was sent
 """
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ class FakeGroq:
         self.models = list(models or MODELS)
         self.script = []            # responses, consumed in order; when empty: auto (tool call first, then an answer)
         self.requests = []          # payloads of /chat/completions
+        self.raw = []               # (headers, raw body bytes) of every request, so a test can scan what left the app
         self.delay = 0.0            # seconds between streamed chunks
         self._srv = None
 
@@ -86,6 +88,7 @@ class FakeGroq:
                 self.wfile.write(body)
 
             def do_GET(self):
+                fake.raw.append((dict(self.headers.items()), b''))
                 if not self._auth():
                     return
                 if self.path.endswith('/models'):
@@ -96,7 +99,9 @@ class FakeGroq:
 
             def do_POST(self):
                 n = int(self.headers.get('Content-Length') or 0)
-                payload = json.loads(self.rfile.read(n) or b'{}')
+                body = self.rfile.read(n) or b'{}'
+                fake.raw.append((dict(self.headers.items()), body))
+                payload = json.loads(body)
                 if not self._auth():
                     return
                 fake.requests.append(payload)

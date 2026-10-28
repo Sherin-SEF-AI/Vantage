@@ -594,6 +594,7 @@ class MainWindow(QMainWindow):
         A('ws_review', 'Review', lambda: self.workspace('review'), None, None, category='Window ▸ Workspaces')
         A('ws_save', 'Save current…', self.save_workspace, None, None, category='Window ▸ Workspaces')
         A('ws_reset', 'Reset layout', lambda: self.workspace('placement'), None, None, category='Window')
+        A('copilot_plans', 'Copilot plans…', self.show_copilot_plans, None, None, category='Window')
         # help
         A('shortcuts', 'Keyboard shortcuts', self.shortcuts, '?', 'keyboard', category='Help')
         A('help_frames', 'Coordinate frames', lambda: self.help_topic('frames'), None, 'axes', category='Help')
@@ -1636,6 +1637,7 @@ class MainWindow(QMainWindow):
         for key, title in (('coverage', 'Coverage'), ('cameras', 'Cameras'), ('tolerance', 'Tolerance'), ('issues', 'Issues'),
                            ('history', 'History'), ('log', 'Log')):
             w.addAction(title, lambda k=key: (self.docks['bottom'].show(), self.bottom.show_tab(k)))
+        w.addAction(self.actions_by_id['copilot_plans'])
         w.addSeparator()
         ws = w.addMenu('Workspaces')
         ws.addActions([self.actions_by_id['ws_placement'], self.actions_by_id['ws_analysis'], self.actions_by_id['ws_review'],
@@ -1643,6 +1645,11 @@ class MainWindow(QMainWindow):
         for name in self.ctx.settings.value('workspaces/names', [], type=list) or []:
             ws.addAction(name, lambda n=name: self.workspace(n))
         w.addAction(self.actions_by_id['ws_reset'])
+
+    def show_copilot_plans(self):
+        """Window ▸ Copilot plans…: the assistant dock with its list of plans (drafts, approved, run)."""
+        self.docks['assistant'].show()
+        self.assistant_panel.show_plans()
 
     def workspace(self, name):
         if name == 'placement':

@@ -4,8 +4,12 @@ Every tool returns plain JSON in metres, degrees, m² and px/cm, in the ISO 8855
 z up, origin at the rear-axle centre on the ground). Only text summaries leave the machine: camera poses, lens and
 module names, analysis figures. Never the vehicle model, images or files.
 
-The model cannot change the project. simulate_changes runs the analysis on a modified copy; propose_changes does the
-same and hands the result to the UI as a Proposal, which the user applies (one undo step) or discards."""
+The model cannot change the project, and no tool starts, stops or deletes anything. simulate_changes runs the
+analysis on a modified copy; propose_changes does the same and hands the result to the UI as a Proposal, which the
+user applies (one undo step) or discards. Runs (CARLA drives, campaigns, detection quality, critical targets in
+CARLA, the live rig, experiments, sample datasets, studies, exports) are planned with propose_plan (the Copilot,
+assistant/copilot.py): the user approves a plan before the app runs it. The read-only studies, simulate and compare
+tools compute without writing."""
 from __future__ import annotations
 
 import json
@@ -64,6 +68,11 @@ class ToolContext:
     critical_carla: dict | None = None   # the Critical targets in CARLA page's last result (core.critical_carla)
     carla_live: dict | None = None       # the CARLA page's live rig panel (summary(): state, cameras, faults; no URLs)
     working_dir: str = ''                # where outputs go (workdir.get of the settings); never sent to the model
+    plan: object = None                  # the Copilot plan on screen (copilot.Plan), which a follow-up revises
+    request: str = ''                    # the user's words this turn (recorded with a plan)
+    provider: str = ''
+    model: str = ''
+    on_copilot: object = None            # callable(copilot.Plan): a proposed plan to show
     _proposals: int = 0
 
     def status(self, text):
@@ -606,50 +615,9 @@ def get_sample_dataset(tc, **_):
                 'ok', 'reason', 'frames', 'samples', 'keyframe_hz', 'images', 'sweeps', 'scans', 'bytes', 'seconds',
                 'notes')},
             'meaning': 'what a synthetic sample drive with these settings would record: frames per nuScenes channel '
-                       'and bag topic, keyframes, approximate size and time; generate_sample_dataset writes it into the '
-                       'working folder when the user asks (or they use Export ▸ Sample dataset): a nuScenes version '
-                       'folder and a ROS 2 bag. The scene is synthetic, for testing pipelines, not for training'}
-
-
-def generate_sample_dataset(tc, duration_s=None, speed_kmh=None, scene=None, image_scale=None, nuscenes=None,
-                            rosbag=None, seed=None, **_):
-    """Write a sample dataset (core.dataset) into a new folder in the user's working folder. The model is told the
-    folder relative to the working folder only; the app shows the full path."""
-    from .. import workdir
-    from ..core import dataset as DSET
-    over = {k: v for k, v in dict(duration_s=duration_s, speed_kmh=speed_kmh, scene=scene, image_scale=image_scale,
-                                  nuscenes=nuscenes, rosbag=rosbag, seed=seed).items() if v is not None}
-    st = DSET.DatasetSettings.from_dict({**(tc.project.analysis.dataset or {}), **over})
-    est = DSET.estimate(tc.project, st)
-    if not est.get('ok'):
-        return {'error': est.get('reason') or 'nothing to record in this variant'}
-    base = tc.working_dir or workdir.default()
-    out = workdir.dataset_dir(tc.project, base=base)
-    last = [-1.0]
-
-    def progress(f, text=''):
-        if f - last[0] >= 0.05 or f >= 1.0:            # a status line every 5 %
-            last[0] = f
-            tc.status(f'Writing the sample dataset · {f * 100:.0f} %' + (f' · {text}' if text else ''))
-    tc.status(f'Writing the sample dataset (about {est.get("seconds", 0):.0f} s, '
-              f'{est.get("bytes", 0) / 1e6:.0f} MB)…')
-    try:
-        res = DSET.generate(tc.project, tc.engine, st, out, progress, tc.cancelled)
-    except ValueError as e:
-        return {'error': str(e)}
-    if res is None:
-        return {'error': 'cancelled: what was written was removed'}
-    if tc.on_ui is not None:
-        tc.on_ui({'action': 'dataset_written', 'result': res})
-    s = DSET.summary(res)
-    return {'written': True, 'folder_in_working_folder': workdir.display(res.out_dir, base),
-            'settings': {k: st.to_dict()[k] for k in ('duration_s', 'speed_kmh', 'scene', 'image_scale', 'nuscenes',
-                                                      'rosbag', 'seed')},
-            **{k: s[k] for k in ('samples', 'annotations', 'seconds', 'size_mb') if k in s},
-            'notes': list(res.notes),
-            'meaning': 'a synthetic drive recorded by this rig, written as a nuScenes version folder (nuscenes/) and a '
-                       'ROS 2 bag (rosbag/) in a new folder of the user\'s working folder; the app shows the full path '
-                       'and the snippet to load it on Export ▸ Sample dataset. Synthetic geometry: for testing '
+                       'and bag topic, keyframes, approximate size and time; a sample_dataset step of a plan '
+                       '(propose_plan) writes it into the working folder once the user approves (or they use Export ▸ '
+                       'Sample dataset): a nuScenes version folder and a ROS 2 bag. The scene is synthetic, for testing '
                        'pipelines, not for training'}
 
 
@@ -804,8 +772,8 @@ def get_automation(tc, **_):
 
 def get_experiment(tc, **_):
     if not tc.experiment:
-        return {'error': 'no experiment run yet: set one up on Analysis ▸ Experiments and Run (or run_experiment for '
-                         'the one stored in the project)'}
+        return {'error': 'no experiment run yet: set one up on Analysis ▸ Experiments and Run (or propose an '
+                         'experiment step with propose_plan for the user to approve)'}
     return {**tc.experiment, 'meaning': _EXPERIMENT_MEANING}
 
 
@@ -814,33 +782,6 @@ _EXPERIMENT_MEANING = (
     'by what drives it (by = total Sobol index, Morris mu*, one-at-a-time swing, or main-effect range), the best point '
     '(the Pareto front\'s best on the first response, meeting the targets when they are set) and, for Monte Carlo, '
     'each response\'s mean, sd, 5/50/95th percentiles and share meeting its target; stale = the design changed since')
-
-
-def run_experiment(tc, max_points=2000, **_):
-    """Run the experiment stored in the project (Analysis ▸ Experiments) on a copy, when it is small enough."""
-    from ..core import experiments as EXP
-    st = EXP.settings_of(tc.project)
-    bad = EXP.errors(tc.project, st)
-    if bad:
-        return {'error': ' '.join(bad) + ' (set the experiment up on Analysis ▸ Experiments)'}
-    try:
-        cap = max(1, int(max_points))
-    except (TypeError, ValueError):
-        cap = 2000
-    n = EXP.point_count(EXP.factors_of(st), st)
-    if n > cap:
-        return {'error': f'the design has {n:,} points, more than {cap:,}: run it on Analysis ▸ Experiments'}
-    tc.status(f'Experiment: {n:,} points…')
-    last = [-1.0]
-
-    def progress(f, text=''):
-        if f - last[0] >= 0.1 or f >= 1.0:
-            last[0] = f
-            tc.status(f'Experiment · {f * 100:.0f} %' + (f' · {text}' if text else ''))
-    res = EXP.run(tc.project, tc.engine, st, progress=progress, cancel=tc.cancelled)
-    if res is None:
-        return {'error': 'cancelled'}
-    return {**EXP.summary(res), 'meaning': _EXPERIMENT_MEANING}
 
 
 def run_validation(tc, models=None, quick=True, **_):
@@ -1802,6 +1743,42 @@ def show_in_app(tc, action='', cameras=None, x=None, y=None, heatmap=None, overl
     return {'done': action, **{k: v for k, v in req.items() if k != 'action'}}
 
 
+# =========================================================================== the Copilot (copilot_tools.py)
+def _copilot(name):
+    def fn(tc, **kw):
+        from . import copilot_tools as CT
+        return getattr(CT, name)(tc, **kw)
+    fn.__name__ = name
+    return fn
+
+
+def _plan_kinds():
+    from .copilot import KINDS
+    return list(KINDS)
+
+
+_VALUE_ITEM = {'type': 'object', 'properties': {
+    'key': {'type': 'string', 'description': 'the setting, dotted for nested ones (scenario.params.gap_m)'},
+    'value': {'type': 'string', 'description': 'the value as JSON text: "\\"Town10HD\\"", "30", "true", "[1, 2, 3]"'},
+    'source': {'type': 'string', 'enum': ['request', 'copilot'],
+               'description': 'request: the user asked for it; copilot: you chose it'},
+    'reason': {'type': 'string', 'description': 'one line: why this value'}},
+    'required': ['key', 'value', 'source', 'reason']}
+_STEP_ITEM = {'type': 'object', 'properties': {
+    'kind': {'type': 'string', 'enum': ['carla_run', 'campaign', 'detection', 'critical_carla', 'carla_live',
+                                        'experiment', 'sample_dataset', 'study', 'export']},
+    'label': {'type': 'string', 'description': 'a few words, e.g. "Dusk rain drive with a crossing"'},
+    'values': {'type': 'array', 'items': _VALUE_ITEM,
+               'description': 'the values you set; the others keep the page\'s default'}},
+    'required': ['kind', 'label', 'values']}
+_PLAN_PARAMS = {'title': {'type': 'string', 'description': 'what the plan does, in a few words'},
+                'rationale': {'type': 'string', 'description': 'one or two sentences: the request as you read it'},
+                'revise': {'type': 'boolean', 'description': 'true: revise the plan on screen (values only say what '
+                                                             'changes, steps in the same order); false: a new plan'},
+                'steps': {'type': 'array', 'items': _STEP_ITEM}}
+_PLAN_REQUIRED = ('title', 'rationale', 'revise', 'steps')
+
+
 # =========================================================================== registry
 _CHANGE_ITEM = {
     'type': 'object',
@@ -1836,7 +1813,7 @@ class Tool:
     description: str
     params: dict
     fn: object
-    kind: str = 'read'      # read | compute | simulate | propose | plan | ui
+    kind: str = 'read'      # read | compute | simulate | propose | plan | ui | copilot
     required: tuple = ()
 
 
@@ -1925,16 +1902,6 @@ TOOLS = [
     Tool('get_sample_dataset', 'Read the sample dataset plan',
          'The synthetic drive the rig would record for pipeline tests: settings, frames per channel, keyframes, '
          'approximate size and generation time. Cheap; writes nothing.', {}, get_sample_dataset),
-    Tool('generate_sample_dataset', 'Write a sample dataset',
-         'Write a synthetic drive recorded by this rig (nuScenes folder and ROS 2 bag) into a new folder in the user\'s '
-         'working folder, with the project\'s sample-dataset settings or the ones given (duration_s up to 30, speed_kmh, '
-         'scene urban|highway, image_scale 0.1-1, nuscenes, rosbag, seed). Takes about a minute and writes a few '
-         'hundred MB at the defaults, so call it only when the user asks for a dataset to be written; '
-         'get_sample_dataset gives the estimate first.',
-         {'duration_s': {'type': 'number'}, 'speed_kmh': {'type': 'number'},
-          'scene': {'type': 'string', 'enum': ['urban', 'highway']}, 'image_scale': {'type': 'number'},
-          'nuscenes': {'type': 'boolean'}, 'rosbag': {'type': 'boolean'}, 'seed': {'type': 'integer'}},
-         generate_sample_dataset, 'compute'),
     Tool('get_drive_log_check', 'Read the drive-log check',
          'The last recorded drive checked against the plan (Calibrate ▸ Drive-log check): streams OK/missing, dropped '
          'frames, data rate against the budget, lidar phase lock, worst camera trigger offset, camera rotations with '
@@ -1996,10 +1963,6 @@ TOOLS = [
          'The last experiment run on Analysis ▸ Experiments: design, points, factors, per response its range and the '
          'factors that drive it, the best point and, for Monte Carlo, the uncertainty. Reads the page\'s result. '
          'Cheap.', {}, get_experiment),
-    Tool('run_experiment', 'Run the designed experiment',
-         'Run the experiment stored in the project (factors, responses and design set on Analysis ▸ Experiments) on '
-         'a copy, when it has at most max_points points (default 2000): the same summary as get_experiment. Seconds '
-         'to minutes.', {'max_points': {'type': 'integer'}}, run_experiment, 'compute'),
     Tool('run_validation', 'Validate the models',
          'Check Vantage\'s models against independent references (closed forms, OpenCV, ITU-R tables, published '
          'examples, exact ray casting, Monte Carlo): checks passed, per model, and every failure with its error and '
@@ -2054,6 +2017,43 @@ TOOLS = [
          'priority, text}] (see get_requirement_metrics), or none to read them from the project brief (or text).',
          {'items': {'type': 'array', 'items': {'type': 'object'}}, 'text': {'type': 'string'}},
          propose_requirements, 'propose'),
+    Tool('get_catalogue', 'Read the Copilot\'s catalogue',
+         'What a plan can use: towns, weathers (CARLA presets and Vantage conditions), scenarios and their '
+         'parameters, fault kinds and their ranges, actor kinds, the rig\'s tags, the detector model\'s state, the '
+         'recordings found (CARLA drives with ground truth, newest first), past runs and approved plans, export '
+         'formats, studies, plan kinds. Call it before propose_plan to use real names. Cheap.',
+         {'topic': {'type': 'string', 'enum': ['towns', 'weathers', 'scenarios', 'faults', 'actors', 'rig', 'detector',
+                                               'recordings', 'past_runs', 'export_formats', 'studies', 'plan_kinds']}},
+         _copilot('get_catalogue'), 'read', ('topic',)),
+    Tool('get_plan_settings', 'Read a run\'s settings',
+         'Every setting of a kind of plan step as the page holds it now: key (dotted for nested ones), value, range '
+         'or choices. Cheap.',
+         {'kind': {'type': 'string', 'enum': ['carla_run', 'campaign', 'detection', 'critical_carla', 'carla_live',
+                                              'experiment', 'sample_dataset', 'study', 'export']}},
+         _copilot('get_plan_settings'), 'read', ('kind',)),
+    Tool('explain_limit', 'Explain a documented limit',
+         'A documented limit of the simulation or the app in plain words: render_budget, weather_sensors, '
+         'asbuilt_carla, ports, memory, detector, faults, carla_vehicle, live, sample_dataset, experiment_carla.',
+         {'topic': {'type': 'string', 'enum': ['render_budget', 'weather_sensors', 'asbuilt_carla', 'ports', 'memory',
+                                               'detector', 'faults', 'carla_vehicle', 'live', 'sample_dataset',
+                                               'experiment_carla']}},
+         _copilot('explain_limit'), 'read', ('topic',)),
+    Tool('estimate_plan', 'Estimate a plan',
+         'The estimate of a plan\'s steps (CARLA time, frames and labels, disk, drives, points) from the app\'s own '
+         'estimators, without showing anything to the user. Same input as propose_plan. About a second a CARLA '
+         'step.', dict(_PLAN_PARAMS), _copilot('estimate_plan'), 'read', _PLAN_REQUIRED),
+    Tool('validate_plan', 'Check a plan',
+         'Check a plan\'s steps as the app will run them (each page\'s settings rules, the render budget, the '
+         'memory free, the CARLA port, the detector model) and list the documented limits that apply, without '
+         'showing it to the user. Same input as propose_plan.', dict(_PLAN_PARAMS), _copilot('validate_plan'), 'read',
+         _PLAN_REQUIRED),
+    Tool('propose_plan', 'Propose a plan',
+         'Create (revise=false) or revise (revise=true) the plan shown to the user: steps of kind carla_run, '
+         'campaign, detection, critical_carla, carla_live, experiment, sample_dataset, study or export, each with the '
+         'values you set ({key, value as JSON text, source, reason}). The app fills in every other value, checks each '
+         'step and estimates it; the user approves, edits or rejects it. Nothing runs until they approve. Returns '
+         'the plan with its errors (an invalid plan cannot be approved), warnings and estimate.',
+         dict(_PLAN_PARAMS), _copilot('propose_plan'), 'copilot', _PLAN_REQUIRED),
     Tool('compare_variants', 'Compare variants',
          'Analyse layout variants of this project side by side (blind area, coverage, redundancy, density, issues). '
          'All variants unless named.', {'variants': {'type': 'array', 'items': {'type': 'string'}}},
@@ -2115,11 +2115,60 @@ TOOLS = [
 BY_NAME = {t.name: t for t in TOOLS}
 
 
+def input_schema(t: Tool) -> dict:
+    return {'type': 'object', 'properties': t.params, **({'required': list(t.required)} if t.required else {})}
+
+
 def schemas() -> list:
-    return [{'type': 'function', 'function': {
-        'name': t.name, 'description': t.description,
-        'parameters': {'type': 'object', 'properties': t.params, **({'required': list(t.required)} if t.required else {})}}}
-        for t in TOOLS]
+    return [{'type': 'function', 'function': {'name': t.name, 'description': t.description,
+                                              'parameters': input_schema(t)}} for t in TOOLS]
+
+
+_JSON_TYPES = {'string': (str,), 'boolean': (bool,), 'object': (dict,), 'array': (list,)}
+
+
+def _check(schema, v, path, out):
+    """Problems of v against a JSON schema (the subset the tools use: type, enum, properties, required, items)."""
+    t = schema.get('type')
+    where = path or 'input'
+    if t in ('number', 'integer'):
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or (isinstance(v, float) and not math.isfinite(v)):
+            out.append(f'{where}: a {t} is expected, not {json.dumps(v, default=str)[:40]}')
+            return
+        if t == 'integer' and float(v) != int(v):
+            out.append(f'{where}: an integer is expected')
+            return
+    elif t in _JSON_TYPES:
+        if not isinstance(v, _JSON_TYPES[t]):
+            out.append(f'{where}: a {t} is expected, not {type(v).__name__}')
+            return
+    if 'enum' in schema and v not in schema['enum']:
+        out.append(f'{where}: {json.dumps(v, default=str)[:40]} is not one of {", ".join(map(str, schema["enum"]))}')
+        return
+    if t == 'object' and isinstance(v, dict) and isinstance(schema.get('properties'), dict):
+        props = schema['properties']
+        for k in schema.get('required', ()):
+            if k not in v:
+                out.append(f'{where}: {k} is missing')
+        for k, x in v.items():
+            if k not in props:
+                out.append(f'{where}: no parameter {k!r}')
+            else:
+                _check(props[k], x, f'{path}.{k}' if path else k, out)
+    if t == 'array' and isinstance(v, list) and isinstance(schema.get('items'), dict):
+        for i, x in enumerate(v[:500]):
+            _check(schema['items'], x, f'{where}[{i}]', out)
+
+
+def validate_args(name: str, args) -> list:
+    """Problems of a tool call's parsed input against the tool's schema ([] when it is valid). The Claude provider
+    streams tool inputs eagerly, so an input may arrive cut short or mistyped: it is checked before any tool runs."""
+    t = BY_NAME.get(name)
+    if t is None:
+        return [f'unknown tool {name!r}']
+    out = []
+    _check(input_schema(t), args, '', out)
+    return out
 
 
 def run(tc, name: str, args: dict) -> tuple[str, bool]:

@@ -28,6 +28,7 @@ dependencies = [
 [project.optional-dependencies]
 step = ["gmsh"]
 keyring = ["keyring"]
+claude = ["anthropic>=2.3,<3"]   # the assistant's Claude provider (Anthropic's official SDK); Groq needs nothing
 bags = ["zstandard", "lz4"]       # read and write compressed ROS 2 bags (MCAP chunks); uncompressed bags need nothing
 test = ["pytest"]
 
