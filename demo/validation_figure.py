@@ -1,6 +1,6 @@
 """The website's validation figure: every check of the published report (site/validation/validation.json) as its
 measured error divided by its tolerance, one row per model, log scale; plus the cube-map depth check as it was before
-this release (the integrator's measurement with HEAD's occlusion.py: 0.715 share of texels against 0.005).
+0.3.0 (the integrator's measurement with HEAD's occlusion.py: 0.715 share of texels against 0.005).
 
     python3 demo/validation_figure.py site/validation/validation.json site/media/validation.jpg
 
@@ -24,7 +24,7 @@ SANS, MONO = 'IBM Plex Sans', 'IBM Plex Mono'
 
 DARK = dict(bg='#0f0f0e', ink='#f0efec', ink2='#c3c2b7', muted='#8f8d86', hair='#2a2a28', strong='#3a3a37',
             dot='#3987e5', fail='#e0524f', ghost='#8f8d86')
-OLD_CUBE_DEPTH = 0.715            # the share of texels off before this release (integrator7.md), tolerance 0.005
+OLD_CUBE_DEPTH = 0.715            # the share of texels off before 0.3.0 (integrator7.md), tolerance 0.005
 ZERO_X = 3e-17                    # where an exact zero is drawn (left of the axis break)
 X0, X1 = 1e-15, 1e3
 
@@ -60,7 +60,7 @@ def main(src, out):
     xs = [ZERO_X if r == 0 else r for _, r, _, _ in ratios]
     yy = [y for y, _, _, _ in ratios]
     ax.scatter(xs, yy, s=110, color=C['dot'], edgecolors=C['bg'], linewidths=2, zorder=4)
-    # the cube-map depth before this release
+    # the cube-map depth before 0.3.0
     ym = next(y for y, m in zip(ys, models) if m['id'] == 'occlusion')
     now = next(r for y, r, c, m in ratios if c['id'] == 'occlusion.cube_depth')
     old = OLD_CUBE_DEPTH / 0.005
@@ -68,7 +68,7 @@ def main(src, out):
     ax.annotate('', xy=(now * 1.6, ym + 0.02), xytext=(old / 1.6, ym + 0.02),
                 arrowprops=dict(arrowstyle='-|>', color=C['ghost'], lw=1.5, shrinkA=0, shrinkB=0,
                                 connectionstyle='arc3,rad=0.45', mutation_scale=14), zorder=3)
-    ax.text(0.045, ym, f'cube-map depth: {old:.0f}× before this release, {now:.2f}× now', color=C['ink2'],
+    ax.text(0.045, ym, f'cube-map depth: {old:.0f}× before 0.3.0, {now:.2f}× now', color=C['ink2'],
             fontsize=12.5, va='center', ha='right', zorder=5,
             bbox=dict(boxstyle='square,pad=0.25', facecolor=C['bg'], edgecolor='none'))
     # the closest call

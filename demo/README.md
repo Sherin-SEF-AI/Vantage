@@ -54,14 +54,19 @@ The poster is the frame at 72 % of a clip unless `POSTER_AT` in `clips.py` names
 real time, plus the web encode; the clips that generate a drive first take 15–30 s longer.
 
 The `automation` clip types `make test` as the command, approves it in the app's own dialog and runs a harmless
-standard-library script from the throw-away home (a Makefile written there in the set-up); the `materials` clip adds
-a windscreen camera (FW) for the glass and wiper part, as the materials tests do: the sample itself has none. The `carla`
-clip needs CARLA 0.9.16 and a GPU: it links the recording machine's CARLA folder and its client venv into the
-throw-away home as `~/carla` (removed at the end), starts the server from the page (headless, in its own scope capped
-at 12 GB), records a 4 s drive into the throw-away home (Town10HD, ClearNoon, 20 vehicles, seed 1, images at half size;
-about 25 s, shown as a time-lapse), runs the drive-log check on it and stops the server at the end, whatever happens.
-The `experiments` clip runs a 6-point factorial and a 512-point Sobol design live (about 10 s, shown as a time-lapse).
-The validation figure (`site/media/validation.jpg`) is drawn from the published report by `demo/validation_figure.py`.
+standard-library script from the throw-away home (a Makefile written there in the set-up); the `materials` clip adds a
+windscreen camera (FW) for the glass and wiper part, as the materials tests do: the sample itself has none. The
+`carla` clip shows a real CARLA drive made beforehand, so that CARLA and the recording never share the machine: run
+`vantage PROJECT --carla-run $VANTAGE_CLIP_RUNS/<variant>-<YYYYmmdd-HHMMSS>` in a CARLA server on the port the clip
+sets (2300 by default, never CARLA's default ports), with `clip_carla.setup`'s settings, and stop the server. The clip
+opens the drive with Simulate ▸ CARLA ▸ Open run…, shows its report and its Ground truth tab (image and boxes, a
+picked object, instances, range, the lidar from above, semantic). While it records, the app can neither start a server
+nor probe CARLA's default ports. The `detection`, `campaign` and `critcarla` clips open working copies of real CARLA
+drives (`VANTAGE_CLIP_DETECT`, `VANTAGE_CLIP_CAMPAIGN`, `VANTAGE_CLIP_CRITICAL`) and start nothing; the campaign
+reuses all 49 drives and their checks. `groundtruth.jpg`, `actors.jpg` and `carlalive.jpg` are drawn from real drives
+by `demo/groundtruth_figure.py`, `demo/actors_figure.py` and `demo/live_figure.py`. The `experiments` clip runs a
+6-point factorial and a 512-point Sobol design live (about 10 s, shown as a time-lapse). The validation figure
+(`site/media/validation.jpg`) is drawn from the published report by `demo/validation_figure.py`.
 
 ## YouTube tour
 

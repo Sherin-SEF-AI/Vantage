@@ -2,15 +2,15 @@
  "schema": "vantage.validation/1",
  "project": "sample (built in)",
  "variant": "6-cam · v3",
- "created_utc": "2026-10-27T08:18:01Z",
- "seconds": 54.87,
+ "created_utc": "2026-10-28T04:18:23Z",
+ "seconds": 48.01,
  "settings": {
   "models": [],
   "quick": false,
   "seed": 20261027
  },
  "environment": {
-  "vantage": "0.3.0",
+  "vantage": "0.4.0",
   "python": "3.14.4",
   "numpy": "2.3.5",
   "scipy": "1.16.3",
@@ -22,8 +22,8 @@
  "limits": "The suite checks the models against references for the cases it builds; it does not show that a model describes a real vehicle, lens or sensor. Monte Carlo checks are statistical: their tolerance is 4.5 standard errors of the estimated spread, at a fixed seed.",
  "cancelled": false,
  "summary": {
-  "checks": 69,
-  "passed": 69,
+  "checks": 71,
+  "passed": 71,
   "failed": [],
   "ok": true
  },
@@ -145,7 +145,7 @@
      "tolerance": 1e-06,
      "unit": "px",
      "passed": true,
-     "seconds": 0.023,
+     "seconds": 0.026,
      "note": "",
      "exception": "",
      "detail": {
@@ -983,7 +983,7 @@
      "tolerance": 0.001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.129,
+     "seconds": 0.121,
      "note": "",
      "exception": "",
      "detail": {
@@ -1040,7 +1040,7 @@
      "tolerance": 0.001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.288,
+     "seconds": 0.309,
      "note": "",
      "exception": "",
      "detail": {
@@ -1095,7 +1095,7 @@
      "tolerance": 0.001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.077,
+     "seconds": 0.058,
      "note": "",
      "exception": "",
      "detail": {
@@ -1134,7 +1134,7 @@
      "tolerance": 0.005,
      "unit": "share of directions",
      "passed": true,
-     "seconds": 3.973,
+     "seconds": 3.07,
      "note": "A cube map texel stores the exact distance along its centre ray to the plane of the triangle drawn there (painted far to near by each triangle's nearest point): the depth error left is the texel's size (a random direction lies up to half a texel off the centre ray; most at grazing angles and silhouettes), see the median and 95th percentile here. Until 0.2.0 it stored the triangle centroid's distance: 15 % off in the median, over 3× at the 95th percentile. What the analysis decides from it is checked in occlusion.ground_visibility.",
      "exception": "",
      "detail": {
@@ -1252,7 +1252,7 @@
      "tolerance": 0.005,
      "unit": "share of texels",
      "passed": true,
-     "seconds": 3.302,
+     "seconds": 2.574,
      "note": "The texels off by more than 0.1 % lie at a silhouette or a crease: the triangle drawn there covers part of the texel but not its centre (a polygon's one-pixel outline), so the depth is of a surface within one texel of the centre ray.",
      "exception": "",
      "detail": {
@@ -1351,7 +1351,7 @@
      "tolerance": 0.005,
      "unit": "share of points",
      "passed": true,
-     "seconds": 2.949,
+     "seconds": 2.551,
      "note": "",
      "exception": "",
      "detail": {
@@ -1475,7 +1475,7 @@
      "tolerance": 1e-09,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.003,
+     "seconds": 0.002,
      "note": "",
      "exception": "",
      "detail": {
@@ -1541,7 +1541,7 @@
      "tolerance": 0.001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.107,
+     "seconds": 0.101,
      "note": "",
      "exception": "",
      "detail": {
@@ -1578,7 +1578,7 @@
      "tolerance": 1e-06,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.011,
+     "seconds": 0.008,
      "note": "",
      "exception": "",
      "detail": {
@@ -1609,7 +1609,7 @@
      "tolerance": 0.02,
      "unit": "degrees",
      "passed": true,
-     "seconds": 0.142,
+     "seconds": 0.137,
      "note": "",
      "exception": "",
      "detail": {
@@ -1947,7 +1947,7 @@
      "tolerance": 1e-06,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.032,
+     "seconds": 0.029,
      "note": "",
      "exception": "",
      "detail": {
@@ -1973,7 +1973,7 @@
      "tolerance": 0.02,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.335,
+     "seconds": 0.306,
      "note": "",
      "exception": "",
      "detail": {
@@ -2116,7 +2116,7 @@
      "tolerance": 0.1,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.334,
+     "seconds": 0.326,
      "note": "The study gives every channel that crosses the object its full angular width / h_res. A pitched lidar's channel that crosses the top or bottom edge off its axis meets the face over part of the width only (the edge is tilted in the lidar's frame), so the count runs high there (and the channels it counts can differ by two from those cast): up to about 8 % in these cases, against 1 % for a level lidar.",
      "exception": "",
      "detail": {
@@ -2490,7 +2490,7 @@
      "tolerance": 0.001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.708,
+     "seconds": 0.59,
      "note": "",
      "exception": "",
      "detail": {
@@ -2516,7 +2516,7 @@
      "tolerance": 1e-09,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.003,
+     "seconds": 0.002,
      "note": "",
      "exception": "",
      "detail": {
@@ -2971,7 +2971,7 @@
      "tolerance": 1e-09,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.021,
+     "seconds": 0.02,
      "note": "",
      "exception": "",
      "detail": {
@@ -3356,7 +3356,7 @@
      "tolerance": 0.0,
      "unit": "share of the requirement",
      "passed": true,
-     "seconds": 0.006,
+     "seconds": 0.005,
      "note": "",
      "exception": "",
      "detail": {
@@ -3917,7 +3917,7 @@
      "tolerance": 1e-09,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.002,
+     "seconds": 0.001,
      "note": "",
      "exception": "",
      "detail": {
@@ -4035,7 +4035,7 @@
      "tolerance": 1e-09,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.005,
+     "seconds": 0.003,
      "note": "",
      "exception": "",
      "detail": {
@@ -4211,7 +4211,7 @@
      "tolerance": 0.001,
      "unit": "share of points",
      "passed": true,
-     "seconds": 1.703,
+     "seconds": 1.373,
      "note": "A ray that grazes the road within the allowance may land either side of it.",
      "exception": "",
      "detail": {
@@ -4250,7 +4250,7 @@
      "tolerance": 0.3,
      "unit": "m",
      "passed": true,
-     "seconds": 0.437,
+     "seconds": 0.337,
      "note": "The profile samples the road every 0.25 m beyond 10 m.",
      "exception": "",
      "detail": {
@@ -4304,7 +4304,7 @@
      "tolerance": 1e-06,
      "unit": "ms",
      "passed": true,
-     "seconds": 0.015,
+     "seconds": 0.014,
      "note": "",
      "exception": "",
      "detail": {
@@ -4356,7 +4356,7 @@
      "tolerance": 0.0001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.047,
+     "seconds": 0.041,
      "note": "",
      "exception": "",
      "detail": {
@@ -4391,7 +4391,7 @@
      "tolerance": 0.02,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.061,
+     "seconds": 0.037,
      "note": "",
      "exception": "",
      "detail": {
@@ -4430,7 +4430,7 @@
      "tolerance": 0.01,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.04,
+     "seconds": 0.028,
      "note": "",
      "exception": "",
      "detail": {
@@ -4475,7 +4475,7 @@
      "tolerance": 1.0,
      "unit": "px",
      "passed": true,
-     "seconds": 3.953,
+     "seconds": 2.722,
      "note": "",
      "exception": "",
      "detail": {
@@ -4512,7 +4512,7 @@
      "tolerance": 0.01,
      "unit": "σ",
      "passed": true,
-     "seconds": 1.828,
+     "seconds": 1.688,
      "note": "",
      "exception": "",
      "detail": {
@@ -4552,7 +4552,7 @@
      "tolerance": 0.001,
      "unit": "degrees or mm",
      "passed": true,
-     "seconds": 0.49,
+     "seconds": 0.436,
      "note": "",
      "exception": "",
      "detail": {
@@ -4598,7 +4598,7 @@
      "tolerance": 0.22556461820268847,
      "unit": "log ratio",
      "passed": true,
-     "seconds": 14.046,
+     "seconds": 12.619,
      "note": "",
      "exception": "",
      "detail": {
@@ -4812,7 +4812,7 @@
      "tolerance": 0.31980107453341566,
      "unit": "log ratio",
      "passed": true,
-     "seconds": 4.999,
+     "seconds": 4.775,
      "note": "",
      "exception": "",
      "detail": {
@@ -4895,7 +4895,7 @@
      "tolerance": 0.0001,
      "unit": "relative",
      "passed": true,
-     "seconds": 1.025,
+     "seconds": 0.916,
      "note": "",
      "exception": "",
      "detail": {
@@ -4923,7 +4923,7 @@
      "tolerance": 0.41425857805424554,
      "unit": "log ratio",
      "passed": true,
-     "seconds": 6.84,
+     "seconds": 6.217,
      "note": "",
      "exception": "",
      "detail": {
@@ -5027,7 +5027,7 @@
      "tolerance": 3.0,
      "unit": "mm",
      "passed": true,
-     "seconds": 5.705,
+     "seconds": 5.324,
      "note": "",
      "exception": "",
      "detail": {
@@ -5063,7 +5063,7 @@
      "tolerance": 0.05,
      "unit": "px",
      "passed": true,
-     "seconds": 0.545,
+     "seconds": 0.481,
      "note": "",
      "exception": "",
      "detail": {
@@ -5202,7 +5202,7 @@
      "tolerance": 0.02,
      "unit": "index",
      "passed": true,
-     "seconds": 0.234,
+     "seconds": 0.211,
      "note": "",
      "exception": "",
      "detail": {
@@ -5389,7 +5389,7 @@
      "tolerance": 1e-09,
      "unit": "share",
      "passed": true,
-     "seconds": 0.002,
+     "seconds": 0.004,
      "note": "",
      "exception": "",
      "detail": {
@@ -5411,7 +5411,7 @@
      "tolerance": 0.022500562521094628,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.198,
+     "seconds": 0.185,
      "note": "",
      "exception": "",
      "detail": {
@@ -5607,6 +5607,81 @@
      }
     }
    ]
+  },
+  {
+   "id": "recording",
+   "title": "Recording checks: frozen cameras and capture skew",
+   "modules": "vantage.core.drivelog, vantage.core.rig_health",
+   "methods_anchor": "recording-checks",
+   "passed": 2,
+   "checks": [
+    {
+     "id": "recording.frozen_runs",
+     "model": "recording",
+     "title": "A frozen camera is found with its repeated frames",
+     "quantity": "frames wrongly counted (missed or extra) by the drive-log check's freeze detector (content fingerprints, runs of images identical to the one before) on 300 frames of a still scene with sensor noise into which a stalled camera's repeats are written at known places (runs of 1, 3 and 10 repeats, one after a dropped frame; the same frames also as 0.8 MB raw payloads, fingerprinted by samples), checked against rig health's own frozen counter on the same frames",
+     "reference": "the runs as written into the sequence; rig health's independent counter (pixel equality of the thumbnails)",
+     "references": [
+      "rfc7693"
+     ],
+     "error": 0.0,
+     "tolerance": 0.0,
+     "unit": "frames",
+     "passed": true,
+     "seconds": 0.156,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "encoded: runs found": 3,
+      "encoded: frames found": 14,
+      "raw 0.8 MB: runs found": 3,
+      "raw 0.8 MB: frames found": 14,
+      "frames repeated (written)": 14,
+      "rig health runs": [
+       1,
+       3,
+       10
+      ],
+      "runs in a still scene with noise": 0
+     },
+     "figure": null
+    },
+    {
+     "id": "recording.capture_skew",
+     "model": "recording",
+     "title": "Rig health judges the capture skew against the sync plan",
+     "quantity": "largest difference, in milliseconds, of rig health's capture-time skew from the skew written into the capture times of three cameras of a lidar-synchronised rig (fired 25 and 75 ms after the front camera, as the sweep crosses them, with 0.4 ms of jitter): every camera on time, then the left one 7 ms late, then every camera fired together; and without the plan the stagger itself",
+     "reference": "the trigger times of a clockwise 10 Hz lidar sweep written out in the check (the front camera at 0 ms, the right one at 25 ms, the left one at 75 ms)",
+     "references": [
+      "ieee1588"
+     ],
+     "error": 0.19972358751374486,
+     "tolerance": 0.5,
+     "unit": "ms",
+     "passed": true,
+     "seconds": 0.003,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "on time: R skew ms": 0.048,
+      "on time: L skew ms": 0.039,
+      "on time: reference": "F",
+      "L 7 ms late: R skew ms": 0.2,
+      "L 7 ms late: L skew ms": 7.036,
+      "L 7 ms late: reference": "F",
+      "fired together: R skew ms": -25.12,
+      "fired together: L skew ms": 24.852,
+      "fired together: reference": "F",
+      "without the plan: worst skew ms": 25.161,
+      "planned offsets ms": {
+       "F": 89.0,
+       "L": 64.0,
+       "R": 14.0
+      }
+     },
+     "figure": null
+    }
+   ]
   }
  ],
  "references": {
@@ -5663,6 +5738,7 @@
   "efron1993": "B. Efron and R. J. Tibshirani, An Introduction to the Bootstrap, Chapman & Hall, 1993.",
   "morris1991": "M. D. Morris, \"Factorial sampling plans for preliminary computational experiments\", Technometrics 33(2), 161–174, 1991.",
   "campolongo2007": "F. Campolongo, J. Cariboni and A. Saltelli, \"An effective screening design for sensitivity analysis of large models\", Environmental Modelling & Software 22(10), 1509–1518, 2007.",
-  "wilson1927": "E. B. Wilson, \"Probable inference, the law of succession, and statistical inference\", Journal of the American Statistical Association 22(158), 209–212, 1927."
+  "wilson1927": "E. B. Wilson, \"Probable inference, the law of succession, and statistical inference\", Journal of the American Statistical Association 22(158), 209–212, 1927.",
+  "rfc7693": "M-J. Saarinen and J-P. Aumasson, \"The BLAKE2 Cryptographic Hash and Message Authentication Code (MAC)\", RFC 7693, IETF, 2015."
  }
 }

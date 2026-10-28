@@ -1,27 +1,48 @@
-"""Website clip 'carla': Simulate ▸ CARLA… on the sample's data rig, a real CARLA run with its camera images.
+"""Website clip 'carla': Simulate ▸ CARLA… opening a real CARLA drive of the sample's data rig made before the clip
+(Open run…), its report, and its ground truth frame by frame in the page's Ground truth tab.
 
-The page finds the CARLA 0.9.16 installation of the machine that records (where the page itself looks for one, or
-VANTAGE_CARLA_ROOT), linked into the throw-away home as ~/carla/<its folder> with its client Python's venv next to it
-as ~/carla/venv; the links are removed at the end. The machine needs a GPU: the cameras are rendered.
+Made in two steps, so that a CARLA server and the recording never share the machine's memory:
+1. the drive, recorded before the clip by Vantage's own Run without a window: `vantage PROJECT --carla-run OUT` in the
+   CARLA server of the project's port (Simulate ▸ CARLA's settings as setup() sets them: Town10HD, ClearNoon, 4 s, 20
+   vehicles, seed 1, images at half the sensor size, ground truth on), the server then stopped. OUT is a folder
+   <variant>-<YYYYmmdd-HHMMSS> in the folder VANTAGE_CLIP_RUNS names, as the CARLA page names its runs;
+2. this clip, with no server: that folder is linked into the throw-away working folder as the project's CARLA runs
+   (~/Documents/Vantage/<project>/carla), where Open run…'s dialog starts.
 
-The clip: the plan (an 80 Hz step, each fisheye camera as five pinhole views remapped through its lens, the roof
-lidar's 128 beams on CARLA's channels, the radar cones, the Audi A2) and the rig in CARLA table; Start, which runs the
-server headless in its own systemd scope capped at 12 GB (the page's Memory cap), on the NVIDIA GPU; Run, a 4 s drive
-through Town10HD at ClearNoon with 20 vehicles of traffic, seed 1, images at half the sensor size, shown as a
-time-lapse; then Drive-log check on the recording: the six cameras' rotation verdicts against the lidar and the
-lidar's depth edges over a CARLA fisheye image. The server is stopped by the page at the end, whatever happens. The
-recording goes to the working folder in the throw-away home (shown from ~). The project is never saved.
+The clip opens the drive with Open run… (the folder the dialog would be given, passed to the page's open_run: the
+dialog itself is the desktop's), shows the report as after a run, then the Ground truth tab on the camera frame holding
+the most labelled objects, zoomed to them: the image with the objects' tight boxes, then both boxes and a vehicle
+picked in the object table and highlighted, the instances (one colour per object) laid over the image, the range on
+its log colour scale, the lidar sweep from above in its nuScenes-lidarseg classes, and last the semantic labels in
+CARLA's palette with the legend of the classes present (the poster). Detection quality on the drive is the
+'detection' clip's: with it this one would run past 25 s.
+
+The CARLA folder and its client venv are linked into the throw-away home as ~/carla (the page checks them; removed
+at the end). While the clip records, the app can neither start a CARLA server nor probe CARLA's default ports
+(2000–2010, traffic manager 8000/8100); the page's settings name port CARLA_PORT, where nothing needs to run. The
+project is never saved.
 """
 from __future__ import annotations
 
 import os
-import time
 
-from PyQt6.QtCore import QRectF
+from PyQt6.QtCore import QPointF, QRectF
+
+CARLA_PORT = int(os.environ.get('VANTAGE_CLIP_CARLA_PORT', '2300'))
+CARLA_TM_PORT = int(os.environ.get('VANTAGE_CLIP_CARLA_TM_PORT', str(CARLA_PORT + 6100)))
 
 # the scenario, saved with the project as the page's settings (Simulate ▸ CARLA's fields show it)
 SCENARIO = {'town': 'Town10HD', 'weather': 'ClearNoon', 'duration_s': 4.0, 'traffic': 20, 'seed': 1,
-            'image_scale': 0.5, 'memory_gb': 12.0, 'quality': 'Epic'}
+            'image_scale': 0.5, 'memory_gb': 12.0, 'quality': 'Epic', 'port': CARLA_PORT, 'tm_port': CARLA_TM_PORT,
+            'ground_truth': {'semantic': True, 'instance': True, 'range': True, 'lidar_labels': True}}
+
+
+def need(var, what) -> str:
+    """A folder the clip needs, named by an environment variable (the recording machine's, never in the repo)."""
+    v = os.environ.get(var, '')
+    if not v or not os.path.isdir(v):
+        raise RuntimeError(f'set {var} to {what}')
+    return v
 
 
 def setup(p):
@@ -61,158 +82,195 @@ def link_carla(home):
     return made
 
 
-def lapse(r, cond, video_s, guess_s, timeout):
-    """Record while a background job runs, as a time-lapse of about video_s seconds of video when it takes guess_s of
-    wall time; a longer wait speeds up further, so it stays short. The recorder's chip shows the measured speed-up."""
-    t0, f0 = time.time(), r.f
-    speed = max(1.0, guess_s / video_s)
-    while not cond() and time.time() - t0 < timeout:
-        ts = time.time()
-        r.tick()
-        if time.time() - t0 > guess_s:
-            speed *= 1.03
-        time.sleep(max(0.015, speed / r.fps - (time.time() - ts)))
-        ratio = (time.time() - t0) / max(1e-6, (r.f - f0) / r.fps)
-        r.timelapse = int(round(ratio)) if ratio >= 1.6 else 0
-    r.timelapse = 0
-    r.tick()
-    return time.time() - t0
+def link_runs(project, working):
+    """The project's CARLA runs folder in the throw-away working folder, linked to the folder on disk that
+    VANTAGE_CLIP_RUNS names: a drive with ground truth is too big for a memory-backed temporary folder."""
+    from vantage import workdir
+    src = need('VANTAGE_CLIP_RUNS', 'a folder on disk for the CARLA runs the clips record')
+    dst = workdir.project_dir(project, working, 'carla')
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    os.symlink(src, dst)
+    return dst
 
 
-def _report_gpu(srv):
-    """(printed for the record, not shown) the GPU the server renders on."""
-    import subprocess
-    try:
-        out = subprocess.run(['nvidia-smi', '--query-gpu=name,memory.used', '--format=csv,noheader'],
-                             capture_output=True, text=True, timeout=20).stdout.strip()
-        apps = [x.strip() for x in subprocess.run(['nvidia-smi'], capture_output=True, text=True,
-                                                  timeout=20).stdout.splitlines() if 'Carla' in x]
-        print(f'  GPU: {out}; {apps}', flush=True)
-    except (OSError, subprocess.SubprocessError) as e:
-        print(f'  GPU: {e}', flush=True)
+def click_tab(r, tabs, title):
+    bar = tabs.tabBar()
+    i = next(k for k in range(tabs.count()) if tabs.tabText(k) == title)
+    r.click(bar, QPointF(bar.tabRect(i).center()), 0.5, real=False)
+    tabs.setCurrentIndex(i)
+    r.hold(0.2)
 
 
-def _report_memory(srv):
-    """(printed for the record, not shown) the server scope's memory: its cap and its peak."""
-    import subprocess
-    try:
-        out = subprocess.run(['systemctl', '--user', 'show', '-p', 'MemoryMax,MemoryPeak,MemoryCurrent',
-                              srv.unit + '.scope'], capture_output=True, text=True, timeout=20).stdout.split()
-        print(f'  server scope: {out}', flush=True)
-    except (OSError, subprocess.SubprocessError) as e:
-        print(f'  server scope: {e}', flush=True)
+FORBIDDEN = set(range(2000, 2011)) | {8000, 8100}       # CARLA's defaults: possibly another user's server
+
+
+def guard_ports(SV):
+    """While the clip runs, the app never starts a CARLA server and never probes CARLA's default ports; returns a
+    function that undoes it."""
+    start, probe = SV.Server.start, SV.port_open
+
+    def refuse(self, *a, **k):
+        raise RuntimeError('the clip never starts a CARLA server: start one outside the recording')
+
+    def port_open(host='127.0.0.1', port=2000, timeout=0.5):
+        if int(port) in FORBIDDEN:
+            raise RuntimeError(f'the app asked for port {port}, one of CARLA\'s defaults')
+        return probe(host, port, timeout)
+    SV.Server.start, SV.port_open = refuse, port_open
+
+    def undo():
+        SV.Server.start, SV.port_open = start, probe
+    return undo
+
+
+def finished_run(folder) -> str:
+    """The newest drive with ground truth in folder (its name as the CARLA page names a run), or ''."""
+    runs = sorted(d for d in (os.path.join(folder, x) for x in os.listdir(folder))
+                  if os.path.isfile(os.path.join(d, 'ground_truth', 'index.json')) and
+                  os.path.isfile(os.path.join(d, 'run.json')))
+    return runs[-1] if runs else ''
 
 
 def clip(stage, r):
+    from vantage.sim import server as SV
+    if CARLA_PORT in FORBIDDEN or CARLA_TM_PORT in FORBIDDEN:
+        raise RuntimeError(f'refusing CARLA port {CARLA_PORT} / {CARLA_TM_PORT}: CARLA\'s default ports may be '
+                           'another user\'s server')
+    runs = need('VANTAGE_CLIP_RUNS', 'the folder holding the drive made by `vantage PROJECT --carla-run`')
+    if not finished_run(runs):
+        raise RuntimeError(f'no CARLA drive with ground truth in {runs}: make one first (see the module docstring)')
+    undo = guard_ports(SV)
     links = link_carla(stage.home)
     if not links:
+        undo()
         raise RuntimeError('no CARLA installation found (set VANTAGE_CARLA_ROOT)')
-    held = {}
+    held = {'links': links}
     try:
         _clip(stage, r, held)
     finally:
-        pg = held.get('page')
-        if pg is not None:
-            if pg.server is not None:
-                _report_memory(pg.server)
-            pg.cancel()
-            t = time.time()
-            while pg.busy and time.time() - t < 60:
-                stage.app.processEvents()
-                time.sleep(0.05)
-            pg.stop_server_now()                      # the page's own stop: SIGTERM to the server's process group
         for x in links:
             os.unlink(x)
+        undo()
+
+
+def best_frame(doc):
+    """(camera tag, frame index) of the frame holding the most labelled objects of at least 250 visible pixels (a tie:
+    the most such pixels)."""
+    from vantage.core import groundtruth as GT
+    best = (-1, -1, '', 0)
+    for tag in doc.get('cameras', {}):
+        for k, f in enumerate(GT.frames(doc, tag)):
+            px = [o['pixels'] for o in f.get('objects', []) if o['pixels'] >= 250]
+            best = max(best, (len(px), sum(px), tag, k))
+    return best[2], best[3]
+
+
+def slide(r, slider, to, dur=0.9):
+    """Drag a slider's handle to a value, the pointer on it."""
+    a = slider.value()
+    g = r.wrect(slider)
+    span = max(slider.maximum() - slider.minimum(), 1)
+
+    def x_of(v):
+        return g.x() + 9 + (g.width() - 18) * (v - slider.minimum()) / span
+    r.move(QPointF(x_of(a), g.center().y()), 0.4)
+    r.ripple()
+    n = max(2, round(dur * r.fps))
+    for k in range(1, n + 1):
+        v = round(a + (to - a) * k / n)
+        slider.setValue(v)
+        r.cur = r.cur * 0 + (x_of(v), g.center().y())
+        r.tick()
+
+
+def objects_box(frame, min_px=250, pad=40):
+    """The image rectangle (x0, y0, x1, y1) around a frame's objects of at least min_px pixels, padded."""
+    bb = [o['bbox'] for o in frame['objects'] if o['pixels'] >= min_px]
+    return (min(b[0] for b in bb) - pad, min(b[1] for b in bb) - pad, max(b[2] for b in bb) + pad,
+            max(b[3] for b in bb) + pad)
 
 
 def _clip(stage, r, held):
-    from vantage.sim import server as SV
+    from vantage.core import groundtruth as GT
     w = stage._rig_window(setup)
     r.win = w
-    r.chapter('Simulate in CARLA', 'The planned rig, driven in CARLA')
+    r.chapter('Simulate in CARLA', 'A finished drive opened: its report and its ground truth')
     r.menu('Simulate', 'CARLA')
-    pg = held['page'] = w.page('sim')
+    pg = w.page('sim')
+    held['links'].append(link_runs(w.store.project, pg.working()))
+    pg._show_where()
     r.wait_for(lambda: pg.rig is not None and pg._check is not None, timeout=90)
     if pg.rig is None or not (pg._check or {}).get('ok'):
         raise RuntimeError(f'the CARLA plan or its Python is not ready: {pg._check}')
-    if SV.port_open('127.0.0.1', pg.settings.port):
-        raise RuntimeError('a server already answers on the port: the clip starts its own')
-    dl = w.page('drivelog')
-    stage.tilde_path_label(dl)
-    r.hold(0.4)
-    # the plan: step rate, rendering, lidar rays, ego vehicle, and the rig in CARLA (each camera's views, the lidar's
-    # channels, the radar cones)
-    t = r.wrect(pg.table)
-    rows = pg.table.rowCount()
-    h = pg.table.rowViewportPosition(rows - 1) + pg.table.rowHeight(rows - 1) + pg.table.horizontalHeader().height()
-    top = r.wrect(pg.tiles['step']).y()
-    r.zoom(QRectF(t.x(), top, t.width() * 0.62, t.y() + min(t.height(), h) + 30 - top), 0.7, margin=8)
-    r.hold(2.0)
-    # the installation, the server and the scenario; Start: headless, capped at 12 GB, on the NVIDIA GPU
-    left = r.wrect(pg.root_label)
-    seed = r.wrect(pg.fields['seed'][0])
-    r.zoom(QRectF(left.x(), left.y() - 30, left.width(), seed.bottom() - left.y() + 36), 0.7, margin=8)
-    r.hold(0.3)
-    r.click(pg.b_start, dur=0.5)
-    if pg.server is None:
-        raise RuntimeError('the server did not start')
-    _mark(r, 'Start')
-    waited = lapse(r, lambda: pg.server is None or not pg.server.running or SV.port_open('127.0.0.1', pg.server.port),
-                   2.4, 2.4, 240)
-    if not pg.server.ready():
-        raise RuntimeError(f'the server never answered ({waited:.0f} s)')
-    print(f'  server answering after {waited:.1f} s', flush=True)
-    _report_gpu(pg.server)
-    pg._refresh_server()                              # the status line now, not at its next second
-    r.hold(0.9)
-    # Run: the drive, recorded as a nuScenes folder and a ROS 2 bag
-    run = r.wrect(pg.b_run)
-    out = r.wrect(pg.out)
-    r.zoom(QRectF(run.x(), run.y() - 6, 980, out.bottom() - run.y() + 6), 0.7, margin=8)
-    r.click(pg.b_run, dur=0.4)
-    if not pg.busy:
-        raise RuntimeError(f'the run did not start: {pg.g_status.text()}')
-    _mark(r, 'Run')
-    waited = lapse(r, lambda: not pg.busy, 3.4, 25.0, 900)
-    res = pg.result or {}
-    if res.get('status') != 'ok':
-        raise RuntimeError(f'the run failed: {pg.g_status.text()}')
-    print(f'  run: {waited:.1f} s; {res.get("performance")}; {res.get("counts")}', flush=True)
-    _mark(r, 'report')
-    r.hold(1.9)
-    # Drive-log check: the recording against the plan
-    r.click(pg.b_drivelog, dur=0.4)
-    r.zoom(None, 0.45, wait=False)
-    waited = lapse(r, lambda: dl.result is not None and not dl.busy, 1.6, 13.0, 600)
-    if dl.result is None:
-        raise RuntimeError(f'the drive-log check gave no result: {dl.status_text}')
-    print(f'  drive-log check: {waited:.1f} s; {dl.status_text}', flush=True)
-    for x in dl.result.extrinsics:
-        print(f'    {x["tag"]:3s} {x["verdict"]:10s} {x.get("confidence")} delta {x.get("delta_deg")} '
-              f'se {x.get("stderr_deg")}', flush=True)
-    r.hold(0.5)
-    # the extrinsics: F's image from CARLA with the lidar's depth edges over it (the buildings, bollards and railing
-    # along its top), then every camera's verdict
-    i = dl.cam_pick.findText('F')
-    if i >= 0:
-        dl.cam_pick.setCurrentIndex(i)
-    bar = dl.tabs.tabBar()
-    r.click(bar, bar.tabRect(2).center(), dur=0.5)
-    r.hold(0.5)
-    ir = dl.overlay.image_rect()
-    o = r.wpos(dl.overlay, ir.topLeft())
-    wz = max(ir.width() * 0.62, 482.0)              # at least the recorder's narrowest zoom: no widening about it
-    r.zoom(QRectF(o.x() + 1, o.y() + 1, wz, wz * 9 / 16), 0.8, margin=0)
-    _mark(r, 'overlay')
-    r.hold(2.3)
-    e = r.wrect(dl.ext)
-    eh = dl.ext.horizontalHeader().height() + dl.ext.rowCount() * dl.ext.rowHeight(0)
-    r.zoom(QRectF(e.x(), e.y(), dl.ext.horizontalHeader().length(), eh), 0.7, margin=12)
-    _mark(r, 'verdicts')
-    r.hold(2.3)
-    r.zoom(None, 0.45)
+    st = pg.settings
+    if (st.port, st.tm_port) != (CARLA_PORT, CARLA_TM_PORT) or pg.server is not None:
+        raise RuntimeError(f'the page is set to port {st.port} / {st.tm_port}, not {CARLA_PORT} / {CARLA_TM_PORT}')
+    drive = finished_run(pg.runs_folder())          # through the link: shown from ~
+    if not drive:
+        raise RuntimeError('no finished drive in the project\'s runs folder')
+    r.hold(0.2)
+    # Open run…: the drive made before, in the project's runs folder
+    r.click(pg.b_open, dur=0.6, real=False)
+    if not pg.open_run(drive):
+        raise RuntimeError(f'Open run… refused the drive: {pg.g_status.text()}')
+    print(f'  opened: {pg.g_status.text()}', flush=True)
+    _mark(r, 'opened')
+    # its report, as after a run
+    a, o = r.wrect(pg.b_drivelog), r.wrect(pg.out)
+    r.zoom(QRectF(a.x(), a.y() - 8, o.width() * 0.62, 330), 0.35, margin=8)
+    r.hold(1.4)
+    r.zoom(None, 0.3, wait=False)
+    # the ground truth, frame by frame: the frame with the most labelled objects, zoomed to them
+    click_tab(r, pg.out_tabs, 'Ground truth')
+    gt = pg.gt
+    doc = GT.read(drive)
+    tag, k = best_frame(doc)
+    frame = GT.frames(doc, tag)[k]
+    gt.set_camera(tag)
+    gt.set_boxes('tight')
+    box = objects_box(frame)
+    gt.canvas.zoom_to(*box)                         # the view stays zoomed while the slider runs to the frame
+    stage.settle(0.3)
+    view = r.wrect(gt)
+    r.zoom(QRectF(view.x(), view.y(), view.width(), view.height()), 0.4, margin=4)
+    slide(r, gt.slider, k, 0.7)
+    gt.show_frame()
+    print(f'  frame {tag} {k}: {gt.canvas.caption}; objects >= 250 px: '
+          f'{[(o["class"], o["id"], o["pixels"]) for o in frame["objects"] if o["pixels"] >= 250]}', flush=True)
+    _mark(r, 'image, tight boxes')
+    r.hold(0.8)
+    # both boxes, and a vehicle picked in the table: highlighted
+    r.click(gt.boxes.buttons['both'], dur=0.4)
+    car = max((o for o in frame['objects'] if o['class'] in ('car', 'truck', 'bus')), key=lambda o: o['pixels'])
+    row = next(i for i in range(gt.table.rowCount()) if gt.table.item(i, 1).text() == str(car['id']))
+    gt.table.scrollToItem(gt.table.item(row, 0))
+    cell = gt.table.visualItemRect(gt.table.item(row, 0))
+    r.click(gt.table.viewport(), QPointF(cell.center()), 0.5)
+    if gt.selected != car['id']:
+        raise RuntimeError(f'the table row did not select {car["class"]} {car["id"]}')
+    _mark(r, f'selected {car["class"]} {car["id"]}')
+    r.hold(1.3)
+    # the instances over the image (the opacity), the range, the lidar from above
+    r.click(gt.layer.buttons['instance'], dur=0.45)
+    _mark(r, 'instance')
+    slide(r, gt.opacity, 60, 0.45)
+    gt.show_frame()
+    r.hold(1.1)
+    gt.opacity.setValue(100)
+    r.click(gt.layer.buttons['range'], dur=0.45)
+    _mark(r, 'range')
+    r.hold(1.5)
+    r.click(gt.layer.buttons['lidar'], dur=0.45)
+    _mark(r, 'lidar')
+    r.hold(1.4)
+    # last, the semantic labels with the legend of the classes present (the poster)
+    r.click(gt.layer.buttons['semantic'], dur=0.45, hold=0.0)
+    gt.canvas.zoom_to(*box)
+    gt.select_object(None)
+    gt.set_boxes('tight')
+    _mark(r, 'semantic')
     r.cursor_on = False
-    r.hold(0.4)
+    r.hold(3.0)
 
 
 def _mark(r, what):

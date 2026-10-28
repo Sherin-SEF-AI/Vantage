@@ -90,6 +90,11 @@
     <a href="#rosbags">ROS 2 bags</a>
     <a href="#automation">Automation and CI</a>
     <a href="#carla">Simulating in CARLA</a>
+    <a href="#carla-gt">Ground truth, faults, scenarios</a>
+    <a href="#carla-live">CARLA as a live rig</a>
+    <a href="#detection">Detection quality</a>
+    <a href="#campaigns">Simulation campaigns</a>
+    <a href="#critical-carla">Critical targets in CARLA</a>
     <p>Reference</p>
     <a href="#validation">Validation and methods</a>
     <a href="#provenance">Provenance and reproducing</a>
@@ -602,7 +607,8 @@ vantage project.vantage            # open a project</code></pre>
       undoable. The sample dataset renders the same condition, and batch mode takes it with <code>--condition</code>.</p>
     <p>A camera still resolves an object when the object is big enough in the image, as in clear weather, and also while
       its contrast, which fades as exp(−σd) over its distance d (σ from the fog's visibility, the rain or the snow), stays
-      above 5 %, and, at night, while enough of its height is lit by the headlamps and the ambient light to the camera's
+      above 5 % (the WMO's threshold, a human observer's: a detector needs more, so for a detector the ranges in fog are
+      an upper bound), and, at night, while enough of its height is lit by the headlamps and the ambient light to the camera's
       minimum luminance. That minimum comes from the module's pixel size, the lens's f-number and the frame rate with a
       typical sensor (quantum efficiency, read noise, the signal-to-noise a detector needs). The headlamps are a typical
       beam pattern shaped after UN R112 (a low beam with its cut-off below the horizon, or a high beam).</p>
@@ -1096,7 +1102,7 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td>Exposure: mean grey level, clipped pixels</td><td>mean below 20 or above 235; over 10 % clipped</td><td></td></tr>
       <tr><td>Sharpness (variance of the Laplacian)</td><td>below 8</td><td></td></tr>
       <tr><td>Frozen image</td><td></td><td>10 identical frames in a row</td></tr>
-      <tr><td>Capture-time spread across the rig (median)</td><td>over 20 ms</td><td>over 50 ms</td></tr>
+      <tr><td>Capture-time skew across the rig, against the sync plan (median)</td><td>over 20 ms</td><td>over 50 ms</td></tr>
       <tr><td>Edge alignment (see below)</td><td>over 12 px</td><td></td></tr>
     </table>
     <p>Statistics cover the last 5 seconds. The resolution is checked against the module's sensor.</p>
@@ -1104,6 +1110,7 @@ vantage project.vantage            # open a project</code></pre>
       <li><b>Drift indicator</b>: the planned body outline and horizon are drawn over each live image through the lens model, and the edge alignment score is the median distance from the planned body edge to the nearest edge in the image, in sensor pixels. A camera that has been knocked shows its body edge elsewhere. It is an indicator, not a measurement: where the body and what lies behind it look alike it may not find the edge, and it misses a rotation that slides the edge along itself, such as yaw on a mirror camera. The installation check measures the pose.</li>
       <li><b>Save frames</b> writes the newest frame of every camera as <code>&lt;tag&gt;.png</code>; <b>Check installation</b> freezes them and opens the installation check with them.</li>
       <li>Capture times are when frames reached Vantage (the software clock), not sensor timestamps, so network and encoder delays are included in the spread.</li>
+      <li>The skew is judged against the <a href="#timing">sync plan</a>: a rig synchronised to a spinning lidar fires its cameras round the sweep, so each camera's planned offset to the reference camera is taken out first (a 31–34 ms stagger on a lidar-synchronised rig is no skew). A camera the plan does not phase is expected to fire with the others. Streams from the <a href="#carla-live">CARLA live rig</a> are judged against its own schedule. Hover the summary line for each camera's offset, planned offset and skew.</li>
       <li>A password in a stream URL (<code>rtsp://user:password@host/…</code>) is not saved in the project: it goes to <code>stream-credentials.json</code> in your settings folder, readable only by you, and is put back when the stream is opened. Someone you share the project with enters their own once.</li>
     </ul>
     <p>Batch mode: <code>--rig-health SECONDS [OUT.json]</code> reads the streams for that long and writes the report
@@ -1118,7 +1125,10 @@ vantage project.vantage            # open a project</code></pre>
     once, in the background, and never loaded whole, so long drives are fine.</p>
     <p><b>Streams</b>: each sensor's measured rate against the plan, dropped frames and the longest gap, jitter, latency (a
     negative one means the sensor's clock runs ahead of the recorder's), the image size against the camera module, and the
-    points per cloud. <b>Data rate</b>: what each topic really recorded against the recording budget, with the real
+    points per cloud. A <b>frozen camera</b> keeps sending its last image at its rate, so its stamps look healthy: every
+    image's content is fingerprinted as the log is read, and images identical to the one before are reported with their
+    times and drawn on the timeline in amber. <i>Freeze repeats</i> (default 3) in a row or more is a fault, fewer a
+    warning; a working camera's noise makes every frame differ, so only an exact repeat counts. <b>Data rate</b>: what each topic really recorded against the recording budget, with the real
     compression of compressed images. <b>Sync</b>: the lidar's measured phase lock against its planned phase, and for every
     camera frame how far its exposure is from the moment the sweep crossed its view, against the sync plan; a camera's own
     trigger error is separated from the lidar's. Set <i>Camera stamps</i> to what your driver stamps (exposure middle,
@@ -1126,7 +1136,12 @@ vantage project.vantage            # open a project</code></pre>
     <p><b>Rotations</b>: at frames spread over the drive, the lidar's depth edges (where the range jumps) are projected
     into each camera and lined up with the image's edges; the rotation that lines them up best is the camera's rotation
     relative to the lidar, with a confidence from how well the frames agree. An axis the edges in view do not pin down is
-    left as planned and shown in brackets. Translation cannot be measured this way. <i>Apply rotation corrections</i> adds a
+    left as planned and shown in brackets. Translation cannot be measured this way. Kerbs and other edges within 0.4 m of
+    the ground are left out (seen at grazing incidence, a roof lidar and a lower camera see the step at different
+    places), and frames that split between two answers cap the confidence at medium (an even split gives no verdict).
+    On a CARLA campaign of the sample's data rig it found the front camera's rotation 90 % of the time from 0.35° and
+    the mirror camera's from 0.52°, found every 1° turn and flagged no camera that had not been turned (see
+    <a href="#campaigns">Simulation campaigns</a>). <i>Apply rotation corrections</i> adds a
     variant "… · drive-log corrected" with the confident rotations (one undo step).</p>
     <p>Limits: sync pulses are taken at multiples of the lidar period on the log's clock (PTP); clouds in the lidar's own
     frame; rolling shutter is not modelled; a view without depth edges (open road) gives no rotation; with only an IMU the
@@ -1153,7 +1168,9 @@ vantage project.vantage            # open a project</code></pre>
       straight bumper edge says little about yaw) is shown in brackets and left as planned. A camera that sees too
       little of the vehicle, or whose correction is too imprecise to act on, is <i>not checkable</i>, and the page says
       why. With <i>Drive-log estimate</i> on, the <a href="#drive-log">drive-log check</a>'s rotation against the lidar
-      is shown beside it, with whether the two agree, and stands in for a camera the outline cannot check.</p>
+      is shown beside it, with whether the two agree, and stands in for a camera the outline cannot check. It is shown
+      only on the axes the lidar's edges pin down (the others –, as planned); an estimate that pins none, such as a
+      mirror camera with a handful of edge points, is not reported as a measurement.</p>
     <p><b>As built.</b> A copy of the variant with every confident correction is analysed against the plan: blind
       ground, the share seen by two cameras, the shares at the minimum and target density, each camera's visible ground
       and the scorecard's coverage requirements. The verdict: the plan's coverage <i>holds</i>, <i>holds with
@@ -1383,13 +1400,207 @@ vantage project.vantage            # open a project</code></pre>
       spaced channels (channels between beams are cast and dropped) and its azimuth step is exact; each radar zone is a
       CARLA radar. Rates and trigger times round to the simulation step (80 Hz for the sample), and every such rounding is
       listed. A camera planned flush with your body may sit inside CARLA's car; the run lists those. Fog and rain show in
-      the images only; the lidar has no reflectivity and the radar no cross-section. Batch:
+      the images only; the lidar has no reflectivity and the radar no cross-section. A Vantage weather condition's fog
+      becomes CARLA's by a calibration measured on CARLA 0.9.16 (a still camera down long straight lanes, linear light,
+      contrast against range): a visibility of about 7000 m / <code>fog_density</code> for road users (±15 %; a height
+      fog, denser along the road surface), so 150 m fog is density 46.7 and nothing under 70 m can be reached. Its light
+      and rain are mapped by documented heuristics; CARLA's rain is water on the lens (contrast lost at every range, the
+      image centre blurred), not extinction with range. Batch:
       <code>vantage project.vantage --carla-rig carla/</code> writes the rig (<code>sim_rig.json</code>,
       <code>sim_remap.npz</code>; also the export format <code>sim_rig</code>), <code>vantage project.vantage --carla-run
       drive/ [--carla-python PY]</code> drives it in the server already running on the port of the project's settings
       (exit 7 when no server answers or the run fails), and <code>python -m vantage.sim.carla_bridge sim_rig.json OUT
       --town Town10HD --weather ClearNoon --duration 20 --traffic 30 --seed 1</code> runs the bridge from CARLA's own
       Python.</p>
+    <p><b>Open run…</b> shows a drive recorded before: by the page, by <code>--carla-run</code> without a window, or by
+      the bridge itself. Choose its folder (the one holding <code>run.json</code>; the dialog starts in the project's
+      runs folder) and the page shows its report exactly as after a run, with <b>Drive-log check</b>, <b>As-built
+      check</b> and <b>Detection quality</b> working on it, and its ground truth in the <b>Ground truth</b> tab. A
+      folder without a CARLA <code>run.json</code> is refused; a run that ended badly shows its report with the checks
+      off. The page keeps no list of runs: open the drive again after a restart.</p>
+    <p>One CARLA server is one synchronous world that one client steps: a recording, the live rig, a simulation campaign
+      and critical targets in CARLA each refuse to start while another of them runs, and stopping the server stops the
+      live rig first.</p>
+
+    <h3 id="carla-gt">Ground truth, faults and scenarios</h3>
+    <p>Every CARLA drive can carry its own ground truth (<b>Ground truth</b> on the CARLA page: semantic labels, objects,
+      range, lidar labels). Beside each pinhole view of a camera CARLA renders an instance image (its red channel is the
+      semantic class, its green and blue the actor) and a depth image; Vantage reads them through the camera's remap at
+      the nearest view pixel, so labels are never blurred, and turns depth into the range along each output pixel's own
+      ray. Each frame gets semantic, instance and range images and a list of objects: the vehicles, pedestrians and
+      props the run spawned, the map's parked vehicles, and every traffic-light head and sign, each with its tight box
+      from its pixels, its full box from its 3D box through the lens, how much of it is hidden or outside the image, and
+      its 3D box in the vehicle frame. A semantic lidar beside each lidar casts the same rays, so every recorded point
+      gets its nuScenes-lidarseg class and panoptic instance. The files open in the nuScenes devkit and as COCO
+      (<code>ground_truth/index.json</code>, schema <code>vantage.ground_truth/1</code>).</p>
+    <p>The <b>Ground truth</b> tab beside the run's report shows it frame by frame, for the drive just recorded or one
+      opened: a camera, a frame of it (the slider), and one layer at a time. <i>Image</i> is the camera image;
+      <i>Semantic</i> the classes in CARLA's palette (the ego cyan), with a legend of the classes in the frame and their
+      shares; <i>Instance</i> one colour per object, the same in every frame; <i>Range</i> the distance along each
+      pixel's ray on a log scale, with its colour bar (grey: nothing within 256 m); <i>Lidar</i> the lidar sweep nearest
+      the frame from above, each point in its nuScenes-lidarseg class, with the frame's objects as their 3D boxes'
+      footprints. The objects' tight boxes (their visible pixels, solid) and full boxes (the 3D box through the lens,
+      dashed) are drawn in their class's colour and named; the opacity lays the labels over the image. The object table
+      lists the frame's objects nearest first: class, id, range, truncation and occlusion. A row clicked, or an object
+      clicked in the image, is highlighted; the wheel zooms and a double click fits the frame again. A frame's images are
+      read when it is shown, so a drive of hundreds of frames opens at once; a drive recorded without ground truth, or
+      without one of the layers, says so.</p>
+    <p>Measured on CARLA 0.9.16 with the sample's data rig (10 s, 30 cars): 602 camera frames with 10,165 objects, the
+      semantic lidar matched the recorded one ray for ray on 99.75 % of its 800 steps, the range images agree with the
+      lidar to a median of 2.2 cm on the ground, and every lidar point inside an annotated vehicle's box is labelled
+      vehicle. Ground truth costs about three times the rendering: that drive took 114 s with it and 46 s without.
+      Six fisheyes at full size with ground truth (306 Mpx a frame) crashed a 0.9.16 server under a 12 GB cap, so the
+      bridge refuses a run whose cameras would render more than 200 Mpx a frame before it starts
+      (<code>--render-budget-mpx</code> raises it for a bigger server); at half size (77 Mpx) it runs. Semantics are
+      CARLA's own tags (a barrier is <i>dynamic</i>, a sign prop <i>static</i>); map objects without a level box (a bus
+      stop, a bin) get no object.</p>
+    <p>A <b>fault</b> changes what CARLA records while the calibration keeps stating the plan, as on a real rig: a sensor
+      turned or moved on its mount, its clock running late, frames dropped or frozen, a lidar's or radar's ranges long.
+      run.json says each fault as applied, with the pose change the drive-log check should find; checked on CARLA, a
+      camera pitched 0.5° shows in its images as 0.5001° about its optical x axis.</p>
+    <p><b>Scenarios</b> play out the same way every time for the same seed, on a straight lane the seed chooses: a lead
+      vehicle braking, a car cutting in, a pedestrian or a cyclist crossing, the ego parked; their events (when the lead
+      brakes, when the walker enters the ego's lane, when the ego stops and how far short) are in run.json. The traffic
+      manager drives with traffic lights ignored, a crossing walker or cyclist moves in a straight line, and the cut-in
+      vehicle is steered by Vantage onto the lane, since CARLA 0.9.16's traffic manager left its forced lane change
+      undone. An <b>actors scene</b> places the actors of a file (children, pedestrians, cyclists, cars, cones, barriers,
+      signs, any blueprint) around a still ego, each exactly where its pose says (within a millimetre; CARLA 0.9.16
+      cannot spawn a traffic light), and the ground truth names each by its actor. Batch: <code>--carla-run OUT
+      --carla-scenario NAME --carla-scenario-params JSON --carla-faults FAULTS.json --carla-actors ACTORS.json
+      --carla-ground-truth all</code>; <code>--ground-truth-summary OUT</code> reads a drive's ground truth in brief.</p>
+
+    <h2 id="carla-live">CARLA as a live rig</h2>
+    <p><b>Simulate ▸ CARLA live rig…</b> (the <b>Live rig</b> panel of the CARLA page) drives the planned cameras in CARLA
+      in real time and streams them to <b>Calibrate ▸ Live rig</b> as if they were the real rig: every camera's fisheye
+      image, made as the recordings make it, served as MJPEG at the module's resolution. Choose the cameras and the
+      render size and press <b>Start live</b>: Vantage starts the CARLA server if none answers, points the cameras'
+      streams at the live server (one undo step) and opens Live rig with a small fault window. <b>Stop live</b> tidies
+      CARLA up and puts the streams back; stopping the server stops it too.</p>
+    <p>Faults are injected while it runs: <b>Rotate</b> turns a camera on its mount by the angles you give (about its own
+      axes, pitch positive down; CARLA renders the turned camera), <b>Freeze</b> repeats its last frame, <b>Drop</b> leaves
+      out a share of its frames, <b>Delay</b> serves them late. The panel's table shows what rig health makes of it: a
+      frozen stream is a fault after ten identical frames, dropped frames show in the drop count, a delayed camera in the
+      sync skew (judged against the live rig's own schedule, which steps at the cameras' rate), a turned camera in the
+      drift indicator.</p>
+    <p>CARLA renders its own car, not your vehicle, so the drift indicator — on the panel and on the Live rig page — is
+      measured against CARLA's car as each camera sees it at its planned mount (rendered once at the start); against
+      your body it would read only the two bodies' difference. A 1° turn moves it 6–9 px, under its 12 px warning: it is
+      an indicator. Each camera costs CARLA a render and read-back of every pinhole view (a fisheye is five): on an RTX
+      5080 one fisheye at 12.5 % render size keeps real time (30 frames a second, 30 ms latency), all six fisheyes
+      together reach about 2.8 frames a second each. When CARLA cannot keep up, frames come less often and rig health
+      says so, as it would for an overloaded rig. Batch: <code>--carla-live SECONDS [OUT] --live-cameras F,R
+      --live-fault '2:{"tag": "F", "kind": "freeze"}'</code> writes rig health's verdicts and exits 3 when a camera is a
+      fault.</p>
+
+    <h2 id="detection">Detection quality per rig</h2>
+    <p><b>Simulate ▸ Detection quality…</b> answers a question the geometry alone cannot: will a detector actually find
+      the pedestrians and cars in what this rig records? It runs an off-the-shelf object detector, YOLOX (Megvii, Apache
+      License 2.0), through OpenCV on the camera images of a CARLA drive recorded with ground truth, and compares its
+      detections with the labelled objects. The model is not part of Vantage: <b>Download</b> fetches it from YOLOX's
+      release (36 MB for YOLOX-S) into your data folder and keeps it only when its SHA-256 matches the published file;
+      <b>Import file…</b> takes a copy you downloaded yourself on the same condition. After a CARLA run with ground truth,
+      <b>Detection quality</b> on the CARLA page opens it here.</p>
+    <p>Detections are matched to objects as COCO's evaluation does (IoU 0.5, 0.3 for objects under 32 px; checked against
+      pycocotools), objects too small, mostly hidden or cut off are ignored, and every figure is given per camera, class
+      and range bin: recall and precision at the operating score, average precision, the detection range (the farthest
+      range bin where half the objects are found) and recall against the object's height in pixels. The rig figure
+      counts each object once per instant, found when any camera finds it. Intervals come from a block bootstrap over
+      time (1 s blocks: a 12 s drive gives wide ones). Add drives of other rig variants with the same scenario and seed
+      and the page compares them, pairing the resamples because the scene is the same. On CARLA, the sample's data rig
+      against the same rig with its cameras pitched 20° up found vehicles at 20–40 m more often (rig recall +12.4 points,
+      95 % interval +4 to +21) and beyond 40 m less often (−6.8, −12 to −2).</p>
+    <p>The detector runs on the fisheye images as they are recorded; <b>Images ▸ Both</b> also cuts level pinhole views
+      from them through the recording's calibration and compares the two object by object. The figures are a COCO
+      detector's on CARLA's renders, not a production detector's on real images: use them to compare rigs, cameras and
+      image formats on the same scene. CARLA's Town10HD has street-light banners YOLOX calls traffic lights, and stop
+      signs are off by default because the ground truth does not say which sign is which. It runs on the CPU (a
+      960 × 768 fisheye takes 70–160 ms with YOLOX-S); detections are cached in each recording, so a second evaluation
+      with other matching settings takes seconds. In <b>Analysis ▸ Experiments</b>, <i>Detection recall (CARLA)</i> and
+      <i>Rig detection recall (CARLA)</i> are responses: each design point is driven in CARLA and evaluated (about four
+      minutes a point; points queue for the one server). Batch: <code>--detection-quality OUT
+      --detection-recording DRIVE --detection-download</code> (exit 8 when the model is missing).</p>
+
+    <h2 id="campaigns">Simulation campaigns</h2>
+    <p><b>Simulate ▸ Simulation campaigns…</b> asks how good Vantage's own checks are, with answers known in advance. A
+      campaign drives the rig in CARLA many times, each drive varied in one known way: a camera turned on its mount by
+      a given angle, a clock offset, dropped or frozen frames, a weather, another rig variant, another seed. Every drive
+      is then checked as a real recording would be (the drive-log check, rig health on the recorded frames, the as-built
+      check, detection quality, image statistics, the lidar and radar returns) and the checks' answers are set against
+      what was injected.</p>
+    <p>The <b>Fault detectability</b> template turns two cameras by 0.1, 0.2, 0.3, 0.5 and 1° about each axis, delays a
+      third, drops frames of a fourth and freezes a fifth, over three seeds, with a clean drive per seed. The results:
+      each check's detection probability against the fault's size, with Wilson intervals; how often it flags a clean
+      sensor; the smallest fault it finds 90 % of the time (empirically, and from a logistic fit with a bootstrap
+      interval); and how far its estimate is from the truth, absolute and paired with the clean drive of the same seed.
+      Faults of different sensors share drives, because each check judges each sensor on its own (the cross-talk is
+      measured). Each drive and each check is kept, so a stopped campaign resumes, and the cost is estimated before you
+      start. The <b>Weather sweep</b> drives the same scene in six weathers with ground truth and compares detection
+      recall and range per class with what Vantage's own weather model predicts for the same named condition; <b>Rig A
+      vs B</b> drives two variants through the same scene and compares their detection quality with paired
+      intervals.</p>
+    <p>The first real campaign (the sample's data rig, 49 drives of 10 s at 320 Hz steps, an hour of CARLA, 16 GB) showed
+      where the checks fell short, and they were fixed at the root; the same drives, re-scored offline, now give:</p>
+    <ul>
+      <li><b>Camera rotation</b> (drive-log check): found 90 % of the time from 0.35° on the front camera (logistic fit,
+        95 % interval 0.32–0.39°; every tested size from 0.5°) and from 0.52° on the left mirror camera (0.35–0.71°;
+        every size from 1°); every 1° turn found; no camera that was not turned flagged. On the third route it had
+        missed or left undecided several 1° turns, because its coarse search went flat on CARLA's textured town, and a
+        kerb seen at grazing incidence had read a clean camera as pitched −0.32°. The front camera's pitch error is
+        0.12° RMS (0.05° against the clean drive of the same seed).</li>
+      <li><b>Frozen frames</b>: the drive-log check finds a camera frozen for 1 s every time (45 of 45, the frozen
+        frames counted exactly), as rig health does; before, only rig health found them.</li>
+      <li><b>Clock offsets</b>: the drive-log check measures them exactly. Rig health's capture-time skew, now judged
+        against the sync plan, reads them within 0.001 ms and flags no clean camera (the plan's 31–34 ms stagger had
+        flagged four of six on every clean drive); offsets of 1–10 ms stay under its 20 ms warning, as they should for
+        software arrival times.</li>
+      <li><b>Dropped frames</b>: every one found. Rig health's drift indicator rose with a turn but never reached its
+        warning at 1°.</li>
+      <li><b>Not applicable on CARLA</b>: the as-built check judges a camera's mount by its view of your vehicle's body,
+        and in CARLA the body in the images is CARLA's car. Its verdict measures the two bodies' difference, not the
+        mount, so the campaign keeps its answers but never counts them: on the clean drives it flagged 11 of its 18
+        verdicts (1–2 of 3 per camera), which the False alarms tab lists after the others, greyed and marked <i>not
+        applicable</i> with the reason, and the False alarms tile does not count. Of the 66 sensor checks that can judge
+        on CARLA, none flagged a clean drive, so the tile reads 0 (“6 not applicable on CARLA” beside it). The export
+        (<code>sim_campaign</code>, the batch summary, the HTML report) says the same: a column
+        <code>applicable_on_carla</code> with the reason, and the flags listed apart.</li>
+    </ul>
+    <p>The weather sweep: heavy rain cut the pedestrian range by a third, which is water on the lens blurring the image
+      centre where the far pedestrians are (Vantage counts it in the lens-drop share, not as a loss with range); fog
+      cut car recall from 26 to 3 %, but CARLA's fog was then too dense for its visibility (a 150 m fog rendered as about 96 m, 60 m along the road
+      surface). Driven again
+      with the measured calibration (150 m → <code>fog_density</code> 46.7), cars at 10–20 m are found 19 % of the time
+      against 46 % in clear weather (10 % against 26 % at every range), where Vantage's model predicts no loss: its 5 %
+      contrast threshold is a human observer's, so its far ranges in fog are an upper bound for a detector. CARLA's lidar
+      and radar returns were identical in every weather, because CARLA does not model weather for them. Batch: <code>--campaign OUT [--campaign-template fault_detectability|weather_sweep|rig_ab]
+      [--campaign-phase drive|evaluate|analyse]</code> (exit 9 when a drive is still to do); the export format
+      <code>sim_campaign</code> writes the analysis from the drives on disk.</p>
+
+    <h2 id="critical-carla">Critical targets in CARLA</h2>
+    <p><b>Simulate ▸ Critical targets in CARLA…</b> (or <b>In CARLA…</b> on the critical-targets page) checks the
+      critical-targets study in another renderer. Every target becomes the CARLA actor nearest it: a child walker (the
+      shortest CARLA has is 1.10 m tall), an adult, the car nearest in size, an information board for a sign (CARLA has
+      no road sign of a plate's size), a bicycle with its rider for an object named a cyclist. The car parks on a
+      straight road with no traffic and the actors stand where the targets are. Targets that a camera would see
+      overlapping are driven in separate scenes, because the study looks at each target alone. Each scene is recorded
+      with ground truth at each spawn point you list, for other backgrounds and light. Traffic lights (CARLA cannot spawn
+      one), kerbs and lane markings are listed as not spawnable; a stand-in prop can test a light's geometry.</p>
+    <p>For each target and camera the page measures, on CARLA's ground truth, what the study predicts: the share of the
+      target's rectangle seen (in the image, and with nothing nearer at its pixel in the range image) and the pixels
+      across its height that the actor's own pixels span, against the study's look at a target of the actor's size at
+      the actor's place. A camera agrees when both say it meets the target, or both say it does not. Every disagreement
+      is explained: the camera sits inside CARLA's car, CARLA's car hides a different share than your vehicle's body,
+      something of CARLA's town hides it, a figure is on the threshold, or the actor's silhouette does not fill a
+      rectangle. The crops show each camera's view with the actor outlined and the study's rectangle drawn. On the
+      sample's targets (8 of 11 stood in, 3 scenes at 3 spawn points): 30 of 30 camera views agree (95 % interval 88.6–100
+      %), and on views where both see at least 90 % the pixel figure is a median of 2.6 % above the prediction (RMS 3.6
+      %).</p>
+    <p>CARLA renders its own car, the one nearest your vehicle's size, not your body; its walkers and props are not your
+      targets, so the comparison at the actor's size takes the size difference out of the figures. Drives already
+      recorded with the same rig are reused, so a cancelled run resumes; <b>Open drives…</b> compares drives again
+      without CARLA: one drive, or a folder holding drives at any depth, such as one subfolder per seed whose drives
+      have the same names. Each drive is named by its path under the folder (<code>seed2/scene1-spauto</code>), so two
+      never count as one; the real comparison's nine drives, opened from their per-seed folders, give the same 30 of 30.
+      Batch: <code>--critical-carla OUT [--critical-carla-drives DRIVES]</code> (exit 3 when a view disagrees).</p>
 
     <!-- ======================================================== reference -->
     <h2 id="validation">Validation and the technical reference</h2>
@@ -1460,6 +1671,8 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td></td><td>Materials, glass and wipers</td><td>JSON, CSV, PNG</td><td><code>materials</code></td></tr>
       <tr><td></td><td>Weather comparison</td><td>JSON, CSV, PNG</td><td><code>weather</code></td></tr>
       <tr><td></td><td>Designed experiment (sensitivity, uncertainty)</td><td>JSON, CSV, PNG</td><td><code>experiment</code></td></tr>
+      <tr><td></td><td>Simulation campaign (CARLA)</td><td>JSON, CSV, PNG, HTML</td><td><code>sim_campaign</code></td></tr>
+      <tr><td></td><td>Detection quality (CARLA drives)</td><td>JSON, CSV, PNG</td><td><code>detection_quality</code></td></tr>
       <tr><td></td><td>CI templates (GitHub Actions, GitLab CI)</td><td>YAML, MD</td><td><code>ci_templates</code></td></tr>
       <tr><td>Extrinsics</td><td>Camera, lidar, radar, GNSS and IMU poses</td><td>JSON</td><td><code>extrinsics_json</code></td></tr>
       <tr><td></td><td>Camera, lidar and radar poses</td><td>YAML</td><td><code>extrinsics_yaml</code></td></tr>
@@ -1486,8 +1699,13 @@ vantage project.vantage            # open a project</code></pre>
     </table>
     <p>The drive-log and as-built checks need a recording, so they export from their own pages (<b>Export…</b>) and
       their batch flags; the sample dataset is a page of its own (<b>Export ▸ Sample dataset…</b>). The experiment (it
-      runs the project's experiment, which can take minutes) and the CARLA rig (tens of MB of remap tables) are written
-      only when named: batch <code>--export</code> without <code>--formats</code> leaves them out.</p>
+      runs the project's experiment, which can take minutes), the CARLA rig (tens of MB of remap tables), the simulation
+      campaign and the detection quality are written only when named: batch <code>--export</code> without
+      <code>--formats</code> leaves them out. The last two drive nothing: the campaign is analysed from the drives and
+      checks in its folder (nothing is written until one drive is done), the detection quality is evaluated on the
+      page's recordings (the detector runs for minutes the first time; its detections are cached in each recording) and
+      needs the model downloaded. A CARLA drive's ground truth is the drive's own output (<code>ground_truth/</code>,
+      COCO, lidarseg in its folder), not an export of the design.</p>
 
     <h2 id="datasets">Dataset calibration</h2>
     <p>The <b>Datasets</b> exports write the calibration in the layouts training datasets and their tools read, and
@@ -1559,13 +1777,19 @@ vantage project.vantage --reproduce ranges.json check.json --tolerance 'blind_m2
 vantage project.vantage --experiment experiment_spec.json experiment/   # a designed experiment; resumes
 vantage --validate report/ --validate-quick          # every model against its reference (exit 6 on a failure)
 vantage project.vantage --carla-rig carla/          # the rig as the CARLA bridge reads it
-vantage project.vantage --carla-run drive/          # drive it in a running CARLA server: nuScenes + ROS 2 bag</code></pre>
+vantage project.vantage --carla-run drive/          # drive it in a running CARLA server: nuScenes + ROS 2 bag
+vantage project.vantage --carla-run drive/ --carla-scenario cut_in --carla-faults faults.json --carla-ground-truth all
+vantage --ground-truth-summary drive/ gt.json       # a drive's ground truth in brief
+vantage project.vantage --carla-live 20 live/ --live-cameras F --live-fault '5:{"tag": "F", "deg": [0, 1, 0]}'
+vantage project.vantage --detection-quality det/ --detection-recording drive/ --detection-download
+vantage project.vantage --campaign campaign/ --campaign-template weather_sweep
+vantage project.vantage --critical-carla critical/  # critical targets stood in CARLA, compared with the study</code></pre>
     <table>
       <tr><th>Option</th><th>Meaning</th></tr>
       <tr><td><code>--variant NAME|N</code></td><td>Variant by name or 1-based index (default: the active one).</td></tr>
       <tr><td><code>--frame</code></td><td>Export frame: <code>rear_axle</code>, <code>front_axle</code>, <code>front_bumper</code>, <code>ground_centre</code>, <code>custom</code>.</td></tr>
       <tr><td><code>--units m|mm</code>, <code>--angles deg|rad</code></td><td>Export conventions.</td></tr>
-      <tr><td><code>--formats</code></td><td>Comma-separated format ids (default: every non-image format but <code>experiment</code> and <code>sim_rig</code>).</td></tr>
+      <tr><td><code>--formats</code></td><td>Comma-separated format ids (default: every non-image format but <code>experiment</code>, <code>sim_rig</code>, <code>sim_campaign</code> and <code>detection_quality</code>).</td></tr>
       <tr><td><code>--pos-tol</code>, <code>--ang-tol</code></td><td>Installation tolerances, mm and degrees (default 10 and 1).</td></tr>
       <tr><td><code>--min-boards</code></td><td>Boards a camera must see (default 1).</td></tr>
       <tr><td><code>--no-joint</code>, <code>--board-tol MM</code></td><td>Solve each camera alone; how far a board may lie off its place (default 20).</td></tr>
@@ -1578,7 +1802,15 @@ vantage project.vantage --carla-run drive/          # drive it in a running CARL
       <tr><td><code>--experiment SPEC.json OUT_DIR</code></td><td>Run a designed experiment (a spec exported from Analysis ▸ Experiments) into OUT_DIR; a journal in OUT_DIR lets an interrupted run resume.</td></tr>
       <tr><td><code>--validate [OUT_DIR]</code>, <code>--validate-models IDS</code>, <code>--validate-quick</code></td><td>The validation suite's report into OUT_DIR (default <code>validation</code>); with a project its vehicle and exports are checked too; only the models named; fewer Monte Carlo trials.</td></tr>
       <tr><td><code>--carla-rig OUT_DIR</code></td><td>The variant as the CARLA bridge reads it: <code>sim_rig.json</code> and <code>sim_remap.npz</code>.</td></tr>
-      <tr><td><code>--carla-run OUT_DIR</code>, <code>--carla-python PY</code></td><td>Drive the variant in the CARLA server running on the port of Simulate ▸ CARLA's settings (2000 unless set); CARLA's client Python (default: the one the page chose, else the venv next to a CARLA folder found).</td></tr>
+      <tr><td><code>--carla-run OUT_DIR</code>, <code>--carla-python PY</code></td><td>Drive the variant in the CARLA server running on the port of Simulate ▸ CARLA's settings (2000 unless set); CARLA's client Python (default: the one the page chose, else the venv next to a CARLA folder found; also for <code>--carla-live</code>, <code>--campaign</code> and <code>--critical-carla</code>).</td></tr>
+      <tr><td><code>--carla-scenario NAME</code>, <code>--carla-scenario-params JSON</code></td><td>With <code>--carla-run</code> or <code>--carla-rig</code>: <code>free_drive</code>, <code>lead_vehicle_brake</code>, <code>cut_in</code>, <code>pedestrian_crossing</code>, <code>cyclist_crossing</code> or <code>parked</code>, and its parameters (a JSON object or a file).</td></tr>
+      <tr><td><code>--carla-faults FAULTS.json</code>, <code>--carla-actors ACTORS.json</code></td><td>Faults with known answers; an actors scene around a still ego (a file or the JSON itself; <code>none</code> clears the project's). Each is checked against the rig first.</td></tr>
+      <tr><td><code>--carla-ground-truth LIST</code>, <code>--carla-walkers N</code>, <code>--carla-spawn-point N</code></td><td>The ground truth to record (<code>all</code>, <code>none</code>, or of <code>semantic</code>, <code>instance</code>, <code>range</code>, <code>lidar_labels</code>); pedestrians on CARLA's walker AI; the ego's spawn point (−1: a straight road by the seed).</td></tr>
+      <tr><td><code>--ground-truth-summary RUN_DIR [OUT.json]</code></td><td>A CARLA drive's ground truth in brief: frames and sweeps labelled, objects by class, the lidar labels' match, the scenario's events, the faults injected. No project needed.</td></tr>
+      <tr><td><code>--carla-live SECONDS [OUT_DIR]</code></td><td>The cameras driven live in CARLA, rig health on their streams for SECONDS: <code>rig_health.json</code>, <code>live.json</code> and the live rig into OUT_DIR (default: a new folder in the working folder). <code>--live-cameras F,R</code>, <code>--live-scale 0.25</code> (the share of the sensor size CARLA renders), <code>--live-fault AT_S:JSON</code> (repeatable).</td></tr>
+      <tr><td><code>--detection-quality OUT_DIR</code></td><td>The detector on CARLA drives with ground truth, evaluated: JSON, CSV, PNG, COCO results, overlays. <code>--detection-recording RUN_DIR</code> (repeatable, the first the reference; default the project's recordings), <code>--detection-download</code> fetches the model first.</td></tr>
+      <tr><td><code>--campaign OUT_DIR</code></td><td>The project's simulation campaign (or <code>--campaign-template fault_detectability|weather_sweep|rig_ab</code>): its drives in the campaign's folder when it names one, else OUT_DIR/drives; the analysis into OUT_DIR. <code>--campaign-phase drive|evaluate|analyse</code> runs part of it; a run again resumes.</td></tr>
+      <tr><td><code>--critical-carla OUT_DIR</code></td><td>The critical targets stood in CARLA and compared with the study (drives in OUT_DIR/drives, reused); <code>--critical-carla-drives DIR</code> compares drives recorded before, without CARLA.</td></tr>
       <tr><td><code>--save OUT.vantage</code></td><td>Save the project afterwards: with imported or fitted calibrations, fleet records, the suspension data read by <code>--suspension-data</code>, or the as-built variant of <code>--as-built-check</code>.</td></tr>
     </table>
     <p>Captures are matched to cameras by the tag in the file name (<code>F.png</code>, <code>cam_QR.jpg</code>,
@@ -1587,14 +1819,16 @@ vantage project.vantage --carla-run drive/          # drive it in a running CARL
     <table>
       <tr><th>Exit code</th><th>Meaning</th></tr>
       <tr><td><code>0</code></td><td>Fine.</td></tr>
-      <tr><td><code>2</code></td><td>The plan has critical issues (with <code>--analyse</code> or <code>--export</code>); or, with <code>--recording-budget</code>, the recorder or a sensor's link cannot keep up; with <code>--power-budget</code>, the DC-DC converter or a fuse is over its rating; with <code>--gnss</code>, an antenna has no sky; with <code>--brackets</code>, a camera cannot take a printed bracket as planned; with <code>--suspension</code>, a load case lifts a wheel or exceeds the gross vehicle mass; with <code>--housings</code>, a camera sits inside a housing; with <code>--critical-targets</code>, no camera resolves a critical target; with <code>--materials</code>, a radar looks into metal over half its field; with <code>--terrain</code>, the body or a sensor would touch the road or no camera resolves a speed bump or kerb; with <code>--harness</code>, a cable is longer than its link allows, no module cable reaches or a GNSS cable has no RF margin; with <code>--observability</code> and calibration targets planned, a camera sees no board whole; with <code>--carla-rig</code> or <code>--carla-run</code>, the variant has nothing to simulate.</td></tr>
-      <tr><td><code>3</code></td><td>A camera has to be re-mounted or could not be checked; or, with <code>--rig-health</code>, a camera is faulty or has no stream; with <code>--drive-log</code>, the recording shows a fault; with <code>--as-built-check</code>, the plan's coverage does not hold as built; with <code>--fleet</code>, a sensor needs re-mounting in its vehicle's latest record; with <code>--lidar-calib</code>, the lidar has to be re-mounted or the board poses did not determine its pose.</td></tr>
+      <tr><td><code>2</code></td><td>The plan has critical issues (with <code>--analyse</code> or <code>--export</code>); or, with <code>--recording-budget</code>, the recorder or a sensor's link cannot keep up; with <code>--power-budget</code>, the DC-DC converter or a fuse is over its rating; with <code>--gnss</code>, an antenna has no sky; with <code>--brackets</code>, a camera cannot take a printed bracket as planned; with <code>--suspension</code>, a load case lifts a wheel or exceeds the gross vehicle mass; with <code>--housings</code>, a camera sits inside a housing; with <code>--critical-targets</code>, no camera resolves a critical target; with <code>--materials</code>, a radar looks into metal over half its field; with <code>--terrain</code>, the body or a sensor would touch the road or no camera resolves a speed bump or kerb; with <code>--harness</code>, a cable is longer than its link allows, no module cable reaches or a GNSS cable has no RF margin; with <code>--observability</code> and calibration targets planned, a camera sees no board whole; with <code>--carla-rig</code> or <code>--carla-run</code>, the variant has nothing to simulate or a <code>--carla-*</code> option does not fit it (or, with <code>--carla-run</code>, its cameras would render more than the bridge's 200 Mpx a frame); with <code>--ground-truth-summary</code>, the drive has no ground truth; with <code>--detection-quality</code>, there is no recording with ground truth to evaluate; with <code>--campaign</code>, the design has nothing to drive or names a sensor the variant lacks; with <code>--critical-carla</code>, no target can be stood in CARLA or no drive is found.</td></tr>
+      <tr><td><code>3</code></td><td>A camera has to be re-mounted or could not be checked; or, with <code>--rig-health</code>, a camera is faulty or has no stream; with <code>--drive-log</code>, the recording shows a fault; with <code>--as-built-check</code>, the plan's coverage does not hold as built; with <code>--fleet</code>, a sensor needs re-mounting in its vehicle's latest record; with <code>--lidar-calib</code>, the lidar has to be re-mounted or the board poses did not determine its pose; with <code>--carla-live</code>, rig health finds a camera faulty; with <code>--critical-carla</code>, a camera view disagrees with the study.</td></tr>
       <tr><td><code>4</code></td><td>A lens calibration failed, or an imported calibration matched no camera or did not fit it; or a <code>--fleet-import</code> file, the <code>--drive-log</code> or <code>--as-built-check</code> recording, the <code>--suspension-data</code> file or the <code>--lidar-calib-folder</code> captures could not be read, or the <code>--dataset</code> could not be written; or the <code>--experiment</code> spec cannot be read or does not fit the project; or <code>--reproduce</code> cannot try the result (no provenance, the project or an input file not found, a live measurement).</td></tr>
       <tr><td><code>5</code></td><td>With <code>--check</code>, a must requirement fails or cannot be evaluated.</td></tr>
       <tr><td><code>6</code></td><td>With <code>--reproduce</code>, the result does not reproduce; with <code>--validate</code>, a check of the models against its reference fails.</td></tr>
-      <tr><td><code>7</code></td><td>With <code>--carla-run</code>, no CARLA server answers, CARLA's client Python is missing, or the run fails (its <code>run.json</code> and <code>bridge.log</code> say why).</td></tr>
+      <tr><td><code>7</code></td><td>With <code>--carla-run</code>, <code>--carla-live</code>, <code>--campaign</code> or <code>--critical-carla</code>, no CARLA server answers, CARLA's client Python is missing, or the run fails (its <code>run.json</code> and <code>bridge.log</code>, or <code>live.log</code>, say why).</td></tr>
+      <tr><td><code>8</code></td><td>With <code>--detection-quality</code> (or a <code>--campaign</code> whose checks include detection), the detector model is missing or does not verify, or its download failed.</td></tr>
+      <tr><td><code>9</code></td><td>With <code>--campaign</code>, a drive failed or is still to do: run it again, and what is done is reused.</td></tr>
     </table>
-    <p>When several apply, the highest is returned. <code>--watch</code> exits with its last run's code: the command's own
+    <p>When several apply, the highest is returned. Ctrl+C during a CARLA run returns 130 once CARLA is tidied up. <code>--watch</code> exits with its last run's code: the command's own
       when it ran, else 5 when the requirements check fails, 4 when the project could not be read or a format not
       written, 130 when stopped during the command.</p>
 

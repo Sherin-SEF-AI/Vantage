@@ -29,6 +29,7 @@
       <a href="#build">Build</a>
       <a href="#studies">Studies</a>
       <a href="#research">Research</a>
+      <a href="#simulation">CARLA</a>
       <a href="#calibration">Calibrate</a>
       <a href="#assistant">Assistant</a>
       <a href="#export">Export</a>
@@ -97,8 +98,9 @@
       <div class="step"><h3>Simulate the recording</h3><p>Simulated camera images, coverage on flat ground or a real
         road, pixel density, overlaps, the 3D blind volume, lidar and radar reach, weather and night, trigger timing, the
         data and power budgets, the cable harness, the GNSS sky, sun glare and a whole synthetic drive or one in the
-        CARLA simulator, checked against your requirements, with designed experiments for what drives each figure,
-        before anything is bought or drilled.</p></div>
+        CARLA simulator with its ground truth, checked against your requirements, with designed experiments for what
+        drives each figure and CARLA campaigns that measure what a detector and the checks find, before anything is
+        bought or drilled.</p></div>
       <div class="step"><h3>Fit, calibrate, verify</h3><p>Print the brackets, check that the planned boards pin every
         camera, calibrate each camera from its live stream and each lidar to a camera, check the installed rig and its
         first recordings against the plan, follow every vehicle of the fleet, and keep the calibration files in step
@@ -272,8 +274,10 @@
           <li>A panel compares every condition with clear: the range ahead per object, the sector checks that still pass, and each camera, lidar and radar. The clear envelope stays dashed on the map.</li>
           <li>Exported as JSON, CSV and PNG; in batch mode with <code class="nowrap">--weather</code>, and <code class="nowrap">--condition</code> sets the weather for <code class="nowrap">--perception-range</code> and <code class="nowrap">--dataset</code>.</li>
         </ul>
-        <p class="note">Typical models, not measurements. Glare from oncoming lights, the headlamps' own veil in fog, wet
-          roads, spray and a wet radar fascia are not modelled.</p>
+        <p class="note">Typical models, not measurements. The 5 % contrast threshold is a human observer's, so fog ranges
+          are an upper bound for a detector: in a calibrated 150 m fog in CARLA, YOLOX found cars 10–20 m away 19 % of
+          the time against 46 % in clear weather (<a href="#campaigns">campaigns</a>). Glare from oncoming lights, the
+          headlamps' own veil in fog, wet roads, spray and a wet radar fascia are not modelled.</p>
       </div>
       <div class="media">
         <div class="frame">
@@ -297,7 +301,7 @@
           <li>On the sample's data rig a child 2 m ahead spans 398 px of F's image (24 needed) and a child 1 m behind 614 px of R's. Only F resolves a pedestrian 10 m ahead: 153 px, with 146 lidar points per frame and three radars on it.</li>
           <li>An overhead traffic light 15 m ahead is in no camera's image, though the lidar puts 30 points on it: the Issues list names it as serious.</li>
           <li>Each axis is moved both ways until a target is lost, to 0.01° and 0.1 mm, then all six at once on a 729-pose grid. F may pitch 8.3° further down before it loses the pedestrian; moved back, it meets the bumper after 17 mm. Every camera holds at the ±10 mm, ±1° install tolerance.</li>
-          <li>The placement optimiser can require every target or weigh the missed ones. Exported as JSON, CSV and PNG with a mounting sheet for the bracket designers; in batch mode with <code class="nowrap">--critical-targets</code>, which exits with 2 when no camera resolves a target.</li>
+          <li>The placement optimiser can require every target or weigh the missed ones. Exported as JSON, CSV and PNG with a mounting sheet for the bracket designers; in batch mode with <code class="nowrap">--critical-targets</code>, which exits with 2 when no camera resolves a target. <b>In CARLA…</b> checks the study in another renderer (<a href="#critical-carla">below</a>).</li>
         </ul>
         <p class="note">Sizes and pixel needs are typical figures, not a standard: set your detector's. Targets are flat
           and stand on level ground.</p>
@@ -845,9 +849,8 @@
     <div class="head" style="margin:72px 0 8px" id="research">
       <div class="eyebrow">Research grade</div>
       <h2>Every figure traceable, reproducible and checked.</h2>
-      <p>Vary the design over a designed experiment to see what drives each figure and how uncertain it is, record the
-        rig in an independent simulator, check every model against references that share none of its code, and run any
-        result again from the record it carries.</p>
+      <p>Vary the design over a designed experiment to see what drives each figure and how uncertain it is, check every
+        model against references that share none of its code, and run any result again from the record it carries.</p>
     </div>
 
     <article class="feature" id="experiments">
@@ -887,48 +890,11 @@
       </div>
     </article>
 
-    <article class="feature flip" id="carla">
-      <div class="text">
-        <div class="eyebrow">Simulate in CARLA</div>
-        <h3>The planned rig on a CARLA car, recorded as a dataset</h3>
-        <p><b>Simulate ▸ CARLA</b> puts every camera, lidar, radar, GNSS antenna and IMU of the variant on the CARLA car
-          nearest the vehicle's size, at its planned pose, and records a drive through CARLA's town, traffic and weather
-          in the sample dataset's layout: a nuScenes folder and a ROS 2 bag. The server starts headless in its own
-          memory-capped scope, and the recording opens in the drive-log check.</p>
-        <ul>
-          <li>CARLA has only pinhole cameras, so each fisheye is rendered as cube faces from one optical centre and
-            remapped through its lens model, within 0.1 px (99 % within 0.068 px). On the sample's data rig: five views
-            per camera, 960 × 768 images, on an 80 Hz simulation step.</li>
-          <li>The roof lidar's 128 beams lie exactly on CARLA's channels, at the exact 0.352° azimuth step: 1.31 million
-            rays a second. Each radar zone becomes a CARLA radar: the front radar a 25° × 20° cone to 250 m and a
-            109° × 28° one to 70 m. The Audi A2 is the ego vehicle, within 3 % of the sample's size.</li>
-          <li>On CARLA 0.9.16 with an RTX 5080, the six fisheyes, the lidar and five radars record 6 s of driving in
-            28 s. The drive-log check finds every camera within 0.25° of its plan; lidar points fall on CARLA's depth
-            image within 0.33 mm, and each view is mounted within 0.03° of the plan.</li>
-          <li>Seamless fisheyes: the cube faces are feathered across their seams, and Unreal's vignette is taken out of
-            every pixel in linear light through CARLA's measured camera response.</li>
-          <li><b>Export rig…</b> writes the rig to run the bridge from CARLA's own Python; in batch mode with
-            <code class="nowrap">--carla-rig</code> and <code class="nowrap">--carla-run</code>.</li>
-        </ul>
-        <p class="note">Camera images need a GPU, even off-screen. CARLA's car is not your vehicle's body, so the
-          as-built check reports a CARLA drive as not checkable: the drive-log rotation check is the cross-check.</p>
-      </div>
-      <div class="media">
-        <div class="frame">
-          <video muted loop playsinline preload="none" poster="media/carla.jpg" aria-label="The Simulate, CARLA page on the sample's data rig: the plan's tiles and the rig in CARLA table; Start, the server headless on the GPU, capped at 12 GB; Run, a 4 s drive through Town10HD at ClearNoon with 20 vehicles of traffic, as a time-lapse, and its report; then the drive-log check on the recording: the lidar's depth edges over the front fisheye image from CARLA, and all six cameras within 0.22 degrees of their plan">
-            <source src="media/carla.mp4" type="video/mp4"></video>
-          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
-          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
-          <span class="chip">A real CARLA run · time-lapse ×7 while it records</span>
-        </div>
-      </div>
-    </article>
-
-    <article class="feature" id="validation">
+    <article class="feature flip" id="validation">
       <div class="text">
         <div class="eyebrow">Validation</div>
         <h3>Every model checked against a reference that shares none of its code</h3>
-        <p><b>Help ▸ Validate the models</b> (or <code class="nowrap">vantage --validate</code>) runs 69 checks of 20
+        <p><b>Help ▸ Validate the models</b> (or <code class="nowrap">vantage --validate</code>) runs 71 checks of 21
           models against independent references and writes a report: for each check the quantity, the reference, the
           error measured, the tolerance and the verdict. The <a href="methods.html">technical reference</a> documents
           each model's equations, frames, assumptions and limits, with its sources.</p>
@@ -936,7 +902,7 @@
           <li>The lens models against OpenCV's own projections, within 2 × 10<sup>−12</sup> px; rain against ITU-R P.838-3's own
             table, the headlamps against UN R112's test points, the sun against the SPA paper's worked example (0.003°),
             the Sobol estimator against the Ishigami function.</li>
-          <li>The suite found, and this release fixes, the occlusion maps' depth: each texel held the distance to its
+          <li>The suite found, and 0.3.0 fixed, the occlusion maps' depth: each texel held the distance to its
             triangle's centre, 14.9 % off in the median. It now holds the exact depth, 0.15 % off.</li>
           <li>Seeded and reproducible: about a minute on the sample, 30 s with <code class="nowrap">--validate-quick</code>.
             It exits with 6 when a check fails, so CI can gate on it.</li>
@@ -948,7 +914,7 @@
       </div>
       <div class="media">
         <div class="frame">
-          <img src="media/validation.jpg" alt="Every check of the published validation report as its error divided by its tolerance, one row per model on a log scale: all 69 left of the tolerance line, the closest the rain table at 0.9998, and the cube-map depth check at 143 times its tolerance before this release and 0.19 times now" loading="lazy" width="1600" height="900">
+          <img src="media/validation.jpg" alt="Every check of the published validation report as its error divided by its tolerance, one row per model on a log scale: all 71 left of the tolerance line, the closest the rain table at 0.9998, and the cube-map depth check at 143 times its tolerance before 0.3.0 and 0.19 times now" loading="lazy" width="1600" height="900">
           <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
         </div>
         <p class="caption">The <a href="validation/validation.html">published report</a>, one dot per check: its error
@@ -956,7 +922,7 @@
       </div>
     </article>
 
-    <article class="feature flip" id="provenance">
+    <article class="feature" id="provenance">
       <div class="text">
         <div class="eyebrow">Provenance</div>
         <h3>Every result says where it came from, and runs again</h3>
@@ -986,7 +952,7 @@ analysed 6-cam · v3: 6 cameras in 0.6 s
 wrote range.json
 <span class="p">$</span> jq -c '.provenance | [.vantage.version, .project.sha256[:12],
       .variant.name, .result_sha256[:12]]' range.json
-["0.3.0","87a7e88f9b1a","6-cam · v3","cf837a06e950"]
+["0.4.0","87a7e88f9b1a","6-cam · v3","cf837a06e950"]
 <span class="p">$</span> vantage tigor.vantage --reproduce range.json report.json 2&gt;/dev/null
 <span class="p">$</span> echo $?; jq -r '.message, .reasons[]' report.json
 0
@@ -1004,6 +970,274 @@ the result file was changed after Vantage wrote it (its result hash
 does not match)</span></pre>
         </div>
         <p class="caption">A real session on the sample, in a throw-away folder. Long lines are wrapped.</p>
+      </div>
+    </article>
+
+    <div class="head" style="margin:72px 0 8px" id="simulation">
+      <div class="eyebrow">Simulation in CARLA</div>
+      <h2>The rig in a simulator: labelled, faulted and measured.</h2>
+      <p>CARLA renders its own town, traffic and weather. Vantage puts the planned rig on its car, records drives with
+        their ground truth and with faults of known size, and measures what a detector and Vantage's own checks make of
+        them. Every figure in this block was measured on a real CARLA 0.9.16 server with an RTX 5080.</p>
+    </div>
+
+    <article class="feature" id="carla">
+      <div class="text">
+        <div class="eyebrow">Simulate in CARLA</div>
+        <h3>The planned rig on a CARLA car, recorded as a dataset</h3>
+        <p><b>Simulate ▸ CARLA</b> puts every camera, lidar, radar, GNSS antenna and IMU of the variant on the CARLA car
+          nearest the vehicle's size, at its planned pose, and records a drive through CARLA's town, traffic and weather
+          in the sample dataset's layout: a nuScenes folder and a ROS 2 bag, with its ground truth when you ask for it.
+          The recording opens in the drive-log check and in detection quality; <b>Open run…</b> brings back a drive
+          recorded earlier or without a window, exactly as after a run.</p>
+        <ul>
+          <li>CARLA has only pinhole cameras, so each fisheye is rendered as cube faces from one optical centre and
+            remapped through its lens model, within 0.1 px (99 % within 0.068 px). On the sample's data rig: five views
+            per camera, 960 × 768 images, on an 80 Hz simulation step.</li>
+          <li>The roof lidar's 128 beams lie exactly on CARLA's channels, at the exact 0.352° azimuth step: 1.31 million
+            rays a second. Each radar zone becomes a CARLA radar: the front radar a 25° × 20° cone to 250 m and a
+            109° × 28° one to 70 m. The Audi A2 is the ego vehicle, within 3 % of the sample's size.</li>
+          <li>With the six fisheyes, the lidar and five radars, 6 s of driving record in 28 s, and 4 s with ground
+            truth in 38 s: 242 labelled camera frames with 3,835 objects and 40 labelled lidar sweeps. The drive-log
+            check finds every camera within 0.25° of its plan; lidar points fall on CARLA's depth image within 0.33 mm,
+            and each view is mounted within 0.03° of the plan.</li>
+          <li>Seamless fisheyes: the cube faces are feathered across their seams, and Unreal's vignette is taken out of
+            every pixel in linear light through CARLA's measured camera response. A Vantage fog becomes CARLA's by a
+            measured calibration: a visibility of about 7000 m / fog_density.</li>
+          <li>The <b>Ground truth</b> tab shows a drive's labels frame by frame: semantic in CARLA's palette with the
+            classes present, one colour per object, range on a log scale, the lidar sweep from above in its lidarseg
+            classes, tight and full boxes, and each object's range, truncation and occlusion. Click a row or an object
+            to highlight it.</li>
+          <li><b>Export rig…</b> writes the rig to run the bridge from CARLA's own Python; in batch mode with
+            <code class="nowrap">--carla-rig</code> and <code class="nowrap">--carla-run</code>.</li>
+        </ul>
+        <p class="note">Camera images need a GPU, even off-screen. One CARLA job runs at a time: a recording, the live
+          rig, a campaign or critical targets. CARLA's car is not your vehicle's body, so the as-built check cannot judge
+          a mount on a CARLA drive: the drive-log rotation check is the cross-check.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/carla.jpg" aria-label="The Simulate, CARLA page opening a real 4 s CARLA drive of the sample's data rig with Open run: its report as after a run, then the Ground truth tab on the rear fisheye's frame with the most labelled objects, zoomed to them: the image with the tight boxes, both boxes and the bus picked in the object table and outlined, the instances in one colour each at 60 % over the image, the range on a log colour scale with its bar, the roof lidar's sweep from above in its lidarseg classes, and the semantic labels in CARLA's palette with the legend of the classes in the frame">
+            <source src="media/carla.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+          <span class="chip">A real CARLA drive with ground truth, opened with Open run…</span>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature flip" id="groundtruth">
+      <div class="text">
+        <div class="eyebrow">Ground truth</div>
+        <h3>Every frame labelled by CARLA, through the lens model</h3>
+        <p>Turn on <b>Ground truth</b> and each camera frame gets semantic, instance and range images, read through the
+          fisheye's own remap at the nearest view pixel so that labels never blur, and a list of its objects with tight
+          and full boxes, occlusion, truncation and a 3D box in the vehicle frame. A semantic lidar casts the same rays
+          as each lidar, so every point gets its nuScenes-lidarseg class and panoptic instance.</p>
+        <ul>
+          <li>A 10 s drive of the sample's data rig in 30 cars of traffic: 602 camera frames with 10,165 objects (cars,
+            trucks, buses, every traffic-light head and sign) and 100 lidar sweeps labelled.</li>
+          <li>Checked against independent geometry: the semantic lidar matches the recorded one ray for ray on 99.75 % of
+            800 steps; all 20,513 lidar points inside annotated vehicles' boxes are labelled vehicle; the range images
+            agree with the lidar to a median of 2.2 cm on the ground.</li>
+          <li>Instance masks lie inside their own projected 3D boxes (median 100 % of their pixels), and every pixel of
+            a traffic-light head and of a sign carries its class and its object.</li>
+          <li>The files open in the nuScenes devkit (lidarseg and panoptic, 32 categories) and as COCO, one file per
+            camera; <code class="nowrap">--ground-truth-summary</code> reads a drive's ground truth in brief, and
+            Simulate ▸ CARLA's <b>Ground truth</b> tab shows it frame by frame, layer by layer.</li>
+        </ul>
+        <p class="note">Ground truth about triples the rendering: that drive took 114 s with it and 46 s without. Six
+          fisheyes at full size with ground truth (306 Mpx a frame) crashed a 0.9.16 server under 12 GB, so the bridge
+          refuses runs over 200 Mpx a frame before they start; half size runs. Classes are CARLA's own tags: a barrier
+          is <i>dynamic</i>, a sign prop <i>static</i>.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <img src="media/groundtruth.jpg" alt="One frame of the right mirror camera from a real CARLA drive with ground truth: the camera image with each object's tight box, its semantic labels (road, sidewalk, buildings, a parked car, CARLA's own car as ego), each object in its own colour, and the range along every pixel's ray on a log scale; beside it the roof lidar's 77,005 points seen from above, each coloured by its nuScenes-lidarseg class" loading="lazy" width="1600" height="900">
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+        <p class="caption">One frame of a real CARLA drive with ground truth on, and the lidar sweep nearest it. Drawn
+          from the drive's own files.</p>
+      </div>
+    </article>
+
+    <article class="feature" id="faults">
+      <div class="text">
+        <div class="eyebrow">Faults, scenarios and actors</div>
+        <h3>Drives with known answers</h3>
+        <p>A fault changes what CARLA records while every calibration file keeps stating the plan, as on a real rig: a
+          sensor turned or moved on its mount, a clock running late, frames dropped or frozen, a lidar's ranges long.
+          Scenarios play out the same way for the same seed, and an actors scene stands the actors of a file around the
+          still car.</p>
+        <ul>
+          <li><b>Faults</b> (<code class="nowrap">--faults</code>, or the Faults table): run.json states each fault as
+            applied, with the pose change the drive-log check should find. Measured on CARLA's own images, F pitched
+            0.5° turned its picture by 0.5001° about the camera's pitch axis.</li>
+          <li><b>Scenarios</b> (<code class="nowrap">--scenario</code>): a lead vehicle braking, a car cutting in, a
+            pedestrian or a cyclist crossing, the car parked, each event in run.json. A crossing pedestrian entered the
+            car's lane at 2.05 s and the car stopped 5.2 m short; the cut-in car was in the lane at 3.03 s, 8.9 m
+            ahead.</li>
+          <li><b>Actors scenes</b> (<code class="nowrap">--actors</code>): children, pedestrians, cyclists, cars,
+            trucks, cones, barriers, signs or any blueprint at poses in the vehicle frame, each placed within a
+            millimetre across the ground (walkers settle by up to 1.2 cm), and the ground truth names each by its
+            actor.</li>
+          <li>The same from batch mode: <code class="nowrap">--carla-run</code> with
+            <code class="nowrap">--carla-faults</code>, <code class="nowrap">--carla-scenario</code> and
+            <code class="nowrap">--carla-actors</code>, every value checked against the rig first.</li>
+        </ul>
+        <p class="note">Scenario traffic ignores traffic lights, and a crossing walker or cyclist moves in a straight
+          line. CARLA 0.9.16's traffic manager left its forced lane change undone, so Vantage steers the cut-in car
+          itself. CARLA 0.9.16 cannot spawn a traffic light, and the run says so.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <img src="media/actors.jpg" alt="An actors scene from a real CARLA drive: the front camera sees a child, an adult, a cyclist, a cone, a barrier, a car and a sign board, and the rear camera a truck, each boxed by its ground truth and named by its id from the actors file; the list of the file's actors as placed, and the traffic light CARLA 0.9.16 cannot spawn" loading="lazy" width="1600" height="900">
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+        <p class="caption">A real actors scene: each actor boxed by its own ground truth and named by its id from the
+          file. Drawn from the drive's own files.</p>
+      </div>
+    </article>
+
+    <article class="feature flip" id="detection">
+      <div class="text">
+        <div class="eyebrow">Detection quality</div>
+        <h3>Will a detector find what each rig records?</h3>
+        <p><b>Simulate ▸ Detection quality</b> runs YOLOX-S, an off-the-shelf COCO detector, through OpenCV on every
+          camera image of CARLA drives with ground truth and matches its detections to the labelled objects as COCO's
+          evaluation does. It gives recall, precision and average precision per camera, class and range, and compares
+          rigs on the same scene with paired bootstrap intervals.</p>
+        <ul>
+          <li>The sample's data rig against the same rig with every camera pitched 20° further up, on the same
+            pedestrian-crossing scene: some camera finds vehicles at 20–40 m 12.4 points more often (95 % interval +4 to
+            +21) and beyond 40 m 6.8 points less often (−12 to −2).</li>
+          <li>Per camera, pedestrian recall rises from 73 % to 79 % (+5.7 points, +1.9 to +9.6), and a pedestrian is
+            found half the time from 48 px tall on the first rig, from 41 px on the second.</li>
+          <li>The model (YOLOX-S, Apache-2.0, 36 MB) is downloaded only on request, kept only when its SHA-256 matches,
+            and never bundled. OpenCV's output matches onnxruntime's to about 10<sup>−4</sup>, and the average
+            precision matches pycocotools.</li>
+          <li>Detections are cached in each recording: comparing the two drives again took 8 s for 1,444 images. Pinhole
+            views cut from the fisheyes are compared object by object; in batch mode with
+            <code class="nowrap">--detection-quality</code>, and as a response in designed experiments.</li>
+        </ul>
+        <p class="note">A COCO detector on CARLA's renders, not a production detector on real images: use the figures to
+          compare rigs, cameras and image formats on the same scene. Town10HD's street-light banners read as traffic
+          lights, and 12 s drives give wide intervals.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/detection.jpg" aria-label="The detection quality page with two real CARLA drives of the same pedestrian-crossing scene, the data rig and the same rig with its cameras pitched 20 degrees up: the model checked by its SHA-256, Run, the tiles for vehicles, the rig recall of both rigs against distance with the paired differences, plus 12.4 points at 20 to 40 m and minus 6.8 beyond 40 m, then a CARLA frame with its labelled objects and the detections over it">
+            <source src="media/detection.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+          <span class="chip">Two real CARLA drives · time-lapse ×3 while it matches</span>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature" id="campaigns">
+      <div class="text">
+        <div class="eyebrow">Simulation campaigns</div>
+        <h3>How small a fault each check finds, and how often it cries wolf</h3>
+        <p><b>Simulate ▸ Simulation campaigns</b> drives the rig in CARLA many times, each drive varied in one known
+          way, checks every drive as a real recording would be checked, and sets each check's answer against what was
+          injected. Templates cover fault detectability, a weather sweep and rig A against rig B; every drive and check
+          is kept, so a stopped campaign resumes.</p>
+        <ul>
+          <li>49 drives of the data rig, about an hour of CARLA: F and ML turned 0.1–1° about each axis, three seeds.
+            The drive-log check finds a turn 90 % of the time from 0.35° on F (95 % interval 0.32–0.39°) and from 0.52°
+            on ML (0.35–0.71°), finds every 1° turn, and flags no camera on a clean drive.</li>
+          <li>QR frozen for 1 s: found 45 times out of 45, the frozen frames counted exactly. R's clock 1–10 ms late:
+            each offset measured to 0.001 ms and flagged every time (the 320 Hz step itself shifts R's trigger by
+            1.03 ms; the check's limit is 2 ms). MR's dropped frames: every one found.</li>
+          <li>The first campaign found three weaknesses in Vantage's own checks: a search that went flat on CARLA's
+            textured town, kerbs that read a clean camera as pitched −0.32°, and a sync check blind to the plan. They
+            were fixed at the root, and the same drives re-scored.</li>
+          <li>Weather sweep: heavy rain cut the pedestrian range by a third (water on the lens blurring the image
+            centre). In a calibrated 150 m fog, YOLOX found cars at 10–20 m 19 % of the time against 46 % in clear
+            weather, where Vantage's model predicts no loss.</li>
+        </ul>
+        <p class="note">Wilson intervals at nine drives per size are wide, and three seeds are three routes. The as-built
+          check cannot judge a mount on CARLA, where it compares CARLA's car with your body: its flags on clean drives
+          (11 of 18) are listed apart, marked not applicable, and the False alarms tile counts only the 66 sensor checks
+          that can judge, none of which flagged. CARLA's lidar and radar ignore the weather.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/campaign.jpg" aria-label="The simulation campaigns page on the real fault-detectability campaign: the fault sets, Run reusing all 49 drives and their checks, the tiles with False alarms at 0 checks on clean drives and 6 not applicable on CARLA, the drive-log check's detection probability against the size of a camera rotation for F and ML with Wilson intervals, the thresholds table, then the False alarms tab: the checks that judge, none flagging a clean drive, and after them the as-built check's six rows, greyed and marked not applicable">
+            <source src="media/campaign.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+          <span class="chip">49 real CARLA drives · time-lapse ×10 while it analyses</span>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature flip" id="critical-carla">
+      <div class="text">
+        <div class="eyebrow">Critical targets in CARLA</div>
+        <h3>The critical targets, stood in another renderer</h3>
+        <p><b>Simulate ▸ Critical targets in CARLA</b> stands each <a href="#critical">critical target</a> around the
+          parked car as the CARLA actor nearest it in kind and size: child and adult walkers by their measured rendered
+          height, the nearest car, a bicycle with its rider, a board for a sign. Each camera's share seen and pixels
+          across the target, measured on CARLA's instance and range images as the study defines them, are compared with
+          the study's prediction for a target of the actor's size.</p>
+        <ul>
+          <li>The sample's targets, 8 of 11 stood in, three scenes at three spawn points: 30 of 30 camera views agree
+            with the study (95 % interval 88.6–100 %).</li>
+          <li>Pixels across the target: a median of 2.6 % above the prediction (RMS 3.6 %) where both see at least 90 %
+            of it. The child 2 m ahead spans 431 px of F's image against 416 predicted.</li>
+          <li>CARLA's pixel heights match the ground truth's own boxes within 1–3 %, and the figures are the same at
+            every spawn point.</li>
+          <li>Every disagreement is explained (the camera inside CARLA's car, its body hiding more, the town, the
+            threshold, the silhouette), with crops of each view. <b>Open drives…</b> compares again without CARLA; in
+            batch mode with <code class="nowrap">--critical-carla</code>, which exits with 3 when a view disagrees.</li>
+        </ul>
+        <p class="note">CARLA's actors are not your targets: its smallest child is 1.10 m tall and the sign is a
+          stand-in board, so the comparison is at the actor's size. Traffic lights, kerbs and lane markings cannot be
+          spawned.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <video muted loop playsinline preload="none" poster="media/critcarla.jpg" aria-label="The critical targets in CARLA page: each target with the CARLA actor that stands in for it, Open drives on nine real CARLA drives, 30 of 30 camera views agreeing with the study and a pixel error of plus 2.6 percent, the crops of the child ahead and beside the front door with the actor outlined, then CARLA's pixels against the prediction">
+            <source src="media/critcarla.mp4" type="video/mp4"></video>
+          <button class="play" type="button" aria-label="Play or pause"><span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span></button>
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+          <span class="chip">Nine real CARLA drives, compared without a server</span>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature" id="carla-live">
+      <div class="text">
+        <div class="eyebrow">CARLA live rig</div>
+        <h3>CARLA as the rig, streaming live</h3>
+        <p><b>Simulate ▸ CARLA live rig</b> drives the planned cameras in CARLA in real time and serves each as an MJPEG
+          stream at its module's resolution, so <a href="#liverig">Live rig health</a> watches them as it would the real
+          rig. Faults are injected while it streams: a camera turned on its mount, frozen, dropping frames or
+          late.</p>
+        <ul>
+          <li>One fisheye at 12.5 % render size keeps real time: 30 frames a second with 30 ms latency. All six
+            fisheyes together reach about 2.8 frames a second each, and rig health flags them as it would an overloaded
+            rig.</li>
+          <li>A frozen stream is a fault after ten identical frames; dropped frames show in the drop count, a delay in
+            the sync skew, judged against the live rig's own schedule.</li>
+          <li>CARLA renders its own car, so the drift indicator is measured against CARLA's car as each camera sees it at
+            its planned mount: a 1° turn moves it 6–9 px, under its 12 px warning. Against your body it would read only
+            the two bodies' difference.</li>
+          <li><b>Start live</b> points the streams at CARLA in one undo step and <b>Stop live</b> puts them back; in batch
+            mode with <code class="nowrap">--carla-live</code>, which exits with 3 when a camera is a fault.</li>
+        </ul>
+        <p class="note">Cameras only. Each fisheye costs CARLA five rendered views, so the full rig is far from real time
+          on this machine. The drift is an indicator, not a measurement.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <img src="media/carlalive.jpg" alt="Three frames of the front camera as the CARLA live rig served them while driving: as planned, turned 5 degrees in pitch live, and cleared, with rig health's body-edge drift against CARLA's car, 3, 21 and 3 px, and against the project's body, 18, 33 and 30 px; below, the frame rates CARLA reached: 30 a second for one camera with views at 12.5 percent, 23 at 50 percent, 10.4 at 100 percent, and 2.75 each for all six fisheyes at 25 percent" loading="lazy" width="1600" height="900">
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+        <p class="caption">Frames the live rig served from a real CARLA server, and the rates it reached. Drawn from the
+          sessions' own files.</p>
       </div>
     </article>
   </div>
@@ -1043,7 +1277,8 @@ does not match)</span></pre>
         <h3>Every stream, its health, and whether a camera moved</h3>
         <p><b>Calibrate ▸ Live rig</b> reads every camera's stream at once and says, per camera, whether it is delivering
           what the recording needs: frame rate against the module's, interval jitter, dropped frames, exposure and
-          clipping, sharpness and frozen images, and across the rig how far apart the cameras' frames arrive.</p>
+          clipping, sharpness and frozen images, and across the rig how far each camera's frames arrive from where the
+          sync plan puts them.</p>
         <ul>
           <li><b>Drift indicator:</b> the planned body outline and horizon drawn over the live image through the lens model. If the body edge sits elsewhere, the camera has probably been knocked; the installation check then measures by how much.</li>
           <li><b>Save frames</b> or hand them straight to the installation check.</li>
@@ -1051,7 +1286,8 @@ does not match)</span></pre>
           <li>Stream passwords are kept in a private file in your settings folder, never in the project.</li>
         </ul>
         <p class="note">Capture times are when frames reached Vantage, not sensor timestamps, so network and encoder delays
-          are included. The recording uses synthetic streams rendered from the plan.</p>
+          are included. The recording uses synthetic streams rendered from the plan; CARLA can stand in for the rig
+          too (<a href="#carla-live">CARLA live rig</a>).</p>
       </div>
       <div class="media">
         <div class="frame">
@@ -1123,9 +1359,9 @@ does not match)</span></pre>
           stream there at its rate, the cameras triggered in step with the lidar sweep, and the lidar points landing on the
           right pixels. The log is read once and never loaded whole, so long drives are fine.</p>
         <ul>
-          <li>Streams: rate, drops, gaps, jitter, latency and image size per sensor, with a timeline of the gaps. On a synthetic drive of the sample's data rig with faults put in, it finds one camera's 4 dropped frames (9.1 %) and another camera's missing topic.</li>
+          <li>Streams: rate, drops, gaps, jitter, latency and image size per sensor, and frozen cameras (identical images in a row, with their times), on a timeline. On a synthetic drive of the sample's data rig with faults put in, it finds one camera's 4 dropped frames (9.1 %) and another camera's missing topic.</li>
           <li>Sync: the lidar's measured phase lock from its points' own times, and each camera's own trigger error, apart from the lidar's. In the same drive, the camera triggered 7 ms late reads 7.0 ms, the others 0.0 ms.</li>
-          <li>Rotations: lidar depth edges are matched to image edges to find each camera's rotation relative to the lidar, with a confidence. The front camera, mounted 0.6° off in yaw, comes out at +0.53°, the others within 0.1°. This is an estimate from edge alignment; translation is not measured this way.</li>
+          <li>Rotations: lidar depth edges are matched to image edges to find each camera's rotation relative to the lidar, with a confidence. The front camera, mounted 0.6° off in yaw, comes out at +0.53°, the others within 0.1°. On 49 CARLA drives with cameras turned by known amounts it finds a turn 90 % of the time from 0.35° and flags no clean camera (<a href="#campaigns">campaigns</a>). This is an estimate from edge alignment; translation is not measured this way.</li>
           <li>Apply the confident rotations as a corrected variant in one step. Exported as JSON, CSV and PNG overlays; in batch mode with <code class="nowrap">--drive-log</code>.</li>
         </ul>
       </div>
@@ -1233,7 +1469,7 @@ does not match)</span></pre>
     <div class="head">
       <div class="eyebrow">Export</div>
       <h2>Hand the design to the people and machines that need it.</h2>
-      <p>Forty-five formats, each with a live preview. Units, angles and the coordinate frame are chosen per export, and
+      <p>Forty-seven formats, each with a live preview. Units, angles and the coordinate frame are chosen per export, and
         every file says which convention it uses.</p>
     </div>
     <article class="feature flip" id="datasets" style="padding-top:0;border-top:0">
@@ -1320,7 +1556,7 @@ does not match)</span></pre>
       <div class="card"><h4>Datasets</h4><ul><li><span>nuScenes sensor calibration</span><span>JSON</span></li><li><span>KITTI calibration</span><span>TXT</span></li><li><span>ROS camera_info</span><span>YAML ×N</span></li><li><span>Kalibr camchain</span><span>YAML</span></li><li><span>CARLA simulator rig</span><span>JSON, NPZ</span></li></ul></div>
       <div class="card"><h4>Calibration and robotics</h4><ul><li><span>OpenCV fisheye calibration</span><span>YAML ×N</span></li><li><span>ROS 2 URDF + static TF</span><span>URDF, PY</span></li><li><span>Jetson camera config</span><span>JSON</span></li><li><span>Extrinsics: every sensor's pose</span><span>JSON</span></li><li><span>Extrinsics: every sensor's pose</span><span>YAML</span></li><li><span>Extrinsics: every sensor's pose</span><span>CSV</span></li></ul></div>
       <div class="card"><h4>Documents</h4><ul><li><span>Mount sheet</span><span>PDF</span></li><li><span>Design report</span><span>HTML, PDF</span></li><li><span>Requirements and review pack</span><span>JSON, CSV, PDF</span></li><li><span>Fleet</span><span>JSON, CSV, PNG</span></li><li><span>CI templates (GitHub, GitLab)</span><span>YAML, MD</span></li></ul></div>
-      <div class="card"><h4>Studies</h4><ul><li><span>Blind volume</span><span>JSON, OBJ</span></li><li><span>Perception range</span><span>JSON, PNG</span></li><li><span>Weather comparison</span><span>JSON, CSV, PNG</span></li><li><span>Critical targets and envelopes</span><span>JSON, CSV, PNG</span></li><li><span>Lidar and radar coverage</span><span>JSON, PNG</span></li><li><span>Sync and timing plan</span><span>JSON, PNG</span></li><li><span>Recording budget</span><span>JSON, CSV</span></li><li><span>Power budget</span><span>JSON, CSV</span></li><li><span>Cable harness</span><span>JSON, CSV, PNG</span></li><li><span>GNSS and IMU</span><span>JSON, TXT, PNG</span></li><li><span>Sun glare and dirt</span><span>JSON, PNG</span></li><li><span>Materials, glass and wipers</span><span>JSON, CSV, PNG</span></li><li><span>Housings in view</span><span>JSON, CSV</span></li><li><span>Load cases (suspension)</span><span>JSON, CSV</span></li><li><span>Road and body motion</span><span>JSON, CSV, PNG</span></li><li><span>Calibration observability</span><span>JSON, CSV, PNG</span></li><li><span>Designed experiment</span><span>JSON, CSV, PNG</span></li></ul></div>
+      <div class="card"><h4>Studies</h4><ul><li><span>Blind volume</span><span>JSON, OBJ</span></li><li><span>Perception range</span><span>JSON, PNG</span></li><li><span>Weather comparison</span><span>JSON, CSV, PNG</span></li><li><span>Critical targets and envelopes</span><span>JSON, CSV, PNG</span></li><li><span>Lidar and radar coverage</span><span>JSON, PNG</span></li><li><span>Sync and timing plan</span><span>JSON, PNG</span></li><li><span>Recording budget</span><span>JSON, CSV</span></li><li><span>Power budget</span><span>JSON, CSV</span></li><li><span>Cable harness</span><span>JSON, CSV, PNG</span></li><li><span>GNSS and IMU</span><span>JSON, TXT, PNG</span></li><li><span>Sun glare and dirt</span><span>JSON, PNG</span></li><li><span>Materials, glass and wipers</span><span>JSON, CSV, PNG</span></li><li><span>Housings in view</span><span>JSON, CSV</span></li><li><span>Load cases (suspension)</span><span>JSON, CSV</span></li><li><span>Road and body motion</span><span>JSON, CSV, PNG</span></li><li><span>Calibration observability</span><span>JSON, CSV, PNG</span></li><li><span>Designed experiment</span><span>JSON, CSV, PNG</span></li><li><span>Simulation campaign (CARLA)</span><span>JSON, CSV, PNG, HTML</span></li><li><span>Detection quality (CARLA drives)</span><span>JSON, CSV, PNG</span></li></ul></div>
       <div class="card"><h4>Surround view</h4><ul><li><span>Bird's-eye remap tables</span><span>NPZ, BIN</span></li><li><span>3D surround-view bowl</span><span>OBJ, NPZ, PNG</span></li><li><span>Parking guidelines</span><span>JSON, PNG ×N</span></li><li><span>Objects in the stitched view</span><span>JSON, PNG</span></li><li><span>Reference stitcher</span><span>C++, PY</span></li></ul></div>
       <div class="card"><h4>Images and CAD</h4><ul><li><span>Viewport</span><span>PNG</span></li><li><span>Bird's-eye view</span><span>PNG</span></li><li><span>All camera views</span><span>PNG ×N</span></li><li><span>Mount points</span><span>DXF</span></li><li><span>Mount points</span><span>STEP</span></li><li><span>Mount brackets</span><span>STL ×N</span></li></ul></div>
     </div>
@@ -1362,7 +1598,7 @@ saved built.vantage with variant 6-cam · v3 · as-built
 <section class="alt" id="download">
   <div class="wrap">
     <div class="head">
-      <div class="eyebrow">Download · version 0.3.0</div>
+      <div class="eyebrow">Download · version 0.4.0</div>
       <h2>Install Vantage.</h2>
       <p>Vantage is free software, licensed under the GPL-3.0-or-later. Downloads that need no Python are on the
         <a href="https://github.com/Sherin-SEF-AI/Vantage/releases/latest">latest release</a>, with SHA-256 checksums in <code>SHA256SUMS.txt</code>; or install from

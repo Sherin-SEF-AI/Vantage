@@ -68,7 +68,7 @@ kbd {
 .nav-links a { color: var(--ink2); font-size: 14.5px; }
 .nav-links a:hover, .nav-links a[aria-current="page"] { color: var(--ink); text-decoration: none; }
 .nav-toggle { display: none; margin-left: auto; background: none; border: 1px solid var(--strong); color: var(--ink); border-radius: 8px; padding: 6px 10px; font: inherit; }
-@media (max-width: 1080px) {
+@media (max-width: 1140px) {
   .nav-toggle { display: block; }
   .nav-links { display: none; position: absolute; top: 60px; left: 0; right: 0; flex-direction: column; align-items: flex-start;
     gap: 2px; padding: 10px 24px 18px; background: var(--bg); border-bottom: 1px solid var(--hair); }

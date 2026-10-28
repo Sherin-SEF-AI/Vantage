@@ -809,9 +809,10 @@ CLIPS = ['hero', 'coverage', 'placement', 'camlight', 'bowl', 'guidelines', 'sti
          'tolerance', 'assistant', 'perception', 'rig', 'liverig', 'datasets', 'sensors', 'sensorcoverage', 'timing',
          'recording', 'power', 'gnss', 'exposure', 'brackets', 'requirements', 'dataset', 'lidarcalib', 'drivelog',
          'fleet', 'housings', 'asbuilt', 'loadcases', 'library', 'weather', 'critical', 'terrain', 'harness', 'materials',
-         'observability', 'automation', 'experiments', 'carla']
+         'observability', 'automation', 'experiments', 'carla', 'detection', 'campaign', 'critcarla']
 POSTER_AT = {'hero': 2.0, 'requirements': 18.0, 'housings': 4.0, 'asbuilt': 13.5, 'weather': 12.0, 'critical': 17.5,
-             'terrain': 6.5, 'materials': 13.5, 'observability': 17.5, 'automation': 15.0, 'carla': 25.0}
+             'terrain': 6.5, 'materials': 13.5, 'observability': 17.5, 'automation': 15.0, 'carla': 20.5,
+             'campaign': 13.5}
 
 
 def clip_fn(stage, name):
