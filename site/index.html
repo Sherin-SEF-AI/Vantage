@@ -953,7 +953,7 @@ analysed 6-cam · v3: 6 cameras in 0.6 s
 wrote range.json
 <span class="p">$</span> jq -c '.provenance | [.vantage.version, .project.sha256[:12],
       .variant.name, .result_sha256[:12]]' range.json
-["0.5.0","87a7e88f9b1a","6-cam · v3","cf837a06e950"]
+["0.6.0","87a7e88f9b1a","6-cam · v3","cf837a06e950"]
 <span class="p">$</span> vantage tigor.vantage --reproduce range.json report.json 2&gt;/dev/null
 <span class="p">$</span> echo $?; jq -r '.message, .reasons[]' report.json
 0
@@ -1477,6 +1477,9 @@ does not match)</span></pre>
           <li><b>Nothing runs until you approve:</b> the approval is recorded in the project with the exact settings and
             their SHA-256, each page refuses a plan without it, an approved plan never changes, and every output names
             its plan. <code class="nowrap">--run-plan</code> repeats it headless without the model.</li>
+          <li><b>Recommended next steps, live:</b> for the camera you selected, the edit you just made (<i>your last change
+            added 0.155 m² blind ground: undo it</i>), the page you are on or the job that just finished; worked out on
+            your computer, and nothing runs until you choose one.</li>
           <li><b>Groq or Claude</b> (Opus 5.5 or Sonnet 5.5), each with its own key and cost line; a <i>What was sent</i>
             view shows each request, never images, recordings, keys or folders.</li>
         </ul>
@@ -1630,7 +1633,7 @@ saved built.vantage with variant 6-cam · v3 · as-built
 <section class="alt" id="download">
   <div class="wrap">
     <div class="head">
-      <div class="eyebrow">Download · version 0.5.0</div>
+      <div class="eyebrow">Download · version 0.6.0</div>
       <h2>Install Vantage.</h2>
       <p>Vantage is free software, licensed under the GPL-3.0-or-later. Downloads that need no Python are on the
         <a href="https://github.com/Sherin-SEF-AI/Vantage/releases/latest">latest release</a>, with SHA-256 checksums in <code>SHA256SUMS.txt</code>; or install from

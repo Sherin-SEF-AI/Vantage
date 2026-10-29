@@ -172,7 +172,7 @@ python -m vantage.validation --list                  # the checks, their referen
       them (the as-built check and the drive-log check compare a recording with the plan). The suite shows that each
       model computes what this page says it computes, within the stated tolerance, for the cases it builds.</p>
     <!-- validation:summary -->
-<table class="val"><caption>71 of 71 checks passed (Vantage 0.5.0, run 2026-10-28, seed 20261027); the full <a href="validation/validation.html">validation report</a>.</caption><tr><th>Model</th><th>Checks</th><th>Passed</th></tr><tr><td><a href="#lens">Lens projection</a></td><td>7</td><td>7</td></tr>
+<table class="val"><caption>71 of 71 checks passed (Vantage 0.6.0, run 2026-10-29, seed 20261027); the full <a href="validation/validation.html">validation report</a>.</caption><tr><th>Model</th><th>Checks</th><th>Passed</th></tr><tr><td><a href="#lens">Lens projection</a></td><td>7</td><td>7</td></tr>
 <tr><td><a href="#coverage">Ground coverage and pixel density</a></td><td>3</td><td>3</td></tr>
 <tr><td><a href="#occlusion">Occlusion by the body</a></td><td>3</td><td>3</td></tr>
 <tr><td><a href="#perception">Perception range</a></td><td>3</td><td>3</td></tr>
@@ -241,7 +241,7 @@ python -m vantage.validation --list                  # the checks, their referen
     </dl>
     <h4>Validation</h4>
     <!-- validation:lens -->
-<table class="val"><caption>7 of 7 checks passed (Vantage 0.5.0, run 2026-10-28, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#lens">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>7 of 7 checks passed (Vantage 0.6.0, run 2026-10-29, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#lens">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#lens.inverse">Image height inverts back to the angle</a><br><code>lens.inverse</code></td><td>the identity: θ(r) is the inverse of r(θ) (closed form, or Newton&#x27;s method for Kannala–Brandt)</td><td>4.7e-13 degrees</td><td>1e-06 degrees</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#lens.derivative">Radial sampling dr/dθ</a><br><code>lens.derivative</code></td><td>a central difference of r(θ) with step 10⁻⁶ rad</td><td>1.9e-09 relative</td><td>1e-06 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#lens.opencv_pinhole">Rectilinear lens against OpenCV&#x27;s pinhole projection</a><br><code>lens.opencv_pinhole</code></td><td>OpenCV cv2.projectPoints (no distortion); OpenCV pixel centres are at integers, Vantage&#x27;s at i + ½</td><td>5.1e-13 px</td><td>1e-06 px</td><td class="ok">✓ pass</td></tr>
@@ -288,7 +288,7 @@ python -m vantage.validation --list                  # the checks, their referen
     </dl>
     <h4>Validation</h4>
     <!-- validation:coverage -->
-<table class="val"><caption>3 of 3 checks passed (Vantage 0.5.0, run 2026-10-28, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#coverage">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>3 of 3 checks passed (Vantage 0.6.0, run 2026-10-29, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#coverage">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#coverage.nadir_pyramid">A rectilinear camera looking straight down at a plate</a><br><code>coverage.nadir_pyramid</code></td><td>the pyramid of a pinhole camera cut by a plane, written out in the check</td><td>5.4e-08 relative</td><td>0.001 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#coverage.oblique_footprint">An aimed and rolled camera&#x27;s footprint on a plate</a><br><code>coverage.oblique_footprint</code></td><td>the image corners&#x27; rays intersected with the plane, written out in the check</td><td>5.9e-08 relative</td><td>0.001 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#coverage.fisheye_cone">A fisheye&#x27;s image circle on a plate is a disc</a><br><code>coverage.fisheye_cone</code></td><td>the cone of the image circle cut by the plane, written out in the check</td><td>5.9e-08 relative</td><td>0.001 relative</td><td class="ok">✓ pass</td></tr>
@@ -320,7 +320,7 @@ python -m vantage.validation --list                  # the checks, their referen
     </div>
     <h4>Validation</h4>
     <!-- validation:occlusion -->
-<table class="val"><caption>3 of 3 checks passed (Vantage 0.5.0, run 2026-10-28, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#occlusion">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>3 of 3 checks passed (Vantage 0.6.0, run 2026-10-29, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#occlusion">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#occlusion.cube_vs_rays">Cube maps against exact ray casting</a><br><code>occlusion.cube_vs_rays</code></td><td>Möller–Trumbore ray–triangle intersection against every occluder triangle, written for the check</td><td>0.00196 share of directions</td><td>0.005 share of directions</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#occlusion.cube_depth">Cube-map depth against exact ray casting</a><br><code>occlusion.cube_depth</code></td><td>Möller–Trumbore ray–triangle intersection against every occluder triangle, written for the check</td><td>0.00094 share of texels</td><td>0.005 share of texels</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#occlusion.ground_visibility">Which ground points a camera sees past the body</a><br><code>occlusion.ground_visibility</code></td><td>Möller–Trumbore ray–triangle intersection along the line of sight, written for the check</td><td>0.00079 share of points</td><td>0.005 share of points</td><td class="ok">✓ pass</td></tr>
@@ -364,7 +364,7 @@ python -m vantage.validation --list                  # the checks, their referen
       must also keep its contrast and, at night, enough light (<a href="#weather">Weather and night</a>).</p>
     <h4>Validation</h4>
     <!-- validation:perception -->
-<table class="val"><caption>3 of 3 checks passed (Vantage 0.5.0, run 2026-10-28, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#perception">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>3 of 3 checks passed (Vantage 0.6.0, run 2026-10-29, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#perception">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#perception.pinhole_pixels">Object pixels through a pinhole lens</a><br><code>perception.pinhole_pixels</code></td><td>the pinhole projection of a fronto-parallel segment, f·H/Z with Z the depth along the axis</td><td>0 relative</td><td>1e-09 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#perception.fisheye_pixels">Object pixels through a fisheye follow its local sampling</a><br><code>perception.fisheye_pixels</code></td><td>the first-order local magnification of the lens at the object&#x27;s direction</td><td>0.00103 relative</td><td>0.02 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#perception.far_range">Perception range of a pinhole camera</a><br><code>perception.far_range</code></td><td>the pinhole relation f·H/Z = min_px solved for Z</td><td>5.6e-16 relative</td><td>0.001 relative</td><td class="ok">✓ pass</td></tr>
@@ -390,7 +390,7 @@ python -m vantage.validation --list                  # the checks, their referen
       to 0.01° or 0.1 mm. The joint check tries all six axes at once on the 3⁶ = 729-pose grid of (−, 0, +) offsets.</p>
     <h4>Validation</h4>
     <!-- validation:critical -->
-<table class="val"><caption>2 of 2 checks passed (Vantage 0.5.0, run 2026-10-28, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#critical">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>2 of 2 checks passed (Vantage 0.6.0, run 2026-10-29, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#critical">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#critical.pinhole_pixels">Critical-target pixels through a pinhole lens</a><br><code>critical.pinhole_pixels</code></td><td>the pinhole projection, written out in the check</td><td>1.3e-15 relative</td><td>1e-06 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#critical.pinhole_envelope">Mounting envelopes of a pinhole camera</a><br><code>critical.pinhole_envelope</code></td><td>the angles of the target&#x27;s edges against the half field, and f·h / min_px, written out in the check</td><td>0.00656 degrees</td><td>0.02 degrees</td><td class="ok">✓ pass</td></tr>
 </table>
@@ -430,7 +430,7 @@ python -m vantage.validation --list                  # the checks, their referen
     </dl>
     <h4>Validation</h4>
     <!-- validation:lidar -->
-<table class="val"><caption>4 of 4 checks passed (Vantage 0.5.0, run 2026-10-28, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#lidar">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>4 of 4 checks passed (Vantage 0.6.0, run 2026-10-29, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#lidar">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#lidar.ring_radii">Ground rings of a level lidar</a><br><code>lidar.ring_radii</code></td><td>the cone of a beam at elevation ε cut by the ground plane, written out in the check</td><td>4.7e-16 relative</td><td>1e-09 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#lidar.ground_points">Points a level lidar puts on the ground</a><br><code>lidar.ground_points</code></td><td>the beam count: channels reaching the ground within range × columns per revolution</td><td>6.4e-08 relative</td><td>1e-06 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#lidar.points_level">Lidar points on an object: a level lidar</a><br><code>lidar.points_level</code></td><td>every beam (channel elevation × column azimuth, through the lidar&#x27;s rotation) intersected with a vertical rectangle square to the line of sight, written for the check</td><td>0.00985 relative</td><td>0.02 relative</td><td class="ok">✓ pass</td></tr>
@@ -480,7 +480,7 @@ python -m vantage.validation --list                  # the checks, their referen
     </dl>
     <h4>Validation</h4>
     <!-- validation:radar -->
-<table class="val"><caption>6 of 6 checks passed (Vantage 0.5.0, run 2026-10-28, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#radar">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>6 of 6 checks passed (Vantage 0.6.0, run 2026-10-29, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#radar">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#radar.cross_section">Radar range against the cross-section</a><br><code>radar.cross_section</code></td><td>the radar equation: received power ∝ σ / R⁴, so the range at a fixed threshold ∝ σ^¼</td><td>1e-05 relative</td><td>0.0001 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#radar.slab">One fascia layer against the sum of its reflections</a><br><code>radar.slab</code></td><td>the Airy summation of the slab&#x27;s multiple reflections with the Fresnel interface coefficients, written for the check</td><td>3.3e-16 power ratio</td><td>1e-09 power ratio</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#radar.thin_film">Layer identities: half wave, quarter wave, Brewster, energy</a><br><code>radar.thin_film</code></td><td>thin-film closed forms (Macleod; Born &amp; Wolf)</td><td>6.7e-16 power ratio</td><td>1e-09 power ratio</td><td class="ok">✓ pass</td></tr>
@@ -508,7 +508,7 @@ python -m vantage.validation --list                  # the checks, their referen
       normal incidence.</p>
     <h4>Validation</h4>
     <!-- validation:glass -->
-<table class="val"><caption>2 of 2 checks passed (Vantage 0.5.0, run 2026-10-28, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#glass">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>2 of 2 checks passed (Vantage 0.6.0, run 2026-10-29, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#glass">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#glass.plate_shift">A ray through a glass plate shifts by the plate formula</a><br><code>glass.plate_shift</code></td><td>the textbook lateral displacement of a plane-parallel plate (Hecht)</td><td>3.1e-16 relative</td><td>1e-09 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#glass.energy">Glass transmission and reflection conserve energy</a><br><code>glass.energy</code></td><td>energy conservation, and the class&#x27;s own t_vis</td><td>3.7e-15 power ratio</td><td>1e-09 power ratio</td><td class="ok">✓ pass</td></tr>
 </table>
@@ -602,7 +602,7 @@ python -m vantage.validation --list                  # the checks, their referen
       25 mm/h on the sample).</p>
     <h4>Validation</h4>
     <!-- validation:weather -->
-<table class="val"><caption>8 of 8 checks passed (Vantage 0.5.0, run 2026-10-28, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#weather">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>8 of 8 checks passed (Vantage 0.6.0, run 2026-10-29, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#weather">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#weather.p838_table">Rain attenuation coefficients against ITU-R P.838-3</a><br><code>weather.p838_table</code></td><td>Recommendation ITU-R P.838-3, Table 5, as printed</td><td>0.9998 half last digits</td><td>1 half last digits</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#weather.p840_water">Fog attenuation at radar frequencies (ITU-R P.840)</a><br><code>weather.p840_water</code></td><td>Rayleigh absorption by drops much smaller than the wavelength, from the same Debye permittivity, written out in the check</td><td>0.00024 relative</td><td>0.002 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#weather.p1814_coefficients">Optical rain and snow attenuation against ITU-R P.1814</a><br><code>weather.p1814_coefficients</code></td><td>Recommendation ITU-R P.1814, Tables 2 and 3</td><td>0 relative</td><td>0.005 relative</td><td class="ok">✓ pass</td></tr>
@@ -630,7 +630,7 @@ python -m vantage.validation --list                  # the checks, their referen
       onto the sensor inside the image circle and the body does not hide it.</p>
     <h4>Validation</h4>
     <!-- validation:sun -->
-<table class="val"><caption>2 of 2 checks passed (Vantage 0.5.0, run 2026-10-28, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#sun">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>2 of 2 checks passed (Vantage 0.6.0, run 2026-10-29, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#sun">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#sun.spa_example">Sun position against the SPA paper&#x27;s worked example</a><br><code>sun.spa_example</code></td><td>I. Reda and A. Andreas, NREL Solar Position Algorithm, worked example</td><td>0.00298 degrees</td><td>0.01 degrees</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#sun.meeus_examples">Solar coordinates against Meeus&#x27;s worked examples</a><br><code>sun.meeus_examples</code></td><td>J. Meeus, Astronomical Algorithms, examples 25.a and 28.b; spherical astronomy at solar noon</td><td>0.0002 degrees</td><td>0.002 degrees</td><td class="ok">✓ pass</td></tr>
 </table>
@@ -678,7 +678,7 @@ python -m vantage.validation --list                  # the checks, their referen
     </dl>
     <h4>Validation</h4>
     <!-- validation:suspension -->
-<table class="val"><caption>3 of 3 checks passed (Vantage 0.5.0, run 2026-10-28, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#suspension">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>3 of 3 checks passed (Vantage 0.6.0, run 2026-10-29, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#suspension">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#suspension.static_hand">Static loads against hand calculations</a><br><code>suspension.static_hand</code></td><td>springs in series, force and moment balance, written out in the check</td><td>1.3e-15 relative</td><td>1e-09 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#suspension.balance">The static solve balances force and moments</a><br><code>suspension.balance</code></td><td>static equilibrium of a rigid body on four supports</td><td>3.1e-15 relative</td><td>1e-06 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#suspension.load_transfer">Brake dive and cornering roll against hand calculations</a><br><code>suspension.load_transfer</code></td><td>quasi-static load transfer with anti-dive and roll centres (Gillespie; Milliken), written out in the check</td><td>6.5e-16 relative</td><td>1e-06 relative</td><td class="ok">✓ pass</td></tr>
@@ -707,7 +707,7 @@ python -m vantage.validation --list                  # the checks, their referen
     </div>
     <h4>Validation</h4>
     <!-- validation:terrain -->
-<table class="val"><caption>4 of 4 checks passed (Vantage 0.5.0, run 2026-10-28, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#terrain">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>4 of 4 checks passed (Vantage 0.6.0, run 2026-10-29, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#terrain">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#terrain.primitives">Road primitives against their definitions</a><br><code>terrain.primitives</code></td><td>each primitive&#x27;s closed form (a vertical curve is the parabola of a grade changing linearly with distance) and a central difference with step 10⁻⁵ m</td><td>5.3e-10 m (height) and m/m (gradient)</td><td>1e-06 m (height) and m/m (gradient)</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#terrain.line_of_sight">Seeing the road past its own crests and kerbs</a><br><code>terrain.line_of_sight</code></td><td>a brute-force march along every line of sight, written for the check</td><td>0.00025 share of points</td><td>0.001 share of points</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#terrain.crest_tangent">The road hidden beyond a crest</a><br><code>terrain.crest_tangent</code></td><td>the tangent from the camera to the vertical curve, written out in the check</td><td>0.111 m</td><td>0.3 m</td><td class="ok">✓ pass</td></tr>
@@ -740,7 +740,7 @@ python -m vantage.validation --list                  # the checks, their referen
     </div>
     <h4>Validation</h4>
     <!-- validation:timing -->
-<table class="val"><caption>3 of 3 checks passed (Vantage 0.5.0, run 2026-10-28, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#timing">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>3 of 3 checks passed (Vantage 0.6.0, run 2026-10-29, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#timing">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#timing.sweep">When the lidar sweep crosses each camera</a><br><code>timing.sweep</code></td><td>the head&#x27;s azimuth phase ∓ 360°·f·t written out in the check; the image&#x27;s half field atan(2.88 mm / 6 mm)</td><td>1.4e-14 ms</td><td>1e-06 ms</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#timing.trigger">Triggers centre the middle row&#x27;s exposure on the sweep</a><br><code>timing.trigger</code></td><td>a rolling shutter&#x27;s middle row is exposed around trigger + readout/2 + exposure/2 (Liang et al.)</td><td>0 ms</td><td>1e-09 ms</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#timing.motion_blur">Motion blur and rolling-shutter skew through the lens</a><br><code>timing.motion_blur</code></td><td>the angular rate v·sin β / d of a static point seen from a moving camera, through the lens, written out in the check</td><td>4.7e-14 relative</td><td>0.0001 relative</td><td class="ok">✓ pass</td></tr>
@@ -770,7 +770,7 @@ python -m vantage.validation --list                  # the checks, their referen
     </div>
     <h4>Validation</h4>
     <!-- validation:gnss -->
-<table class="val"><caption>2 of 2 checks passed (Vantage 0.5.0, run 2026-10-28, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#gnss">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>2 of 2 checks passed (Vantage 0.6.0, run 2026-10-29, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#gnss">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#gnss.sky_solid_angle">Sky blocked by a wall against its solid angle</a><br><code>gnss.sky_solid_angle</code></td><td>the solid angle of a rectangle seen from a point, integrated with scipy.integrate.quad</td><td>0.00667 relative</td><td>0.02 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#gnss.pose_budget">The pose error budget against a hand calculation and Monte Carlo</a><br><code>gnss.pose_budget</code></td><td>small-angle error propagation δp = δθ × L (Groves), by hand and by Monte Carlo</td><td>0.00223 relative</td><td>0.01 relative</td><td class="ok">✓ pass</td></tr>
 </table>
@@ -791,7 +791,7 @@ python -m vantage.validation --list                  # the checks, their referen
       resolution of the images; the app converts them to the sensor's full resolution and its own pixel convention.</p>
     <h4>Validation</h4>
     <!-- validation:calib -->
-<table class="val"><caption>1 of 1 checks passed (Vantage 0.5.0, run 2026-10-28, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#calib">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>1 of 1 checks passed (Vantage 0.6.0, run 2026-10-29, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#calib">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#calib.unit_recovery">A unit calibration recovers a simulated unit&#x27;s lens</a><br><code>calib.unit_recovery</code></td><td>the simulated unit&#x27;s own intrinsics (the images are rendered from them)</td><td>0.698 px</td><td>1 px</td><td class="ok">✓ pass</td></tr>
 </table>
 <!-- /validation:calib -->
@@ -816,7 +816,7 @@ python -m vantage.validation --list                  # the checks, their referen
       broken line.</p>
     <h4>Validation</h4>
     <!-- validation:joint -->
-<table class="val"><caption>2 of 2 checks passed (Vantage 0.5.0, run 2026-10-28, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#joint">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>2 of 2 checks passed (Vantage 0.6.0, run 2026-10-29, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#joint">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#joint.reference_optimum">The joint solve reaches the optimum of its least-squares problem</a><br><code>joint.reference_optimum</code></td><td>the same problem written out from scratch (own parameterisation, IRLS Gauss–Newton, central differences), solved to convergence</td><td>4.5e-07 σ</td><td>0.01 σ</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#joint.exact_recovery">The joint solve recovers known poses from exact corners</a><br><code>joint.exact_recovery</code></td><td>the injected poses the corners were rendered from</td><td>6.5e-10 degrees or mm</td><td>0.001 degrees or mm</td><td class="ok">✓ pass</td></tr>
 </table>
@@ -846,7 +846,7 @@ python -m vantage.validation --list                  # the checks, their referen
       verified by Monte Carlo with the machinery that solves real captures.</p>
     <h4>Validation</h4>
     <!-- validation:observability -->
-<table class="val"><caption>4 of 4 checks passed (Vantage 0.5.0, run 2026-10-28, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#observability">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>4 of 4 checks passed (Vantage 0.6.0, run 2026-10-29, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#observability">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#observability.cameras">Predicted camera σ against the joint solve&#x27;s spread</a><br><code>observability.cameras</code></td><td>Monte Carlo solves with core.joint.joint_solve, the machinery that solves real captures</td><td>0.163 log ratio</td><td>0.226 log ratio</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#observability.boards_placed">Predicted σ with boards laid by hand</a><br><code>observability.boards_placed</code></td><td>Monte Carlo solves with core.joint.joint_solve</td><td>0.179 log ratio</td><td>0.32 log ratio</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#observability.radar">Radar pose σ from corner reflectors</a><br><code>observability.radar</code></td><td>the Fisher information of range and azimuth measurements, written out in the check; Monte Carlo</td><td>2.9e-09 relative</td><td>0.0001 relative</td><td class="ok">✓ pass</td></tr>
@@ -871,7 +871,7 @@ python -m vantage.validation --list                  # the checks, their referen
     </div>
     <h4>Validation</h4>
     <!-- validation:lidar_calib -->
-<table class="val"><caption>2 of 2 checks passed (Vantage 0.5.0, run 2026-10-28, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#lidar_calib">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>2 of 2 checks passed (Vantage 0.6.0, run 2026-10-29, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#lidar_calib">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#lidar_calib.closed_form">Plane-to-plane alignment recovers a known transform</a><br><code>lidar_calib.closed_form</code></td><td>the transform the planes were generated with</td><td>3.3e-15 matrix element</td><td>1e-09 matrix element</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#lidar_calib.recovery">An injected lidar mounting error is recovered</a><br><code>lidar_calib.recovery</code></td><td>the injected mounting error the captures were simulated with</td><td>0.835 mm</td><td>3 mm</td><td class="ok">✓ pass</td></tr>
 </table>
@@ -901,7 +901,7 @@ python -m vantage.validation --list                  # the checks, their referen
     </table>
     <h4>Validation</h4>
     <!-- validation:formats -->
-<table class="val"><caption>4 of 4 checks passed (Vantage 0.5.0, run 2026-10-28, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#formats">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>4 of 4 checks passed (Vantage 0.6.0, run 2026-10-29, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#formats">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#formats.nuscenes">nuScenes calibrated_sensor rows</a><br><code>formats.nuscenes</code></td><td>the nuScenes devkit&#x27;s convention (points into the sensor frame by −translation, then the rotation transposed); OpenCV&#x27;s fisheye projection</td><td>7.5e-07 px</td><td>0.05 px</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#formats.kitti">KITTI calib_cam_to_cam and calib_cams_to_vehicle</a><br><code>formats.kitti</code></td><td>the KITTI raw devkit&#x27;s (and pykitti&#x27;s) reading of the files</td><td>0.00064 px</td><td>0.05 px</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#formats.ros_camera_info">ROS camera_info files</a><br><code>formats.ros_camera_info</code></td><td>sensor_msgs/CameraInfo and the camera_calibration_parsers YAML layout; OpenCV</td><td>6.5e-07 px</td><td>0.05 px</td><td class="ok">✓ pass</td></tr>
@@ -927,7 +927,7 @@ python -m vantage.validation --list                  # the checks, their referen
     </div>
     <h4>Validation</h4>
     <!-- validation:experiments -->
-<table class="val"><caption>4 of 4 checks passed (Vantage 0.5.0, run 2026-10-28, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#experiments">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>4 of 4 checks passed (Vantage 0.6.0, run 2026-10-29, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#experiments">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#experiments.sobol_ishigami">Sobol indices of the Ishigami function</a><br><code>experiments.sobol_ishigami</code></td><td>the analytic Sobol indices of the Ishigami function</td><td>0.00049 index</td><td>0.02 index</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#experiments.morris_linear">Morris elementary effects of a linear function</a><br><code>experiments.morris_linear</code></td><td>the elementary effects of a linear function, which are its coefficients exactly</td><td>7.9e-16 response per range</td><td>1e-09 response per range</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#experiments.wilson">Wilson&#x27;s interval for a share</a><br><code>experiments.wilson</code></td><td>scipy.stats.binomtest(k, n).proportion_ci(method=&#x27;wilson&#x27;)</td><td>1.1e-16 share</td><td>1e-09 share</td><td class="ok">✓ pass</td></tr>
@@ -984,7 +984,7 @@ python -m vantage.validation --list                  # the checks, their referen
       the same seed.</p>
     <h4>Validation</h4>
     <!-- validation:recording -->
-<table class="val"><caption>2 of 2 checks passed (Vantage 0.5.0, run 2026-10-28, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#recording">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>2 of 2 checks passed (Vantage 0.6.0, run 2026-10-29, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#recording">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#recording.frozen_runs">A frozen camera is found with its repeated frames</a><br><code>recording.frozen_runs</code></td><td>the runs as written into the sequence; rig health&#x27;s independent counter (pixel equality of the thumbnails)</td><td>0 frames</td><td>0 frames</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#recording.capture_skew">Rig health judges the capture skew against the sync plan</a><br><code>recording.capture_skew</code></td><td>the trigger times of a clockwise 10 Hz lidar sweep written out in the check (the front camera at 0 ms, the right one at 25 ms, the left one at 75 ms)</td><td>0.2 ms</td><td>0.5 ms</td><td class="ok">✓ pass</td></tr>
 </table>

@@ -85,6 +85,7 @@
     <a href="#assistant-use">Asking and proposals</a>
     <a href="#agent">Agent mode</a>
     <a href="#copilot">The Copilot: plans you approve</a>
+    <a href="#recommended">Recommended actions</a>
     <a href="#privacy">What is sent</a>
     <p>Data</p>
     <a href="#sample-dataset">Sample dataset</a>
@@ -1262,6 +1263,7 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td>Optimise a camera</td><td>Searches one camera's pose within ranges for the least blind ground, best minimum density or most redundancy, optionally keeping a minimum density; says when the gain is not worth it.</td></tr>
       <tr><td>Simulate / propose a change</td><td>Camera poses, lenses, seam angles or thresholds, analysed on a copy; a proposal shows the predicted effect.</td></tr>
       <tr><td>Show in Vantage</td><td>Selects cameras, frames a ground point, switches heatmaps and overlays, opens pages. Never changes the design.</td></tr>
+      <tr><td>Suggest next steps</td><td>At the end of an answer, when a next step is worth it: up to three follow-ups shown as buttons under the answer (each a label, the prompt it sends and whether it asks, starts a goal or asks for a plan). Nothing runs unless you click one.</td></tr>
       <tr><td>Catalogue, run settings, limits, estimate, check, propose a plan</td><td>The Copilot's tools (below): what a run can use, each kind's settings, the documented limits, a plan's estimate and its checks, and the plan shown to you. None of them starts, stops or deletes anything.</td></tr>
     </table>
     <p>The assistant can only <b>propose</b> design changes. A proposal card lists the changes (mirrored partners
@@ -1335,6 +1337,42 @@ vantage project.vantage            # open a project</code></pre>
       settings without asking the model. In batch mode <code>--run-plan ID [OUT_DIR]</code> does the same (exit 10 when
       the project holds no approved, intact plan of that ID or a step no longer validates). After a run, ask about the
       results: the Copilot reads them with the read tools and can propose the next plan, which you approve again.</p>
+
+    <h3 id="recommended">Recommended actions</h3>
+    <p>The panel recommends what to look at or do next, worked out on this computer from Vantage's own results: the
+      analysis, the Issues list, the worst single-camera mounting error, the objects in the stitched view, the
+      requirements scorecard, the perception range, the pages' results (drive-log check, detection quality, the
+      simulation campaign, the CARLA page and its runs, the live rig) and the Copilot's plans. Every figure a
+      recommendation quotes is read off those results; computing them sends nothing.</p>
+    <ul>
+      <li><b>The live strip</b> at the top of the panel follows what you are doing: the open page, the selection (a
+        camera, a sensor, a rig part, a target, a requirement, a plan), your last edit with the analysis before and
+        after it, and a job that has just finished. It shows one to three recommendations about that thing, a moment
+        after it changes, for example <i>For QR · 3D and top views: QR alone sees 3.00 m²: check what its loss or a
+        mounting error costs</i>; <i>Your last change added 0.155 m² blind ground: undo it</i>; on the CARLA page <i>No
+        server on port 2000: start it</i> or <i>Image scale 1 with ground truth exceeds the render budget: use
+        0.8</i>; after the drive-log check <i>Ask why ML is off by 0.37°</i>. For a selected camera whose minimum
+        density is below the target, copies with its pitch changed by ±2° and ±4° are analysed in the background, and
+        a step that raises it without adding blind ground is named (<i>QR's minimum density is 3.44 px/cm (target 5): try pitch -4°</i>, with the quarter cameras pitched 10° down), with the simulated
+        figures.</li>
+      <li><b>The empty chat</b> lists the design's own, most useful first: blind ground, a camera's minimum density, a
+        seam where a standing child vanishes, the Issues, the worst mounting error, failing requirements (or none
+        written), perception sectors short of their range, a lidar with no calibration plan, a stale analysis, CARLA
+        never run, the last drive not checked or not scored, a campaign that misses your target, a plan waiting or
+        failed, an unhealthy stream; a few general starters when little is wrong. Five show; <b>More</b> shows the
+        rest.</li>
+      <li><b>Recommended (n)</b> in the panel's header opens the full list at any time, mid-conversation too.</li>
+      <li><b>Next steps</b> under each answer: the recommendations worked out again on the new state, and up to three
+        follow-ups the model suggests (<code>suggest_next</code>), checked and without duplicates. A plan card offers
+        revisions taken from its own warnings and estimate (<i>Halve the duration: 20 → 10 s</i>, <i>Use half-size
+        images</i>) and, after it ran, the checks that fit it.</li>
+    </ul>
+    <p>A button says what it does. <b>Ask</b> and <b>Start goal</b> send the prompt exactly as typing it would (so the
+      consent and the daily token cap apply). <b>Plan it</b> asks the Copilot for a plan: the plan card follows and
+      nothing runs until you approve it. <b>Open</b> shows a page or a panel or points at the page's own button, and
+      runs nothing; <i>undo it</i> shows the History panel and names the step Edit ▸ Undo would undo, without undoing
+      it. No recommendation runs anything or changes the design by itself. × dismisses one for this project file (kept
+      in the app's settings, never in the project); it comes back when its figures change by more than 15 %.</p>
 
     <h3 id="privacy">What is sent</h3>
     <div class="callout"><p>With each question, Vantage sends the provider you chose (Groq or Anthropic) the question,
