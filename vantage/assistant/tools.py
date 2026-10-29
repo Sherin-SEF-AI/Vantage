@@ -73,6 +73,7 @@ class ToolContext:
     provider: str = ''
     model: str = ''
     on_copilot: object = None            # callable(copilot.Plan): a proposed plan to show
+    on_next: object = None               # callable(list of Recommendation): next-step chips to show under the answer
     _proposals: int = 0
 
     def status(self, text):
@@ -1743,6 +1744,18 @@ def show_in_app(tc, action='', cameras=None, x=None, y=None, heatmap=None, overl
     return {'done': action, **{k: v for k, v in req.items() if k != 'action'}}
 
 
+def suggest_next(tc, items=None, **_):
+    """Next steps the user may click under the answer: validated (recommend.clean_next), shown as chips, never run."""
+    from . import recommend as RC
+    good = RC.clean_next(items)
+    if not good:
+        return {'error': 'items must be 1-3 of {label, prompt, kind: ask | goal | plan}, each with a label and a prompt'}
+    if tc.on_next is not None:
+        tc.on_next(good)
+    return {'shown': len(good), 'note': 'shown as buttons under your answer; nothing runs unless the user clicks one, '
+                                        'and a plan still needs their approval'}
+
+
 # =========================================================================== the Copilot (copilot_tools.py)
 def _copilot(name):
     def fn(tc, **kw):
@@ -2111,6 +2124,16 @@ TOOLS = [
          {'action': {'type': 'string', 'enum': list(UI_ACTIONS)}, 'cameras': {'type': 'array', 'items': {'type': 'string'}},
           'x': {'type': 'number'}, 'y': {'type': 'number'}, 'heatmap': {'type': 'string'}, 'overlay': {'type': 'string'},
           'on': {'type': 'boolean'}, 'page': {'type': 'string'}}, show_in_app, 'ui', ('action',)),
+    Tool('suggest_next', 'Suggest next steps',
+         'At the end of an answer, only when a next step is genuinely useful: up to 3 short follow-ups shown as '
+         'buttons under your answer. Each has a label (a few words, action first), the prompt sent if the user clicks '
+         'it, and a kind: ask (a question to you), goal (agent mode) or plan (a run planned for approval). Nothing runs '
+         'unless the user clicks; do not repeat what you just did.',
+         {'items': {'type': 'array', 'description': '1 to 3 next steps', 'items': {'type': 'object', 'properties': {
+             'label': {'type': 'string', 'description': 'what the button says, e.g. "Check QR\'s tolerance"'},
+             'prompt': {'type': 'string', 'description': 'the message sent when it is clicked'},
+             'kind': {'type': 'string', 'enum': ['ask', 'goal', 'plan']}},
+             'required': ['label', 'prompt', 'kind']}}}, suggest_next, 'ui', ('items',)),
 ]
 BY_NAME = {t.name: t for t in TOOLS}
 

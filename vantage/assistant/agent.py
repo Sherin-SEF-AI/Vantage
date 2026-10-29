@@ -71,7 +71,12 @@ propose_plan(revise=true), or say plainly why they cannot be fixed. Warnings and
 the values that change, steps in the same order. Never start over unless asked.
 5. Then answer in two or three sentences: what the plan does, its cost and the warnings that matter. The user \
 approves, edits or rejects it on the plan card; nothing runs until they approve. Never say a run started or finished \
-unless a tool result says so. After a run, read its results with the read tools; a next run is a new plan."""
+unless a tool result says so. After a run, read its results with the read tools; a next run is a new plan.
+
+NEXT STEPS. When a next step is genuinely useful (a check the answer calls for, the obvious follow-up), end the answer \
+by calling suggest_next with at most 3 short items {label, prompt, kind: ask | goal | plan}. They are shown as buttons \
+under your answer and run nothing unless the user clicks; a plan still needs approval. Skip it when nothing is worth \
+suggesting, and never suggest what you just did."""
 
 
 AGENT = """
@@ -102,7 +107,7 @@ class Settings:
 
 @dataclass
 class Event:
-    kind: str                   # turn | reasoning | content | tool_start | tool_done | proposal | status | usage | error | done
+    kind: str                   # turn | reasoning | content | tool_start | tool_done | proposal | next_steps | status | usage | error | done
     data: dict = field(default_factory=dict)
 
 
@@ -187,6 +192,7 @@ class BaseSession:
             tc.on_proposal = lambda prop: emit(Event('proposal', {'proposal': prop}))
             tc.on_plan = lambda steps: emit(Event('plan', {'steps': steps}))
             tc.on_status = lambda text: emit(Event('tool_status', {'text': text}))
+            tc.on_next = lambda items: emit(Event('next_steps', {'items': items}))
             prev = tc.on_copilot
 
             def on_copilot(plan, prev=prev):

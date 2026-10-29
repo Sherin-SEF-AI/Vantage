@@ -220,7 +220,7 @@ class MainWindow(QMainWindow):
         ad = self._dock('assistant', 'Assistant', self.assistant_panel, R)
         self.addDockWidget(R, ad, Qt.Orientation.Horizontal)  # a full-height column of its own, not under the inspector
         ad.setTitleBarWidget(QWidget())                      # the panel has its own header
-        ad.setMinimumWidth(340)
+        ad.setMinimumWidth(300)
         ad.hide()
         self.splitDockWidget(self.docks['outliner'], self.docks['library'], Qt.Orientation.Vertical)
         self.splitDockWidget(self.docks['inspector'], self.docks['camview'], Qt.Orientation.Vertical)

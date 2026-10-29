@@ -9,6 +9,7 @@ the page's own Run, which refuses a plan without its record). The API keys are s
 from __future__ import annotations
 
 import copy
+import hashlib
 import html
 import json
 import math
@@ -17,6 +18,7 @@ import re
 import threading
 import time
 
+from PyQt6 import sip
 from PyQt6.QtCore import QObject, QPointF, QRectF, QSize, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices, QFont, QFontMetricsF, QPainter, QPen, QTextOption
 from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QGridLayout,
@@ -28,6 +30,7 @@ from ..assistant import agent as A
 from ..assistant import client as C
 from ..assistant import copilot as CP
 from ..assistant import providers as PR
+from ..assistant import recommend as RC
 from ..assistant import secrets as K
 from ..assistant import tools as T
 from . import icons
@@ -133,6 +136,7 @@ class AssistantController(QObject):
     proposal_state = pyqtSignal(int)    # a proposal was applied, discarded, undone or measured
     plan_state = pyqtSignal(str)        # a plan was edited, approved, rejected, or one of its steps moved on
     agent_changed = pyqtSignal(bool)
+    cta = pyqtSignal(object)            # a recommendation was clicked (a card's or a turn's chip): the panel acts on it
     _raw = pyqtSignal(object)           # (thread id, Event) from the worker
     _ui_req = pyqtSignal(object)        # (thread id, request) from a show_in_app call
 
@@ -2022,6 +2026,13 @@ class CopilotCard(QFrame):
         for w in (self.b_reject, self.b_open, self.b_stop, self.b_approve):
             b.addWidget(w)
         self.v.addLayout(b)
+        self.chips_box = QWidget()
+        self.chips_lay = QVBoxLayout(self.chips_box)
+        self.chips_lay.setContentsMargins(0, 0, 0, 0)
+        self.chips_box.hide()
+        self.v.addWidget(self.chips_box)
+        self.chips: NextSteps | None = None
+        self._chips_sig = None
         self.tables = []
         ctl.plan_state.connect(self._sync)
         self._restyle()
@@ -2262,6 +2273,26 @@ class CopilotCard(QFrame):
             self.state_lbl.setText('Rejected: nothing was run.')
         else:
             self.state_lbl.setText('')
+        self._sync_chips(rec)
+
+    def _sync_chips(self, rec):
+        """Revisions while it waits (from its own warnings), the checks that fit it once it ran; clicked, a revision is
+        a follow-up to the Copilot (a new version, approval again), a check opens or asks."""
+        recs = plan_chips(self.plan, rec) if self.plan.status not in ('rejected', 'superseded') else []
+        sig = [(r.id, r.title) for r in recs]
+        if sig == self._chips_sig:
+            return
+        self._chips_sig = sig
+        if self.chips is not None:
+            self.chips.hide()
+            self.chips.setParent(None)
+            self.chips.deleteLater()
+            self.chips = None
+        if recs:
+            self.chips = NextSteps(recs, 'Revise it' if self.plan.status == 'draft' else 'Next')
+            self.chips.act.connect(self.ctl.cta.emit)
+            self.chips_lay.addWidget(self.chips)
+        self.chips_box.setVisible(bool(recs))
 
     def _restyle(self):
         t = THEME.tok
@@ -2478,6 +2509,8 @@ class AssistantTurn(QWidget):
         self.tools = {}
         self.texts = []
         self.copilot_cards = []
+        self.next_items = []            # the model's suggest_next items (recommend.Recommendation)
+        self.next_steps: NextSteps | None = None
         self._pending = False
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
@@ -2520,6 +2553,8 @@ class AssistantTurn(QWidget):
         elif k == 'tool_start':
             if self.thinking is not None:
                 self.thinking.finish()
+            if d['name'] == 'suggest_next':         # shown as chips under the answer
+                return
             self._n_tools += 1
             if d['name'] == 'update_plan':          # the plan card shows it
                 return
@@ -2543,6 +2578,8 @@ class AssistantTurn(QWidget):
         elif k == 'progress':
             if d.get('agent'):
                 self.prog.setText(f'· agent · step {d["round"] + 1} of {d["max"]} · {d["elapsed"]:.0f} s')
+        elif k == 'next_steps':
+            self.next_items = list(d.get('items') or [])[:RC.NEXT_MAX]
         elif k == 'proposal':
             self._insert(ProposalCard(self.ctl, d['proposal']))
         elif k == 'copilot':
@@ -2593,8 +2630,33 @@ class AssistantTurn(QWidget):
             bits.append(f'{d["seconds"]:.1f} s')
         self.stats.setText(' · '.join(bits))
         self.b_copy.setVisible(any(t.strip() for t in self.texts))
+        if d.get('ok') and not d.get('stopped'):
+            self._add_next_steps()
         self.v.addWidget(self.footer)
         self.footer.show()
+
+    def _add_next_steps(self):
+        """The model's next steps, then the local recommendations worked out again on the new state (the ones about
+        what the user is doing first), without duplicates; at most five chips."""
+        model = list(self.next_items)
+        local = []
+        rc = getattr(self.ctl, 'recommender', None)
+        if rc is not None:
+            rc.refresh()
+            norm = lambda x: re.sub(r'\W+', ' ', str(x).lower()).strip()
+            taken = {norm(r.title) for r in model} | {norm(r.prompt) for r in model}
+            pool = rc.strip() + [r for r in rc.recs if r.base >= RC.SEVERITY['info'] * 0.6]
+            for r in pool:
+                if r.id not in {x.id for x in local} and norm(r.title) not in taken and norm(r.prompt or '-') not in taken:
+                    local.append(r)
+                if len(local) >= 2:
+                    break
+        items = (model + local)[:5]
+        if not items:
+            return
+        self.next_steps = NextSteps(items)
+        self.next_steps.act.connect(self.ctl.cta.emit)
+        self.v.addWidget(self.next_steps)
 
     def _copy(self):
         QApplication.clipboard().setText('\n\n'.join(t.strip() for t in self.texts if t.strip()))
@@ -2883,6 +2945,672 @@ def edit_brief(ctl: AssistantController, parent=None):
     return False
 
 
+# ============================================================================================ recommendations
+KIND_ICON = {'ask': 'chat', 'goal': 'optimise', 'plan': 'checklist', 'open': 'external'}
+
+
+def _metrics_of(res) -> dict:
+    m = res.metrics
+    return {'blind_m2': float(m.get('blind_m2', 0.0)), 'min_density': float(m.get('min_density', 0.0)),
+            'min_ok_pct': float(m.get('min_ok_pct', 0.0))}
+
+
+class ContextTracker(QObject):
+    """What the user is doing now, for the recommendations: the open page, the selection, the last edits (read off the
+    undo stack) with the analysis results just before and just after each, and a job that just finished (a page's
+    result that appeared or changed, a plan that ran). It reads; it never changes anything."""
+    changed = pyqtSignal()
+    POLL_MS = 1000
+    # page -> the job its result stands for (the attribute holding the result)
+    WATCH = (('drivelog', 'drivelog', 'result'), ('detection', 'detection', 'result'),
+             ('campaign', 'campaign', 'result'), ('sim', 'carla_run', 'result'), ('requirements', 'requirements', 'full'),
+             ('asbuilt', 'asbuilt', 'result'))
+
+    def __init__(self, ctx, ctl, parent=None):
+        super().__init__(parent)
+        self.ctx, self.ctl = ctx, ctl
+        st = ctx.store
+        self.edits: list = []                # oldest first: {'index', 'text', 'before', 'after', 'revision', 'cmd'}
+        self.job: dict | None = None
+        self._metrics, self._metrics_rev = None, -1
+        self._rev = st.revision
+        self._plan_seen = None
+        st.undo.indexChanged.connect(self._on_index)
+        st.project_replaced.connect(self._reset)
+        ctx.analysis.finished.connect(self._on_analysis)
+        ctl.plan_state.connect(self._on_plan)
+        if ctx.analysis.result is not None:
+            self._metrics, self._metrics_rev = _metrics_of(ctx.analysis.result), \
+                getattr(ctx.analysis.result, 'revision', st.revision)
+        self._sig = self._signature()        # results already there did not "just finish"
+        self.timer = QTimer(self)
+        self.timer.setInterval(self.POLL_MS)
+        self.timer.timeout.connect(self.poll)
+        self.timer.start()
+
+    # ---------------------------------------------------------------- edits and the analysis around them
+    def _on_index(self, idx):
+        try:
+            st = self.ctx.store
+            stack = st.undo
+            if sip.isdeleted(stack):
+                return
+            cmd = stack.command(idx - 1) if idx > 0 else None
+            known = next((e for e in self.edits if e['cmd'] is cmd), None) if cmd is not None else None
+            if cmd is not None and idx == stack.count() and known is None:          # a new step
+                before = self._metrics if self._metrics is not None and self._metrics_rev == self._rev else None
+                self.edits.append({'index': idx, 'text': cmd.text(), 'before': before, 'after': None,
+                                   'revision': st.revision, 'cmd': cmd})
+                self.edits = self.edits[-6:]
+            elif known is not None and known is self.edits[-1] and idx == stack.count() and \
+                    known['revision'] != st.revision and known['text'] != cmd.text():
+                known.update(text=cmd.text(), revision=st.revision, after=None)     # merged into it (a drag)
+            self._rev = st.revision
+        except RuntimeError:                 # the window is closing
+            return
+        self.changed.emit()
+
+    def _on_analysis(self, res):
+        if res is None:
+            return
+        try:
+            st = self.ctx.store
+            self._metrics, self._metrics_rev = _metrics_of(res), getattr(res, 'revision', st.revision)
+            e = self.edits[-1] if self.edits else None
+            if e is not None and e['after'] is None and e['before'] is not None and self._metrics_rev >= e['revision'] \
+                    and st.undo.index() == e['index'] and st.undo.command(e['index'] - 1) is e['cmd']:
+                e['revision'] = max(e['revision'], self._metrics_rev)
+                e['after'] = self._metrics
+            if self._metrics_rev == st.revision:
+                self._rev = st.revision
+        except RuntimeError:
+            return
+        self.changed.emit()
+
+    def _reset(self, *_):
+        self.edits, self.job = [], None
+        self._metrics, self._metrics_rev, self._rev = None, -1, self.ctx.store.revision
+        self._sig = self._signature()
+        self.changed.emit()
+
+    # ---------------------------------------------------------------- jobs
+    def _signature(self) -> dict:
+        w = self.ctx.window
+        pages = getattr(w, '_page_widgets', {}) if w is not None else {}
+        out = {}
+        for name, job, attr in self.WATCH:
+            pg = pages.get(name)
+            res = getattr(pg, attr, None) if pg is not None else None
+            ok = not (isinstance(res, dict) and res.get('status') not in (None, 'ok'))
+            out[job] = (id(res) if res is not None else None, ok)
+        pc = getattr(self.ctx, 'perception', None)
+        res = getattr(pc, 'result', None)
+        out['perception'] = (id(res) if res is not None else None, True)
+        return out
+
+    def poll(self):
+        """A page's result appeared or changed: a job finished (checked once a second; nothing is computed)."""
+        try:
+            sig = self._signature()
+        except RuntimeError:
+            return
+        new = [(k, v) for k, v in sig.items() if v[0] is not None and self._sig.get(k, (None,))[0] != v[0]]
+        self._sig = sig
+        if new:
+            k, (_, ok) = new[-1]
+            self.job = {'kind': k, 'ok': ok, 't': time.time()}
+            self.changed.emit()
+
+    def _on_plan(self, pid):
+        r = self.ctl.runner
+        if r is None or r.running or r.id != pid or not r.status or self._plan_seen == (r.id, r.version, r.status):
+            return
+        self._plan_seen = (r.id, r.version, r.status)
+        self.job = {'kind': 'plan', 'ok': r.status == 'done', 't': time.time(), 'plan': pid}
+        self.changed.emit()
+
+    # ---------------------------------------------------------------- now
+    def context(self) -> RC.Context:
+        ctx, st = self.ctx, self.ctx.store
+        w = ctx.window
+        page = w.page_name() if w is not None and hasattr(w, 'page_name') else 'viewports'
+        sel = [('camera', c.tag, c.tag) for c in st.selected_cams()]
+        o = st.sel_obj
+        if not sel and o and len(o) > 1:
+            v = st.project.variant
+            if o[0] == 'sensor':
+                s = v.sensor(o[1]) if hasattr(v, 'sensor') else None
+                if s is not None:
+                    sel.append(('sensor', s.tag, s.tag))
+            elif o[0] == 'rig':
+                q = next((x for x in getattr(st.project, 'rig', ()) if x.uid == o[1]), None)
+                if q is not None:
+                    sel.append(('rig', q.uid, q.name))
+            elif o[0] == 'target':
+                t = next((x for x in st.project.targets if x.uid == o[1]), None)
+                if t is not None:
+                    sel.append(('target', t.uid, t.name))
+        if page == 'requirements':
+            rq = getattr(w, '_page_widgets', {}).get('requirements')
+            if rq is not None and getattr(rq, 'sel_id', None):
+                sel.append(('requirement', rq.sel_id, rq.sel_id))
+        pl = self.ctl.current_plan
+        if pl is not None and pl.status == 'draft':
+            sel.append(('plan', pl.id, f'plan {pl.id}'))
+        return RC.Context(page=page, page_label=PAGES.get(page, page), selection=tuple(sel),
+                          edits=[{k: v for k, v in e.items() if k != 'cmd'} for e in self.edits],
+                          undo_index=st.undo.index(), job=dict(self.job) if self.job else None, now=time.time())
+
+
+class Recommender(QObject):
+    """The recommendations, worked out locally (recommend.py) a moment after the design, the selection, the page, the
+    analysis, a page's result or a plan changes (debounced), and the ones the user dismissed (per project file, in
+    QSettings; never in the project). Nothing here sends anything or runs anything."""
+    updated = pyqtSignal()
+    _hint_done = pyqtSignal(object)      # (key, hint) from the worker that analyses copies
+    DEBOUNCE_MS = 300
+
+    def __init__(self, ctx, ctl, parent=None):
+        super().__init__(parent)
+        self.ctx, self.ctl = ctx, ctl
+        self.hints: dict = {}            # key -> hint (or None: nothing helps); see recommend.pitch_hint / scale_hint
+        self._hint_busy = None
+        self._hint_next = None
+        self._hint_done.connect(self._on_hint)
+        self.tracker = ContextTracker(ctx, ctl, self)
+        self.recs: list = []
+        self.context: RC.Context | None = None
+        self.ms = {'gather': 0.0, 'recommend': 0.0}
+        self.refreshes = 0
+        self._shown = None
+        self._runs = (None, [])
+        self.dismissed = RC.Dismissed()
+        self._dkey = ''
+        self._load_dismissed()
+        self.timer = QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.setInterval(self.DEBOUNCE_MS)
+        self.timer.timeout.connect(self.refresh)
+        st, an = ctx.store, ctx.analysis
+        st.changed.connect(self.schedule)
+        st.selection_changed.connect(self.schedule)
+        st.project_replaced.connect(self._replaced)
+        an.finished.connect(self.schedule)
+        an.secondary.connect(self.schedule)
+        an.stale_changed.connect(self.schedule)
+        ctl.plan_state.connect(self.schedule)
+        ctl.reset.connect(self.schedule)
+        self.tracker.changed.connect(self.schedule)
+        w = ctx.window
+        if w is not None and hasattr(w, 'pages'):
+            w.pages.currentChanged.connect(self.schedule)
+        so = getattr(ctx, 'stitched', None)
+        if so is not None and hasattr(so, 'ready'):
+            so.ready.connect(self.schedule)
+        self.refresh()
+
+    def schedule(self, *_):
+        self.timer.start()
+
+    # ---------------------------------------------------------------- dismissed, per project file
+    def _key(self) -> str:
+        p = self.ctx.store.project
+        ident = os.path.abspath(p.path) if getattr(p, 'path', '') else f'unsaved:{p.name}'
+        return 'assistant/dismissed/' + hashlib.sha1(ident.encode('utf-8')).hexdigest()[:16]
+
+    def _load_dismissed(self):
+        self._dkey = self._key()
+        try:
+            data = json.loads(str(self.ctx.settings.value(self._dkey, '') or '{}'))
+        except (TypeError, ValueError):
+            data = {}
+        self.dismissed = RC.Dismissed(data if isinstance(data, dict) else {})
+
+    def _save_dismissed(self):
+        self.ctx.settings.setValue(self._dkey, json.dumps(self.dismissed.data, default=str))
+
+    def _replaced(self, *_):
+        self._load_dismissed()
+        self._runs = (None, [])
+        self.schedule()
+
+    def dismiss(self, rec: RC.Recommendation):
+        if self._key() != self._dkey:            # saved under a new name since: its own list
+            self._load_dismissed()
+        self.dismissed.dismiss(rec)
+        self._save_dismissed()
+        self.refresh()
+
+    # ---------------------------------------------------------------- what the app knows now
+    def _page(self, name):
+        w = self.ctx.window
+        return getattr(w, '_page_widgets', {}).get(name) if w is not None else None
+
+    def _carla(self, p) -> dict:
+        from ..assistant import copilot_tools as CT
+        from ..core import simrig as SR
+        from ..sim import carla_bridge as CB
+        from ..sim import server as SV
+        pg = self._page('sim')
+        root = str(self.ctx.settings.value('sim/carla_root', '') or '')
+        installed = SV.is_carla_root(root) or (pg is not None and SV.is_carla_root(getattr(pg, 'carla_root', '')))
+        port = int(SR.settings_of(p).port)
+        up, render = None, None
+        if pg is not None:
+            txt = pg.srv_status.text.text()
+            up = True if (pg.server is not None and pg.server.running) or 'answers on port' in txt else \
+                False if txt.startswith('No server') else None
+            rig = getattr(pg, 'rig', None)
+            if rig is not None:
+                d = rig.doc
+                render = {'mpx': sum(c['render_mpx'] for c in d['cameras']),
+                          'gt_mpx': float((d.get('ground_truth') or {}).get('gt_render_mpx', 0.0)),
+                          'budget': float(CB.RENDER_BUDGET_MPX), 'scale': float(pg.settings.image_scale)}
+        wd = workdir.get(self.ctx.settings)
+        rdir = workdir.project_dir(p, wd, 'carla')
+        try:
+            key = (rdir, os.stat(rdir).st_mtime_ns)
+        except OSError:
+            key = (rdir, None)
+        if not installed and pg is None:
+            key = (rdir, None)                   # CARLA not set up and its page never opened: no runs to look for
+        if self._runs[0] != key:                 # read the runs again only when the folder changed
+            self._runs = (key, CT.find_runs(p, wd, limit=12) if key[1] is not None else [])
+        rows = self._runs[1]
+        last = None
+        if pg is not None and isinstance(pg.result, dict) and pg.out_dir:
+            from ..core import groundtruth as GT
+            last = {'path': pg.out_dir, 'name': os.path.basename(pg.out_dir), 'status': pg.result.get('status'),
+                    'error': str(pg.result.get('error') or ''),
+                    'ground_truth': os.path.isfile(os.path.join(pg.out_dir, GT.INDEX))}
+        elif rows:
+            r = rows[0]
+            last = {'path': r['path'], 'name': os.path.basename(r['path']), 'status': r['status'], 'error': '',
+                    'ground_truth': bool(r['ground_truth'])}
+        if last is not None:
+            base = os.path.normpath(last['path'])
+            dl, de = self._page('drivelog'), self._page('detection')
+            dres = getattr(dl, 'result', None)
+            last['checked'] = dres is not None and os.path.normpath(str(dres.path)).startswith(base)
+            eres = getattr(de, 'result', None)
+            last['scored'] = eres is not None and any(os.path.normpath(str(r.get('path') or '')).startswith(base)
+                                                      for r in eres.recordings)
+        return {'installed': installed, 'port': port, 'server_up': up, 'runs': len(rows) + (1 if last and not rows
+                                                                                           else 0),
+                'last_run': last, 'render': render}
+
+    def gather(self) -> RC.State:
+        ctx, ctl = self.ctx, self.ctl
+        p, an = ctx.store.project, ctx.analysis
+        res = an.result if an.result is not None and getattr(an.result, 'variant_uid', p.active_uid) == p.active_uid \
+            else None
+        worst = an.worst if res is not None and an.worst and len(an.worst) == 3 else None
+        so = getattr(ctx, 'stitched', None)
+        stitched = getattr(so, 'result', None)
+        if stitched is not None and getattr(stitched, 'variant_uid', p.active_uid) not in ('', p.active_uid):
+            stitched = None
+        rq = self._page('requirements')
+        lc = self._page('lidar_calib')
+        rig = self._page('rig')
+        pc = getattr(ctx, 'perception', None)
+        try:
+            carla = self._carla(p)
+        except Exception:                                    # noqa: BLE001 — no CARLA facts beats no list
+            carla = None
+        return RC.State(p, res, list(an.issues), worst, bool(an.stale), stitched, getattr(so, 'advice', None),
+                        getattr(rq, 'res', None), getattr(pc, 'result', None),
+                        getattr(self._page('drivelog'), 'result', None), getattr(self._page('detection'), 'result', None),
+                        getattr(self._page('campaign'), 'result', None), carla,
+                        rig.health() if rig is not None else None,
+                        lc is not None and (lc.result is not None or lc.plan is not None),
+                        [e['plan'] for e in ctl.plans.values() if e.get('plan') is not None],
+                        CP.records(p), ctl.brief())
+
+    # ---------------------------------------------------------------- hints: copies analysed off the UI thread
+    def _hint_keys(self, state, cx) -> dict:
+        """The hints worth having now: a pitch for the selected camera whose minimum density is below the target
+        (on an up-to-date analysis), the image scale that fits when the CARLA page's rig is over the render budget."""
+        st, an, p = self.ctx.store, self.ctx.analysis, state.project
+        out = {}
+        par = self.parent()
+        if par is None or not par.isVisible():          # only while the assistant panel is open
+            return out
+        res = state.result
+        fresh = res is not None and not state.stale and getattr(res, 'revision', -1) == st.revision
+        for sel in cx.selection[:1]:
+            if sel[0] != 'camera' or not fresh:
+                continue
+            c = p.variant.by_tag(sel[1])
+            d = res.per_cam.get(c.uid) if c is not None else None
+            if d and d.get('best_m2', 0) > 0 and d['min_dens'] < p.analysis.target_density and not c.locked:
+                out[f'pitch:{c.tag}'] = ('pitch', c.tag, st.revision, p.active_uid)
+        r = (state.carla or {}).get('render') or {}
+        if r and r['mpx'] + r['gt_mpx'] > r['budget']:
+            from ..core import simrig as SR
+            out['scale'] = ('scale', st.revision, p.active_uid,
+                            json.dumps(SR.settings_of(p).to_dict(), sort_keys=True, default=str))
+        return out
+
+    def _start_hint(self, name, key):
+        if self._hint_busy is not None:
+            self._hint_next = (name, key)
+            return
+        self._hint_busy = key
+        snap = self.ctx.store.project.snapshot()
+        if key[0] == 'pitch':
+            eng = self.ctx.analysis.engine.share()
+
+            def work():
+                return RC.pitch_hint(snap, eng, key[1])
+        else:
+            from ..core import simrig as SR
+            from ..sim import carla_bridge as CB
+            settings = SR.settings_of(snap).to_dict()
+
+            def work():
+                return RC.scale_hint(snap, settings, float(CB.RENDER_BUDGET_MPX))
+
+        def run():
+            try:
+                h = work()
+            except Exception:                                # noqa: BLE001 — no hint, the plain recommendation
+                h = None
+            try:
+                self._hint_done.emit((key, h))
+            except RuntimeError:                             # the window closed meanwhile
+                pass
+        threading.Thread(target=run, daemon=True, name='recommend-hint').start()
+
+    def _on_hint(self, item):
+        key, h = item
+        self.hints[key] = h
+        self._hint_busy = None
+        nxt, self._hint_next = self._hint_next, None
+        if nxt is not None and nxt[1] not in self.hints:
+            self._start_hint(*nxt)
+        self.schedule()
+
+    def refresh(self):
+        """Work the list out now (the debounce ends here); updated is emitted only when what is shown changes."""
+        try:
+            t0 = time.perf_counter()
+            state = self.gather()
+            cx = self.tracker.context()
+            for name, key in self._hint_keys(state, cx).items():
+                if key in self.hints:
+                    if self.hints[key] is not None:
+                        state.hints[name] = self.hints[key]
+                elif key != self._hint_busy:
+                    self._start_hint(name, key)
+            t1 = time.perf_counter()
+            every = RC.recommend(state, cx, None, [r.id for r in self.recs])
+            self.dismissed.prune(every)
+            recs = [r for r in every if not self.dismissed.hides(r)]
+            t2 = time.perf_counter()
+        except RuntimeError:                                 # the window is closing
+            return
+        self.ms = {'gather': (t1 - t0) * 1000, 'recommend': (t2 - t1) * 1000}
+        self.refreshes += 1
+        self.recs, self.context = recs, cx
+        strip = self.strip()
+        shown = ([(r.id, r.title, r.why, r.kind) for r in recs], RC.context_label(cx, strip), [r.id for r in strip])
+        if shown != self._shown:
+            self._shown = shown
+            self.updated.emit()
+
+    def strip(self) -> list:
+        return RC.context_items(self.recs, self.context)
+
+
+class RecRow(QFrame):
+    """One recommendation: an icon by kind, the title, the evidence (muted), a button saying what a click does, ×."""
+    act = pyqtSignal(object)
+    dismiss = pyqtSignal(object)
+
+    def __init__(self, rec: RC.Recommendation, compact=False, parent=None):
+        super().__init__(parent)
+        self.setObjectName('recrow')
+        self.compact = compact
+        h = QHBoxLayout(self)
+        h.setContentsMargins(8, 5 if compact else 7, 4, 5 if compact else 7)
+        h.setSpacing(8)
+        self.ico = QLabel()
+        h.addWidget(self.ico, 0, Qt.AlignmentFlag.AlignTop)
+        col = QVBoxLayout()
+        col.setSpacing(1)
+        self.title = QLabel('')
+        self.title.setWordWrap(True)
+        self.title.setFont(sans(11, QFont.Weight.DemiBold if not compact else QFont.Weight.Normal))
+        col.addWidget(self.title)
+        self.why = label('', muted=True, small=True, wrap=True)
+        col.addWidget(self.why)
+        h.addLayout(col, 1)
+        self.b = QPushButton('')
+        self.b.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.b.setFont(sans(10))
+        self.b.clicked.connect(lambda: self.act.emit(self.rec))
+        h.addWidget(self.b, 0, Qt.AlignmentFlag.AlignTop)
+        self.x = tool_button('close', 'Dismiss (it comes back when its figures change)', size=20, icon_size=10)
+        self.x.clicked.connect(lambda: self.dismiss.emit(self.rec))
+        h.addWidget(self.x, 0, Qt.AlignmentFlag.AlignTop)
+        self.rec = None
+        self.set_rec(rec)
+
+    def set_rec(self, rec: RC.Recommendation):
+        """In place: only what changed is set again (no flicker)."""
+        t = THEME.tok
+        old = self.rec
+        self.rec = rec
+        if old is None or old.kind != rec.kind:
+            name = 'undo' if rec.target and 'undo' in rec.target else KIND_ICON.get(rec.kind, 'sparkle')
+            self.ico.setPixmap(icons.pixmap(name, t['ink2'], 14))
+            self.b.setText(rec.button)
+            primary = rec.kind != 'open'
+            self.b.setStyleSheet(
+                f'QPushButton {{ border: 1px solid {t["ink"] if primary else t["strong"]}; border-radius: 10px; '
+                f'padding: 1px 10px; min-height: 18px; color: {t["panel"] if primary else t["ink"]}; '
+                f'background: {t["ink"] if primary else "transparent"}; }}'
+                f'QPushButton:hover {{ background: {t["ink2"] if primary else t["sel"]}; }}')
+            self.setStyleSheet(f'QFrame#recrow {{ background: {t["raised"]}; border: 1px solid {t["hair"]}; '
+                               f'border-radius: 6px; }}')
+        if old is None or old.title != rec.title:
+            self.title.setText(html.escape(rec.title, quote=False))
+        if old is None or old.why != rec.why:
+            self.why.setText(html.escape(rec.why, quote=False))
+            self.why.setVisible(bool(rec.why))
+        tip = {'ask': 'Sends this to the assistant, as typing it would:\n\n', 'goal': 'Starts the agent on this goal:\n\n',
+               'plan': 'Asks the Copilot for a plan; nothing runs until you approve it:\n\n'}.get(rec.kind, '')
+        self.b.setToolTip((tip + rec.prompt) if rec.prompt else 'Opens it; runs nothing')
+        self.setToolTip(f'From: {rec.source}' if rec.source else '')
+
+
+class RecList(QWidget):
+    """Recommendations as rows: the first few, the rest one click away (More)."""
+    act = pyqtSignal(object)
+    dismiss = pyqtSignal(object)
+
+    def __init__(self, shown=RC.SHOWN, compact=False, parent=None):
+        super().__init__(parent)
+        self.shown, self.compact = shown, compact
+        self.v = QVBoxLayout(self)
+        self.v.setContentsMargins(0, 0, 0, 0)
+        self.v.setSpacing(5)
+        self.rows: dict = {}
+        self.more = QPushButton('')
+        self.more.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.more.setFlat(True)
+        self.more.setFont(sans(10))
+        self.more.clicked.connect(self.toggle)
+        self.v.addWidget(self.more, 0, Qt.AlignmentFlag.AlignLeft)
+        self.expanded = False
+        self.recs = []
+
+    def toggle(self):
+        self.expanded = not self.expanded
+        self.set_recs(self.recs)
+
+    def set_recs(self, recs):
+        """Rows kept by id and updated in place, in the new order; hidden rather than rebuilt."""
+        self.recs = list(recs)
+        n = len(self.recs) if self.expanded else min(self.shown, len(self.recs))
+        want = [r.id for r in self.recs[:n]]
+        for rid in [k for k in self.rows if k not in want]:
+            w = self.rows.pop(rid)
+            w.hide()
+            w.setParent(None)
+            w.deleteLater()
+        for i, r in enumerate(self.recs[:n]):
+            w = self.rows.get(r.id)
+            if w is None:
+                w = RecRow(r, self.compact)
+                w.act.connect(self.act.emit)
+                w.dismiss.connect(self.dismiss.emit)
+                self.rows[r.id] = w
+            else:
+                w.set_rec(r)
+            if self.v.indexOf(w) != i:
+                self.v.insertWidget(i, w)
+            w.show()
+        rest = len(self.recs) - self.shown
+        self.more.setVisible(rest > 0)
+        self.more.setText('Fewer' if self.expanded else f'More ({rest})')
+        t = THEME.tok
+        self.more.setStyleSheet(f'QPushButton {{ color: {t["ink2"]}; border: none; padding: 0 2px; }}'
+                                f'QPushButton:hover {{ color: {t["ink"]}; }}')
+
+
+class LiveStrip(QFrame):
+    """The top of the panel: 1–3 recommendations about what the user is doing now ("For QR · Coverage page"),
+    updated a moment after the selection, the page or a result changes; hidden when there is none."""
+    act = pyqtSignal(object)
+    dismiss = pyqtSignal(object)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName('livestrip')
+        v = QVBoxLayout(self)
+        v.setContentsMargins(10, 6, 10, 7)
+        v.setSpacing(4)
+        head = QHBoxLayout()
+        head.setSpacing(6)
+        self.ico = QLabel()
+        head.addWidget(self.ico)
+        self.head = label('', muted=True, small=True)
+        head.addWidget(self.head, 1)
+        v.addLayout(head)
+        self.list = RecList(RC.STRIP, compact=True)
+        self.list.act.connect(self.act.emit)
+        self.list.dismiss.connect(self.dismiss.emit)
+        v.addWidget(self.list)
+        self._restyle()
+        self.hide()
+
+    def _restyle(self):
+        t = THEME.tok
+        self.ico.setPixmap(icons.pixmap('sparkle', t['ink2'], 12))
+        self.setStyleSheet(f'QFrame#livestrip {{ background: {t["panel"]}; border: none; '
+                           f'border-bottom: 1px solid {t["hair"]}; }}')
+
+    def set_items(self, recs, text):
+        if not recs:
+            self.hide()
+            return
+        self.head.setText(html.escape(text or 'Now', quote=False))
+        self.list.set_recs(recs)
+        self.show()
+
+
+class NextSteps(QWidget):
+    """Next steps under an answer: the model's suggest_next items and the local recommendations, as chips. A chip
+    does what its kind says (ask, start a goal, ask for a plan, open); none runs anything by itself."""
+    act = pyqtSignal(object)
+
+    def __init__(self, recs, title='Next steps', parent=None):
+        super().__init__(parent)
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 2, 0, 0)
+        v.setSpacing(4)
+        v.addWidget(label(title, muted=True, small=True))
+        self.recs = list(recs)
+        self.chips = FlowChips([(r.title, r.id) for r in self.recs])
+        by = {r.id: r for r in self.recs}
+        self.chips.picked.connect(lambda rid: self.act.emit(by[rid]))
+        for b, r in zip(self.chips.btns, self.recs):
+            b.setIcon(icons.icon(KIND_ICON.get(r.kind, 'sparkle'), 12))
+            b.setToolTip({'ask': 'Ask: ', 'goal': 'Start a goal: ', 'plan': 'Ask for a plan (approval needed): ',
+                          'open': 'Open (runs nothing): '}.get(r.kind, '') + (r.prompt or r.why))
+        v.addWidget(self.chips)
+
+
+def plan_chips(plan: CP.Plan, rec: dict | None) -> list:
+    """The chips under a plan card: while it waits, the revisions its own warnings suggest; after it ran, the checks
+    that fit its kind; after it failed, why."""
+    if plan.status == 'draft':
+        return RC.plan_revisions(plan)
+    if rec is None or not rec.get('runs'):
+        return []
+    run = rec['runs'][-1]
+    out = []
+    if run.get('status') == 'failed':
+        st = RC.State(None, records=[rec])
+        return [r for r in RC.plan_rules(st, RC.Context()) if r.id.startswith('plan:failed')]
+    if run.get('status') != 'done':
+        return []
+    kinds = [s['kind'] for s in rec.get('steps', [])]
+    gt = any(s['kind'] == 'carla_run' and any((s.get('settings') or {}).get('ground_truth', {}).values())
+             for s in rec.get('steps', []) if isinstance((s.get('settings') or {}).get('ground_truth'), dict))
+    if 'carla_run' in kinds:
+        out.append(RC.Recommendation(f'plan:{plan.id}:check', 'Check the drive', 'Opens the CARLA page on the drive; '
+                                     'its Drive-log check button runs the check.', 'open',
+                                     target={'page': 'sim', 'focus': 'b_drivelog'}, source='Copilot plan'))
+        if gt:
+            out.append(RC.Recommendation(f'plan:{plan.id}:score', 'Score detection', 'Opens the CARLA page on the drive; '
+                                         'its Detection quality button opens the scoring.', 'open',
+                                         target={'page': 'sim', 'focus': 'b_detect'}, source='Copilot plan'))
+    for k, title, prompt in (('campaign', 'What did the campaign find?', 'Read the campaign\'s results with '
+                                                                         'get_campaign and say what it found.'),
+                             ('detection', 'Where is recall weak?', 'Read the detection quality with '
+                                                                    'get_detection_quality: where is recall weak?'),
+                             ('critical_carla', 'Which targets were missed?', 'Read get_critical_carla: which critical '
+                                                                              'targets were missed, and why?'),
+                             ('experiment', 'What did the experiment show?', 'Read get_experiment: which factors '
+                                                                             'matter most?'),
+                             ('carla_live', 'How healthy was the live rig?', 'Read get_carla_live and get_rig_health: '
+                                                                             'which faults showed up?')):
+        if k in kinds:
+            out.append(RC.Recommendation(f'plan:{plan.id}:{k}', title, '', 'ask', prompt=prompt, source='Copilot plan'))
+    if 'sample_dataset' in kinds:
+        out.append(RC.Recommendation(f'plan:{plan.id}:dataset', 'Open the sample dataset', '', 'open',
+                                     target={'page': 'dataset'}, source='Copilot plan'))
+    return out
+
+
+class RecPopup(QFrame):
+    """The header chip's list: every recommendation, the first five shown, the rest under More."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.WindowType.Popup)
+        self.setObjectName('recpopup')
+        v = QVBoxLayout(self)
+        v.setContentsMargins(10, 10, 10, 10)
+        v.setSpacing(6)
+        v.addWidget(label('Recommended for this design', bold=True))
+        v.addWidget(label('Worked out on this machine from Vantage\'s own results; nothing is sent until you click Ask, '
+                          'Start goal or Plan it.', muted=True, small=True, wrap=True))
+        self.list = RecList(RC.SHOWN)
+        v.addWidget(self.list)
+        t = THEME.tok
+        self.setStyleSheet(f'QFrame#recpopup {{ background: {t["panel"]}; border: 1px solid {t["strong"]}; '
+                           f'border-radius: 6px; }}')
+
+    def open_at(self, anchor):
+        self.setFixedWidth(max(360, min(460, anchor.window().width() // 3)))
+        self.adjustSize()
+        pos = anchor.mapToGlobal(anchor.rect().bottomRight())
+        self.move(pos.x() - self.width(), pos.y() + 4)
+        self.show()
+
+
 # ============================================================================================ panel
 class FlowChips(QWidget):
     """Suggestion buttons that wrap onto as many rows as the width needs."""
@@ -2949,6 +3677,12 @@ class AssistantPanel(QWidget):
         self.title = QLabel('')
         self.title.setFont(sans(11))
         h.addWidget(self.title, 1)
+        self.b_recs = QPushButton('Recommended')
+        self.b_recs.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.b_recs.setFont(sans(10))
+        self.b_recs.setToolTip('Recommended actions for this design, worked out on this machine (nothing is sent)')
+        self.b_recs.clicked.connect(self.show_recommended)
+        h.addWidget(self.b_recs)
         self.b_brief = QPushButton('Brief')
         self.b_brief.setCursor(Qt.CursorShape.PointingHandCursor)
         self.b_brief.setFont(sans(10))
@@ -2975,6 +3709,11 @@ class AssistantPanel(QWidget):
         line.setObjectName('hairline')
         v.addWidget(line)
         self.hairline = line
+        # what the user is doing now: 1–3 recommendations about it
+        self.strip = LiveStrip()
+        self.strip.act.connect(self.run_cta)
+        self.strip.dismiss.connect(lambda r: self.recommender.dismiss(r))
+        v.addWidget(self.strip)
         # transcript
         self.area = QScrollArea()
         self.area.setWidgetResizable(True)
@@ -3006,8 +3745,14 @@ class AssistantPanel(QWidget):
         v.addWidget(bottom)
         self._stick = True
         self.empty = None
+        self.empty_list: RecList | None = None
         self.consent = None
+        self.popup = None
         self._empty_ready = None
+        self.recommender = Recommender(ctx, self.ctl, self)
+        self.ctl.recommender = self.recommender
+        self.recommender.updated.connect(self._recs_updated)
+        self.ctl.cta.connect(self.run_cta)
         self.ctl.event.connect(self._event)
         self.ctl.changed.connect(self._sync)
         self.ctl.reset.connect(self._clear)
@@ -3017,6 +3762,7 @@ class AssistantPanel(QWidget):
         THEME.changed.connect(self._theme_changed)      # a bound slot: disconnected when the widget goes
         self._restyle()
         self._clear()
+        self._recs_updated()
 
     # ---------------------------------------------------------------- state
 
@@ -3025,6 +3771,8 @@ class AssistantPanel(QWidget):
     def _restyle(self):
         t = THEME.tok
         self.hairline.setStyleSheet(f'background: {t["hair"]};')
+        self.strip._restyle()
+        self._recs_chip()
         self.area.setStyleSheet(f'QScrollArea {{ background: {t["panel"]}; }}')
         self._sync()
 
@@ -3085,6 +3833,7 @@ class AssistantPanel(QWidget):
         if self.empty is not None:
             self.col.removeWidget(self.empty)
             self._drop(self.empty)
+        self.empty_list = None
         self._empty_ready = self.ctl.ready
         w = QWidget()
         v = QVBoxLayout(w)
@@ -3114,13 +3863,22 @@ class AssistantPanel(QWidget):
                       'apply one. Ask for a run and the Copilot plans it: nothing runs until you approve the plan. '
                       'Type / for commands, or switch on Agent for goals.', ink2=True, wrap=True)
             v.addWidget(s)
-            n = len(self.ctx.analysis.issues)
-            items = [(f'Explain the {n} issue' + ('s' if n != 1 else ''), prompt) if text == 'Explain the issues'
-                     else (text, prompt) for text, prompt in SUGGESTIONS if n or text != 'Explain the issues']
-            chips = FlowChips(items)
-            chips.picked.connect(self._send)
+            recs = self.recommender.recs if getattr(self, 'recommender', None) is not None else []
             v.addSpacing(4)
-            v.addWidget(chips)
+            if recs:
+                v.addWidget(label('Recommended for this design', bold=True))
+                self.empty_list = RecList(RC.SHOWN)
+                self.empty_list.act.connect(self.run_cta)
+                self.empty_list.dismiss.connect(lambda r: self.recommender.dismiss(r))
+                self.empty_list.set_recs(self._below_strip())
+                v.addWidget(self.empty_list)
+            else:                               # the static starters, when nothing is recommended
+                n = len(self.ctx.analysis.issues)
+                items = [(f'Explain the {n} issue' + ('s' if n != 1 else ''), prompt) if text == 'Explain the issues'
+                         else (text, prompt) for text, prompt in SUGGESTIONS if n or text != 'Explain the issues']
+                chips = FlowChips(items)
+                chips.picked.connect(self._send)
+                v.addWidget(chips)
         else:
             t = QLabel('Connect the assistant')
             t.setFont(sans(15, QFont.Weight.DemiBold))
@@ -3147,13 +3905,15 @@ class AssistantPanel(QWidget):
         v.addStretch(1)
         self.empty = w
         self.col.insertWidget(self.col.count() - 1, w)
+        self._stick = False                     # the welcome reads from its top; an answer sticks to the bottom again
+        self.area.verticalScrollBar().setValue(0)
 
     # ---------------------------------------------------------------- conversation
     def ask(self, text: str):
         """Ask from outside (the Issues list, the command palette)."""
         self._send(text)
 
-    def _send(self, text):
+    def _send(self, text, agent=None):
         text = text.strip()
         if not text:
             return
@@ -3165,7 +3925,7 @@ class AssistantPanel(QWidget):
         why = self.ctl.blocked()
         if why == 'consent':
             if self.consent is None or not self.consent.isVisible():
-                self.consent = ConsentCard(self.ctl, lambda t=text: self._send(t))
+                self.consent = ConsentCard(self.ctl, lambda t=text, a=agent: self._send(t, a))
                 self._add(self.consent)
             return
         if why == 'cap':
@@ -3174,7 +3934,8 @@ class AssistantPanel(QWidget):
             n.settings.connect(lambda: open_settings(self.ctx))
             self._add(n)
             return
-        prompt, agent, local = expand_slash(text)
+        prompt, slash_agent, local = expand_slash(text)
+        agent = slash_agent if agent is None else agent
         if local is not None:
             self.composer.take()
             if self.composer.popup is not None:
@@ -3192,6 +3953,7 @@ class AssistantPanel(QWidget):
             self.col.removeWidget(self.empty)
             self._drop(self.empty)
             self.empty = None
+            self.empty_list = None
         if self.composer.edit.toPlainText().strip() == text:
             self.composer.take()
         self._add(UserTurn(text))
@@ -3210,6 +3972,106 @@ class AssistantPanel(QWidget):
 
     def _add(self, w):
         self.col.insertWidget(self.col.count() - 1, w)
+
+    # ---------------------------------------------------------------- recommendations
+    def _recs_chip(self):
+        t = THEME.tok
+        rc = getattr(self, 'recommender', None)
+        n = len(rc.recs) if rc is not None else 0
+        self.b_recs.setText(f'Recommended ({n})' if n else 'Recommended')
+        self.b_recs.setStyleSheet(f'QPushButton {{ border: 1px solid {t["strong"] if n else t["hair"]}; '
+                                  f'border-radius: 10px; padding: 1px 9px; min-height: 18px; '
+                                  f'color: {t["ink"] if n else t["muted"]}; background: transparent; }}'
+                                  f'QPushButton:hover {{ border-color: {t["ink"]}; }}')
+
+    def _recs_updated(self):
+        rc = self.recommender
+        self._recs_chip()
+        items = rc.strip()
+        self.strip.set_items(items, RC.context_label(rc.context, items))
+        if self.empty_list is not None and not rc.recs:
+            self._show_empty()                  # every one dismissed: the static starters again
+        elif self.empty_list is not None:
+            self.empty_list.set_recs(self._below_strip())
+        elif self.empty is not None and self.ctl.ready and not self.ctl.agent_mode and rc.recs:
+            self._show_empty()                  # the first recommendations replace the starters
+        if self.popup is not None and self.popup.isVisible():
+            self.popup.list.set_recs(rc.recs)
+
+    def _below_strip(self) -> list:
+        """The list under the strip leaves out what the strip already shows (the header's list keeps every one)."""
+        rc = self.recommender
+        shown = {r.id for r in rc.strip()} if self.strip.isVisible() or rc.strip() else set()
+        return [r for r in rc.recs if r.id not in shown]
+
+    def show_recommended(self):
+        """The header chip: every recommendation, any time (mid-conversation too)."""
+        self.recommender.refresh()
+        if self.popup is None:
+            self.popup = RecPopup(self)
+            self.popup.list.act.connect(lambda r: (self.popup.hide(), self.run_cta(r)))
+            self.popup.list.dismiss.connect(lambda r: self.recommender.dismiss(r))
+        self.popup.list.set_recs(self.recommender.recs)
+        self.popup.open_at(self.b_recs)
+        return self.popup
+
+    def run_cta(self, rec: RC.Recommendation):
+        """What a recommendation's button does: ask and goal send its prompt as typing would (consent and the daily cap
+        apply), plan sends a planning request (the plan card needs approval), open navigates. Nothing runs by itself."""
+        if rec.kind == 'open':
+            return self.open_target(rec.target or {})
+        if rec.kind not in ('ask', 'goal', 'plan') or not rec.prompt:
+            return False
+        w = self.ctx.window
+        if w is not None and hasattr(w, 'show_assistant') and not self.isVisible():
+            w.show_assistant()
+        self._send(rec.prompt, agent=rec.kind == 'goal')
+        return True
+
+    def open_target(self, t: dict) -> bool:
+        """Open a page, a panel or a plan card, or point at a button: shows, never runs or changes anything."""
+        w = self.ctx.window
+        if not isinstance(t, dict) or w is None:
+            return False
+        if t.get('plan'):
+            for turn in self.findChildren(AssistantTurn):
+                for card in turn.copilot_cards:
+                    if card.plan.id == t['plan'] and card.isVisible():
+                        self.area.ensureWidgetVisible(card, 0, 40)
+                        self._stick = False
+                        return True
+            self.show_plans()
+            return True
+        if t.get('undo') is not None:
+            st = self.ctx.store
+            if hasattr(w, 'docks') and hasattr(w, 'bottom'):
+                w.docks['bottom'].show()
+                w.bottom.show_tab('history')
+            what = st.undo.undoText() or t.get('text', '')
+            self.ctx.msg(f'Edit ▸ Undo (Ctrl+Z) would undo: {what}. Nothing was undone.', 8000)
+            return True
+        page = t.get('page')
+        if page and hasattr(w, 'set_page'):
+            w.set_page(page)
+            pg = w.page(page) if hasattr(w, 'page') else None
+            run = t.get('run')
+            if run and pg is not None and hasattr(pg, 'open_run') and not pg.busy and \
+                    os.path.normpath(pg.out_dir or '') != os.path.normpath(run):
+                pg.open_run(run)                # shows the recorded drive (reads its run.json); runs nothing
+            foc = getattr(pg, t['focus'], None) if t.get('focus') and pg is not None else None
+            if foc is not None:
+                foc.setFocus(Qt.FocusReason.OtherFocusReason)
+                self.ctx.msg(f'{foc.text()}: the page\'s own button does it when you click it.', 6000)
+        if t.get('point') == 'analysis':
+            b = getattr(w, 'state_btn', None)
+            if b is not None:
+                b.setFocus(Qt.FocusReason.OtherFocusReason)
+            self.ctx.msg('The analysis is out of date: press F5 (Analysis ▸ Run now) to update it.', 6000)
+        if t.get('camera'):
+            c = self.ctx.store.project.variant.by_tag(t['camera'])
+            if c is not None:
+                self.ctx.store.select_cams([c.uid])
+        return True
 
     def _event(self, ev):
         if self.cur is not None:

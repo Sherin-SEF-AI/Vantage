@@ -38,7 +38,8 @@ DIVERGING_LIGHT_MID = '#e1e0d9'
 QSS = r'''
 * { font-family: "IBM Plex Sans"; font-size: @fs12px; color: @ink; }
 QMainWindow, QMainWindow::separator { background: @base; }
-QMainWindow::separator { width: 2px; height: 2px; }
+QMainWindow::separator { width: 6px; height: 6px; }       /* wide enough to grab: drag it to resize a panel */
+QMainWindow::separator:hover { background: @strong; }
 QDialog { background: @panel; }
 QDockWidget { titlebar-close-icon: none; titlebar-normal-icon: none; }
 QDockWidget::title { background: @panel; height: 22px; padding-left: 8px; border-bottom: 1px solid @hair; text-align: left; }

@@ -10,8 +10,8 @@ abstract: >-
 authors:
   - name: "Sherin Joseph Roy"
     website: "https://github.com/Sherin-SEF-AI"
-version: "0.5.0"
-date-released: "2026-10-28"
+version: "0.6.0"
+date-released: "2026-10-29"
 license: GPL-3.0-or-later
 repository-code: "https://github.com/Sherin-SEF-AI/Vantage"
 url: "https://sherin-sef-ai.github.io/Vantage/"

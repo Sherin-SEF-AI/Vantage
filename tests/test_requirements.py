@@ -670,7 +670,8 @@ def test_json_csv_files_and_export(done, tmp_path):
     back = json.loads(json.dumps(doc))
     for d, r in zip(back['requirements'], res.items):
         assert d['status'] == r.status and d['id'] == r.item['id']
-        assert d['value'] == pytest.approx(r.value, rel=1e-6, abs=1e-6)
+        # a requirement whose metric was not computed has no value (pytest 9.2 refuses approx(None))
+        assert d['value'] == (None if r.value is None else pytest.approx(r.value, rel=1e-6, abs=1e-6))
         assert d['evidence']['study'] == RQ.METRICS[r.item['metric']].study
     assert {s['id'] for s in back['studies']} == set(res.studies)
     assert all(s['figures'] for s in back['studies'] if s['ran'])
