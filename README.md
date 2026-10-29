@@ -12,6 +12,12 @@ more, each checked against the tool that reads it). Lidars and radars sit on the
 cameras: where their beams and fields reach, what the vehicle blocks, how far they detect each object, how their
 timing lines up with the cameras, and how much data the whole rig records.
 
+Then drive the planned rig in the CARLA simulator: every camera frame and lidar sweep comes labelled (semantic,
+instance and range images through each fisheye's own lens model, 2D and 3D boxes, COCO, nuScenes lidarseg and panoptic),
+with faults of known size, standard scenarios, detection quality per rig and campaigns that measure how small a fault
+Vantage's own checks catch. Or just say what you want run: the **Copilot** (Groq or Claude, with your own key) turns it
+into a plan with every value and its reason, and nothing runs until you approve it.
+
 The same engine also serves production surround-view systems: stitched bird's-eye remap tables, a 3D bowl view, parking
 guidelines and where standing people vanish at stitch seams.
 

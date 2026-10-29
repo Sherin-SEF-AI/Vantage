@@ -53,7 +53,8 @@
       housings block it, how many pixels land on the road, what each lidar and radar reaches through the bumper, in rain,
       fog and at night, whether the recorder, the power supply and the cables keep up, and what a drive with
       it looks like to your pipeline. Then calibrate the real rig, check its recordings against the plan and hand the
-      calibration to your data pipeline.</p>
+      calibration to your data pipeline. Drive it in the CARLA simulator for labelled training data and fault campaigns,
+      or just say what to run: the Copilot plans it, and runs it once you approve.</p>
     <div class="cta">
       <a class="btn primary" href="#download"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>Download</a>
       <a class="btn" href="docs.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5"/></svg>Read the docs</a>
@@ -1448,7 +1449,7 @@ does not match)</span></pre>
           <li><b>Proposals</b> show the change and the predicted effect; apply them as one undo step or as a new variant, and the card shows the measured result.</li>
           <li><b>A project brief</b> with your requirements goes with every question; slash commands such as <code>/optimise QR</code> and <code>/compare</code>.</li>
         </ul>
-        <p class="note">Only camera poses, lens and module names and analysis figures are sent to Groq, never the vehicle
+        <p class="note">Only camera poses, lens and module names and analysis figures are sent to the provider (Groq or Anthropic), never the vehicle
           model, images or files; every lookup is listed with what it sent. In this recording the model's replies were
           scripted; the lookups, the optimisation and the proposal were computed live by Vantage.</p>
       </div>
