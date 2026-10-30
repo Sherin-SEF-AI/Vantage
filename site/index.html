@@ -953,7 +953,7 @@ analysed 6-cam · v3: 6 cameras in 0.6 s
 wrote range.json
 <span class="p">$</span> jq -c '.provenance | [.vantage.version, .project.sha256[:12],
       .variant.name, .result_sha256[:12]]' range.json
-["0.6.0","87a7e88f9b1a","6-cam · v3","cf837a06e950"]
+["0.7.0","87a7e88f9b1a","6-cam · v3","cf837a06e950"]
 <span class="p">$</span> vantage tigor.vantage --reproduce range.json report.json 2&gt;/dev/null
 <span class="p">$</span> echo $?; jq -r '.message, .reasons[]' report.json
 0
@@ -1633,12 +1633,19 @@ saved built.vantage with variant 6-cam · v3 · as-built
 <section class="alt" id="download">
   <div class="wrap">
     <div class="head">
-      <div class="eyebrow">Download · version 0.6.0</div>
+      <div class="eyebrow">Download · version 0.7.0</div>
       <h2>Install Vantage.</h2>
       <p>Vantage is free software, licensed under the GPL-3.0-or-later. Downloads that need no Python are on the
         <a href="https://github.com/Sherin-SEF-AI/Vantage/releases/latest">latest release</a>, with SHA-256 checksums in <code>SHA256SUMS.txt</code>; or install from
         source with Python 3.10 or later. The downloads are not code-signed yet, so the first start asks you to confirm,
         as each card says. <a href="docs.html#install">Install</a> in the docs has the details and the self-test.</p>
+      <p><b>New in 0.7.0:</b> the rig's <a href="docs.html#clock-tree">clock tree and time sync</a>,
+        <a href="docs.html#isp">exposure metering and HDR seams</a>, <a href="docs.html#thermo-vib">thermal and
+        vibration drift</a>, a gradient refinement of the whole layout, <a href="docs.html#online-calib">calibration
+        checked over a whole drive</a>, a <a href="docs.html#calib-coach">live calibration coach</a>,
+        <a href="docs.html#log-replay">recorded drives replayed through a rig not yet built</a>, SUMO traffic in CARLA,
+        corners picked by hand in the installation check, and Apache-2.0 stitchers for your product. Gradient refinement
+        and log replay need PyTorch, which the downloads leave out: install from source with <code>[torch]</code>.</p>
     </div>
     <div class="dl">
       <div class="card"><span class="os">Windows</span><h4>Installer</h4>
@@ -1655,7 +1662,7 @@ vantage --self-test</pre><p>x86_64 or arm64, glibc 2.35 or later (Ubuntu 22.04, 
 <pre>git clone https://github.com/Sherin-SEF-AI/Vantage
 cd Vantage
 python3 -m pip install .
-vantage --sample</pre><p>Python 3.10 or later, any system. Add <code>[step]</code> for STEP import, <code>[bags]</code> for compressed ROS 2 bags and <code>[keyring]</code> to keep the assistant's key in the system keyring.</p></div>
+vantage --sample</pre><p>Python 3.10 or later, any system. Add <code>[step]</code> for STEP import, <code>[bags]</code> for compressed ROS 2 bags, <code>[torch]</code> for gradient refinement and log replay, and <code>[keyring]</code> to keep the assistant's key in the system keyring.</p></div>
     </div>
   </div>
 </section>

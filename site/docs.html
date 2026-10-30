@@ -1739,7 +1739,12 @@ vantage project.vantage            # open a project</code></pre>
       you propose, with that rig's lenses, body, housings, rolling shutter and lidars, and the same detector runs on
       both. The result says, per class and range, how many objects each rig shows clearly and how often the detector
       finds them. The images are re-rendered, not real: textures blur and places the lidar never reached are missing,
-      so read the difference between the rigs, not the absolute numbers. Export: <code>vantage.splat/1</code> JSON,
+      so read the difference between the rigs, not the absolute numbers.
+      On a 10 s CARLA drive, YOLOX found 58 % of the vehicles in the re-rendered frames and 59 % of the same vehicles
+      in the real ones. Objects the lidar did not rebuild (far, small and thin ones) are not scored at all, so
+      the absolute figures look better than real frames would, and traffic lights, which are mostly not rebuilt,
+      are not assessed. Both rigs are rendered with the same rolling-shutter model, so the same cameras give the
+      same figures. Export: <code>vantage.splat/1</code> JSON,
       the recall and validation CSVs, two PNG previews and the scene as a 3DGS <code>.ply</code> (the format
       <code>log_replay</code> is written only when named). Batch: <code>--log-replay DRIVE_DIR OUT_DIR</code> with
       <code>--replay-variant</code>; it exits with 3 when the reconstruction does not validate (held-out PSNR under 18

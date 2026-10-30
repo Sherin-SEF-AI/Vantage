@@ -2,15 +2,15 @@
  "schema": "vantage.validation/1",
  "project": "sample (built in)",
  "variant": "6-cam · v3",
- "created_utc": "2026-10-29T12:28:36Z",
- "seconds": 45.45,
+ "created_utc": "2026-10-30T20:02:08Z",
+ "seconds": 64.49,
  "settings": {
   "models": [],
   "quick": false,
   "seed": 20261027
  },
  "environment": {
-  "vantage": "0.6.0",
+  "vantage": "0.7.0",
   "python": "3.14.4",
   "numpy": "2.3.5",
   "scipy": "1.16.3",
@@ -145,7 +145,7 @@
      "tolerance": 1e-06,
      "unit": "px",
      "passed": true,
-     "seconds": 0.015,
+     "seconds": 0.06,
      "note": "",
      "exception": "",
      "detail": {
@@ -216,7 +216,7 @@
      "tolerance": 0.0001,
      "unit": "degrees",
      "passed": true,
-     "seconds": 0.01,
+     "seconds": 0.011,
      "note": "",
      "exception": "",
      "detail": {
@@ -702,7 +702,7 @@
      "tolerance": 0.001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.013,
+     "seconds": 0.01,
      "note": "",
      "exception": "",
      "detail": {
@@ -983,7 +983,7 @@
      "tolerance": 0.001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.111,
+     "seconds": 0.122,
      "note": "",
      "exception": "",
      "detail": {
@@ -1040,7 +1040,7 @@
      "tolerance": 0.001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.211,
+     "seconds": 0.224,
      "note": "",
      "exception": "",
      "detail": {
@@ -1095,7 +1095,7 @@
      "tolerance": 0.001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.057,
+     "seconds": 0.056,
      "note": "",
      "exception": "",
      "detail": {
@@ -1134,7 +1134,7 @@
      "tolerance": 0.005,
      "unit": "share of directions",
      "passed": true,
-     "seconds": 3.089,
+     "seconds": 3.059,
      "note": "A cube map texel stores the exact distance along its centre ray to the plane of the triangle drawn there (painted far to near by each triangle's nearest point): the depth error left is the texel's size (a random direction lies up to half a texel off the centre ray; most at grazing angles and silhouettes), see the median and 95th percentile here. Until 0.2.0 it stored the triangle centroid's distance: 15 % off in the median, over 3× at the 95th percentile. What the analysis decides from it is checked in occlusion.ground_visibility.",
      "exception": "",
      "detail": {
@@ -1252,7 +1252,7 @@
      "tolerance": 0.005,
      "unit": "share of texels",
      "passed": true,
-     "seconds": 2.476,
+     "seconds": 2.839,
      "note": "The texels off by more than 0.1 % lie at a silhouette or a crease: the triangle drawn there covers part of the texel but not its centre (a polygon's one-pixel outline), so the depth is of a surface within one texel of the centre ray.",
      "exception": "",
      "detail": {
@@ -1351,7 +1351,7 @@
      "tolerance": 0.005,
      "unit": "share of points",
      "passed": true,
-     "seconds": 2.225,
+     "seconds": 6.274,
      "note": "",
      "exception": "",
      "detail": {
@@ -1475,7 +1475,7 @@
      "tolerance": 1e-09,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.002,
+     "seconds": 0.003,
      "note": "",
      "exception": "",
      "detail": {
@@ -1541,7 +1541,7 @@
      "tolerance": 0.001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.095,
+     "seconds": 0.113,
      "note": "",
      "exception": "",
      "detail": {
@@ -1578,7 +1578,7 @@
      "tolerance": 1e-06,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.008,
+     "seconds": 0.013,
      "note": "",
      "exception": "",
      "detail": {
@@ -1609,7 +1609,7 @@
      "tolerance": 0.02,
      "unit": "degrees",
      "passed": true,
-     "seconds": 0.134,
+     "seconds": 0.138,
      "note": "",
      "exception": "",
      "detail": {
@@ -1654,7 +1654,7 @@
      "tolerance": 1e-09,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.005,
+     "seconds": 0.006,
      "note": "",
      "exception": "",
      "detail": {
@@ -1947,7 +1947,7 @@
      "tolerance": 1e-06,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.027,
+     "seconds": 0.034,
      "note": "",
      "exception": "",
      "detail": {
@@ -1973,7 +1973,7 @@
      "tolerance": 0.02,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.284,
+     "seconds": 0.45,
      "note": "",
      "exception": "",
      "detail": {
@@ -2116,7 +2116,7 @@
      "tolerance": 0.1,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.286,
+     "seconds": 0.5,
      "note": "The study gives every channel that crosses the object its full angular width / h_res. A pitched lidar's channel that crosses the top or bottom edge off its axis meets the face over part of the width only (the edge is tilted in the lidar's frame), so the count runs high there (and the channels it counts can differ by two from those cast): up to about 8 % in these cases, against 1 % for a level lidar.",
      "exception": "",
      "detail": {
@@ -2268,7 +2268,7 @@
      "tolerance": 0.0001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.012,
+     "seconds": 0.014,
      "note": "",
      "exception": "",
      "detail": {
@@ -2490,7 +2490,7 @@
      "tolerance": 0.001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.607,
+     "seconds": 0.746,
      "note": "",
      "exception": "",
      "detail": {
@@ -2516,7 +2516,7 @@
      "tolerance": 1e-09,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.002,
+     "seconds": 0.008,
      "note": "",
      "exception": "",
      "detail": {
@@ -2616,7 +2616,7 @@
      "tolerance": 1.0,
      "unit": "half last digits",
      "passed": true,
-     "seconds": 0.0,
+     "seconds": 0.001,
      "note": "",
      "exception": "",
      "detail": {
@@ -2971,7 +2971,7 @@
      "tolerance": 1e-09,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.017,
+     "seconds": 0.082,
      "note": "",
      "exception": "",
      "detail": {
@@ -3917,7 +3917,7 @@
      "tolerance": 1e-09,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.001,
+     "seconds": 0.002,
      "note": "",
      "exception": "",
      "detail": {
@@ -4035,7 +4035,7 @@
      "tolerance": 1e-09,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.003,
+     "seconds": 0.005,
      "note": "",
      "exception": "",
      "detail": {
@@ -4077,7 +4077,7 @@
      "tolerance": 1e-06,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.002,
+     "seconds": 0.003,
      "note": "",
      "exception": "",
      "detail": {
@@ -4143,7 +4143,7 @@
      "tolerance": 1e-06,
      "unit": "m (height) and m/m (gradient)",
      "passed": true,
-     "seconds": 0.003,
+     "seconds": 0.005,
      "note": "",
      "exception": "",
      "detail": {
@@ -4211,7 +4211,7 @@
      "tolerance": 0.001,
      "unit": "share of points",
      "passed": true,
-     "seconds": 1.314,
+     "seconds": 1.711,
      "note": "A ray that grazes the road within the allowance may land either side of it.",
      "exception": "",
      "detail": {
@@ -4250,7 +4250,7 @@
      "tolerance": 0.3,
      "unit": "m",
      "passed": true,
-     "seconds": 0.345,
+     "seconds": 0.443,
      "note": "The profile samples the road every 0.25 m beyond 10 m.",
      "exception": "",
      "detail": {
@@ -4304,7 +4304,7 @@
      "tolerance": 1e-06,
      "unit": "ms",
      "passed": true,
-     "seconds": 0.014,
+     "seconds": 0.015,
      "note": "",
      "exception": "",
      "detail": {
@@ -4356,7 +4356,7 @@
      "tolerance": 0.0001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.043,
+     "seconds": 0.044,
      "note": "",
      "exception": "",
      "detail": {
@@ -4391,7 +4391,7 @@
      "tolerance": 0.02,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.037,
+     "seconds": 0.055,
      "note": "",
      "exception": "",
      "detail": {
@@ -4430,7 +4430,7 @@
      "tolerance": 0.01,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.026,
+     "seconds": 0.046,
      "note": "",
      "exception": "",
      "detail": {
@@ -4475,7 +4475,7 @@
      "tolerance": 1.0,
      "unit": "px",
      "passed": true,
-     "seconds": 3.38,
+     "seconds": 5.147,
      "note": "",
      "exception": "",
      "detail": {
@@ -4512,7 +4512,7 @@
      "tolerance": 0.01,
      "unit": "σ",
      "passed": true,
-     "seconds": 1.641,
+     "seconds": 1.891,
      "note": "",
      "exception": "",
      "detail": {
@@ -4552,7 +4552,7 @@
      "tolerance": 0.001,
      "unit": "degrees or mm",
      "passed": true,
-     "seconds": 0.43,
+     "seconds": 0.521,
      "note": "",
      "exception": "",
      "detail": {
@@ -4598,7 +4598,7 @@
      "tolerance": 0.22556461820268847,
      "unit": "log ratio",
      "passed": true,
-     "seconds": 12.222,
+     "seconds": 14.33,
      "note": "",
      "exception": "",
      "detail": {
@@ -4812,7 +4812,7 @@
      "tolerance": 0.31980107453341566,
      "unit": "log ratio",
      "passed": true,
-     "seconds": 4.505,
+     "seconds": 5.353,
      "note": "",
      "exception": "",
      "detail": {
@@ -4895,7 +4895,7 @@
      "tolerance": 0.0001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.846,
+     "seconds": 1.028,
      "note": "",
      "exception": "",
      "detail": {
@@ -4923,7 +4923,7 @@
      "tolerance": 0.41425857805424554,
      "unit": "log ratio",
      "passed": true,
-     "seconds": 5.87,
+     "seconds": 6.98,
      "note": "",
      "exception": "",
      "detail": {
@@ -5005,7 +5005,7 @@
      "tolerance": 1e-09,
      "unit": "matrix element",
      "passed": true,
-     "seconds": 0.0,
+     "seconds": 0.001,
      "note": "",
      "exception": "",
      "detail": {
@@ -5027,7 +5027,7 @@
      "tolerance": 3.0,
      "unit": "mm",
      "passed": true,
-     "seconds": 4.012,
+     "seconds": 10.778,
      "note": "",
      "exception": "",
      "detail": {
@@ -5063,7 +5063,7 @@
      "tolerance": 0.05,
      "unit": "px",
      "passed": true,
-     "seconds": 0.437,
+     "seconds": 0.56,
      "note": "",
      "exception": "",
      "detail": {
@@ -5092,7 +5092,7 @@
      "tolerance": 0.05,
      "unit": "px",
      "passed": true,
-     "seconds": 0.001,
+     "seconds": 0.002,
      "note": "",
      "exception": "",
      "detail": {
@@ -5123,7 +5123,7 @@
      "tolerance": 0.05,
      "unit": "px",
      "passed": true,
-     "seconds": 0.007,
+     "seconds": 0.01,
      "note": "",
      "exception": "",
      "detail": {
@@ -5152,7 +5152,7 @@
      "tolerance": 0.05,
      "unit": "px",
      "passed": true,
-     "seconds": 0.004,
+     "seconds": 0.005,
      "note": "A wide-angle Kalibr model is a fit to the lens, not the lens: the check holds it to the error the file states for it.",
      "exception": "",
      "detail": {
@@ -5202,7 +5202,7 @@
      "tolerance": 0.02,
      "unit": "index",
      "passed": true,
-     "seconds": 0.144,
+     "seconds": 0.21,
      "note": "",
      "exception": "",
      "detail": {
@@ -5411,7 +5411,7 @@
      "tolerance": 0.022500562521094628,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.171,
+     "seconds": 0.213,
      "note": "",
      "exception": "",
      "detail": {
@@ -5628,7 +5628,7 @@
      "tolerance": 0.0,
      "unit": "frames",
      "passed": true,
-     "seconds": 0.151,
+     "seconds": 0.167,
      "note": "",
      "exception": "",
      "detail": {
@@ -5659,7 +5659,7 @@
      "tolerance": 0.5,
      "unit": "ms",
      "passed": true,
-     "seconds": 0.003,
+     "seconds": 0.004,
      "note": "",
      "exception": "",
      "detail": {
