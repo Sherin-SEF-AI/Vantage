@@ -50,6 +50,7 @@
     <a href="#tolerance">Tolerance and optimiser</a>
     <a href="#loadcases">Load cases and suspension</a>
     <a href="#terrain">Road and body motion</a>
+    <a href="#thermo-vib">Thermal and vibration drift</a>
     <a href="#variants">Variants</a>
     <a href="#volume">3D blind volume</a>
     <a href="#perception">Perception range</a>
@@ -57,11 +58,13 @@
     <a href="#critical">Critical targets</a>
     <a href="#sensor-coverage">Lidar and radar coverage</a>
     <a href="#timing">Sync and timing</a>
+    <a href="#clock-tree">Clock tree and time sync</a>
     <a href="#recording">Recording budget</a>
     <a href="#power">Power budget</a>
     <a href="#harness">Cable harness</a>
     <a href="#gnss">GNSS and IMU</a>
     <a href="#exposure">Sun glare and dirt</a>
+    <a href="#isp">Exposure metering and HDR seams</a>
     <a href="#materials">Materials, glass and wipers</a>
     <a href="#brackets">Mount brackets</a>
     <a href="#requirements">Requirements scorecard</a>
@@ -77,8 +80,10 @@
     <a href="#lidar-calib">Lidar–camera calibration</a>
     <a href="#observability">Calibration observability</a>
     <a href="#live-rig">Live rig health</a>
+    <a href="#calib-coach">Calibration coach</a>
     <a href="#drive-log">Drive-log check</a>
     <a href="#as-built">As-built check</a>
+    <a href="#online-calib">Online self-calibration</a>
     <a href="#fleet">Fleet</a>
     <p>Assistant</p>
     <a href="#assistant">Setting up</a>
@@ -95,6 +100,7 @@
     <a href="#carla-gt">Ground truth, faults, scenarios</a>
     <a href="#carla-live">CARLA as a live rig</a>
     <a href="#detection">Detection quality</a>
+    <a href="#log-replay">Log replay</a>
     <a href="#campaigns">Simulation campaigns</a>
     <a href="#critical-carla">Critical targets in CARLA</a>
     <p>Reference</p>
@@ -487,6 +493,18 @@ vantage project.vantage            # open a project</code></pre>
       preview.</p>
     <p>The <b>Optimiser</b> runs an evolutionary search over the camera poses, scored under tolerance, and shows the
       Pareto front of coverage against robustness; apply a result as a new variant.</p>
+    <p><b>Refine with gradients.</b> The evolutionary optimiser is good at discrete choices; the second tab of the
+      Optimise page then tunes the six pose variables of every camera continuously. A smooth surrogate replaces each
+      hard test of the coverage analysis by a sigmoid — the margin to the lens's image circle and image border, the
+      occluder depth against the point's range in the camera's cube depth map, the pixel density against the minimum —
+      so the blind area, the ground below the minimum density, unresolved critical targets and objects sitting on a
+      stitch seam have gradients (torch autograd, checked against finite differences). L-BFGS-B minimises it while the
+      sigmoids sharpen stage by stage; a camera stays on its mount zone, locked cameras stay, mirrored pairs move
+      together. Every layout is then checked with the exact engine at the project's resolution, and the page shows the
+      surrogate's figures beside the exact ones before and after. The stopping rule (0.01° / 0.1 mm per iteration) is
+      the solver's step tolerance, not the accuracy of the pose. Export: <code>vantage.diff_optim/1</code> JSON and
+      CSVs (the export format <code>diff_optim</code> is written only when named); batch <code>--refine-rig
+      OUT.json</code> (<code>--refine-from VARIANT</code>).</p>
 
     <h2 id="loadcases">Load cases and suspension</h2>
     <p>A data-collection vehicle carries its rig, a crew and equipment, and its cameras are calibrated at one load.
@@ -560,6 +578,24 @@ vantage project.vantage            # open a project</code></pre>
       sensor would touch the road or no camera resolves a speed bump or kerb. Studies that build their own ground points
       (the optimiser, the tolerance study, the perception range, the stitched objects, the installation check and the
       load cases) stay on flat ground.</p>
+
+    <h2 id="thermo-vib">Thermal and vibration drift</h2>
+    <p><b>Analysis ▸ Thermal and vibration drift…</b> asks how far the midday sun and the road move each camera and sensor
+      from where it was calibrated. The sun is the exposure study's (its location, the campaign's day with the highest
+      noon sun, its driving window), with a clear sky; the air warms from a cosine day to the set peak. Every rig part is
+      a thin aluminium shell in two halves (top and bottom of a bar or box, the sun-lit and shaded sides of a mast) whose
+      temperatures balance the sun they absorb against the airflow, the sky and each other; the roof is a steel plate and
+      the body stays at air temperature. From those temperatures each part expands, bows and, for a roof rack, slides on
+      (or strains against) the steel roof through its feet. The page charts each device's turn and move from the garage
+      calibration hour by hour, and each camera-lidar and stereo pair's relative drift in pixels through the camera's lens,
+      against the installation check's 1° / 10 mm, the observability requirement or your own figures.</p>
+    <p>On the road it takes an ISO 8608 class at a speed through a half-car built from the suspension tab and gives every
+      mount's first mode (its bracket, a mast as a cantilever with what it carries, a crossbar between its feet), the
+      acceleration PSD at the mount and the transfer functions, the RMS flex and the motion blur in one exposure. A mode in
+      the body band (1-2 Hz), the wheel-hop band (10-15 Hz) or at the peak of the shaking is flagged, as is one at the sett
+      beat on cobblestones; a speed bump and an expansion joint give the peak flex and the ring-down. Export:
+      <code>vantage.thermo_vib/1</code> JSON, the hour-by-hour drift, the pairs, the vibration table and the PSDs as CSV,
+      and a PNG. Batch: <code>--thermo-vib OUT.json</code>.</p>
 
     <h2 id="variants">Variants</h2>
     <p>A project holds several layout variants. The variant menu switches, duplicates and renames them; <b>Compare</b>
@@ -693,6 +729,19 @@ vantage project.vantage            # open a project</code></pre>
       limit (1 px), trigger lines available (4). These are planned times; the <a href="#live-rig">Live rig</a> page
       measures the cameras' skew from software timestamps. Export: <code>vantage.sync_plan/1</code> JSON (in the export
       frame and units; times in ms) and the dial as PNG; batch <code>--sync-plan</code>.</p>
+
+    <h2 id="clock-tree">Clock tree and time sync</h2>
+    <p><b>Analysis ▸ Clock tree and time sync</b> draws the rig's time distribution: the GNSS PPS disciplines a
+      grandmaster (the time server, or the compute), which feeds the lidars, radars and IMU over gPTP through the
+      switch and the deserializers' FSYNC timers that trigger the cameras. Every node has an oscillator, a servo, a
+      link asymmetry and jitter or a timer tick, preset to typical values whose source is shown. Put faults on a
+      timeline — a PPS dropout in an urban canyon, the grandmaster lost (BMCA hands over after the announce timeout), a
+      link turning asymmetric, a missed or late FSYNC pulse — and a seeded Monte Carlo gives every sensor's timestamp
+      error against true time and against the lidar. The page turns that into pixels: a lidar point stamped Δt off
+      moves by the vehicle's turn and travel over Δt, projected through each camera's lens, shown as a heat map over
+      the image and a worst-case table. Findings flag cameras whose error passes your limit and a grandmaster that
+      cannot hold UTC through the outage you must ride out. Export: <code>vantage.clock_tree/1</code> JSON, sensor and
+      projection CSVs and a PNG; batch <code>--clock-tree OUT.json</code> (or a folder for every file).</p>
 
     <h2 id="recording">Recording budget</h2>
     <p><b>Analysis ▸ Recording budget</b> adds up the data the rig records and checks the links, the network and the
@@ -859,6 +908,20 @@ vantage project.vantage            # open a project</code></pre>
       and water films matter little at 77 GHz. The dirt map colours every face of the body in four views.</p>
     <p>Assumptions: clear sky, a flat horizon (no buildings, trees or terrain), the sun as a point, the vehicle level and
       driving straight. Export: <code>exposure.json</code> (<code>vantage.exposure/1</code>) and <code>exposure.png</code>.</p>
+
+    <h2 id="isp">Exposure metering and HDR seams</h2>
+    <p><b>Analysis ▸ Exposure metering and HDR seams</b> works out what each camera's auto-exposure should meter and
+      how far the cameras' exposures drift apart across the bird's-eye view's seams. Every pixel of every camera, through
+      its real lens model, is classed as ground, body and rig, housings, sky (above the horizon plus a margin) or outside
+      the image circle; the ground is what the AE meters. The masks export as PNG, as a metering grid of weights 0–15 and
+      as weighted rectangles for ISPs that take AE regions (NVIDIA libargus:
+      <code>IAutoControlSettings::setAeRegions</code> with <code>AcRegion</code>; V4L2 has no standard per-cell weight
+      control). A clear-sky photometric model (CIE standard clear sky, the vehicle's shadow, veiling glare from the sun)
+      then predicts each camera's exposure over the Sun glare study's campaign and at low sun, a tunnel exit and night,
+      the exposure step across each seam, and what is left after the stitcher's gain balancing. The figures are typical
+      models, stated in the export; the HDR merge is an assumed one, not Sony's published scheme for the ISX031.
+      Export: <code>vantage.isp/1</code> JSON, the metering grids and AE regions as JSON, the seams as CSV and a mask
+      PNG per camera; batch <code>--isp OUT_DIR</code>.</p>
 
     <h2 id="materials">Materials, glass and wipers</h2>
     <p>A radar behind a bumper sees through plastic and paint, a camera behind the windscreen through glass, and both
@@ -1034,6 +1097,10 @@ vantage project.vantage            # open a project</code></pre>
       <li>The <b>joint solve</b> refines all cameras with each board's placement (x, y, yaw under a placement prior), so cameras that share a board agree at the seams even if the boards were laid a centimetre off.</li>
       <li>Per camera: boards, corners, RMS, Δx Δy Δz, Δyaw Δpitch Δroll and a verdict (OK, adjust, re-mount) against the tolerance. The stitched view is shown with the planned and the measured poses.</li>
       <li>Save the report, the stitched PNG and remap tables for the measured poses, or apply them as an <b>as-built</b> variant.</li>
+      <li><b>Pick corners</b> is the fallback for a camera the detection fails on (glare, a board half hidden): drag the
+        rings on the board corners onto the image, with a magnifier under the pointer. Four or more picks give the whole
+        pose, two or three the rotation; the picked pose then looks for the boards again, and boards it finds replace
+        their picks. Batch mode takes picks with <code>--install-picks picks.json</code>.</li>
     </ul>
 
     <h2 id="lidar-calib">Lidar–camera calibration</h2>
@@ -1118,6 +1185,18 @@ vantage project.vantage            # open a project</code></pre>
     <p>Batch mode: <code>--rig-health SECONDS [OUT.json]</code> reads the streams for that long and writes the report
       (<code>vantage.rig_health/1</code>); it exits with 3 if a camera is faulty or has no stream.</p>
 
+    <h3 id="calib-coach">Calibration coach</h3>
+    <p>On <b>Calibrate ▸ Live rig</b>, switch to <b>Calibration coach</b> (or open <b>Calibrate ▸ Calibration coach</b>)
+      and pick a camera. While someone holds a checkerboard in front of it, Vantage detects the board, keeps every sharp
+      view that is not a repeat, and adds up what its corners say about the lens (or, with a lidar, about where the lidar
+      sits). Bars turn green as each part of the calibration falls within the requirement. A ghost board on the live
+      image shows where to hold the board next, with the move in words. When every bar is green, Finish hands the views
+      to the lens or lidar–camera calibration. The bars are predictions from the Fisher information at the current lens
+      model, not solves; the sharpness and repeat thresholds are heuristics (settings). Batch
+      <code>--calib-coach [OUT.json|DIR]</code> counts how many views a technician following the coach needs against
+      random hand-held views (seeded, from the poses): <code>vantage.calib_coach/1</code> JSON and a views CSV. The
+      export format <code>calib_coach</code> is written only when named.</p>
+
     <!-- ======================================================== assistant -->
     <h2 id="drive-log">Drive-log check</h2>
     <p><b>Calibrate ▸ Drive-log check</b> closes the loop from plan to build: open a recorded drive (a ROS 2 bag folder, an
@@ -1194,6 +1273,23 @@ vantage project.vantage            # open a project</code></pre>
       (<i>Fit a shift</i>). The drive-log estimate is relative to the lidar. The stated errors were checked on synthetic
       recordings, where the injected errors came back within about 1.5 standard errors; real lenses and body meshes add
       systematic errors.</p>
+
+    <h2 id="online-calib">Online self-calibration</h2>
+    <p><b>Calibrate ▸ Online self-calibration</b> follows each camera's rotation relative to the lidar through a whole
+      recorded drive. The drive is cut into windows (10 s every 10 s by default). In each window the lidar's depth
+      edges are matched to the image edges (the drive-log check's search on that window's frames); optionally the own
+      vehicle's outline (the as-built check's fit, only when the recorded car is the project's body) and the ground
+      that two cameras share, warped onto the lidar's ground plane. Each measurement states the yaw, pitch or roll it
+      pins down, with its standard error. A smoother joins the windows (a random walk between them, robust weights
+      against outliers). Each axis's per-window estimates are then explained by the simplest model the Bayesian
+      information criterion allows: a constant, steps, or a linear term in speed, acceleration, yaw rate or the time
+      of day. A step that stays is a <i>knock</i>, a step that comes back an <i>excursion</i>, a significant
+      regression term <i>flex</i>. The timeline shows each camera's yaw, pitch and roll with σ bands and the events;
+      <b>Apply final segment</b> keeps the last segment's precise corrections as a new variant. <b>Export</b> writes
+      the JSON (segments and interpolated extrinsics with σ), a new nuScenes folder with one calibrated_sensor row per
+      segment and every camera sample re-pointed to its segment, and a ROS 2 bag with the cameras' /tf over time.
+      Batch: <code>vantage project.vantage --online-calib DRIVE OUT_DIR</code> (exit 3 when a camera was knocked
+      beyond the tolerance).</p>
 
     <h2 id="fleet">Fleet</h2>
     <p><b>Calibrate ▸ Fleet</b> tracks the rig on every vehicle built to the design. Add each vehicle (name, VIN, note) and
@@ -1525,6 +1621,15 @@ vantage project.vantage            # open a project</code></pre>
     <p>One CARLA server is one synchronous world that one client steps: a recording, the live rig, a simulation campaign
       and critical targets in CARLA each refuse to start while another of them runs, and stopping the server stops the
       live rig first.</p>
+    <p><b>SUMO traffic.</b> In Simulate ▸ CARLA ▸ Traffic choose SUMO and Eclipse SUMO drives the other vehicles,
+      stepped with CARLA every simulation step through CARLA's own co-simulation package. SUMO's vehicles are CARLA
+      actors, so the ground truth, the nuScenes annotations and the lidar labels include them, and
+      <code>run.json</code> <code>traffic_source.actors</code> gives each one's SUMO id and type. The net is CARLA's
+      bundled one for Town01, Town04 and Town05 (it has no traffic lights), one generated from the map's OpenDRIVE on
+      the first run and cached in the working folder, or your own <code>.net.xml</code> or <code>.sumocfg</code>. The
+      page shows whether SUMO is in CARLA's Python and the command that installs it there (Vantage never runs it).
+      Walkers stay on CARLA's walker AI. Batch: <code>--carla-run OUT --carla-traffic sumo [--sumo-net
+      FILE]</code>.</p>
 
     <h3 id="carla-gt">Ground truth, faults and scenarios</h3>
     <p>Every CARLA drive can carry its own ground truth (<b>Ground truth</b> on the CARLA page: semantic labels, objects,
@@ -1623,6 +1728,22 @@ vantage project.vantage            # open a project</code></pre>
       <i>Rig detection recall (CARLA)</i> are responses: each design point is driven in CARLA and evaluated (about four
       minutes a point; points queue for the one server). Batch: <code>--detection-quality OUT
       --detection-recording DRIVE --detection-download</code> (exit 8 when the model is missing).</p>
+
+    <h2 id="log-replay">Log replay</h2>
+    <p><b>Log replay.</b> <b>Simulate ▸ Log replay</b> takes a drive you recorded (a nuScenes folder such as a CARLA
+      run, or a ROS 2 bag) and asks what a different rig would have seen on it. Vantage rebuilds the street from the
+      drive's lidar sweeps as a few hundred thousand 3D Gaussians, colours them from the camera images and refines
+      them against those images for a couple of minutes (its own renderer, through the fisheye model, on the GPU when
+      one is free). Cars and pedestrians that have 3D boxes are rebuilt in their boxes and follow them. The scene is
+      then rendered through the recorded rig (to check the rebuild against frames it never saw) and through the rig
+      you propose, with that rig's lenses, body, housings, rolling shutter and lidars, and the same detector runs on
+      both. The result says, per class and range, how many objects each rig shows clearly and how often the detector
+      finds them. The images are re-rendered, not real: textures blur and places the lidar never reached are missing,
+      so read the difference between the rigs, not the absolute numbers. Export: <code>vantage.splat/1</code> JSON,
+      the recall and validation CSVs, two PNG previews and the scene as a 3DGS <code>.ply</code> (the format
+      <code>log_replay</code> is written only when named). Batch: <code>--log-replay DRIVE_DIR OUT_DIR</code> with
+      <code>--replay-variant</code>; it exits with 3 when the reconstruction does not validate (held-out PSNR under 18
+      dB) and 4 when the drive cannot be read.</p>
 
     <h2 id="campaigns">Simulation campaigns</h2>
     <p><b>Simulate ▸ Simulation campaigns…</b> asks how good Vantage's own checks are, with answers known in advance. A
@@ -1760,15 +1881,21 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td></td><td>Perception range</td><td>JSON, PNG</td><td><code>perception_range</code></td></tr>
       <tr><td></td><td>Lidar and radar coverage</td><td>JSON, PNG</td><td><code>sensor_coverage</code></td></tr>
       <tr><td></td><td>Sync and timing plan</td><td>JSON, PNG</td><td><code>sync_plan</code></td></tr>
+      <tr><td></td><td>Clock tree and time sync</td><td>JSON, CSV, PNG</td><td><code>clock_tree</code></td></tr>
       <tr><td></td><td>Recording budget</td><td>JSON, CSV</td><td><code>recording_budget</code></td></tr>
       <tr><td></td><td>Power budget</td><td>JSON, CSV</td><td><code>power_budget</code></td></tr>
       <tr><td></td><td>GNSS and IMU</td><td>JSON, TXT, PNG</td><td><code>gnss_imu</code></td></tr>
       <tr><td></td><td>Sun glare and dirt</td><td>JSON, PNG</td><td><code>exposure</code></td></tr>
+      <tr><td></td><td>Exposure metering masks, grids and AE regions</td><td>JSON, PNG, CSV</td><td><code>isp</code></td></tr>
       <tr><td></td><td>Housings in view</td><td>JSON, CSV</td><td><code>housings</code></td></tr>
       <tr><td></td><td>Load cases (suspension)</td><td>JSON, CSV</td><td><code>suspension_load_cases</code></td></tr>
       <tr><td></td><td>Fleet</td><td>JSON, CSV, PNG</td><td><code>fleet</code></td></tr>
       <tr><td></td><td>Requirements scorecard and review pack</td><td>JSON, CSV, PDF</td><td><code>requirements</code></td></tr>
       <tr><td></td><td>Calibration observability</td><td>JSON, CSV, PNG</td><td><code>observability</code></td></tr>
+      <tr><td></td><td>Calibration coach (views to the requirement)</td><td>JSON, CSV</td><td><code>calib_coach</code></td></tr>
+      <tr><td></td><td>Log replay: reconstruction, validation and rig A/B</td><td>JSON, CSV, PNG, 3DGS .ply</td><td><code>log_replay</code></td></tr>
+      <tr><td></td><td>Thermal and vibration drift</td><td>JSON, CSV, PNG</td><td><code>thermo_vib</code></td></tr>
+      <tr><td></td><td>Gradient refinement</td><td>JSON, CSV</td><td><code>diff_optim</code></td></tr>
       <tr><td></td><td>Cable harness</td><td>JSON, CSV, PNG</td><td><code>harness</code></td></tr>
       <tr><td></td><td>Road and body motion</td><td>JSON, CSV, PNG</td><td><code>terrain</code></td></tr>
       <tr><td></td><td>Critical targets and mounting envelopes</td><td>JSON, CSV, PNG</td><td><code>critical_targets</code></td></tr>
@@ -1804,7 +1931,8 @@ vantage project.vantage            # open a project</code></pre>
     <p>The drive-log and as-built checks need a recording, so they export from their own pages (<b>Export…</b>) and
       their batch flags; the sample dataset is a page of its own (<b>Export ▸ Sample dataset…</b>). The experiment (it
       runs the project's experiment, which can take minutes), the CARLA rig (tens of MB of remap tables), the simulation
-      campaign and the detection quality are written only when named: batch <code>--export</code> without
+      campaign, the detection quality, the calibration coach, the gradient refinement and the log replay are written only when
+      named: batch <code>--export</code> without
       <code>--formats</code> leaves them out. The last two drive nothing: the campaign is analysed from the drives and
       checks in its folder (nothing is written until one drive is done), the detection quality is evaluated on the
       page's recordings (the detector runs for minutes the first time; its detections are cached in each recording) and
@@ -1849,31 +1977,38 @@ vantage project.vantage --blind-volume volume.json   # 3D blind volume, unseen o
 vantage project.vantage --perception-range ranges.json   # range per object class and direction, stereo pairs
 vantage project.vantage --sensor-coverage coverage.json  # lidar/radar reach, blocked beams, sector verdicts
 vantage project.vantage --sync-plan sync.json       # camera triggers against the lidar sweep, blur at speed
+vantage project.vantage --clock-tree clock/         # timestamp errors over a fault scenario, pixels in the images
 vantage project.vantage --recording-budget budget.json   # data rate, links, write speed, hours per disk set
 vantage project.vantage --power-budget power.json   # loads, DC-DC, fuses, power cables, alternator, runtime
 vantage project.vantage --gnss gnss.json            # antennas' sky view, heading baseline, lever arms, pose errors
 vantage project.vantage --exposure exposure.json    # sun in each camera over the campaign, dirt and spray
+vantage project.vantage --isp metering/             # AE metering masks, grids, regions; exposure steps at the seams
 vantage project.vantage --brackets out/             # a printable STL bracket per camera, checks, sheet
 vantage project.vantage --dataset out/              # a synthetic drive as a nuScenes folder and a ROS 2 bag
 vantage project.vantage --drive-log drive/ report/  # a recorded drive against the plan
 vantage project.vantage --as-built-check drive/ report/   # each camera's view of the vehicle in a recording
+vantage project.vantage --online-calib drive.mcap online/   # knocks and flex of every camera over a drive
                                                      # against the plan; the coverage as built
 vantage project.vantage --fleet-import V3 check.json --fleet fleet/ --save project.vantage
 vantage project.vantage --check review/            # the requirements scorecard and the design-review pack (CI gate)
 vantage project.vantage --lidar-calib out/ --lidar-calib-pair F L1 --lidar-calib-folder boards/
 vantage project.vantage --rig-health 10 health.json  # read every camera's stream for 10 s
 vantage project.vantage --observability obs/ --verify 30   # how firmly the planned boards pin each camera
+vantage project.vantage --calib-coach coach/        # hand-held views the calibration coach needs, against random ones
 vantage project.vantage --harness harness.json      # every cable routed along the body, against its link
 vantage project.vantage --terrain road.json         # coverage on the road, bumps first seen, clearance, body motion
+vantage project.vantage --thermo-vib drift/         # sun warping and road vibration of every mount
 vantage project.vantage --critical-targets envelopes/   # who resolves each critical target; mounting envelopes
 vantage project.vantage --materials materials.json  # radars through the fascia, cameras behind glass, wipers
 vantage project.vantage --weather weather.json      # rain, fog, snow and night compared
+vantage project.vantage --refine-rig refined.json --refine-from 2   # gradient refinement of a variant's poses
 vantage project.vantage --perception-range night.json --condition night
 vantage --watch project.vantage --on-change "make perception-test"   # regenerate and run your check on every change
 vantage project.vantage --ci-templates ci/          # a GitHub Actions workflow and a GitLab CI job
 vantage project.vantage --export out/ --formats nuscenes_calib,kitti_calib,ros_camera_info
 vantage project.vantage --install-check captures/ --report check.json \
         --lut-out out/bev_lut --as-built built.vantage
+vantage project.vantage --install-check captures/ --install-picks picks.json   # corners picked by hand
 vantage project.vantage --calibrate-lens views/ --camera F --board 9x6 --square 60 \
         --serial SN1234 --calib-out F.yaml --save calibrated.vantage
 vantage project.vantage --import-calib camchain.yaml F.yaml --save calibrated.vantage
@@ -1883,11 +2018,13 @@ vantage --validate report/ --validate-quick          # every model against its r
 vantage project.vantage --carla-rig carla/          # the rig as the CARLA bridge reads it
 vantage project.vantage --carla-run drive/          # drive it in a running CARLA server: nuScenes + ROS 2 bag
 vantage project.vantage --carla-run drive/ --carla-scenario cut_in --carla-faults faults.json --carla-ground-truth all
+vantage project.vantage --carla-run drive/ --carla-traffic sumo --sumo-net generate   # SUMO drives the other vehicles
 vantage --ground-truth-summary drive/ gt.json       # a drive's ground truth in brief
 vantage project.vantage --carla-live 20 live/ --live-cameras F --live-fault '5:{"tag": "F", "deg": [0, 1, 0]}'
 vantage project.vantage --detection-quality det/ --detection-recording drive/ --detection-download
 vantage project.vantage --campaign campaign/ --campaign-template weather_sweep
 vantage project.vantage --critical-carla critical/  # critical targets stood in CARLA, compared with the study
+vantage project.vantage --log-replay drive/ replay/ --replay-variant 2   # a recorded drive through another rig
 vantage project.vantage --run-plan P3F9A21C plan-run/  # a Copilot plan approved in the app, from its record</code></pre>
     <table>
       <tr><th>Option</th><th>Meaning</th></tr>
@@ -1925,12 +2062,12 @@ vantage project.vantage --run-plan P3F9A21C plan-run/  # a Copilot plan approved
     <table>
       <tr><th>Exit code</th><th>Meaning</th></tr>
       <tr><td><code>0</code></td><td>Fine.</td></tr>
-      <tr><td><code>2</code></td><td>The plan has critical issues (with <code>--analyse</code> or <code>--export</code>); or, with <code>--recording-budget</code>, the recorder or a sensor's link cannot keep up; with <code>--power-budget</code>, the DC-DC converter or a fuse is over its rating; with <code>--gnss</code>, an antenna has no sky; with <code>--brackets</code>, a camera cannot take a printed bracket as planned; with <code>--suspension</code>, a load case lifts a wheel or exceeds the gross vehicle mass; with <code>--housings</code>, a camera sits inside a housing; with <code>--critical-targets</code>, no camera resolves a critical target; with <code>--materials</code>, a radar looks into metal over half its field; with <code>--terrain</code>, the body or a sensor would touch the road or no camera resolves a speed bump or kerb; with <code>--harness</code>, a cable is longer than its link allows, no module cable reaches or a GNSS cable has no RF margin; with <code>--observability</code> and calibration targets planned, a camera sees no board whole; with <code>--carla-rig</code> or <code>--carla-run</code>, the variant has nothing to simulate or a <code>--carla-*</code> option does not fit it (or, with <code>--carla-run</code>, its cameras would render more than the bridge's 200 Mpx a frame); with <code>--ground-truth-summary</code>, the drive has no ground truth; with <code>--detection-quality</code>, there is no recording with ground truth to evaluate; with <code>--campaign</code>, the design has nothing to drive or names a sensor the variant lacks; with <code>--critical-carla</code>, no target can be stood in CARLA or no drive is found.</td></tr>
-      <tr><td><code>3</code></td><td>A camera has to be re-mounted or could not be checked; or, with <code>--rig-health</code>, a camera is faulty or has no stream; with <code>--drive-log</code>, the recording shows a fault; with <code>--as-built-check</code>, the plan's coverage does not hold as built; with <code>--fleet</code>, a sensor needs re-mounting in its vehicle's latest record; with <code>--lidar-calib</code>, the lidar has to be re-mounted or the board poses did not determine its pose; with <code>--carla-live</code>, rig health finds a camera faulty; with <code>--critical-carla</code>, a camera view disagrees with the study.</td></tr>
-      <tr><td><code>4</code></td><td>A lens calibration failed, or an imported calibration matched no camera or did not fit it; or a <code>--fleet-import</code> file, the <code>--drive-log</code> or <code>--as-built-check</code> recording, the <code>--suspension-data</code> file or the <code>--lidar-calib-folder</code> captures could not be read, or the <code>--dataset</code> could not be written; or the <code>--experiment</code> spec cannot be read or does not fit the project; or <code>--reproduce</code> cannot try the result (no provenance, the project or an input file not found, a live measurement).</td></tr>
+      <tr><td><code>2</code></td><td>The plan has critical issues (with <code>--analyse</code> or <code>--export</code>); or, with <code>--recording-budget</code>, the recorder or a sensor's link cannot keep up; with <code>--power-budget</code>, the DC-DC converter or a fuse is over its rating; with <code>--gnss</code>, an antenna has no sky; with <code>--brackets</code>, a camera cannot take a printed bracket as planned; with <code>--suspension</code>, a load case lifts a wheel or exceeds the gross vehicle mass; with <code>--housings</code>, a camera sits inside a housing; with <code>--critical-targets</code>, no camera resolves a critical target; with <code>--materials</code>, a radar looks into metal over half its field; with <code>--terrain</code>, the body or a sensor would touch the road or no camera resolves a speed bump or kerb; with <code>--thermo-vib</code>, a mount resonates in the body or wheel-hop band or a device drifts in full sun beyond the calibration tolerance; with <code>--harness</code>, a cable is longer than its link allows, no module cable reaches or a GNSS cable has no RF margin; with <code>--observability</code> and calibration targets planned, a camera sees no board whole; with <code>--carla-rig</code> or <code>--carla-run</code>, the variant has nothing to simulate or a <code>--carla-*</code> option does not fit it (or, with <code>--carla-run</code>, its cameras would render more than the bridge's 200 Mpx a frame); with <code>--ground-truth-summary</code>, the drive has no ground truth; with <code>--detection-quality</code>, there is no recording with ground truth to evaluate; with <code>--campaign</code>, the design has nothing to drive or names a sensor the variant lacks; with <code>--critical-carla</code>, no target can be stood in CARLA or no drive is found; with <code>--calib-coach</code>, no hand-held board pose fits the camera; with <code>--refine-rig</code>, the variant has no vehicle body or visible camera to refine; with <code>--isp</code>, a stitch seam keeps an exposure step over twice the limit after gain balancing.</td></tr>
+      <tr><td><code>3</code></td><td>A camera has to be re-mounted or could not be checked; or, with <code>--rig-health</code>, a camera is faulty or has no stream; with <code>--drive-log</code>, the recording shows a fault; with <code>--as-built-check</code>, the plan's coverage does not hold as built; with <code>--online-calib</code>, a camera was knocked beyond the tolerance; with <code>--fleet</code>, a sensor needs re-mounting in its vehicle's latest record; with <code>--lidar-calib</code>, the lidar has to be re-mounted or the board poses did not determine its pose; with <code>--carla-live</code>, rig health finds a camera faulty; with <code>--critical-carla</code>, a camera view disagrees with the study; with <code>--clock-tree</code>, lidar points land further off than the limit in 95 % of frames or the grandmaster cannot hold UTC within the time budget.</td></tr>
+      <tr><td><code>4</code></td><td>A lens calibration failed, or an imported calibration matched no camera or did not fit it; or a <code>--fleet-import</code> file, the <code>--drive-log</code> or <code>--as-built-check</code> recording, the <code>--suspension-data</code> file or the <code>--lidar-calib-folder</code> captures could not be read, or the <code>--dataset</code> could not be written; or the <code>--experiment</code> spec cannot be read or does not fit the project; or <code>--reproduce</code> cannot try the result (no provenance, the project or an input file not found, a live measurement); or <code>--calib-coach</code> has no visible camera or, in lidar mode, no camera–lidar pair; or <code>--refine-from</code> names no variant; or the <code>--online-calib</code> drive cannot be read or no camera has a topic in it.</td></tr>
       <tr><td><code>5</code></td><td>With <code>--check</code>, a must requirement fails or cannot be evaluated.</td></tr>
       <tr><td><code>6</code></td><td>With <code>--reproduce</code>, the result does not reproduce; with <code>--validate</code>, a check of the models against its reference fails.</td></tr>
-      <tr><td><code>7</code></td><td>With <code>--carla-run</code>, <code>--carla-live</code>, <code>--campaign</code> or <code>--critical-carla</code>, no CARLA server answers, CARLA's client Python is missing, or the run fails (its <code>run.json</code> and <code>bridge.log</code>, or <code>live.log</code>, say why).</td></tr>
+      <tr><td><code>7</code></td><td>With <code>--carla-run</code>, <code>--carla-live</code>, <code>--campaign</code> or <code>--critical-carla</code>, no CARLA server answers, SUMO traffic is asked for and SUMO is not in CARLA's Python, CARLA's client Python is missing, or the run fails (its <code>run.json</code> and <code>bridge.log</code>, or <code>live.log</code>, say why).</td></tr>
       <tr><td><code>8</code></td><td>With <code>--detection-quality</code> (or a <code>--campaign</code> whose checks include detection), the detector model is missing or does not verify, or its download failed.</td></tr>
       <tr><td><code>9</code></td><td>With <code>--campaign</code>, a drive failed or is still to do: run it again, and what is done is reused.</td></tr>
       <tr><td><code>10</code></td><td>With <code>--run-plan</code>, the project holds no approved, intact plan of that ID, or a step no longer validates: approve it again in the app. Otherwise <code>--run-plan</code> returns the first failing step's own code; a step that reports findings (3, 5 or 6) lets the plan go on, any other stops it.</td></tr>
@@ -1974,6 +2111,12 @@ vantage project.vantage --run-plan P3F9A21C plan-run/  # a Copilot plan approved
       no warranty. The downloads also carry the licences of the libraries they bundle (PyQt6 and Qt, NumPy, SciPy,
       OpenCV and others) in their <code>licenses</code> folder. The fonts are IBM Plex Sans and IBM Plex Mono, under
       the SIL Open Font License 1.1.</p>
+    <p><b>For production use:</b> the reference bird's-eye stitchers that the remap-table export copies next to the
+      tables (C++ and Python, with their CMake file) are licensed under the
+      <a href="https://github.com/Sherin-SEF-AI/Vantage/blob/main/vantage/runtime/LICENSE">Apache License 2.0</a>
+      instead, so they can be built into proprietary and production software without opening its source. What Vantage
+      exports from your project (remap tables, calibration files, URDF and TF, dataset tables, meshes, reports, images)
+      is the program's output, not part of Vantage: it is yours and can be used anywhere.</p>
   </main>
 </div>
 
