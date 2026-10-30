@@ -1252,9 +1252,15 @@ sweeps, coloured and refined against its camera images (or a 3DGS `.ply` is impo
 rebuilt in their boxes. The scene is rendered through the recorded rig, to check it on frames and sweeps it never saw,
 and through a proposed rig with its own lenses, body, housings, rolling shutter and lidars; the same detector then
 runs on both. On a 10 s CARLA drive of the sample's data rig: 257 000 Gaussians built in about 2 minutes on a GPU,
-held-out frames at 20.2 dB PSNR and lidar sweeps at a median range error of 8.4 cm; raising the roof lidar 0.3 m
-takes its own-roof hits from 35 % of the beams to none. The images are re-rendered, not real: compare rigs, not
-absolute figures. Batch `--log-replay DRIVE_DIR OUT_DIR` (`--replay-variant`).
+held-out frames at 20.2 dB PSNR and lidar sweeps at a median range error of 8.4 cm; raising the roof lidar 0.3 m takes
+its own-roof hits from 35 % of the beams to none. Against the drive's real frames at the same 50 moments, YOLOX-S
+finds 57.6 % of the vehicles on the re-render and 59.2 % of the same 255 vehicles on the real images (cars 74 %
+against 81 %). Objects the lidar did not rebuild are not scored: the re-render shows 259 of the 313 vehicles the
+ground truth shows (79 of 128 beyond 40 m), which leaves an easier set: its own vehicle recall is 56 % where the real
+frames give 49 %. Traffic lights are mostly not rebuilt (63 of 349) and their recall is not assessed. The recorded rig
+is rendered with the same rolling shutter as the proposed one (its own when the drive states one, else its modules'),
+so identical cameras give identical figures. The images are re-rendered, not real: compare rigs, not absolute figures.
+Batch `--log-replay DRIVE_DIR OUT_DIR` (`--replay-variant`).
 
 ### 15.8 Simulation campaigns
 

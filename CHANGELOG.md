@@ -45,6 +45,29 @@ Versions follow [semantic versioning](https://semver.org). The top entry is what
   calibrated_sensor row per segment and a ROS 2 /tf sidecar bag; `--online-calib DRIVE OUT_DIR` (exit 3 on a knock
   beyond the tolerance).
 
+**Fixed and measured**
+
+- Log replay: the recorded rig is now re-rendered with the same rolling shutter as the proposed rig (the recording's
+  own readout when the drive states one, else its modules'), so identical cameras compare exactly; a CARLA drive's
+  single-instant frames had made single objects flip. The result now counts what the reconstruction leaves out
+  (objects the recording's ground truth shows against those the re-render shows, per class and range) and says traffic
+  lights are mostly not rebuilt and are not assessed. Measured with YOLOX-S on a 10 s CARLA drive (Town10HD, the data
+  rig, 50 moments): on the same 255 vehicles recall is 57.6 % on the re-render and 59.2 % on the real frames; the
+  re-render shows 259 of 313 vehicles and 63 of 349 traffic lights.
+- The board detectors of the lens calibration and the lidar–camera calibration (`calib.find_board`,
+  `lidar_calib.detect_board`) now reject a frame with no board in about 0.05 s instead of 2–15 s. This covers sensor
+  noise, dark or black frames and the calibration coach's empty room, at up to 3840×2160. A cheap pre-check looks for
+  a two-dimensional group of chessboard-like corners first, and only the parts of the image holding such a group are
+  searched.
+- The lidar–camera calibration's board search no longer reports grids it assembled from clutter or floor texture.
+  Before, it returned such grids in 29 of 48 board-free sample frames, and in 11 of 98 frames instead of the board. A
+  found board must now look like a printed checker and fit its pose within 2 px. Every board found before is found
+  again with bit-identical corners and pose, and some boards it missed are now found. On cluttered board-free
+  1920×1536 frames the search takes a median 0.75 s (worst 4.1 s), down from 4.1 s (worst 13.9 s).
+- SUMO traffic: SUMO's vehicles now carry SUMO's velocity in CARLA (physics on, placed one step behind SUMO's pose
+  with its speed and yaw rate), so CARLA's radar measures their radial velocity: within 0.02 m/s rms of SUMO's on
+  Town10HD with 40 vehicles, where before it saw them as parked (6.2 m/s rms wrong).
+
 ## 0.6.0 — 2026-10-29
 
 The assistant now recommends what to do next, live, about what you are working on: the camera you selected, the edit

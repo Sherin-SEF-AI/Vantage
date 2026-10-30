@@ -137,8 +137,9 @@ the simulated vehicle's rear-axle centre on the ground (the CARLA bridge reads i
 `--carla-traffic sumo`); without it CARLA's traffic manager drives them, and the rig file is exactly what it was before
 SUMO existed. The CARLA bridge co-simulates SUMO in lockstep through CARLA's own co-simulation package
 (`CARLA_ROOT/Co-Simulation/Sumo/sumo_integration`, as `run_synchronization.py` uses it; `vantage/sim/sumo_cosim.py`):
-SUMO steps once before every synchronous CARLA step, the vehicles it inserts become CARLA actors (physics off, moved to
-SUMO's pose every step: role `vantage_sumo`), and the ego and a scenario's vehicles are mirrored into SUMO after the
+SUMO steps once before every synchronous CARLA step, the vehicles it inserts become CARLA actors (role `vantage_sumo`;
+put on SUMO's pose every step with SUMO's speed and yaw rate as their CARLA velocity, so CARLA's radar and
+`get_velocity` see their motion), and the ego and a scenario's vehicles are mirrored into SUMO after the
 step so its traffic reacts to them. Walkers stay on CARLA's walker AI: CARLA's co-simulation does not synchronise
 SUMO's pedestrians, and SUMO's vehicles do not see CARLA's walkers.
 
@@ -507,7 +508,7 @@ SUMO traffic (**CARLA**; only when the rig has `traffic_source`). SUMO's vehicle
 so they have boxes, instance ids, lidar labels and nuScenes annotations like any other; `traffic_source.actors` names
 each by its SUMO id and type (the ground truth's `objects[].actor_id` is its `actor_id`; the bag's
 `/ground_truth/boxes` carry its `sumo_id`). Their velocity in the annotations and boxes is SUMO's speed along their
-heading (CARLA reports none for an actor it does not simulate).
+heading, which is also their CARLA velocity (SUMO's speed is taken should CARLA report none).
 
 | key | meaning |
 |---|---|

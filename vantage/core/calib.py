@@ -167,6 +167,177 @@ def _sb(gray, pattern, exhaustive=False):
     return c.reshape(-1, 2).astype(np.float64) if ok else None
 
 
+# The board pre-check: a cheap test that a frame can hold a chessboard at all, so a frame with none is turned away
+# in tens of milliseconds instead of running the detector's searches (seconds to minutes on an empty, noisy frame).
+# It looks for the board's inner corners as saddle points of the image (Hessian determinant < 0) on an image pyramid
+# and keeps those that (1) stand above the noise, (2) have some contrast (the saddle's response over that of an ideal
+# sharp corner per grey level of local mean brightness, so independent of exposure and gain: a sharp black-on-white
+# print gives 0.8–1.8; blur, haze and flare lower it), (3) have two nearby saddles of the opposite polarity (dark and
+# bright squares swapped, as at the next corner along an edge) in two different directions, and (4) form, linked to
+# such neighbours, one connected two-dimensional group. A frame passes when some pyramid level has a group of at
+# least PRE_FRAC of the board's inner corners. The thresholds are heuristics chosen to keep the boards the detectors
+# find (rendered lens and lidar boards through the library lenses and the sample's cameras: distance, tilt, fisheye
+# edge, blur, noise, exposure, gamma, haze, clipping; of 419 found, one blurred by ~0.4 of a square was turned away)
+# with margin, which lets many cluttered board-free scenes through; for those the groups' places at least narrow the
+# searches: a rectified view that holds no group's worth of corners is skipped (board_groups, groups_in_view). The
+# measurements are summarised in tests/test_board_reject.py.
+PRE_SIGMA = 1.0          # px at each pyramid level: the derivative scale
+PRE_NOISE_K = 8.0        # a saddle's response must exceed this many robust σ of the image's mixed derivative
+PRE_CONTRAST = 0.15      # minimum contrast (2)
+PRE_FRAC = 0.5           # the group must hold this share of the board's inner corners
+PRE_MAX_SIDE = 2000      # px: larger frames are looked at downscaled to this
+_pre_unit: dict = {}
+
+
+def _pre_derivs(f, sigma):
+    import cv2
+    b = cv2.GaussianBlur(f, (0, 0), sigma)
+    return (cv2.Sobel(b, cv2.CV_32F, 2, 0, ksize=3), cv2.Sobel(b, cv2.CV_32F, 0, 2, ksize=3),
+            cv2.Sobel(b, cv2.CV_32F, 1, 1, ksize=3))
+
+
+def _pre_unit_response(sigma) -> float:
+    """Saddle response per grey level of step at the centre of an ideal, sharp chessboard corner."""
+    if sigma not in _pre_unit:
+        n = 64
+        y, x = np.mgrid[0:n, 0:n] + 0.5 - n / 2
+        f = (np.sign(x) * np.sign(y) * 50 + 100).astype(np.float32)
+        a, c, b = _pre_derivs(f, sigma)
+        _pre_unit[sigma] = float(np.sqrt(np.maximum(b * b - a * c, 0)).max()) / 100.0
+    return _pre_unit[sigma]
+
+
+def _lattice_group(f, contrast=PRE_CONTRAST, sigma=PRE_SIGMA, k=10, near=2.0, sep_deg=25.0, d_min=3.0,
+                   min_group=6, spread=0.5, groups=None) -> int:
+    """Size of the largest two-dimensional group of chessboard-like saddle points in one pyramid level f (float32
+    grey); 0 when there is none. groups: a list that receives every such group's points (n, 2), level pixels."""
+    import cv2
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    from scipy.spatial import cKDTree
+    a, c, b = _pre_derivs(f, sigma)
+    r = np.sqrt(np.maximum(b * b - a * c, 0))
+    noise = float(np.median(np.abs(b))) * 1.4826 + 1e-6
+    ys, xs = np.nonzero((r >= cv2.dilate(r, np.ones((5, 5), np.uint8))) & (r > PRE_NOISE_K * noise))
+    if len(xs) < min_group:
+        return 0
+    mu = cv2.GaussianBlur(f, (0, 0), 3.0)[ys, xs]
+    keep = r[ys, xs] / _pre_unit_response(sigma) / np.maximum(mu, 4.0) >= contrast
+    xs, ys = xs[keep], ys[keep]
+    n = len(xs)
+    if n < min_group:
+        return 0
+    A, B, C = (m[ys, xs].astype(np.float64) for m in (a, b, c))
+    phi = 0.5 * np.arctan2(2 * B, A - C)                     # each saddle's direction of positive curvature
+    xy = np.c_[xs, ys].astype(np.float64)
+    d, idx = cKDTree(xy).query(xy, k=min(k + 1, n))
+    d, idx = d[:, 1:], idx[:, 1:]
+    v = xy[idx] - xy[:, None]
+    ang = np.arctan2(v[..., 1], v[..., 0])
+    cp, sp = np.cos(phi), np.sin(phi)
+    # opposite polarity: the neighbour's curvature along this saddle's positive direction is negative
+    ok = (A[idx] * (cp * cp)[:, None] + 2 * B[idx] * (cp * sp)[:, None] + C[idx] * (sp * sp)[:, None] < 0) & \
+        (d >= d_min)
+    dn = np.min(np.where(ok, d, np.inf), 1)
+    ok &= d <= near * dn[:, None]
+    rows = np.arange(n)
+    a0 = ang[rows, np.argmin(np.where(ok, d, np.inf), 1)]
+    other = ok & (np.abs((ang - a0[:, None] + math.pi / 2) % math.pi - math.pi / 2) >= math.radians(sep_deg))
+    good = ok.any(1) & other.any(1)
+    link = ok & good[:, None] & good[idx]
+    ii, kk = np.nonzero(link)
+    if len(ii) < min_group:
+        return 0
+    _, lab = connected_components(coo_matrix((np.ones(len(ii)), (ii, idx[ii, kk])), shape=(n, n)), directed=False)
+    lab = np.where(good, lab, -1)
+    sizes = np.bincount(lab[lab >= 0])
+    best = 0
+    for g in np.nonzero(sizes >= min_group)[0]:
+        if sizes[g] <= best and groups is None:
+            continue
+        P = xy[lab == g]
+        step = float(np.median(d[ii, kk][lab[ii] == g]))
+        minor = math.sqrt(max(float(np.linalg.eigvalsh(np.cov((P - P.mean(0)).T))[0]), 0.0))
+        if minor >= spread * step:                           # two-dimensional, not a chain along one edge
+            best = max(best, len(P))
+            if groups is not None:
+                groups.append(P)
+    return best
+
+
+def board_lattice(img, need: int | None = None, max_side=PRE_MAX_SIDE, groups=None) -> int:
+    """Largest group of chessboard-like corners in the image over its pyramid levels (see PRE_*), coarse levels
+    first; with need given, stops at the first level that reaches it, unless groups (a list) is given: it then
+    receives every group of at least need points, as OpenCV pixel coordinates of img (n, 2)."""
+    import cv2
+    g = _gray(img)
+    h, w = g.shape[:2]
+    if min(h, w) < 48:
+        return 0
+    f = g.astype(np.float32)
+    s = min(1.0, max_side / max(h, w))
+    if s < 1.0:
+        f = cv2.resize(f, (max(int(round(w * s)), 1), max(int(round(h * s)), 1)), interpolation=cv2.INTER_AREA)
+    levels = [f]
+    while min(levels[-1].shape) >= 96:
+        p = levels[-1]
+        levels.append(cv2.resize(p, (p.shape[1] // 2, p.shape[0] // 2), interpolation=cv2.INTER_AREA))
+    best = 0
+    for f in reversed(levels):
+        if min(f.shape) < 48:
+            continue
+        found = [] if groups is not None else None
+        best = max(best, _lattice_group(f, groups=found))
+        if found:
+            k = np.array([w / f.shape[1], h / f.shape[0]])
+            groups += [(P + 0.5) * k - 0.5 for P in found if len(P) >= (need or 0)]
+        elif need is not None and best >= need:
+            break
+    return best
+
+
+def board_groups(img, pattern) -> list:
+    """The image's groups of chessboard-like corners large enough for a board of pattern = (columns, rows): a list of
+    (n, 2) OpenCV pixel coordinates, empty when board_possible is False. A board the detector finds anywhere lies
+    round one of them."""
+    cols, rows = pattern
+    out = []
+    board_lattice(img, int(math.ceil(PRE_FRAC * cols * rows)), groups=out)
+    return out
+
+
+def groups_in_view(rays, Rv, tan_half, pattern) -> bool:
+    """Whether a virtual pinhole view (axes Rv, columns in the optical frame; half-width tan_half) holds at least
+    half of a board's worth (PRE_FRAC × corners / 2) of the points of one group (rays: list of (n, 3) unit rays)."""
+    need = 0.5 * PRE_FRAC * pattern[0] * pattern[1]
+    for r in rays:
+        loc = r @ Rv
+        z = np.maximum(loc[:, 2], 1e-9)
+        inside = (loc[:, 2] > 0) & (np.abs(loc[:, 0] / z) <= tan_half) & (np.abs(loc[:, 1] / z) <= tan_half)
+        if inside.sum() >= need:
+            return True
+    return False
+
+
+def group_rays(groups, intr: Intrinsics, sx, sy) -> list:
+    """board_groups' points (pixels of an image scaled sx, sy from the sensor) as unit rays in the optical frame."""
+    out = []
+    for P in groups:
+        d, _ = intr.unproject((P[:, 0] + 0.5) / sx, (P[:, 1] + 0.5) / sy)
+        d = np.asarray(d, np.float64)
+        ok = np.all(np.isfinite(d), axis=1)
+        out.append(d[ok] / np.linalg.norm(d[ok], axis=1, keepdims=True))
+    return out
+
+
+def board_possible(img, pattern) -> bool:
+    """False when the image cannot hold a chessboard of pattern = (columns, rows) inner corners: the pre-check run
+    before the detector's searches. It never decides where the board is; when it passes the detector runs as before."""
+    cols, rows = pattern
+    need = int(math.ceil(PRE_FRAC * cols * rows))
+    return board_lattice(img, need) >= need
+
+
 def _view_dirs():
     """Directions of the virtual pinhole views tried when the board is not found in the raw fisheye image."""
     out = [(0.0, 0.0)]
@@ -179,10 +350,13 @@ def _view_dirs():
 def find_board(img, pattern, intr: Intrinsics | None = None) -> np.ndarray | None:
     """Inner corners (N, 2) of a chessboard in a camera image, in OpenCV pixel coordinates of that image; None when
     not found. pattern = (columns, rows) of inner corners. With the lens model (intr) given, a board the raw fisheye
-    image distorts too much is looked for in rectified pinhole views and its corners mapped back exactly."""
+    image distorts too much is looked for in rectified pinhole views and its corners mapped back exactly. A frame the
+    pre-check (board_possible) finds no chessboard-like corners in is turned away first."""
     import cv2
     from .install import _virtual_basis
     g = _gray(img)
+    if not board_possible(g, pattern):
+        return None
     c = _sb(g, pattern)
     if c is not None:
         return c
@@ -193,10 +367,13 @@ def find_board(img, pattern, intr: Intrinsics | None = None) -> np.ndarray | Non
     n = 900
     half = math.radians(48)
     f = (n / 2) / math.tan(half)
+    rays = group_rays(board_groups(g, pattern), intr, sx, sy)
     for off, az in _view_dirs():
         t, a = math.radians(off), math.radians(az)
         z = np.array([math.sin(t) * math.cos(a), math.sin(t) * math.sin(a), math.cos(t)])
         Rv = _virtual_basis(z)
+        if not groups_in_view(rays, Rv, math.tan(half), pattern):     # no board-like corners in this view
+            continue
         xs = (np.arange(n) + 0.5 - n / 2) / f
         X, Y = np.meshgrid(xs, xs)
         rv = np.stack([X, Y, np.ones_like(X)], -1).reshape(-1, 3)
@@ -205,6 +382,8 @@ def find_board(img, pattern, intr: Intrinsics | None = None) -> np.ndarray | Non
         mx = np.where(ok, u * sx - 0.5, -1).reshape(n, n).astype(np.float32)
         my = np.where(ok, v * sy - 0.5, -1).reshape(n, n).astype(np.float32)
         patch = cv2.remap(g, mx, my, cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+        if not board_possible(patch, pattern):
+            continue
         det = _sb(patch, pattern)
         if det is None:
             continue

@@ -14,8 +14,9 @@ Two halves:
     before the tick: SUMO steps once (its step = CARLA's fixed_delta_seconds when that is a whole number of
     milliseconds, SUMO's resolution; else SUMO steps every k ticks, k·dt whole milliseconds, and its vehicles move on
     along their heading at SUMO's speed in between: sumo_substeps); vehicles SUMO inserted are spawned in
-    CARLA (physics off, BridgeHelper's blueprint for their vType), those that arrived are destroyed, every SUMO vehicle
-    is moved to SUMO's pose (BridgeHelper.get_carla_transform); with tls 'sumo', CARLA's lights take SUMO's states;
+    CARLA (BridgeHelper's blueprint for their vType; CARLA's spawn turns physics off, CoSim turns it back on), those
+    that arrived are destroyed, every SUMO vehicle is moved to SUMO's pose (BridgeHelper.get_carla_transform) with
+    SUMO's velocity (see "Velocity" below); with tls 'sumo', CARLA's lights take SUMO's states;
     after the tick: the CARLA vehicles SUMO did not make (the ego, a scenario's vehicles) are mirrored into SUMO
     (traci moveToXY) so its traffic reacts to them; with tls 'carla', SUMO's lights take CARLA's states.
   Every set is walked in sorted order and every random choice is seeded (SUMO's --seed = the drive's seed,
@@ -35,10 +36,25 @@ of the chosen classes that the server has as blueprints (data/vtypes.json maps v
 trips come in fast and SUMO's --max-num-vehicles holds `traffic` vehicles in the network at once (plus the mirrored
 CARLA vehicles); 'period': one trip every period_s, at most `traffic` at once. A user .sumocfg brings its own demand.
 
+Velocity: CARLA reports no velocity for an actor with physics off that is moved by set_transform (get_velocity() = 0,
+and its radar takes a hit's radial velocity from the hit actor's velocity, so it saw SUMO's vehicles as parked), and
+set_target_velocity / enable_constant_velocity do nothing on such an actor (measured on 0.9.16). So SUMO's vehicles
+keep CARLA's physics on: before every tick each is put one step behind its pose (moved back by v·dt and turned back by
+ω·dt) with target velocity v = SUMO's speed along its heading and target angular velocity ω = its yaw rate between
+SUMO's last two steps, and CARLA's physics step carries it onto the pose (`_place`). Measured on 0.9.16 at 80 Hz
+(SUMO every 2 ticks), Town10HD, 40 SUMO vehicles, 8 s, ten static radars: on 106 646 detections on 24 SUMO vehicles
+CARLA's radial velocity minus SUMO's velocity along the line of sight was -4 mm/s mean, 18 mm/s rms, 0.21 m/s at most
+(before: v_r = 0 on all of them, 6.2 m/s rms and 14.4 m/s at most wrong); get_velocity() was SUMO's speed within
+0.14 m/s (99 %); the pose after the tick was the one asked for within 4.7 mm (99 %, 12 mm at most) and 0.23°. CARLA's
+radar takes the hit actor's velocity for every point on it (no ω × r, for any actor), so a turning vehicle's yaw rate
+is not in its radial velocities.
+
 Limits (said in run.json): walkers stay on CARLA's walker AI (CARLA's co-simulation does not synchronise SUMO's
-pedestrians) and SUMO's vehicles do not see them; SUMO's vehicles are kinematic in CARLA (physics off, moved each step:
-no suspension, wheels or skids); a vehicle SUMO teleports jumps; SUMO's vehicles appear where their trip starts and
-vanish where it ends.
+pedestrians) and SUMO's vehicles do not see them; SUMO's vehicles are placed in CARLA every step (no suspension, wheel
+motion or skids of their own); within a step CARLA's physics moves them, so a collision slows one for that step and
+moves it off its pose until the next step puts it back (measured: a SUMO car at 8 m/s driven through a parked car fell
+to 0.9 m/s for a step and was 0.11 m off; it pushed the parked car away as before, when it had no physics); a vehicle
+SUMO teleports jumps; SUMO's vehicles appear where their trip starts and vanish where it ends.
 """
 from __future__ import annotations
 
@@ -67,14 +83,16 @@ LIMITS = {'period_s': (0.1, 60.0)}
 COSIM_DIR = os.path.join('Co-Simulation', 'Sumo')
 ROLE_SUMO = 'vantage_sumo'               # role name of the CARLA vehicles SUMO drives (carla_bridge.ROLE_PREFIX)
 MAX_SUBSTEPS = 16                        # SUMO steps at least every this many simulation steps
+MAX_TURN_DEG = 45.0                      # a heading change over this in one SUMO step is a jump (no yaw rate)
 MAX_TRIPS = 20000                        # the most trips a 'count' demand writes (the period is lengthened beyond)
 START_TIMEOUT_S = 60.0                   # SUMO must listen on its port within this
 NET_TIMEOUT_S = 600.0                    # netconvert on a town's OpenDRIVE (Town10HD: 0.5 s measured here)
 TRIPS_TIMEOUT_S = 300.0
 WALKERS_NOTE = ('Walkers stay on CARLA\'s walker AI: CARLA\'s SUMO co-simulation does not synchronise SUMO\'s '
                 'pedestrians, and SUMO\'s vehicles do not see CARLA\'s walkers.')
-LIMITS_TEXT = ('SUMO\'s vehicles are kinematic in CARLA (physics off, moved to SUMO\'s pose every step): no suspension, '
-               'wheel or skid; a vehicle SUMO teleports (a jam it gives up on) jumps; vehicles appear where their trip '
+LIMITS_TEXT = ('SUMO\'s vehicles are put on SUMO\'s pose every step, with SUMO\'s speed and yaw rate as their CARLA '
+               'velocity (so CARLA\'s radar and annotations see their motion): no suspension, wheel motion or skid of '
+               'their own; a vehicle SUMO teleports (a jam it gives up on) jumps; vehicles appear where their trip '
                'starts and vanish where it ends. ' + WALKERS_NOTE)
 
 
@@ -290,6 +308,8 @@ class CoSim:
         self.sumo_dt = round(self.k * self.dt, 3)
         self.ticks = 0                    # before_tick calls: SUMO steps on every k-th
         self.base = {}                    # SUMO vehicle id -> its CARLA transform at SUMO's last step
+        self.yaw_rate = {}                # SUMO vehicle id -> its yaw rate over SUMO's last step (deg/s, CARLA's yaw)
+        self.actor = {}                   # SUMO vehicle id -> its CARLA actor
         self.horizon_s = float(horizon_s)
         self.work_dir = os.path.abspath(work_dir)
         self.cache_dir = os.path.abspath(cache_dir) if cache_dir else default_cache()
@@ -648,6 +668,8 @@ class CoSim:
                     cid = self.sumo2carla.pop(sid)
                     self.speed.pop(sid, None)
                     self.base.pop(sid, None)
+                    self.yaw_rate.pop(sid, None)
+                    self.actor.pop(sid, None)
                     self.rows[sid]['arrived_t_s'] = round(self.t, 4)
                     self.st['arrived'] += 1
                     self.on_destroy(cid)
@@ -657,8 +679,12 @@ class CoSim:
                 res = traci.vehicle.getSubscriptionResults(sid) or {}
                 self.speed[sid] = float(res.get(traci.constants.VAR_SPEED, 0.0) or 0.0)
                 tr = BH.get_carla_transform(sa.transform, sa.extent)
+                old = self.base.get(sid)
+                dy = _wrap_deg(tr.rotation.yaw - old.rotation.yaw) if old is not None else 0.0
+                # (a turn over 45° in one SUMO step is a jump, a teleport: no rate)
+                self.yaw_rate[sid] = dy / self.sumo_dt if abs(dy) <= MAX_TURN_DEG else 0.0
                 self.base[sid] = tr
-                side.synchronize_vehicle(self.sumo2carla[sid], tr, None)
+                self._place(sid, tr)
             if self.opts.get('tls') == 'sumo' and self.frozen:
                 for lid in self.common_tls:
                     st = self.sumo.get_traffic_light_state(lid)
@@ -678,7 +704,32 @@ class CoSim:
             d = self.speed.get(sid, 0.0) * r * self.dt
             y = math.radians(tr.rotation.yaw)
             loc = C.Location(tr.location.x + d * math.cos(y), tr.location.y + d * math.sin(y), tr.location.z)
-            self.side.synchronize_vehicle(self.sumo2carla[sid], C.Transform(loc, tr.rotation), None)
+            self._place(sid, C.Transform(loc, tr.rotation))
+
+    def target_velocity(self, sid, yaw_deg: float) -> tuple:
+        """A SUMO vehicle's velocity (m/s, CARLA's axes: SUMO's speed along the heading yaw_deg, level) and its yaw
+        rate (deg/s about CARLA's z: SUMO's heading change over its last step)."""
+        v = self.speed.get(sid, 0.0)
+        y = math.radians(yaw_deg)
+        return (v * math.cos(y), v * math.sin(y), 0.0), self.yaw_rate.get(sid, 0.0)
+
+    def _place(self, sid, tr):
+        """A SUMO vehicle on CARLA's next tick at the pose tr with SUMO's velocity: put one simulation step behind tr
+        (moved back by v·dt, turned back by ω·dt) with v and ω as its target velocities, so CARLA's physics step carries
+        it onto tr and CARLA (get_velocity, its radar) sees it move. Measured on 0.9.16: an actor with physics off,
+        moved by set_transform, reports velocity 0, also with set_target_velocity or enable_constant_velocity."""
+        C = self.carla
+        (vx, vy, vz), w = self.target_velocity(sid, tr.rotation.yaw)
+        dt = self.dt
+        lead = C.Transform(C.Location(tr.location.x - vx * dt, tr.location.y - vy * dt, tr.location.z - vz * dt),
+                           C.Rotation(tr.rotation.pitch, tr.rotation.yaw - w * dt, tr.rotation.roll))
+        if not self.side.synchronize_vehicle(self.sumo2carla[sid], lead, None):
+            return
+        a = self.actor.get(sid)
+        if a is None:
+            return
+        a.set_target_velocity(C.Vector3D(vx, vy, vz))       # after the transform (a teleport keeps the velocity)
+        a.set_target_angular_velocity(C.Vector3D(0.0, 0.0, w))
 
     def _spawn_in_carla(self, sid):
         BH, side = self.BH, self.side
@@ -705,6 +756,8 @@ class CoSim:
         row.update(actor_id=int(cid), blueprint=bp.id)
         actor = self.world.get_actor(cid)
         if actor is not None:
+            actor.set_simulate_physics(True)                  # moved by its velocity within a tick (_place)
+            self.actor[sid] = actor
             self.on_spawn(actor, sid)
 
     def after_tick(self, recording: bool = False):
@@ -781,13 +834,12 @@ class CoSim:
         return None
 
     def velocity(self, actor_id, yaw_deg: float):
-        """A SUMO vehicle's velocity in CARLA's axes (m/s) from SUMO's speed along its heading, or None."""
+        """A SUMO vehicle's velocity in CARLA's axes (m/s) from SUMO's speed along its heading, or None: what _place
+        gives CARLA as its target velocity."""
         sid = self.sumo_id(actor_id)
         if sid is None:
             return None
-        v = self.speed.get(sid, 0.0)
-        y = math.radians(yaw_deg)
-        return (v * math.cos(y), v * math.sin(y), 0.0)
+        return self.target_velocity(sid, yaw_deg)[0]
 
     def report(self) -> dict:
         """run.json traffic_source."""
@@ -901,6 +953,10 @@ def _role(actor) -> str:
         return str((getattr(actor, 'attributes', None) or {}).get('role_name', ''))
     except Exception:                                      # noqa: BLE001
         return ''
+
+
+def _wrap_deg(a: float) -> float:
+    return (a + 180.0) % 360.0 - 180.0
 
 
 def _natural(s):

@@ -66,7 +66,11 @@ Rendering through a rig
   are dropped, its pixels masked out of the colours and the loss). Rolling shutter (rolling_shutter 'module', modules
   not stated global): the image is rendered in up to 8 row bands, each with the ego pose at its rows' mid-exposure time
   (row y at t + (y / h − ½)·readout, the frame stamped at its middle row), readout core.timing's readout_ms; 'off'
-  renders a global shutter.
+  renders a global shutter. The recorded rig is rendered by the same rule: with the recording's own readout when the
+  drive states one (a real log, a sample dataset written with a rolling shutter), else (frames stamped as single
+  instants, as CARLA renders them, or a log that does not say) with the readout of the drive variant's camera of the
+  same tag, so the same cameras in both rigs give the same images (the reconstruction and its validation always use
+  the recording's own timing).
 * Lidars: each beam of the variant's lidar model (core.sensors: its ring elevations and azimuth columns, turning
   sense, rate, phase) is cast against the Gaussians: the beam grid is rendered in 16 azimuth sectors, each with the ego
   pose at its firing time, as an image whose pixel centres are the beams, through the same rasteriser (each Gaussian's
@@ -105,15 +109,22 @@ comparison takes the objects that either rig shows unignored in at least one cam
 same objects. Without the detector the figures are the objects each rig shows large and clear enough to be scored.
 Lidar: returns per sweep, the share of beams on the own vehicle, and the points on each annotated object per class and
 range.
+Coverage (rig A the recorded rig, a drive with per-frame ground truth such as a CARLA run): the objects the recording's
+own ground truth shows unignored at the same instants (each camera's frame nearest the instant, within ACTOR_PAD_S),
+per class and range, against those the re-rendered recorded rig shows; what the reconstruction leaves out (far, small
+and thin objects the lidar caught too few points of) is not scored by either rig. Traffic lights, thin and high, are
+mostly not rebuilt: their recall is not assessed (their rows stay in the table, but no finding is drawn from them).
 
 Limits
 ------
 The re-rendered images are not real images: Gaussians from a lidar's points and a few hundred photometric steps blur
 fine texture, leave holes where the lidar never reached (above its field: tall buildings show sky), and show nothing
-the recording never saw from where the proposed rig looks. A detector's absolute recall on them is therefore lower than
-on the recorded images; what carries over is the difference between rigs on the same reconstruction. Colour has no
-view dependence and no exposure model (the recording's own exposure is baked in). The recorded rig and the proposed
-rig see the same moment of the same drive (the ego's path is the recording's).
+the recording never saw from where the proposed rig looks. A detector's absolute recall on them is therefore not its
+recall on the recorded images: on the same objects it is a little lower (fine detail such as a traffic light's lamps is
+lost), while the objects the lidar did not rebuild finely enough (far, small and thin ones) are not shown, so not
+scored, which leaves an easier set; what carries over is the difference between rigs on the same reconstruction.
+Colour has no view dependence and no exposure model (the recording's own exposure is baked in). The recorded rig and
+the proposed rig see the same moment of the same drive (the ego's path is the recording's).
 """
 from __future__ import annotations
 
@@ -167,9 +178,16 @@ ASSUMPTIONS = (
     'The street scene is rebuilt from the drive\'s lidar sweeps as 3D Gaussians coloured (and optimised) from its '
     'camera images, and re-rendered through Vantage\'s lens and lidar models: the re-rendered images are not real '
     'images (blurred texture, holes where the lidar never reached, nothing the recording never saw). Absolute '
-    'detection figures on them are lower than on recorded images; the difference between two rigs on the same '
+    'detection figures on them are not those of recorded images (on the same objects a little lower; objects the '
+    'lidar did not rebuild finely enough, far, small and thin ones, are not scored at all); the difference between '
+    'two rigs on the same '
     'reconstruction is what the study measures. Moving objects are rebuilt as rigid bodies in their annotated boxes '
-    'where the drive has boxes; otherwise the scene is static and anything that moved smears.')
+    'where the drive has boxes; otherwise the scene is static and anything that moved smears. Rolling shutter '
+    '(rolling_shutter module): a variant\'s camera gets its module\'s readout (core.timing; none for a global-shutter '
+    'module); the recorded rig\'s camera gets the recording\'s own readout when the drive states one (a real log), '
+    'otherwise (a simulator\'s single-instant frames, or a log that does not say) the readout of the drive variant\'s '
+    'camera of the same tag, so the same cameras in both rigs render the same images. Traffic lights are mostly not '
+    'rebuilt and their recall is not assessed.')
 
 
 def _f(v, default):
@@ -1912,19 +1930,43 @@ def recorded_rig(drive: Drive, st: SplatSettings, project=None, engine=None) -> 
     f = min(st.render_scale / max(drive.image_scale, 1e-6), 2.0)
     cams, lids = [], []
     slots = {c.tag: c.slot for c in (var.cameras if var is not None else [])}
+    by_tag = {c.tag: c for c in (var.cameras if var is not None else [])}
+    from_module = []
     for cam in drive.cameras.values():
         w = max(16, int(round(cam.model.width * f)))
         h = max(16, int(round(cam.model.height * f)))
         m = cam.model.scaled(w, h)
         body, shade = _body(project, engine, var, cam.R, cam.t, m) if var is not None else (None, None)
-        ro = cam.readout_s if st.rolling_shutter == 'module' else 0.0
+        ro = recorded_readout(cam, by_tag.get(cam.tag), project, st)
+        if st.rolling_shutter == 'module' and cam.readout_s <= 0 and ro > 0:
+            from_module.append(cam.tag)
         cams.append(CamSpec(cam.tag, cam.channel, m, cam.R, cam.t, ro, body, shade, int(slots.get(cam.tag, 0))))
+    if from_module:
+        notes.append(f'The drive does not state a rolling shutter for its camera frames (a simulator renders each '
+                     f'frame at one instant): the recorded rig\'s cameras ({", ".join(from_module)}) are re-rendered '
+                     f'with their modules\' rolling shutter, as a variant\'s are, so identical cameras compare alike.')
     for L in drive.lidars.values():
         spec = recorded_lidar_spec(L)
         if var is not None:
             spec.body = _lidar_body(project, engine, var, spec)
         lids.append(spec)
     return RigSpec(RECORDED, 'Recorded rig', cams, lids, notes)
+
+
+def recorded_readout(cam: DriveCamera, vcam, project, st: SplatSettings) -> float:
+    """The rolling-shutter readout (s) the recorded rig's camera is re-rendered with in the A/B: 0 with
+    rolling_shutter 'off'; the recording's own readout when the drive states one (cam.readout_s > 0: a real log or a
+    sample dataset written with a rolling shutter); otherwise (frames stamped as single instants, as CARLA renders
+    them, or a log that does not say) the readout a variant's camera gets (_readout: core.timing's readout_ms unless
+    the module is global shutter) for the same-tagged camera of the drive's variant, 0 without one. Both rigs of an A/B
+    are thus rendered alike, and the same cameras give the same images."""
+    if st.rolling_shutter != 'module':
+        return 0.0
+    if cam.readout_s > 0:
+        return float(cam.readout_s)
+    if vcam is None or project is None:
+        return 0.0
+    return _readout(project, vcam, st)
 
 
 def recorded_lidar_spec(L: DriveLidar) -> LidarSpec:
@@ -2218,6 +2260,43 @@ def _boot_ci(per_instant_a, per_instant_b, n_inst, B, seed, conf=0.95):
     return [round(float(lo), 4), round(float(hi), 4)]
 
 
+def _coverage(drive: Drive, rig_a: RigSpec, instants, rows_a: dict, de_st, classes, edges) -> list:
+    """Per class and range bin: the objects the recording's own ground truth shows unignored at the instants
+    ('recorded': each camera's frame nearest the instant, within ACTOR_PAD_S; an object counts once per instant), those
+    the re-rendered recorded rig shows ('rendered'), and both. [] unless rig A is the recorded rig and the drive has
+    per-frame ground truth."""
+    if rig_a.key != RECORDED or drive.gt is None:
+        return []
+    rec = {}
+    for k, t in enumerate(instants):
+        for c in rig_a.cameras:
+            dc = drive.cameras.get(c.tag)
+            if dc is None or not dc.frames:
+                continue
+            j = int(np.argmin([abs(fr[0] - t) for fr in dc.frames]))
+            tf, _, gfr = dc.frames[j]
+            if gfr is None or abs(tf - t) > ACTOR_PAD_S:
+                continue
+            g = DE.gt_objects(gfr, de_st)
+            for i in range(len(g['id'])):
+                if g['ignore'][i] == DE.IGN_NONE and g['cls'][i] >= 0:
+                    rec.setdefault((k, int(g['id'][i])), (int(g['cls'][i]), float(g['dist'][i])))
+    if not rec:
+        return []
+    out = []
+    labels = DE.bin_labels(edges)
+    for ec in classes:
+        cidx = [DT.CLASSES.index(m) for m in DT.GROUPS.get(ec, (ec,))]
+        for b in range(len(edges) + 1):
+            kr = {key for key, (cl, d) in rec.items() if cl in cidx and DE.bin_of(np.array([d]), edges)[0] == b}
+            kq = {key for key, r in rows_a.items() if r['vis'] and r['cls'] in cidx
+                  and DE.bin_of(np.array([r['dist']]), edges)[0] == b}
+            if kr or kq:
+                out.append({'class': ec, 'range': labels[b], 'bin': b, 'recorded': len(kr), 'rendered': len(kq),
+                            'both': len(kr & kq)})
+    return out
+
+
 def compare(ts: TorchScene, drive: Drive, scene: Scene, rig_a: RigSpec, rig_b: RigSpec, st: SplatSettings,
             de_st, detector=None, progress=None, cancel=None) -> dict:
     """The A/B comparison (module docstring). detector: a callable BGR image -> detections, or None (visibility
@@ -2307,6 +2386,7 @@ def compare(ts: TorchScene, drive: Drive, scene: Scene, rig_a: RigSpec, rig_b: R
     out_rows = []
     nb = len(edges) + 1
     labels = DE.bin_labels(edges)
+    coverage = _coverage(drive, rig_a, instants, rows['a'], de_st, classes, edges)
     for ec in classes:
         members = DT.GROUPS.get(ec, (ec,))
         cidx = [DT.CLASSES.index(m) for m in members]
@@ -2346,7 +2426,7 @@ def compare(ts: TorchScene, drive: Drive, scene: Scene, rig_a: RigSpec, rig_b: R
                                                      if (detector is not None and v['objects']) else None)}
                    for tag, v in per_cam[side].items()] for side in ('a', 'b')}
     return {'instants': [round(x, 4) for x in instants], 'classes': classes, 'range_edges': edges,
-            'recall': out_rows, 'cameras': cams, 'lidar': lid, 'previews': previews,
+            'recall': out_rows, 'coverage': coverage, 'cameras': cams, 'lidar': lid, 'previews': previews,
             'detector_ms': round(float(np.median(det_ms)), 1) if det_ms else None}
 
 
@@ -2665,8 +2745,31 @@ def _findings(drive, scene, val, ra, rb, ab, st, de_st, detected) -> list:
                                                       ': the drive has no 3D boxes') +
                  ': vehicles and pedestrians that moved during the drive are smeared along their paths.')
     rows = ab.get('recall') or []
+    cov = ab.get('coverage') or []
+    classes = ab.get('classes') or []
+    if 'traffic_light' in classes and (any(r['class'] == 'traffic_light' for r in rows + cov) or
+                                       any(t.cls == 'traffic_light' for t in drive.tracks.values())):
+        n_rec = sum(r['recorded'] for r in cov if r['class'] == 'traffic_light')
+        n_ren = sum(r['rendered'] for r in cov if r['class'] == 'traffic_light')
+        _finding(out, 'note', 'coverage',
+                 'Traffic lights are mostly not rebuilt (thin and high, they catch few lidar points)'
+                 + (f': the re-rendered recorded rig shows {n_ren} of the {n_rec} the recording\'s ground truth shows '
+                    f'at these instants' if n_rec else '')
+                 + ', so their recall is not assessed (their rows are in the table only for completeness).')
+    in_group = {m for g in classes if g in DT.GROUPS for m in DT.GROUPS[g]}
+    for ec in classes:
+        if ec == 'traffic_light' or ec in in_group:
+            continue
+        short = [r for r in cov if r['class'] == ec and r['recorded'] >= max(de_st.min_gt, 3)
+                 and r['rendered'] < 0.8 * r['recorded']]
+        if short:
+            _finding(out, 'note', 'coverage',
+                     f'{DT.CLASS_LABEL.get(ec, ec)}: the re-rendered recorded rig shows '
+                     + ', '.join(f'{r["rendered"]} of the {r["recorded"]} at {r["range"]}' for r in short)
+                     + ' that the recording\'s ground truth shows at these instants: objects the lidar did not rebuild '
+                       'finely enough are not scored, so recall there is on an easier set than the recorded images\'.')
     for r in rows:
-        if r['objects'] < max(de_st.min_gt, 3):
+        if r['objects'] < max(de_st.min_gt, 3) or r['class'] == 'traffic_light':
             continue
         if detected and r.get('delta') is not None and abs(r['delta']) >= 0.05:
             sev = 'warning' if r['delta'] <= -0.10 else 'note'
@@ -2694,8 +2797,10 @@ def _findings(drive, scene, val, ra, rb, ab, st, de_st, detected) -> list:
         _finding(out, 'note', 'lidar',
                  f'Lidar returns per sweep: {rb.name} {rb_ret:,.0f}, {ra.name} {ra_ret:,.0f} (re-rendered).')
     _finding(out, 'note', 'caveat',
-             'Re-rendered images are not real images: absolute recall on them is lower than on recorded images; '
-             'compare the rigs, not the figures with other studies.')
+             'Re-rendered images are not real images: on the same objects recall on them is a little lower than on '
+             'recorded images, and objects the lidar did not rebuild finely enough (far, small and thin ones, such as '
+             'traffic lights) are not scored at all, so absolute recall is not a recorded image\'s; compare the rigs, '
+             'not the figures with other studies.')
     return out
 
 

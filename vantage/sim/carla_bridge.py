@@ -56,7 +56,8 @@ What a run does
    * SUMO traffic (--traffic-source sumo, the rig's traffic_source; vantage.sim.sumo_cosim): instead of the traffic
      manager's vehicles, Eclipse SUMO drives the traffic, stepped once before every synchronous tick through CARLA's
      own co-simulation package (Co-Simulation/Sumo/sumo_integration); its vehicles are CARLA actors (role
-     vantage_sumo), so they have boxes, instance ids and lidar labels like any other; the ego and a scenario's
+     vantage_sumo), so they have boxes, instance ids and lidar labels like any other, and they move in CARLA with
+     SUMO's velocity, so CARLA's radar measures their radial velocity; the ego and a scenario's
      vehicles are mirrored into SUMO after each tick; run.json traffic_source says what SUMO did. Walkers stay on
      CARLA's walker AI.
 5. Writes the nuScenes tables, dataset.json, README.md and run.json (this run's report), then tidies up in all cases:
@@ -2124,7 +2125,8 @@ class Bridge:
             Rg = Mg[:3, :3]
             vel = s.get_velocity()
             sid = getattr(self, 'sumo_ids', {}).get(int(a.id))
-            if sid is not None and math.hypot(vel.x, vel.y) < 1e-6:     # kinematic: CARLA reports no velocity
+            # a SUMO vehicle carries SUMO's velocity in CARLA (sumo_cosim._place); should CARLA report none, SUMO's
+            if sid is not None and math.hypot(vel.x, vel.y) < 1e-6:
                 vv = self.cosim.velocity(a.id, s.get_transform().rotation.yaw) if self.cosim is not None else None
                 v = FR.to_vantage(vv) if vv is not None else FR.to_vantage([vel.x, vel.y, vel.z])
             else:

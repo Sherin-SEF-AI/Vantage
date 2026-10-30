@@ -372,6 +372,12 @@ def test_ab_run_doc_and_files(drive):
         assert r['recall_a'] == 0.0 and r['recall_b'] == 0.0 and r['objects'] >= 1
     kinds = {f['kind'] for f in res.findings}
     assert {'validation', 'dynamic', 'caveat'} <= kinds
+    # measured on a CARLA drive against its real frames: re-render recall is a little lower on the same objects, but
+    # far, small and thin objects drop out of the scored set, so the study's absolute recall can come out higher;
+    # the caveat must not claim it is simply lower (round 11)
+    caveat = next(f['message'] for f in res.findings if f['kind'] == 'caveat')
+    assert 'not scored' in caveat and 'absolute recall on them is lower' not in caveat
+    assert 'not scored' in SP.ASSUMPTIONS
     doc = SP.to_doc(res, drive['p'])
     json.dumps(doc)
     assert doc['schema'] == SP.SCHEMA and doc['settings']['max_gaussians'] == 6000 and doc['limits']
@@ -380,6 +386,84 @@ def test_ab_run_doc_and_files(drive):
     assert 'log_replay_cameras.png' in names and 'log_replay_lidar.png' in names and 'log_replay_scene.ply' in names
     # cancelled: None
     assert SP.run(drive['p'], drive['engine'], st, cancel=lambda: True, cache_root=drive['cache']) is None
+
+
+def _grid_detector(img):
+    """A stand-in detector whose scores follow the image: a 4 × 4 grid of 'car' boxes scored by their mean value, so
+    two renders that differ give different detections."""
+    h, w = img.shape[:2]
+    boxes, scores = [], []
+    for i in range(4):
+        for j in range(4):
+            x0, x1, y0, y1 = j * w // 4, (j + 1) * w // 4, i * h // 4, (i + 1) * h // 4
+            boxes.append([x0, y0, x1, y1])
+            scores.append(float(img[y0:y1, x0:x1].mean()) / 255.0)
+    return {'boxes': np.array(boxes, float), 'scores': np.array(scores), 'cls': np.full(16, 3),
+            'coco': np.full(16, 2)}
+
+
+def test_identical_rig_compares_exactly_with_default_settings(drive):
+    """The drive's own variant as rig B, default rolling shutter: the recorded rig (a drive whose frames are single
+    instants) is rendered with the same module readout as the variant, so the images agree to the calibration's
+    rounding and every row of the A/B is the same for both rigs (round 11: rig A was rendered as a global shutter and
+    single objects flipped)."""
+    p = drive['p']
+    st = SP.SplatSettings.from_dict(dict(drive['st'].to_dict(), variant_b=p.variant.uid, optimise=False))
+    assert st.rolling_shutter == 'module'
+    res = SP.run(p, drive['engine'], st, detector=_grid_detector, cache_root=drive['cache'])
+    ro_a = {c['tag']: c['readout_ms'] for c in res.rig_a['cameras']}
+    ro_b = {c['tag']: c['readout_ms'] for c in res.rig_b['cameras']}
+    assert ro_a == ro_b and all(v > 0 for v in ro_a.values())
+    for pv in res.ab['previews']:
+        for tag, a in pv['a'].items():
+            assert np.abs(a.astype(int) - pv['b'][tag].astype(int)).max() <= 2
+    assert res.ab['recall']
+    for r in res.ab['recall']:
+        assert r['visible_a'] == r['visible_b'] and r['recall_a'] == r['recall_b'] and r['delta'] == 0.0
+    ca = {c['camera']: (c['objects'], c['detected']) for c in res.ab['cameras']['a']}
+    assert ca == {c['camera']: (c['objects'], c['detected']) for c in res.ab['cameras']['b']}
+    assert not any(f['kind'] == 'recall' for f in res.findings)
+    assert any('rolling shutter' in n for n in res.notes)
+
+
+def test_recorded_readout_rule():
+    """The recorded rig's readout: off → none; the recording's own when the drive states one; else the variant's."""
+    p = tigor_sample_project()
+    v = next(v for v in p.variants if v.sensors)
+    vc = v.by_tag('F')
+    m = SP.CamModel.from_intrinsics(resolve(p.module_for(vc), p.lens_for(vc)), 64, 48)
+    cam = SP.DriveCamera('F', 'CAM_F', m, np.eye(3), np.zeros(3), [], 0.0)
+    st = SP.SplatSettings()
+    assert SP._readout(p, vc, st) > 0
+    assert SP.recorded_readout(cam, vc, p, st) == pytest.approx(SP._readout(p, vc, st))
+    assert SP.recorded_readout(cam, None, p, st) == 0.0
+    cam.readout_s = 0.031                                          # a real log stating its rolling shutter
+    assert SP.recorded_readout(cam, vc, p, st) == pytest.approx(0.031)
+    assert SP.recorded_readout(cam, vc, p, SP.SplatSettings.from_dict({'rolling_shutter': 'off'})) == 0.0
+
+
+def test_traffic_lights_are_not_assessed():
+    """With traffic lights evaluated, a finding says they are mostly not rebuilt and not assessed (with the recording's
+    and the re-render's counts when the drive has per-frame ground truth), and no recall finding is drawn from them."""
+    de_st = SP.DE.DetectionSettings()
+    st = SP.SplatSettings()
+    d = SP.Drive.__new__(SP.Drive)
+    d.tracks = {}
+    sc = SP.Scene.__new__(SP.Scene)
+    sc.actor_ids = []
+    rig = SP.RigSpec(SP.RECORDED, 'Recorded rig', [], [])
+    rows = [{'class': 'traffic_light', 'range': '10–20 m', 'bin': 1, 'objects': 20, 'visible_a': 2, 'visible_b': 20,
+             'visible_share_a': 0.1, 'visible_share_b': 1.0, 'recall_a': 0.0, 'recall_b': 0.5, 'delta': 0.5,
+             'delta_ci': [0.3, 0.7]}]
+    cov = [{'class': 'traffic_light', 'range': '10–20 m', 'bin': 1, 'recorded': 44, 'rendered': 2, 'both': 2},
+           {'class': 'vehicle', 'range': '40+ m', 'bin': 3, 'recorded': 128, 'rendered': 78, 'both': 77}]
+    ab = {'recall': rows, 'coverage': cov, 'classes': ['vehicle', 'traffic_light'], 'lidar': {}}
+    out = SP._findings(d, sc, {}, rig, rig, ab, st, de_st, True)
+    tl = [f['message'] for f in out if f['kind'] == 'coverage' and 'Traffic lights' in f['message']]
+    assert len(tl) == 1 and 'not assessed' in tl[0] and '2 of the 44' in tl[0]
+    assert any(f['kind'] == 'coverage' and 'Vehicle' in f['message'] and '78 of the 128 at 40+ m' in f['message']
+               for f in out)
+    assert not any(f['kind'] in ('recall', 'visible') for f in out)
 
 
 def test_unreadable_drive_is_refused(tmp_path):

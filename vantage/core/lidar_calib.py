@@ -97,6 +97,16 @@ VERDICT_SEVERITY = {'good': 'good', 'warning': 'warning', 'serious': 'serious', 
 MIN_RINGS = 4                  # lidar channels that must cross a planned board
 MIN_SQUARE_PX = 8.0            # a square's width in the image at the farthest planned pose
 MIN_BOARD_POINTS = 20
+VIEWS_CLASSIC = False          # the search's views also fall back on the classic detector (seconds on clutter;
+                               # only the whole image ever needed it on the rendered boards)
+FIND_BOTH_WAYS = False         # the search also tries the transposed pattern (it finds the same boards: rotations)
+# A board found by the search (no plan to say where it stands) is checked before it is taken: the detectors also
+# assemble grids from clutter and from periodic textures. Heuristics set from rendered boards and board-free scenes
+# (tests/test_board_reject.py): a grid whose fitted pose misses its corners by more than MAX_BOARD_RMS_PX, or whose
+# squares do not alternate like a printed board's (CHECKER_* at the square centres), is passed over.
+MAX_BOARD_RMS_PX = 2.0         # px at the image's resolution: true boards ≤ 0.3 (≤ 1.2 with a 5 % / 50 px lens error)
+CHECKER_WEBER = 0.15           # |bright − dark| / mean of the squares: a print ≥ 0.3 even through haze; floor grain ~0.1
+CHECKER_ORDER = 0.8            # share of neighbouring squares in the checker's order
 EDGE_FLOOR_M = 0.004           # slack of the edge and checker brackets (beam divergence, range noise)
 OWN_MOUNT_M = 0.05             # lidar: occluder hits this close to its optical centre are its own mount
 NEAR_CLIP = 0.05               # camera: body surface this close is the lens housing
@@ -1276,24 +1286,53 @@ def _view(gray, intr, sx, sy, Rv, f, n):
     return cv2.remap(gray, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
 
 
-def _search(gray, intr, sx, sy, st):
-    """Corner rays (rows, cols, 3) of a board found anywhere: the whole image first, then virtual pinhole views tiling
-    the lens circle. (rays, how) or (None, '')."""
+def _find_quick(gray, pattern, precheck=True, classic=True):
+    """install._find made cheaper for the search: the exhaustive SB detector, then (classic) the classic one with
+    OpenCV's fast check (CALIB_CB_FAST_CHECK), in the pattern's orientation only (FIND_BOTH_WAYS; each detector finds
+    the board turned either way); precheck: calib.board_possible first. On every rendered board these found the same
+    corners as install._find (tests/test_board_reject.py); None when nothing is found."""
     import cv2
-    from .install import _find, _virtual_basis
+    from . import calib
+    from .install import find_sb
+    if precheck and not calib.board_possible(gray, pattern):
+        return None
+    flags = cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY | cv2.CALIB_CB_NORMALIZE_IMAGE
+    for pat in ((pattern, (pattern[1], pattern[0])) if FIND_BOTH_WAYS else (pattern,)):
+        ok, corners = find_sb(gray, pat, flags)
+        if ok:
+            return corners.reshape(pat[1], pat[0], 2)
+        if not classic:
+            continue
+        ok, corners = cv2.findChessboardCorners(gray, pat, flags=cv2.CALIB_CB_ADAPTIVE_THRESH |
+                                                cv2.CALIB_CB_NORMALIZE_IMAGE | cv2.CALIB_CB_FAST_CHECK)
+        if ok:
+            corners = cv2.cornerSubPix(gray, corners, (5, 5), (-1, -1),
+                                       (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 40, 0.01))
+            return corners.reshape(pat[1], pat[0], 2)
+    return None
+
+
+def _candidates(gray, intr, sx, sy, st):
+    """Corner rays (rows, cols, 3) of boards found anywhere, lazily: the whole image first, then those virtual pinhole
+    views tiling the lens circle that hold one of the image's groups of chessboard-like corners (calib.board_groups),
+    each pre-checked. Yields (rays, how)."""
+    import cv2
+    from .install import _virtual_basis
     pattern = (st.cols, st.rows)
     h, w = gray.shape[:2]
     small = 1.0 if max(h, w) <= 2200 else 2200.0 / max(h, w)
     g = gray if small == 1.0 else cv2.resize(gray, (int(w * small), int(h * small)), interpolation=cv2.INTER_AREA)
-    det = _find(g, pattern)
+    det = _find_quick(g, pattern, precheck=False)            # the caller has pre-checked the whole image
     if det is not None:
         uv = (det.reshape(-1, 2) + 0.5) / small
         d, _ = intr.unproject(uv[:, 0] / sx, uv[:, 1] / sy)
         G = _to_model_grid(d.reshape(det.shape[0], det.shape[1], 3), st)
         if G is not None:
-            return G, 'whole image'
+            yield G, 'whole image'
+    from . import calib
     n, half = 640, math.radians(32)
     f = n / 2 / math.tan(half)
+    rays = calib.group_rays(calib.board_groups(gray, pattern), intr, sx, sy)
     dirs = [(0.0, 0.0)] + [(38.0, a) for a in range(0, 360, 60)] + [(70.0, a) for a in range(0, 360, 36)]
     for th, az in dirs:
         if math.radians(th) > intr.max_theta:
@@ -1301,13 +1340,14 @@ def _search(gray, intr, sx, sy, st):
         t, a = math.radians(th), math.radians(az)
         c = np.array([math.sin(t) * math.cos(a), math.sin(t) * math.sin(a), math.cos(t)])
         Rv = _virtual_basis(c)
-        det = _find(_view(gray, intr, sx, sy, Rv, f, n), pattern)
+        if not calib.groups_in_view(rays, Rv, math.tan(half), pattern):     # no board-like corners in this view
+            continue
+        det = _find_quick(_view(gray, intr, sx, sy, Rv, f, n), pattern, classic=VIEWS_CLASSIC)
         if det is None:
             continue
         G = _to_model_grid(_rays_from_patch(det, Rv, f, n).reshape(det.shape[0], det.shape[1], 3), st)
         if G is not None:
-            return G, 'view search'
-    return None, ''
+            yield G, 'view search'
 
 
 def _refine_in_view(gray, intr, sx, sy, st, rays_grid, outline_rays=None, fills=(0.72, 0.45)):
@@ -1403,9 +1443,53 @@ def _square_phase(gray, intr, sx, sy, R, c, st) -> int:
     return 0 if m0 < m1 else 1
 
 
+def _best_fit(intr, sx, sy, model, cands):
+    """Of the corner sets (rays) found for one board, the one its pose fits best: ((R, c, rms, cov), rays, uv) or
+    None (a corner the detector misplaced in one view shows as a worse fit)."""
+    best = None
+    for rays in cands:
+        rays = rays.reshape(-1, 3)
+        u, v, _, ok = intr.project_dirs(rays)
+        if not ok.all():
+            continue
+        uv = np.c_[u * sx, v * sy]
+        sol = _board_pnp(intr, sx, sy, model, rays, uv)
+        if sol is not None and (best is None or sol[2] < best[0][2]):
+            best = (sol, rays, uv)
+    return best
+
+
+def _checker_like(gray, intr, sx, sy, R, c, st) -> bool:
+    """Whether the squares of a board at pose (R, c) alternate like a printed checker in the image: Weber contrast of
+    the two square colours ≥ CHECKER_WEBER and at least CHECKER_ORDER of neighbouring squares in that order (sampled
+    at the square centres, lightly smoothed)."""
+    import cv2
+    P, par = square_centres(st)
+    u, v, _, ok = intr.project_dirs(P @ R.T + c)
+    if not ok.all():
+        return False
+    x, y = u * sx - 0.5, v * sy - 0.5
+    step = float(np.median(np.hypot(np.diff(x.reshape(st.rows + 1, -1), axis=1), np.diff(y.reshape(st.rows + 1, -1),
+                                                                                         axis=1))))
+    sm = cv2.GaussianBlur(gray.astype(np.float32), (0, 0), max(0.5, step / 8))
+    val = cv2.remap(sm, x.astype(np.float32).reshape(1, -1), y.astype(np.float32).reshape(1, -1), cv2.INTER_LINEAR,
+                    borderMode=cv2.BORDER_REPLICATE).ravel().astype(np.float64)
+    m0, m1 = val[par == 0].mean(), val[par == 1].mean()
+    gap = abs(m1 - m0)
+    if gap / max((m0 + m1) / 2, 1.0) < CHECKER_WEBER:
+        return False
+    V = (val * (1 if m1 > m0 else -1)).reshape(st.rows + 1, st.cols + 1)
+    sign = np.where(par.reshape(st.rows + 1, st.cols + 1) == 1, 1.0, -1.0)
+    d = np.r_[((V[:, 1:] - V[:, :-1]) * sign[:, 1:]).ravel(), ((V[1:] - V[:-1]) * sign[1:]).ravel()]
+    return float(np.mean(d > 0.2 * gap)) >= CHECKER_ORDER
+
+
 def detect_board(project, cam, img, st: LidarCalibSettings, hint: BoardPose | None = None) -> CamBoard | None:
     """The board in one camera image: corners and its pose in the optical frame. hint: where it should stand (the
-    plan); without one (real data) the whole image is searched."""
+    plan); without one (real data) the whole image is searched, after a cheap pre-check (calib.board_possible) has
+    found chessboard-like corners in it (a frame with none is turned away in tens of milliseconds), and the first
+    board found that is checker-like (_checker_like) and whose pose fits its corners within MAX_BOARD_RMS_PX is
+    taken (the detectors also assemble grids from clutter and periodic textures)."""
     from .install import _scale
     gray = _gray(img)
     intr = resolve(project.module_for(cam), project.lens_for(cam))
@@ -1425,32 +1509,28 @@ def detect_board(project, cam, img, st: LidarCalibSettings, hint: BoardPose | No
             cands = _refine_in_view(gray, intr, sx, sy, st, r[:len(P)].reshape(st.rows, st.cols, 3), r[len(P):])
             how = 'expected place'
     if not cands:
-        coarse, how = _search(gray, intr, sx, sy, st)
-        if coarse is None:
+        from . import calib
+        if not calib.board_possible(gray, (st.cols, st.rows)):
             return None
-        cands = [coarse]
-        # a first pose from the coarse corners gives the board's outline: refine as round an expected board
-        flat = coarse.reshape(-1, 3)
-        u0, v0, _, ok0 = intr.project_dirs(flat)
-        first = _board_pnp(intr, sx, sy, model, flat, np.c_[u0 * sx, v0 * sy]) if ok0.all() else None
-        if first is not None:
+        # the first candidate that is a board: checker-like at its first pose, then (refined round that pose, as round
+        # an expected board) fitted within MAX_BOARD_RMS_PX
+        for coarse, how in _candidates(gray, intr, sx, sy, st):
+            flat = coarse.reshape(-1, 3)
+            u0, v0, _, ok0 = intr.project_dirs(flat)
+            first = _board_pnp(intr, sx, sy, model, flat, np.c_[u0 * sx, v0 * sy]) if ok0.all() else None
+            if first is None or not _checker_like(gray, intr, sx, sy, first[0], first[1], st):
+                continue
             Rb, cb_ = first[0], first[1]
             r = np.vstack([model @ Rb.T + cb_, outline_local(W, H, 1) @ Rb.T + cb_])
             r /= np.linalg.norm(r, axis=1, keepdims=True)
-            cands += _refine_in_view(gray, intr, sx, sy, st, r[:len(model)].reshape(st.rows, st.cols, 3),
-                                     r[len(model):])
-    # every view that found the board gives its corners: keep the set the board's pose fits best (a corner the
-    # detector misplaced in one view shows as a worse fit)
-    best = None
-    for rays in cands:
-        rays = rays.reshape(-1, 3)
-        u, v, _, ok = intr.project_dirs(rays)
-        if not ok.all():
-            continue
-        uv = np.c_[u * sx, v * sy]
-        sol = _board_pnp(intr, sx, sy, model, rays, uv)
-        if sol is not None and (best is None or sol[2] < best[0][2]):
-            best = (sol, rays, uv)
+            best = _best_fit(intr, sx, sy, model, [coarse] + _refine_in_view(
+                gray, intr, sx, sy, st, r[:len(model)].reshape(st.rows, st.cols, 3), r[len(model):]))
+            if best is not None and best[0][2] <= MAX_BOARD_RMS_PX:
+                break
+        else:
+            return None
+    else:
+        best = _best_fit(intr, sx, sy, model, cands)
     if best is None:
         return None
     (R, c, rms, cov), rays, uv = best

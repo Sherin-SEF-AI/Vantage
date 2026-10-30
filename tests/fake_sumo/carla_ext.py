@@ -3,8 +3,16 @@ pytest's monkeypatch, so it is undone after): Client.apply_batch_sync with comma
 command.SetSimulatePhysics(FutureActor, False)), TrafficLightState, the map's traffic-light landmarks (one, id '1000',
 the fake world's light), BlueprintLibrary[i], World.get_traffic_light, TrafficLight state / set_state / freeze, Map.to_opendrive. Spawns go
 through the fake World.spawn_actor (logged there); the rest is logged in the fake's LOG as ('batch', ...),
-('tl_state', ...), ('tl_freeze', ...)."""
+('tl_state', ...), ('tl_freeze', ...).
+
+Vehicle.set_target_angular_velocity, and what CARLA 0.9.16's physics does (measured) with a vehicle that has physics on
+and was given target velocities before a tick: over the tick it moves as a free rigid body (location + v·dt, yaw +
+ω·dt) and reports v and ω after it. A vehicle with physics off keeps the fake's behaviour (it stays where it was put and
+reports no velocity, as CARLA's)."""
+import math
 import types
+
+import numpy as np
 
 LANDMARK = '1000'
 
@@ -89,3 +97,28 @@ def extend(fc, monkeypatch, no_landmarks=False):
     monkeypatch.setattr(fc.TrafficLight, 'state', _State.Red, raising=False)
     monkeypatch.setattr(fc.TrafficLight, 'set_state', set_state, raising=False)
     monkeypatch.setattr(fc.TrafficLight, 'freeze', freeze, raising=False)
+
+    def set_target_velocity(self, v):
+        self._vel = np.array([v.x, v.y, v.z], float)
+        self._free = True
+
+    def set_target_angular_velocity(self, w):
+        self._yaw_rate = math.radians(float(w.z))
+        self._free = True
+        fc.LOG.append(('target_w', self.id, float(w.z)))
+
+    real_step = fc.Vehicle._step
+
+    def _step(self, dt):
+        free, self._free = getattr(self, '_free', False), False
+        if not (free and self.physics) or self.autopilot or self.constant_velocity is not None:
+            if not self.physics:
+                self._vel, self._yaw_rate = np.zeros(3), 0.0
+            return real_step(self, dt)
+        M = self._m_world.copy()                       # a free rigid body over the tick
+        M[:3, 3] = M[:3, 3] + self._vel * dt
+        M[:3, :3] = fc.Rotation(0.0, math.degrees(self._yaw_rate * dt), 0.0).matrix() @ M[:3, :3]
+        self._m_world = M
+    monkeypatch.setattr(fc.Vehicle, 'set_target_velocity', set_target_velocity, raising=False)
+    monkeypatch.setattr(fc.Vehicle, 'set_target_angular_velocity', set_target_angular_velocity, raising=False)
+    monkeypatch.setattr(fc.Vehicle, '_step', _step, raising=False)

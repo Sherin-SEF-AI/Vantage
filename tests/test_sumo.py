@@ -3,9 +3,10 @@ traffic_source, the CARLA page's Traffic section), against tests/fake_carla and 
 and sumo package, a fake SUMO process that holds the TraCI socket, a stand-in for CARLA's sumo_integration package):
 
 * the settings: tolerant, clamped, checked against the rig; a CARLA-traffic rig and run are what they were;
-* the bridge steps SUMO once per synchronous CARLA tick, before it; SUMO's vehicles are spawned (physics off, role
-  vantage_sumo), moved to SUMO's pose (closed forms of CARLA's conversions written out here) and destroyed when they
-  arrive; the ego is mirrored into SUMO after each tick; traffic lights both ways;
+* the bridge steps SUMO once per synchronous CARLA tick, before it; SUMO's vehicles are spawned (role vantage_sumo,
+  physics on), moved to SUMO's pose (closed forms of CARLA's conversions written out here) with SUMO's velocity and yaw
+  rate as their CARLA velocity (so CARLA's radar sees their motion) and destroyed when they arrive; the ego is mirrored
+  into SUMO after each tick; traffic lights both ways;
 * SUMO's vehicles are in the ground truth and run.json names them; the traffic block validates against
   docs/sim_run.schema.json;
 * the same seed gives the same SUMO vehicles on the same paths, another seed other ones;
@@ -391,15 +392,15 @@ def test_poses_both_ways_follow_carlas_conversions(tmp_path):
             _step(cs, 20)                                         # (one trip every 0.25 s)
             sim = traci._S
             assert len(cs.sumo2carla) == 4
-            # each CARLA actor holds SUMO's pose of this step (SUMO has not stepped since; CARLA's tick leaves a
-            # vehicle without physics where it was put)
+            # each CARLA actor holds SUMO's pose of this step after CARLA's tick (SUMO has not stepped since): it was
+            # put one step behind it with SUMO's velocity, and the tick carried it there
             for sid, cid in cs.sumo2carla.items():
                 v = sim.veh[sid]
                 x, y, yaw = carla_pose_of(v['x'], v['y'], v['angle'], sim.types[v['type']]['length'])
                 tr = cs.w.get_actor(cid).get_transform()
                 assert (tr.location.x, tr.location.y) == pytest.approx((x, y), abs=1e-6)
                 assert _wrap(tr.rotation.yaw - yaw) == pytest.approx(0.0, abs=1e-6)
-                assert cs.w.get_actor(cid).physics is False
+                assert cs.w.get_actor(cid).physics is True
             # the ego in SUMO: at its CARLA pose converted, after the tick
             ego = cs.vehicles[0]
             tr = ego.get_transform()
@@ -437,6 +438,92 @@ def test_between_sumo_steps_vehicles_move_on_at_sumos_speed(tmp_path):
                 tr = cs.w.get_actor(cid).get_transform()
                 assert (tr.location.x, tr.location.y) == pytest.approx((x, y_), abs=1e-6)
             assert cs.report()['steps_per_sumo_step'] == 2 and cs.report()['step_s'] == 0.025
+
+
+def test_carla_sees_sumo_vehicles_move_with_sumos_velocity(tmp_path):
+    """CARLA 0.9.16 reports no velocity for a vehicle with physics off moved by set_transform, and its radar takes a hit's
+    radial velocity from the hit actor's velocity (measured): SUMO's vehicles keep physics on and get SUMO's speed along
+    their heading and their yaw rate as CARLA target velocities on every tick (SUMO's steps and the dead-reckoned ones
+    between, at 80 Hz), put one tick behind SUMO's pose so CARLA's step carries them onto it. Then CARLA's velocity of
+    each is SUMO's, and a radar's radial velocity on one is SUMO's velocity along the line of sight."""
+    with fake_sumo() as fc:
+        import carla
+        import traci
+        with cosim(tmp_path / 'v', dt=0.0125) as cs:
+            assert cs.k == 2
+            cs.start()
+            _step(cs, 40)
+            sim = traci._S
+            for k in range(4):                                    # two SUMO steps, two dead-reckoned ticks
+                prev = {sid: cs.base[sid].rotation.yaw for sid in cs.sumo2carla if sid in cs.base}
+                fc.LOG.clear()
+                sumo_step = (cs.ticks + 1) % cs.k == 0
+                cs.before_tick()
+                targets = {e[1]: e[2] for e in fc.LOG if e[0] == 'target_w'}
+                cs.w.tick()
+                snap = cs.w.get_snapshot()
+                for sid, cid in cs.sumo2carla.items():
+                    a = cs.w.get_actor(cid)
+                    assert a.physics is True
+                    yaw = cs.base[sid].rotation.yaw                   # the heading at SUMO's last step
+                    sp = sim.veh[sid]['speed']
+                    v = snap.find(cid).get_velocity()
+                    assert sp > 1.0 and (v.x, v.y, v.z) == pytest.approx(
+                        (sp * math.cos(math.radians(yaw)), sp * math.sin(math.radians(yaw)), 0.0), abs=1e-9)
+                    assert cs.velocity(cid, yaw) == pytest.approx((v.x, v.y, v.z), abs=1e-12)   # (the annotations')
+                    # the yaw rate: SUMO's heading change over its last step (deg/s about CARLA's z)
+                    if sumo_step and sid in prev:
+                        assert targets[cid] == pytest.approx(_wrap(yaw - prev[sid]) / cs.sumo_dt, abs=1e-9)
+                    assert a.get_angular_velocity().z == pytest.approx(cs.yaw_rate[sid], abs=1e-9)
+                    # and it stands on the pose SUMO's (or the dead reckoning's) was, after the tick
+                    if sumo_step:
+                        vv = sim.veh[sid]
+                        x, y_, yw = carla_pose_of(vv['x'], vv['y'], vv['angle'], sim.types[vv['type']]['length'])
+                        tr = a.get_transform()
+                        assert (tr.location.x, tr.location.y) == pytest.approx((x, y_), abs=1e-6)
+                        assert _wrap(tr.rotation.yaw - yw) == pytest.approx(0.0, abs=1e-6)
+                cs.after_tick(True)
+            # a radar looking at one: its radial velocity is SUMO's velocity along the line of sight (fake CARLA's
+            # radar takes it from the hit actor's velocity, as CARLA's)
+            sid, cid = sorted(cs.sumo2carla.items())[0]
+            car = cs.w.get_actor(cid).get_transform()
+            yaw = math.radians(car.rotation.yaw)
+            pos = carla.Location(car.location.x - 15 * math.cos(yaw) + 3 * math.sin(yaw),
+                                 car.location.y - 15 * math.sin(yaw) - 3 * math.cos(yaw), car.location.z + 0.8)
+            look = math.degrees(math.atan2(car.location.y - pos.y, car.location.x - pos.x))
+            bp = cs.w.get_blueprint_library().find('sensor.other.radar')
+            bp.set_attribute('horizontal_fov', '16')
+            bp.set_attribute('vertical_fov', '10')
+            bp.set_attribute('range', '40')
+            bp.set_attribute('points_per_second', '8000')
+            lib = cs.w.get_blueprint_library()
+            mast = cs.w.spawn_actor(lib.find('static.prop.trafficcone01'),      # (the fake's sensors need a parent)
+                                    carla.Transform(carla.Location(pos.x, pos.y, 0.0), carla.Rotation(0.0, look, 0.0)))
+            radar = cs.w.spawn_actor(bp, carla.Transform(carla.Location(0.0, 0.0, pos.z + 0.5)), attach_to=mast)
+            got = []
+            radar.listen(got.append)
+            _step(cs, 3)
+            radar.stop()
+            m = got[-1]
+            a = cs.w.get_actor(cid)
+            Mi = np.linalg.inv(np.array(a.get_transform().get_matrix()))
+            bb = a.bounding_box
+            sp = sim.veh[sid]['speed']
+            yaw = math.radians(cs.base[sid].rotation.yaw)
+            vt = np.array([sp * math.cos(yaw), sp * math.sin(yaw), 0.0])
+            R = np.array(m.transform.get_matrix())
+            on_car = []
+            for d in m:
+                u = R[:3, :3] @ np.array([math.cos(d.altitude) * math.cos(d.azimuth),
+                                          math.cos(d.altitude) * math.sin(d.azimuth), math.sin(d.altitude)])
+                q = Mi @ np.r_[R[:3, 3] + u * d.depth, 1.0]
+                if np.all(np.abs(q[:3] - [bb.location.x, bb.location.y, bb.location.z]) <=
+                          [bb.extent.x + 0.05, bb.extent.y + 0.05, bb.extent.z + 0.05]):
+                    on_car.append((d.velocity, float(vt @ u)))
+            assert len(on_car) >= 3 and min(abs(e) for _, e in on_car) > 1.0
+            assert [v for v, _ in on_car] == pytest.approx([e for _, e in on_car], abs=1e-9)
+            radar.destroy()
+            mast.destroy()
 
 
 def test_arrived_vehicles_are_destroyed_in_carla(tmp_path):
@@ -630,13 +717,13 @@ def test_with_carlas_real_sumo_integration(tmp_path):
             sim = traci._S
             for sid, cid in cs.sumo2carla.items():
                 cs.before_tick()
+                cs.w.tick()                                       # (put a step behind, the tick carries it there)
                 v = sim.veh.get(sid)
                 if v is None:
                     continue
                 tr = cs.w.get_actor(cid).get_transform()
                 x, y, yaw = carla_pose_of(v['x'], v['y'], v['angle'], sim.types[v['type']]['length'])
                 assert (tr.location.x, tr.location.y) == pytest.approx((x, y), abs=1e-4)
-                cs.w.tick()
                 cs.after_tick(True)
 
 
