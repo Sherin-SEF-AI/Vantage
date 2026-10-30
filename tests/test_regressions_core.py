@@ -684,3 +684,40 @@ def test_drive_log_peak_width_does_not_depend_on_where_the_peak_falls_in_its_pix
     w, ok = DL._peak_width(lambda d: float(np.prod([base + math.exp(-0.5 * (v / 0.3) ** 2) for v in d])),
                            np.zeros(3), 0.1)
     assert all(ok) and np.allclose(w, w[0]) and w[0] < 0.6    # finer pixels: the 0.15° step, a narrow peak passes
+
+
+def test_campaign_finds_channels_by_the_rigs_names_and_ignoring_case():
+    """Campaign evaluators looked a sensor up only as CAM_<tag> etc., case-sensitively: drives written with nuScenes
+    channel names (CAM_FRONT) or a lower-case tag (channels carry it upper-cased) got no rig health, image statistics
+    or returns. The rig's own channel for the tag comes first now, then the tag patterns ignoring case."""
+    from vantage.core.simcampaign import _channel_of
+    streams = {'CAM_FRONT': {}, 'CAM_QL': {}, 'LIDAR_TOP': {}, 'RADAR_RD1': {}}
+    rig = {'cameras': [{'tag': 'F', 'channel': 'CAM_FRONT'}, {'tag': 'ql', 'channel': 'CAM_QL'}],
+           'lidars': [{'tag': 'L1', 'channel': 'LIDAR_TOP'}]}
+    assert _channel_of('F', streams, rig) == 'CAM_FRONT'
+    assert _channel_of('L1', streams, rig) == 'LIDAR_TOP'
+    assert _channel_of('ql', streams) == 'CAM_QL'                  # no rig: the tag pattern, ignoring case
+    assert _channel_of('rd1', streams) == 'RADAR_RD1'
+    assert _channel_of('MR', streams, rig) is None
+    assert _channel_of('F', {'CAM_F': {}}, {'cameras': [{'tag': 'F', 'channel': 'CAM_FRONT'}]}) == 'CAM_F'
+
+
+def test_critical_carla_uses_the_actual_mount_of_a_faulted_camera():
+    """cam_pose read 'pose_actual' from rig/sim_rig.json, which the bridge never writes back (it moves an in-memory
+    copy); the actual mount is in run.json faults_injected. with_actual_mounts puts it on the rig."""
+    import numpy as np
+    from vantage.core.critical_carla import cam_pose, with_actual_mounts
+    plan = {'x': 3.6, 'y': 0.0, 'z': 0.6, 'yaw': 0.0, 'pitch': 30.0, 'roll': 0.0}
+    rig = {'cameras': [{'tag': 'F', 'pose_vehicle': dict(plan)}, {'tag': 'R', 'pose_vehicle': dict(plan)}]}
+    run = {'faults_injected': [
+        {'kind': 'rotation', 'tag': 'F', 'actual_pose': dict(plan, pitch=30.5)},
+        {'kind': 'translation', 'tag': 'F', 'actual_pose': dict(plan, pitch=30.5, z=0.61)},
+        {'kind': 'drop', 'tag': 'R'}]}
+    got = with_actual_mounts(rig, run)
+    f = next(c for c in got['cameras'] if c['tag'] == 'F')
+    R, pos = cam_pose(f)
+    R0, _ = cam_pose(rig['cameras'][0])
+    assert pos[2] == 0.61 and not np.allclose(R, R0)               # the last row: where the mount ended up
+    assert 'pose_actual' not in rig['cameras'][0]                   # the caller's rig is not changed
+    assert 'pose_actual' not in next(c for c in got['cameras'] if c['tag'] == 'R')
+    assert with_actual_mounts(rig, {'faults_injected': []}) is rig and with_actual_mounts(rig, None) is rig

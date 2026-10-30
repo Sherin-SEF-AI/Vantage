@@ -46,6 +46,15 @@ def test_tone_curve_keeps_mid_grey_and_matches_the_reference(gl):
     assert gl['tone_hue_kept']                               # a bright orange stays orange
 
 
+def test_floor_grid_and_axes_from_the_ground_shader(gl):
+    """The grid lies on the 0.5 m and 1 m marks counted from the display origin (major lines brighter), the floor in
+    between is untouched, the axes are red (x) and green (y), and with the grid off nothing changes."""
+    assert gl['grid_major'] > 40 and gl['grid_minor'] > 15 and gl['grid_major'] > gl['grid_minor']
+    assert gl['grid_between'] <= 2
+    assert gl['grid_off_same'] == 0
+    assert gl['axis_x_red'] and gl['axis_y_green']
+
+
 def test_tone_reference_shoulder():
     from vantage.ui.render_gl import tone_reference, to_srgb, to_linear, TONE_KNEE
     grey = to_linear([0.5, 0.5, 0.5])

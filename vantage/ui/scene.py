@@ -6,6 +6,7 @@ import math
 import numpy as np
 from PyQt6.QtCore import QObject, pyqtSignal, Qt, QPointF, QRectF, QLineF
 from PyQt6.QtGui import QColor, QPen, QPainter, QFont, QPolygonF, QBrush, QPainterPath
+from PyQt6.QtWidgets import QMenu
 
 from ..core.analysis import surface_frame, camera_frames
 from ..core.lens import resolve
@@ -14,6 +15,7 @@ from ..core.mesh import ROLE_GLASS, ROLE_WHEELS, ROLE_IGNORED
 from . import guides, maps, ops, icons, overlays3d as O3
 from .theme import THEME, mono, sans, STATUS
 from .viewport3d import MeshDraw, GroundDraw, LineDraw, TriDraw
+from .context import OVERLAYS
 from .widgets import paint_chip
 
 MARKER = 7
@@ -251,10 +253,23 @@ class MainScene(QObject):
         ink = np.array(THEME.color('ink').getRgbF()[:3])
         photo = self.ctx.shading == 'photo' or vp.cam.custom is not None
         lit = bool(self.ctx.overlays.get('shadows', True)) and not photo
+        # the floor and the backdrop stay with lighting off: it only drops the shadow and sky-occlusion maps
+        plane = self.mode == 'scene' and not photo and self._road() is None
+        grid = self._shader_grid(vp)
+        o = self.project.origin_offset()
         return Style(shadows=lit and self.mode == 'scene', ao=lit and self.mode == 'scene',
-                     ground_plane=self.mode == 'scene' and not photo and lit and self._road() is None,
+                     ground_plane=plane,
                      ground_rgb=tuple(bg * 0.9 + ink * 0.1), sky_rgb=(0.62, 0.66, 0.72) if dark else (0.86, 0.88, 0.91),
-                     bounce_rgb=(0.24, 0.23, 0.22) if dark else (0.50, 0.48, 0.45))
+                     bounce_rgb=(0.24, 0.23, 0.22) if dark else (0.50, 0.48, 0.45),
+                     grid=grid, axes=grid, origin=(float(o[0]), float(o[1])),
+                     grid_minor=(*ink, 0.07 if dark else 0.10), grid_major=(*ink, 0.15 if dark else 0.20))
+
+    def _shader_grid(self, vp) -> bool:
+        """The floor grid is drawn by the shader renderer's ground (anti-aliased, fading with distance) instead of
+        as lines: a perspective scene view on the plain floor, with a shader renderer."""
+        return (getattr(vp, 'renderer', None) is not None and self.mode == 'scene' and bool(self.ctx.overlays.get('grid', True))
+                and self.ctx.shading != 'photo' and vp.cam.custom is None and self._road() is None
+                and self.bowl_draw(vp) is None)
 
     def camera_lights(self, vp):
         """Cameras for the camera-light overlay (what each camera sees, painted on the body and the ground)."""
@@ -568,7 +583,7 @@ class MainScene(QObject):
         res = self.result
         textured = self.bowl_draw(vp) is not None
         road = self._road()
-        if ov.get('grid', True) and not textured and road is None:
+        if ov.get('grid', True) and not textured and road is None and not self._shader_grid(vp):
             out += self._grid()
         if road is not None:
             out += self._road_edges(road)
@@ -652,6 +667,8 @@ class MainScene(QObject):
         if self.mode == 'scene' and ov.get('wipers'):  # View ▸ Overlays ▸ Wiper sweep (Analysis ▸ Materials)
             from .workspaces.materials_ws import scene_lines as wiper_lines
             out += wiper_lines(self.ctx)
+        if self.mode == 'scene' and ov.get('clocktree'):  # View ▸ Overlays ▸ Timestamp error (Analysis ▸ Clock tree)
+            out += self._clock_tree_lines()
         out += guides.scene_lines(self, vp)
         return out
 
@@ -698,6 +715,36 @@ class MainScene(QObject):
             segs.append([c.pos(), P])
         return [LineDraw(np.array(segs), _qc(STATUS['critical'], 0.55), 1.0, segments=True)]
 
+    CLOCK_SCALE = 50.0         # the timestamp-error overlay magnifies millimetres to see them
+
+    def _clock_tree_lines(self):
+        """The reference lidar's points moved by each camera's timestamp error, × CLOCK_SCALE, in the camera's colour
+        (core.clock_tree.overlay_segments): from the Clock tree page's last result when there is one, else the study's
+        slip setting. Recomputed only when the project or that result changes."""
+        from ..core import clock_tree as CT
+        w = self.ctx.window
+        pg = getattr(w, '_page_widgets', {}).get('clock_tree') if w is not None else None
+        res = getattr(pg, 'res', None)
+        key = (self.ctx.store.revision, id(self.project), id(res))
+        cache = getattr(self, '_ct_cache', None)
+        if cache is None or cache[0] != key:
+            try:
+                segs = CT.overlay_segments(self.project, res, scale=self.CLOCK_SCALE)
+            except Exception:                  # a half-edited rig: draw nothing rather than break the view
+                segs = []
+            out = []
+            by_col = {}
+            for a, b, rgba in segs:
+                by_col.setdefault(rgba, []).append((a, b))
+            for rgba, ab in by_col.items():
+                col = QColor.fromRgbF(*rgba)
+                out.append(LineDraw(np.array(ab, float), col, 1.2, segments=True))
+                ends = np.array([b for _, b in ab], float)
+                tick = np.stack([ends - [0, 0, 0.02], ends + [0, 0, 0.02]], axis=1)   # a short mark at the slipped end
+                out.append(LineDraw(tick, col, 2.4, segments=True))
+            self._ct_cache = cache = (key, out)
+        return cache[1]
+
     def _dimensions(self):
         m = self.project.vehicle.measured()
         lo, hi = self.project.vehicle.mesh.bbox
@@ -733,6 +780,57 @@ class MainScene(QObject):
             heat += f' · blind space up to {vc.result.z[vc.cut_level() - 1] + vc.result.dz / 2:.2f} m'
         return f'{view} · {names.get(self.ctx.shading, "Solid")}{heat}'
 
+    # ------------------------------------------------------------------ view bar
+    SHADING_NAMES = {'solid': 'Solid', 'wire': 'Wire', 'xray': 'X-ray', 'photo': 'Photo-matched'}
+    HEAT_NAMES = {'coverage': 'Coverage', 'density': 'Density', 'redundancy': 'Redundancy', 'stitched': 'Objects'}
+
+    def view_bar(self, vp):
+        """The view bar's buttons, [(key, text, tooltip, icon)]: the main window's 3D scene views only."""
+        w = self.ctx.window
+        if self.mode != 'scene' or self.label_prefix or w is None or not hasattr(w, 'actions_by_id'):
+            return []
+        view = self.hud_label(vp).split(' · ')[0]
+        if vp.cam.custom is not None:
+            view = 'Matched to photo'
+        n_on = sum(1 for k, *_ in OVERLAYS if self.ctx.overlays.get(k))
+        heat = self.HEAT_NAMES.get(self.ctx.heatmap)
+        return [('view', view, 'View: perspective, top, front, side, rear or through a camera; frame; render', 'cube'),
+                ('shading', self.SHADING_NAMES.get(self.ctx.shading, 'Solid'), 'Shading: solid, wire, X-ray or matched '
+                 'to a reference photo', 'shading'),
+                ('overlays', f'Overlays {n_on}', 'Show or hide what is drawn over the scene (several at once)', 'layers'),
+                ('heat', f'Heat map · {heat}' if heat else 'Heat map', 'Colour the ground by coverage, density, '
+                 'redundancy or the objects in the stitched view', 'density')]
+
+    def view_bar_note(self, vp):
+        """What follows the view bar: the parts of the plain label the buttons do not show (the blind space's cut)."""
+        vc = getattr(self.ctx, 'volume', None)
+        if vc is not None and vc.result is not None and (self.show_volume or self.ctx.overlays.get('volume')):
+            return f'blind space up to {vc.result.z[vc.cut_level() - 1] + vc.result.dz / 2:.2f} m'
+        return ''
+
+    def view_bar_menu(self, vp, key):
+        """The menu a view bar button opens: the main window's own actions, so it stays in step with the View menu."""
+        from .navigation import StayOpenMenu
+        w = self.ctx.window
+        a = getattr(w, 'actions_by_id', None)
+        if not a:
+            return None
+        ids = {'view': ['view_persp', 'view_top', 'view_front', 'view_side', 'view_rear', 'view_through', '-',
+                        'frame_all', 'frame_sel', '-', 'render_image', 'turntable'],
+               'shading': ['shade_solid', 'shade_wire', 'shade_xray', 'shade_photo'],
+               'overlays': [f'ov_{k}' for k, *_ in OVERLAYS],
+               'heat': [f'heat_{k}' for k in ('none', *self.HEAT_NAMES)]}.get(key)
+        if ids is None:
+            return None
+        m = StayOpenMenu(vp) if key == 'overlays' else QMenu(vp)
+        m.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        for i in ids:
+            if i == '-':
+                m.addSeparator()
+            elif i in a:
+                m.addAction(a[i])
+        return m
+
     def overlay(self, p: QPainter, vp):
         if self.project.vehicle.mesh is None and self.mode == 'scene':
             p.setFont(sans(12, QFont.Weight.DemiBold))
@@ -745,6 +843,8 @@ class MainScene(QObject):
             p.drawText(QPointF(12, 100), 'or File ▸ New from template')
         sel = set(self.ctx.store.sel_cams)
         cams = [c for c in self.cameras() if c.visible and not (self.ctx.isolate and c.uid not in self.ctx.isolate)]
+        labels = self.mode == 'scene' and bool(self.ctx.overlays.get('labels', True))
+        placed, tags = [], []           # label plates already drawn (nearer and selected first), camera tags to draw
         if cams:
             P = np.array([c.pos() for c in cams])
             sc, dep, ok = vp.project(P)
@@ -765,6 +865,8 @@ class MainScene(QObject):
                     p.setPen(QPen(THEME.color('ink'), 1))
                     p.setBrush(Qt.BrushStyle.NoBrush)
                     p.drawRect(r.adjusted(-2.5, -2.5, 2.5, 2.5))
+                if labels:
+                    tags.append((dep[k], x + s / 2 + 5, y, c))
                 mi = self.ctx.analysis.mounts.get(c.uid) if self.cameras_override is None else None
                 if mi is not None and mi.floating:
                     p.setFont(sans(11))
@@ -776,6 +878,9 @@ class MainScene(QObject):
                     p.drawPixmap(int(x + 14), int(y - 19), icons.pixmap('critical', STATUS['critical'], 12))
                     p.setPen(QColor(240, 239, 236))
                     p.drawText(QPointF(x + 30, y - 9), txt)
+        # camera tags: selected cameras first, then the nearer ones; a tag that would cover another is left out
+        for _, x, y, c in sorted(tags, key=lambda t: (t[3].uid not in sel, t[0])):
+            self._chip(p, x, y, c.tag, accent=THEME.cam(c.slot), placed=placed, strong=c.uid in sel)
         # gizmo
         tg = self._gizmo_target()
         if tg is not None:
@@ -791,16 +896,27 @@ class MainScene(QObject):
                 q, _, ok = vp.project([[t.x, t.y, 0.0]])
                 if ok[0]:
                     s = st.get(t.uid)
-                    p.setFont(mono(11))
-                    p.setPen(THEME.color('ink') if not s or s.ok else QColor(STATUS['critical']))
-                    p.drawText(QPointF(q[0][0] + 10, q[0][1] - 10), t.name)
+                    bad = s is not None and not s.ok
+                    if labels:
+                        self._chip(p, q[0][0] + 10, q[0][1] - 10, t.name, placed=placed,
+                                   ink=QColor(STATUS['critical']) if bad else None,
+                                   swatch=QColor(STATUS['critical']) if bad else None)
+                    else:
+                        p.setFont(mono(11))
+                        p.setPen(THEME.color('ink') if not bad else QColor(STATUS['critical']))
+                        p.drawText(QPointF(q[0][0] + 10, q[0][1] - 10), t.name)
         if self.ctx.overlays.get('dimensions') and hasattr(self, '_dim_labels') and self.mode == 'scene':
             p.setFont(mono(11))
             p.setPen(THEME.color('ink'))
             for x, y, z, txt in self._dim_labels:
                 q, _, ok = vp.project([[x, y, z]])
                 if ok[0]:
-                    p.drawText(QPointF(q[0][0] - 30, q[0][1] + 4), txt)
+                    if labels:
+                        self._chip(p, q[0][0] - 30, q[0][1], txt)
+                    else:
+                        p.setFont(mono(11))
+                        p.setPen(THEME.color('ink'))
+                        p.drawText(QPointF(q[0][0] - 30, q[0][1] + 4), txt)
         # place preview
         if self.ctx.tool == 'place' and self.place_preview is not None:
             self._paint_disc(p, vp, *self.place_preview)
@@ -1075,6 +1191,38 @@ class MainScene(QObject):
             mid = (sc[0] + sc[1]) / 2
             txt = f'{np.linalg.norm(d):.3f} m   Δx {d[0]:+.3f}  Δy {d[1]:+.3f}  Δz {d[2]:+.3f}'
             self._label_box(p, QPointF(mid[0] + 8, mid[1] - 8), [txt])
+
+    def _chip(self, p, x, y, text, swatch=None, ink=None, placed=None, strong=False, accent=None):
+        """A small label plate, its left edge at x and centred on y, with an optional colour swatch before the text or
+        accent bar along its left edge. With placed (the plates drawn so far), a plate that would cover one of them is
+        left out (None); else it joins them."""
+        p.setFont(mono(10, QFont.Weight.DemiBold))
+        fm = p.fontMetrics()
+        sw = 7 if swatch is not None else 0
+        w = fm.horizontalAdvance(text) + 10 + (sw + 4 if sw else 0) + (2 if accent is not None else 0)
+        h = fm.height() + 3
+        r = QRectF(x, y - h / 2, w, h)
+        if placed is not None:
+            if any(r.intersects(q) for q in placed):
+                return None
+            placed.append(r.adjusted(-2, -2, 2, 2))
+        p.setPen(QPen(THEME.color('ink', 0.75) if strong else THEME.color('strong'), 1))
+        p.setBrush(THEME.color('panel', 0.84))
+        p.drawRoundedRect(r, 3, 3)
+        tx = r.left() + 5
+        if accent is not None:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(accent)
+            p.drawRoundedRect(QRectF(r.left() + 1.5, r.top() + 2.5, 2.5, r.height() - 5), 1.2, 1.2)
+            tx += 2
+        if sw:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(swatch)
+            p.drawRoundedRect(QRectF(tx, y - sw / 2, sw, sw), 1.5, 1.5)
+            tx += sw + 4
+        p.setPen(ink or THEME.color('ink'))
+        p.drawText(QPointF(tx, y + fm.ascent() / 2 - 1.5), text)
+        return r
 
     def _label_box(self, p, at, lines, mono_lines=True):
         p.setFont(mono(11) if mono_lines else sans(11))

@@ -8,6 +8,8 @@
 - Touchpad: two fingers orbit, with Shift they pan, with Ctrl (or a pinch) they zoom. A mouse wheel zooms.
 - Keyboard (3D view focused): arrows orbit, Shift+arrows pan, + and − zoom; 1 front, Ctrl+1 rear, 3 side, 7 top,
   5 perspective/orthographic, 0 the default view; F frames the selection and Home everything (main window).
+- The view bar along the top-left edge: buttons for the view, the shading, the overlays and the heat map, each opening
+  the same choices as the View menu (the provider lists them: view_bar and view_bar_menu).
 """
 from __future__ import annotations
 
@@ -15,7 +17,8 @@ import math
 
 import numpy as np
 from PyQt6.QtCore import QPointF, QRectF, Qt
-from PyQt6.QtGui import QColor, QPainter, QPen
+from PyQt6.QtGui import QColor, QFontMetricsF, QPainter, QPen
+from PyQt6.QtWidgets import QMenu
 
 EL_MIN, EL_MAX = -5.0, 89.99      # elevation limits of the orbit, degrees (just below the horizon, not upside down)
 ORBIT_DEG_PER_PX = 0.4
@@ -121,6 +124,9 @@ class NavControl:
 
     def hit(self, pos):
         """What is under pos, or None."""
+        b = self.vp.bar.hit(pos) if self.visible and hasattr(self.vp, 'bar') else None
+        if b is not None:
+            return ('bar', b)
         if not self.enabled():
             return None
         for i, (key, _, _) in enumerate(self.BUTTONS):
@@ -136,6 +142,8 @@ class NavControl:
         return 'ball'
 
     def tooltip(self, what) -> str:
+        if isinstance(what, tuple) and what[0] == 'bar':
+            return self.vp.bar.tooltip(what[1])
         if what == 'ball':
             return 'Drag to orbit · click an axis to look along it'
         if isinstance(what, tuple):
@@ -200,3 +208,118 @@ class NavControl:
             pm = icons.pixmap(icon, col, 14)
             p.drawPixmap(QPointF(b.x() - 7, b.y() - 7), pm)
         p.restore()
+
+
+class StayOpenMenu(QMenu):
+    """A menu whose check boxes toggle without closing it (the overlays), so several can be changed in one go."""
+
+    def mouseReleaseEvent(self, e):
+        a = self.activeAction()
+        if a is not None and a.isCheckable() and a.isEnabled() and a.menu() is None and a.actionGroup() is None:
+            a.trigger()
+            return
+        QMenu.mouseReleaseEvent(self, e)
+
+
+class ViewBar:
+    """The buttons along a 3D view's top-left edge (the view, the shading, the overlays, the heat map), each opening
+    a menu of the window's own actions. The provider lists them, view_bar(vp) -> [(key, text, tooltip, icon)], and
+    builds the menus, view_bar_menu(vp, key) -> QMenu; a provider without them keeps its plain label."""
+
+    H = 22.0
+    GAP = 4.0
+    PAD = 8.0
+    ICON = 12
+
+    def __init__(self, vp):
+        self.vp = vp
+        self.hot = None
+        self.open = None           # the key whose menu is showing
+        self.menu = None
+
+    def items(self):
+        f = getattr(self.vp.provider, 'view_bar', None)
+        if f is None or self.vp.width() < 320:
+            return []
+        try:
+            return f(self.vp) or []
+        except Exception as ex:   # never let a provider's bar take the view down
+            print('view bar:', ex)
+            return []
+
+    def layout(self):
+        """[(key, QRectF, text, tooltip, icon)] left to right; buttons that would run into the navigation control are
+        left out."""
+        from .theme import sans
+        fm = QFontMetricsF(sans(11))
+        x, y = 6.0, 6.0
+        limit = self.vp.width() - 2 * BALL_R - 40.0
+        out = []
+        for key, text, tip, icon in self.items():
+            w = self.PAD + (self.ICON + 5 if icon else 0) + fm.horizontalAdvance(text) + 5 + 8 + self.PAD
+            if x + w > limit:
+                break
+            out.append((key, QRectF(x, y, w, self.H), text, tip, icon))
+            x += w + self.GAP
+        return out
+
+    def right(self) -> float:
+        """x just past the last button (where a note can follow), or 0 without a bar."""
+        lay = self.layout()
+        return lay[-1][1].right() if lay else 0.0
+
+    def hit(self, pos):
+        for key, r, *_ in self.layout():
+            if r.adjusted(-1, -2, 1, 2).contains(pos):
+                return key
+        return None
+
+    def tooltip(self, key) -> str:
+        return next((tip for k, _, _, tip, _ in self.layout() if k == key), '')
+
+    def paint(self, p: QPainter, hot=None):
+        from . import icons
+        from .theme import THEME, sans
+        lay = self.layout()
+        if not lay:
+            return
+        p.save()
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setFont(sans(11))
+        fm = p.fontMetrics()
+        for key, r, text, _, icon in lay:
+            on = key == hot or key == self.open
+            p.setPen(QPen(THEME.color('strong', 0.95 if on else 0.6), 1.0))
+            p.setBrush(THEME.color('sel' if on else 'panel', 0.92 if on else 0.72))
+            p.drawRoundedRect(r, 5, 5)
+            x = r.left() + self.PAD
+            col = THEME.tok['ink'] if on else THEME.tok['ink2']
+            if icon:
+                p.drawPixmap(QPointF(x, r.center().y() - self.ICON / 2), icons.pixmap(icon, col, self.ICON))
+                x += self.ICON + 5
+            p.setPen(THEME.color('ink' if on else 'ink2'))
+            p.drawText(QPointF(x, r.center().y() + fm.ascent() / 2 - 1.5), text)
+            x += fm.horizontalAdvance(text) + 5
+            p.drawPixmap(QPointF(x, r.center().y() - 4), icons.pixmap('chev-d', col, 8))
+        p.restore()
+
+    def popup(self, key):
+        """Open key's menu under its button."""
+        lay = {k: r for k, r, *_ in self.layout()}
+        f = getattr(self.vp.provider, 'view_bar_menu', None)
+        if key not in lay or f is None:
+            return None
+        m = f(self.vp, key)
+        if m is None:
+            return None
+        from PyQt6.QtCore import QPoint
+        self.menu, self.open = m, key
+        m.aboutToHide.connect(self._closed)
+        r = lay[key]
+        m.popup(self.vp.mapToGlobal(QPoint(int(r.left()), int(r.bottom() + 3))))
+        self.vp.update()
+        return m
+
+    def _closed(self):
+        self.open = None
+        self.vp.update()

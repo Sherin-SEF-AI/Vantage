@@ -98,12 +98,21 @@ class PartCard:
         return gfx.to_np(img)
 
 
+def durations(ep=None) -> tuple[float, float]:
+    """(chapter card, part card) seconds for an episode: its own 'cards' durations, else CHAPTER_DUR and PART_DUR
+    (every episode but as070 uses the defaults)."""
+    import chapters as C
+    d = (ep or C.episode()).get('cards') or {}
+    return float(d.get('chapter', CHAPTER_DUR)), float(d.get('part', PART_DUR))
+
+
 def make(entry, seg_root=None):
     """The card object for a sequence entry ('chapter-card' or 'part')."""
+    ch, pt = durations()
     if entry['kind'] == 'part':
-        return PartCard(entry)
+        return PartCard(entry, pt)
     seg_root = seg_root or common.SEG_DIR
-    return ChapterCard(entry, first_frame(os.path.join(seg_root, entry['id'], 'video.mp4')))
+    return ChapterCard(entry, first_frame(os.path.join(seg_root, entry['id'], 'video.mp4')), ch)
 
 
 def preview(cid, out):

@@ -7,7 +7,7 @@ name = "vantage"
 dynamic = ["version"]
 description = "Sensor rig planner for autonomous-driving data collection: place cameras on a vehicle, prove what they record, calibrate them from live streams"
 readme = "README.md"
-license = { text = "GPL-3.0-or-later" }
+license = { text = "GPL-3.0-or-later AND Apache-2.0" }   # Apache-2.0: vantage/runtime (the reference stitchers)
 classifiers = [
     "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Programming Language :: Python :: 3",
@@ -60,4 +60,5 @@ vantage = [
     "runtime/CMakeLists.txt",
     "runtime/*.cpp",
     "runtime/README.md",
+    "runtime/LICENSE",
 ]

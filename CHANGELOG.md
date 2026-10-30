@@ -2,6 +2,49 @@
 
 Versions follow [semantic versioning](https://semver.org). The top entry is what the release notes on GitHub show.
 
+## Unreleased
+
+**What's new**
+
+- **Clock tree and time sync** (Analysis ▸ Clock tree and time sync…, `--clock-tree`): the rig's PPS / gPTP / FSYNC time
+  distribution with editable oscillators, servos, links and timers (typical values with sources), a fault timeline
+  (PPS dropout, grandmaster loss with BMCA, link asymmetry, missed and late FSYNC pulses) as a seeded Monte Carlo,
+  every sensor's timestamp error against true time and the lidar, and the projection error it makes in each camera
+  through the real lens model, with a heat map over the image and 3D overlay segments.
+- **Exposure metering and HDR seams** (Analysis ▸ Exposure metering and HDR seams…): an auto-exposure metering mask
+  per camera through its real lens (no body, rig, housings, sky or the dark beyond the image circle), exported as
+  PNG, a 0–15 metering grid and weighted AE rectangles (libargus `setAeRegions`); and a clear-sky photometric model
+  that predicts each camera's exposure over the campaign and at low sun, a tunnel exit and night, the step across
+  each stitch seam and what the bird's-eye gain balancing leaves of it. Batch `--isp OUT_DIR`.
+- **Calibration coach** (Calibrate ▸ Live rig ▸ Calibration coach): live next-best-view coaching for lens and
+  lidar–camera calibration with a ghost board over the camera's image, per-parameter lock bars from the Fisher
+  information, sharp/duplicate gating, a simulated technician, and hand-off of the views to Lens calibration or
+  Lidar–camera calibration; batch `--calib-coach`.
+- **SUMO traffic in CARLA**: Simulate ▸ CARLA ▸ Traffic runs Eclipse SUMO co-simulated in lockstep (CARLA's own
+  co-simulation package) as the background traffic: bundled, generated (cached) or your own net, seeded demand, CARLA
+  or SUMO running the lights; SUMO's vehicles carry ground truth and run.json names them (`traffic_source`). Batch
+  `--carla-traffic sumo`, `--sumo-net FILE` (exit 7 when SUMO is not in CARLA's Python). SUMO's own time on a 12 s
+  drive: 4 s (Town04) to 11 s (Town10HD).
+- **Gradient refinement of the rig** (Optimise placement ▸ Refine with gradients): L-BFGS-B with torch gradients on a
+  smooth surrogate of the coverage objective (blind ground, ground below the minimum density, critical targets,
+  objects on a seam), annealed from soft to sharp, from the current variant or the Pareto candidates; every result
+  checked with the exact engine; Add as variant; batch `--refine-rig`.
+- **Thermal and vibration drift** (Analysis ▸ Thermal and vibration drift…): how the midday sun warps the rig and how
+  the road shakes it. Every camera's and sensor's move and angle change from its garage calibration hour by hour in
+  full sun (the exposure study's sun, a clear sky, each rig part's temperatures from an energy balance, expansion,
+  bowing and the aluminium rack against the steel roof), camera-lidar and stereo pairs in pixels through the lens;
+  each mount's first mode, flex and blur on an ISO 8608 road through a half-car from the suspension tab, flagged in
+  the body and wheel-hop bands; cobblestones, an expansion joint and a speed bump. Batch `--thermo-vib`.
+- **Log replay** (Simulate ▸ Log replay…): a recorded drive rebuilt as 3D Gaussians (from its lidar and images, or a
+  3DGS .ply), validated on held-out frames and sweeps, re-rendered through a proposed rig's lenses, body, rolling
+  shutter and lidars, and detection compared between the recorded and the proposed rig per class and range; batch
+  `--log-replay DRIVE_DIR OUT_DIR` with `--replay-variant`.
+- **Online self-calibration** (Calibrate ▸ Online self-calibration…): every camera's extrinsics relative to the lidar
+  over a whole recorded drive, window by window; a knock that stays told from an excursion that comes back and from
+  flex with speed, braking, turning or the time of day; the calibration over time as JSON, a nuScenes folder with one
+  calibrated_sensor row per segment and a ROS 2 /tf sidecar bag; `--online-calib DRIVE OUT_DIR` (exit 3 on a knock
+  beyond the tolerance).
+
 ## 0.6.0 — 2026-10-29
 
 The assistant now recommends what to do next, live, about what you are working on: the camera you selected, the edit

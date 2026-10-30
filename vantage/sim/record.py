@@ -437,7 +437,8 @@ class Recorder:
             {'id': int(b['id']), 'instance_token': token('vantage', 'instance', self.run_key, b['id']),
              'category': b['category'], 'name': b['name'], 'centre': [round(float(q), 4) for q in b['centre']],
              'size_lwh': [round(float(q), 4) for q in b['size_lwh']], 'yaw': round(float(b['yaw']), 6),
-             'velocity': [round(float(q), 4) for q in b['velocity']]} for b in boxes]}
+             'velocity': [round(float(q), 4) for q in b['velocity']],
+             **({'sumo_id': b['sumo_id']} if b.get('sumo_id') is not None else {})} for b in boxes]}
         self.bag.write('/ground_truth/boxes', t_ns, {'data': json.dumps(doc, separators=(',', ':'))})
 
     # ------------------------------------------------------------------ the end
@@ -687,6 +688,14 @@ def _readme(doc, rec: Recorder) -> str:
     if scen.get('name') and scen['name'] != 'free_drive':
         lines.append(f'- Scenario: {scen["name"]} ({", ".join(f"{k} {v}" for k, v in scen.get("params", {}).items())}); '
                      f'events in run.json `scenario.events`.')
+    tr = (doc.get('carla') or {}).get('traffic_source')
+    if tr:
+        vc = tr.get('vehicles_in_carla') or {}
+        lines.append(f'- Traffic: Eclipse SUMO {tr.get("sumo_version") or ""} co-simulated in lockstep '
+                     f'({(tr.get("net") or {}).get("kind", "")} net {(tr.get("net") or {}).get("file", "")}, '
+                     f'{tr.get("vehicles_spawned", 0)} vehicles spawned, {vc.get("mean", 0):g} on average in CARLA, '
+                     f'traffic lights run by {(tr.get("tls") or {}).get("owner", "carla").upper()}); each SUMO '
+                     'vehicle\'s id and type in run.json `traffic_source.actors`.')
     if (doc.get('carla') or {}).get('actors'):
         lines.append(f'- An actors scene: {len(doc["carla"]["actors"])} actors around the ego, which stands still '
                      '(run.json `actors`).')

@@ -9,7 +9,9 @@ NVIDIA driver loaded, the loader is pointed at NVIDIA's Vulkan driver only (unle
 is set already): Unreal could otherwise pick an integrated GPU, the one that usually drives the desktop.
 
 The bridge (vantage.sim.carla_bridge) runs in CARLA's own Python (a venv with the carla wheel, numpy, OpenCV and
-PyYAML) with Vantage's source folder on PYTHONPATH, in a capped scope of its own.
+PyYAML) with Vantage's source folder on PYTHONPATH, in a capped scope of its own. SUMO traffic (vantage.sim.sumo_cosim)
+needs eclipse-sumo, traci and sumolib in that Python: check_sumo asks it (in a child process, cached), and SUMO runs as
+the bridge's child in the bridge's scope.
 """
 from __future__ import annotations
 
@@ -103,6 +105,87 @@ def check_client(python, timeout=60.0) -> dict:
                    f'Missing in CARLA\'s Python: {", ".join(out["missing"])} (pip install carla==0.9.16 numpy '
                    'opencv-python-headless pyyaml zstandard)')
     return out
+
+
+SUMO_MODULES = ('sumo', 'traci', 'sumolib', 'lxml')
+SUMO_PACKAGES = ('eclipse-sumo==1.23.1', 'traci==1.23.1', 'sumolib==1.23.1')   # (sumo_cosim.PIP_PACKAGES)
+_SUMO_CHECKS = {}                       # (python, its environment's stamp) -> check_sumo's answer
+
+
+def sumo_install_command(python) -> str:
+    """The command that installs SUMO into CARLA's Python (shown as text; Vantage never runs it)."""
+    return 'uv pip install --python ' + (python or "<CARLA's python>") + ' ' + ' '.join(SUMO_PACKAGES)
+
+
+def _env_stamp(python) -> tuple:
+    """What changes when packages are installed into the Python's environment: its site-packages folders' times."""
+    venv = os.path.dirname(os.path.dirname(os.path.abspath(python)))
+    out = []
+    for d in sorted(glob.glob(os.path.join(venv, 'lib', 'python*', 'site-packages'))):
+        try:
+            out.append((d, os.stat(d).st_mtime_ns))
+        except OSError:
+            pass
+    try:
+        out.append((python, os.stat(python).st_mtime_ns))
+    except OSError:
+        pass
+    return tuple(out)
+
+
+def check_sumo(python, timeout=60.0, refresh=False) -> dict:
+    """Whether CARLA's Python has SUMO for the co-simulation (sumo, traci, sumolib, lxml), asked of that Python in a
+    child process (never imported into Vantage) and cached until its environment changes: {'ok', 'version' (the
+    eclipse-sumo package), 'traci', 'sumolib', 'sumo_home', 'binary', 'missing', 'text', 'install'}."""
+    install = sumo_install_command(python)
+    if not python or not os.path.isfile(python):
+        return {'ok': False, 'missing': list(SUMO_MODULES), 'install': install,
+                'text': 'No Python for CARLA\'s client chosen.'}
+    key = (os.path.abspath(python), _env_stamp(python))
+    if not refresh and key in _SUMO_CHECKS:
+        return dict(_SUMO_CHECKS[key])
+    code = ('import importlib, json, os\nout = {"missing": []}\n'
+            f'for m in {SUMO_MODULES!r}:\n'
+            '    try:\n        mod = importlib.import_module(m)\n'
+            '        if m == "sumo":\n            out["sumo_home"] = getattr(mod, "SUMO_HOME", "")\n'
+            '    except Exception:\n        out["missing"].append(m)\n'
+            'from importlib.metadata import version\n'
+            'for k, d in (("version", "eclipse-sumo"), ("traci", "traci"), ("sumolib", "sumolib")):\n'
+            '    try:\n        out[k] = version(d)\n    except Exception:\n        out[k] = ""\n'
+            'b = os.path.join(out.get("sumo_home") or "", "bin", "sumo")\n'
+            'out["binary"] = b if os.path.isfile(b) or os.path.isfile(b + ".exe") else ""\n'
+            'print(json.dumps(out))\n')
+    try:
+        r = subprocess.run([python, '-I', '-c', code], capture_output=True, text=True, timeout=timeout,
+                           env=_clean_env())
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+    except (OSError, subprocess.TimeoutExpired, ValueError, IndexError) as e:
+        return {'ok': False, 'missing': list(SUMO_MODULES), 'install': install,
+                'text': f'{python} did not answer ({type(e).__name__}).'}
+    if not out.get('missing') and not out.get('binary'):
+        out['missing'] = ['sumo binary']
+    out['ok'] = not out['missing']
+    out['install'] = install
+    out['text'] = (f'SUMO {out.get("version") or "?"} in CARLA\'s Python (traci {out.get("traci") or "?"})' if out['ok']
+                   else f'SUMO is not in CARLA\'s Python (missing {", ".join(out["missing"])}): install it with '
+                        + install)
+    _SUMO_CHECKS[key] = dict(out)
+    return out
+
+
+def cosim_folder(root) -> str:
+    """CARLA's SUMO co-simulation folder (Co-Simulation/Sumo with sumo_integration/) in a CARLA folder, or ''."""
+    d = os.path.join(root or '', 'Co-Simulation', 'Sumo')
+    return d if root and os.path.isfile(os.path.join(d, 'sumo_integration', 'sumo_simulation.py')) else ''
+
+
+def sumo_bundled_towns(root) -> list:
+    """The towns CARLA bundles a SUMO net for (Co-Simulation/Sumo/examples/net/<town>.net.xml)."""
+    d = os.path.join(cosim_folder(root), 'examples', 'net') if cosim_folder(root) else ''
+    try:
+        return sorted(n[:-8] for n in os.listdir(d) if n.endswith('.net.xml')) if d else []
+    except OSError:
+        return []
 
 
 def _clean_env(extra=None) -> dict:

@@ -4,6 +4,10 @@ and compare it with the plan.
 Each board is cut out of the fisheye image as a rectified pinhole view (exact lens model), the chessboard
 corners are found there with OpenCV, turned back into bearing rays in the camera's optical frame and fed to
 PnP together with the boards' known floor positions.
+
+When glare, a half-hidden board or a large mounting error defeats the detection, the board corners can be picked by
+hand instead (solve_from_picks): four or more picked corners give the whole pose, two or three the rotation with the
+position as planned, and the picked pose then seeds the automatic detection again.
 """
 from __future__ import annotations
 
@@ -39,6 +43,7 @@ class BoardObs:
     image_pts: np.ndarray        # (N,2) corner positions in the captured image (pixels of that image)
     predicted: np.ndarray        # (N,2) where the plan put them (same image pixels)
     outline: np.ndarray          # (4,2) predicted board outline in image pixels
+    picked: bool = False         # corners picked by hand (board outline corners), not detected
 
 
 @dataclass
@@ -60,6 +65,10 @@ class PoseResult:
     joint: bool = False
     detected: list = field(default_factory=list)   # every board found, incl. ones the camera's own solve set aside
     rot_err_deg: float = float('nan')                # angle of the rotation from the planned to the measured pose
+    method: str = 'detected'      # detected | picked+detected (picks seeded the detection) | picked | picked-rotation
+    picked: int = 0               # picked corners the solve used
+    pick_err_px: list = field(default_factory=list)  # [(target uid, corner, px)] each pick's distance to the solve
+    img_px: float = 1.0           # image pixels per sensor pixel, at least 1 (how far off a pick may be)
 
 
 def inner_corners(t: Target) -> np.ndarray:
@@ -330,24 +339,217 @@ def check_camera(project: Project, cam: Camera, img, st: InstallSettings | None 
         return res
     try:
         R, pos, rms = solve_pose(project, cam, obs, img.shape)
-        # the boards were cut out where the plan predicts them; with a large mounting error that clips them.
-        # Detect again around the solved pose, drop boards that disagree with the rest and solve again.
-        for _ in range(2):
-            again = {o.target_uid: o for o in detect_boards(img, project, cam, pose=(R, pos))}
-            have = {o.target_uid for o in obs}
-            merged = [again.get(o.target_uid, o) for o in obs] + [o for u, o in again.items() if u not in have]
-            # keep every board for the joint solve: one that disagrees here may just lie off its planned place
-            res.detected = [o for o in res.detected if o.target_uid not in {m.target_uid for m in merged}] + merged
-            obs = _reject_outliers(project, cam, merged, img.shape, (R, pos))
-            R, pos, rms = solve_pose(project, cam, obs, img.shape, init=(R, pos))
-        res.boards = obs
-        res.n_corners = int(sum(len(o.world) for o in obs))
+        R, pos, rms = _refine(project, cam, img, obs, R, pos, res)
     except Exception as e:
         res.status = 'serious'
         res.message = f'Pose solve failed: {e}'
         return res
     _grade(res, cam, R, pos, rms, st)
     return res
+
+
+def _refine(project, cam, img, obs, R, pos, res, keep=()):
+    """The boards were cut out where the plan predicts them; with a large mounting error that clips them. Detect again
+    around the solved pose, drop boards that disagree with the rest and solve again (twice). keep: picked boards, kept
+    in every solve until the detection finds the board; they stay out of the vote on outliers, where a board of three
+    picked corners would fit its own pose exactly and win. Fills res.boards, res.detected and res.n_corners."""
+    for _ in range(2):
+        again = {o.target_uid: o for o in detect_boards(img, project, cam, pose=(R, pos))}
+        base = [o for o in obs if not o.picked]
+        have = {o.target_uid for o in base}
+        merged = [again.get(o.target_uid, o) for o in base] + [o for u, o in again.items() if u not in have]
+        # keep every board for the joint solve: one that disagrees here may just lie off its planned place
+        res.detected = [o for o in res.detected if o.target_uid not in {m.target_uid for m in merged}] + merged
+        obs = _reject_outliers(project, cam, merged, img.shape, (R, pos)) if merged else []
+        obs += [o for o in keep if o.target_uid not in {b.target_uid for b in merged}]
+        R, pos, rms = solve_pose(project, cam, obs, img.shape, init=(R, pos))
+    res.boards = obs
+    res.n_corners = int(sum(len(o.world) for o in obs))
+    return R, pos, rms
+
+
+# ----------------------------------------------------------------------------- corners picked by hand
+def planned_corners(project: Project, cam: Camera, img_shape, targets=None, pose=None) -> list:
+    """Where each board's four outline corners fall in the image under the plan (or pose): [(target uid, name,
+    (4,2) image pixels, (4,) in view)], for the boards with at least one corner in view. The corners are numbered as
+    board_outline numbers them, which is how picks name them."""
+    intr = resolve(project.module_for(cam), project.lens_for(cam))
+    sx, sy = _scale(intr, img_shape)
+    R0, p0 = (rot_zyx(cam.yaw, cam.pitch, cam.roll), cam.pos()) if pose is None else \
+        (np.asarray(pose[0], float), np.asarray(pose[1], float))
+    out = []
+    for t in (project.targets if targets is None else targets):
+        uv, ok = _project(intr, R0, p0, board_outline(t), sx, sy)
+        if ok.any():
+            out.append((t.uid, t.name, uv, ok))
+    return out
+
+
+def picked_obs(project: Project, cam: Camera, picks: dict, img_shape) -> list[BoardObs]:
+    """Board observations from picked corners. picks: {target uid: {corner index 0-3: (u, v) image pixels}}."""
+    intr = resolve(project.module_for(cam), project.lens_for(cam))
+    sx, sy = _scale(intr, img_shape)
+    R0, p0 = rot_zyx(cam.yaw, cam.pitch, cam.roll), cam.pos()
+    targets = {t.uid: t for t in project.targets}
+    out = []
+    for tu, corners in picks.items():
+        t = targets.get(tu)
+        ks = sorted(int(k) for k in corners if 0 <= int(k) < 4) if t is not None else []
+        if not ks:
+            continue
+        uv = np.array([corners[k] if k in corners else corners[str(k)] for k in ks], float).reshape(-1, 2)
+        rays, _ = intr.unproject(uv[:, 0] / sx, uv[:, 1] / sy)
+        rays = rays / np.linalg.norm(rays, axis=1, keepdims=True)
+        world = board_outline(t)[ks]
+        outl, _ = _project(intr, R0, p0, board_outline(t), sx, sy)
+        pred, _ = _project(intr, R0, p0, world, sx, sy)
+        out.append(BoardObs(t.uid, t.name, world, rays, uv, pred, outl, picked=True))
+    return out
+
+
+def picks_to_rows(project: Project, picks: dict) -> list:
+    """{target uid: {corner: (u, v)}} -> [{'board': name, 'corner': k, 'x': u, 'y': v}] (the report's and
+    --install-picks' form; boards by name, corners 0-3 as board_outline numbers them)."""
+    names = {t.uid: t.name for t in project.targets}
+    return [{'board': names[tu], 'corner': int(k), 'x': round(float(uv[0]), 2), 'y': round(float(uv[1]), 2)}
+            for tu, cs in picks.items() if tu in names for k, uv in sorted(cs.items(), key=lambda kv: int(kv[0]))]
+
+
+def picks_from_rows(project: Project, rows) -> tuple[dict, list]:
+    """[{'board', 'corner', 'x', 'y'}] -> ({target uid: {corner: (u, v)}}, [what could not be used])."""
+    by_name = {t.name.lower(): t.uid for t in project.targets}
+    out, bad = {}, []
+    for r in rows or []:
+        try:
+            tu = by_name.get(str(r['board']).lower())
+            k = int(r['corner'])
+            uv = (float(r['x']), float(r['y']))
+        except (KeyError, TypeError, ValueError):
+            bad.append(f'not a picked corner: {r!r}')
+            continue
+        if tu is None:
+            bad.append(f'no board named {r["board"]!r} in the project')
+        elif not 0 <= k < 4:
+            bad.append(f'{r["board"]}: corner {k} is not 0-3')
+        elif not all(math.isfinite(v) for v in uv):
+            bad.append(f'{r["board"]}: corner {k} has no position')
+        else:
+            out.setdefault(tu, {})[k] = uv
+    return out, bad
+
+
+def _rotation_from_rays(cam: Camera, obs: list[BoardObs]):
+    """Rotation only (Kabsch) with the camera at its planned position: (R_body_to_world, position)."""
+    p0 = cam.pos()
+    W = np.concatenate([o.world for o in obs]) - p0
+    W /= np.linalg.norm(W, axis=1, keepdims=True)
+    D = np.concatenate([o.rays for o in obs])
+    U, _, Vt = np.linalg.svd(W.T @ D)                       # W2O maps world directions onto the rays
+    S = np.diag([1.0, 1.0, np.sign(np.linalg.det(Vt.T @ U.T))])
+    W2O = Vt.T @ S @ U.T
+    return (BODY_TO_OPTICAL.T @ W2O).T, p0
+
+
+def _non_degenerate(obs) -> bool:
+    """Four or more picked points that span the floor (not all on one line), enough for the whole pose."""
+    W = np.concatenate([o.world for o in obs])[:, :2]
+    if len(W) < 4:
+        return False
+    sv = np.linalg.svd(W - W.mean(axis=0), compute_uv=False)
+    return sv[-1] > 0.05 * max(sv[0], 1e-9)
+
+
+def solve_from_picks(project: Project, cam: Camera, img, picks: dict, st: InstallSettings | None = None) -> PoseResult:
+    """The installed pose from board corners picked by hand, for a camera the detection fails on (glare, a board
+    partly hidden, a mounting error too large for the planned cut-outs). Four or more picks that span the floor give
+    the whole pose, two or three the rotation with the position as planned. The picked pose then seeds the automatic
+    detection: boards found around it replace their picks (their corners are far more precise), the others' picks
+    stay in the solve."""
+    st = st or InstallSettings()
+    res = PoseResult(cam.uid, cam.tag)
+    obs = picked_obs(project, cam, picks, img.shape)
+    n = int(sum(len(o.world) for o in obs))
+    if n < 2:
+        res.status = 'serious'
+        res.message = 'Pick at least two board corners (four or more for the position too).'
+        return res
+    try:
+        full = _non_degenerate(obs)
+        if full:
+            R, pos, rms = solve_pose(project, cam, obs, img.shape)
+        else:
+            R, pos = _rotation_from_rays(cam, obs)
+        # boards found around the picked pose; with those also found around the plan's, which can cut a board out
+        # better than a pose from a few clicks (or, under a large error, clip it): the second wins only when it
+        # detects more boards and fits about as well
+        seeded = detect_boards(img, project, cam, pose=(R, pos))
+        both = seeded + [o for o in detect_boards(img, project, cam) if o.target_uid not in {f.target_uid for f in seeded}]
+        px = max(0.5, img.shape[1] / resolve(project.module_for(cam), project.lens_for(cam)).width)
+        best = None
+        for found in [f for f in (seeded, both) if f][:1 if len(both) == len(seeded) else 2]:
+            r = PoseResult(cam.uid, cam.tag, detected=list(found))
+            keep = [o for o in obs if o.target_uid not in {f.target_uid for f in found}]
+            P = solve_pose(project, cam, found + keep, img.shape, init=(R, pos))
+            P = _refine(project, cam, img, found, P[0], P[1], r, keep=keep)
+            n_det = sum(not o.picked for o in r.boards)
+            if best is None or (n_det > best[0] and P[2] <= 2 * best[2][2] + 0.3 * px) or \
+                    (n_det == best[0] and P[2] < best[2][2]):
+                best = (n_det, r, P)
+        if best is not None:
+            _, r, (R, pos, rms) = best
+            res.boards, res.detected, res.n_corners = r.boards, r.detected, r.n_corners
+            res.method = 'picked+detected'
+        else:
+            res.boards, res.detected = obs, list(obs)
+            res.n_corners = n
+            if full:
+                res.method = 'picked'
+            else:
+                res.method = 'picked-rotation'
+                intr = resolve(project.module_for(cam), project.lens_for(cam))
+                sx, sy = _scale(intr, img.shape)
+                W = np.concatenate([o.world for o in obs])
+                uv = np.concatenate([o.image_pts for o in obs])
+                rep, _ = _project(intr, R, pos, W, sx, sy)
+                rms = float(np.sqrt(np.mean(np.sum((rep - uv) ** 2, axis=1))))
+    except Exception as e:
+        res.status = 'serious'
+        res.message = f'Pose solve from the picked corners failed: {e}'
+        return res
+    res.picked = int(sum(len(o.world) for o in res.boards if o.picked))
+    res.pick_err_px = _pick_errors(project, cam, obs, img.shape, (R, pos))
+    res.img_px = max(1.0, img.shape[1] / resolve(project.module_for(cam), project.lens_for(cam)).width)
+    _grade(res, cam, R, pos, rms, st)
+    return res
+
+
+def _method_note(res: PoseResult) -> str:
+    """What the picked corners did, for the message ('' for a camera solved from detected boards alone)."""
+    if res.method == 'detected':
+        return ''
+    n = sum(1 for _ in res.pick_err_px)
+    note = {'picked+detected': ' · picked corners found the boards',
+            'picked': f' · from {n} picked corners (less certain)',
+            'picked-rotation': f' · rotation from {n} picked corners, position as planned (pick four or more for it)'
+            }[res.method]
+    worst = max((e for *_, e in res.pick_err_px), default=0.0)
+    if worst > 15 * res.img_px:
+        note += f' · a pick is {worst:.0f} px off the solve: check it is the right corner'
+    return note
+
+
+def _pick_errors(project, cam, obs, img_shape, pose) -> list:
+    intr = resolve(project.module_for(cam), project.lens_for(cam))
+    sx, sy = _scale(intr, img_shape)
+    targets = {t.uid: t for t in project.targets}
+    out = []
+    for o in obs:
+        outl = board_outline(targets[o.target_uid])
+        for w, uv in zip(o.world, o.image_pts):
+            k = int(np.argmin(np.linalg.norm(outl - w, axis=1)))
+            rep, _ = _project(intr, pose[0], pose[1], w[None], sx, sy)
+            out.append((o.target_uid, k, float(np.linalg.norm(rep[0] - uv))))
+    return out
 
 
 def _grade(res: PoseResult, cam: Camera, R, pos, rms, st: InstallSettings):
@@ -370,24 +572,30 @@ def _grade(res: PoseResult, cam: Camera, R, pos, rms, st: InstallSettings):
     else:
         res.status = 'serious'
         res.message = f'Off by {worst_p:.0f} mm / {worst_a:.1f}°: re-mount'
-    if len(res.boards) == 1:
+    if len(res.boards) == 1 and res.method in ('detected', 'picked+detected'):
         res.message += ' · one board only (less certain)'
+    res.message += _method_note(res)
 
 
-def check_all(project: Project, cams, images: dict, st: InstallSettings | None = None, progress=None):
+def check_all(project: Project, cams, images: dict, st: InstallSettings | None = None, progress=None, picks=None):
     """Check every camera that has an image: ({uid: PoseResult}, JointResult or None).
-    With st.joint the per-camera poses are refined together with the board placement (core.joint)."""
+    With st.joint the per-camera poses are refined together with the board placement (core.joint).
+    picks: {camera uid: {target uid: {corner: (u, v)}}}: a camera with picks is solved from them (solve_from_picks)."""
     st = st or InstallSettings()
     results = {}
     cams = [c for c in cams if c.uid in images]
     for i, c in enumerate(cams):
-        r = check_camera(project, c, images[c.uid], st)
+        if (picks or {}).get(c.uid):
+            r = solve_from_picks(project, c, images[c.uid], picks[c.uid], st)
+        else:
+            r = check_camera(project, c, images[c.uid], st)
         r.img_w = images[c.uid].shape[1]
         results[c.uid] = r
         if progress:
             progress((i + 1) / (len(cams) + (1 if st.joint else 0)), f'Checked {c.tag}: {len(r.boards)} board(s)')
     jr = None
-    solved = [c for c in cams if results[c.uid].pos is not None]
+    # a rotation from two or three picks has no measured position to refine: it stays out of the joint solve
+    solved = [c for c in cams if results[c.uid].pos is not None and results[c.uid].method != 'picked-rotation']
     if st.joint and len(solved) >= 2:
         from .joint import joint_solve
         obs = {c.uid: results[c.uid].detected or results[c.uid].boards for c in solved}

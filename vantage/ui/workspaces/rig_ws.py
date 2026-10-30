@@ -1,5 +1,7 @@
 """Calibrate ▸ Live rig: every camera's stream at once, with its health (frame rate, drops, exposure, sharpness, sync)
-and a check that each camera still looks where the plan says it does."""
+and a check that each camera still looks where the plan says it does; and the calibration coach (ui.live_calib_coach,
+core.calib_coach): while a board is held in front of one camera, how firmly the views so far pin its lens (or its
+lidar), where to hold the board next (a ghost board over the live image) and when to stop."""
 from __future__ import annotations
 
 import copy
@@ -16,10 +18,12 @@ from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QSp
 from ...core import capture as cap
 from ...core import rig_health as rh
 from ..theme import THEME, STATUS, mono, sans
-from ..widgets import label, button, tool_button, Chip
+from ..widgets import label, button, tool_button, Chip, SegmentedControl
+from ..live_calib_coach import CoachPanel
 from .install_ws import to_qimage
 
 KINDS = [('none', 'Not set'), ('synthetic', 'Synthetic'), ('stream', 'Stream')]
+MODES = [('health', 'Health'), ('coach', 'Calibration coach')]
 DOT = {'ok': STATUS['good'], 'warning': STATUS['warning'], 'fault': STATUS['critical']}
 VIDEO_FILTER = 'Video (*.mp4 *.mkv *.avi *.mov *.webm *.h264 *.h265 *.mjpeg);;All files (*)'
 
@@ -111,6 +115,10 @@ class RigTile(QWidget):
         p.end()
 
     def _overlay(self, p, cam, rect):
+        if self.page.mode == 'coach':
+            if self.uid == self.page.coach.cam_uid():
+                self.page.coach.paint(p, rect)
+            return
         ev = self.page.views.get(cam.tag)
         if ev is None:
             return
@@ -193,6 +201,7 @@ class RigPage(QWidget):
         self._drift_busy = False
         self._drift_t = 0.0
         self._rr = 0
+        self.mode = 'health'              # health | coach
         self.sig = _Signals()
         self.sig.view.connect(self._on_view)
 
@@ -212,6 +221,7 @@ class RigPage(QWidget):
         ctx.store.changed.connect(self._on_store_changed)
         ctx.store.project_replaced.connect(self._on_project_replaced)
         self._rebuild()
+        self.destroyed.connect(self.coach.shutdown)
 
     # ------------------------------------------------------------------ layout
     def _build_left(self):
@@ -225,6 +235,11 @@ class RigPage(QWidget):
                            'cameras capture. The dashed outline is where the plan puts the body in each image; a '
                            'camera that has moved shows its body edge somewhere else.', muted=True, small=True,
                            wrap=True))
+        self.mode_seg = SegmentedControl(MODES, 'health')
+        self.mode_seg.changed.connect(self.set_mode)
+        self.mode_seg.setToolTip('Health: every stream\'s statistics. Calibration coach: guide a board held in front '
+                                 'of one camera until its calibration is pinned')
+        ll.addWidget(self.mode_seg)
         ll.addSpacing(4)
         ll.addWidget(label('Streams', bold=True))
         self.src_grid = QGridLayout()
@@ -237,7 +252,11 @@ class RigPage(QWidget):
                            'Saved with the project and shared with the installation check.', muted=True, small=True,
                            wrap=True))
         ll.addSpacing(6)
-        ll.addWidget(label('Overlay', bold=True))
+        self.health_box = QWidget()
+        hl = QVBoxLayout(self.health_box)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.setSpacing(4)
+        hl.addWidget(label('Overlay', bold=True))
         self.show_edge = QCheckBox('Planned body outline')
         self.show_edge.setChecked(True)
         self.show_horizon = QCheckBox('Planned horizon')
@@ -249,10 +268,14 @@ class RigPage(QWidget):
                                    'measures the pose.')
         for cb in (self.show_edge, self.show_horizon, self.show_score):
             cb.toggled.connect(self._overlay_changed)
-            ll.addWidget(cb)
-        ll.addWidget(label('Indicator only: a high value means the body edge is not where it was planned (a moved camera, '
+            hl.addWidget(cb)
+        hl.addWidget(label('Indicator only: a high value means the body edge is not where it was planned (a moved camera, '
                            'or a scene with few edges). Measure with the installation check.', muted=True, small=True,
                            wrap=True))
+        ll.addWidget(self.health_box)
+        self.coach = CoachPanel(self)
+        self.coach.setVisible(False)
+        ll.addWidget(self.coach)
         ll.addStretch(1)
         self.status = label('Stopped', muted=True, small=True, wrap=True)
         ll.addWidget(self.status)
@@ -330,15 +353,21 @@ class RigPage(QWidget):
             if self.running:
                 self._judge_against()
                 self.monitor.update(self.ctx.store.project, self._cams(), self._engine)
+                self.coach.install_technician()
             self._repaint()
+        self.coach.on_store_changed(sections)
 
     def _on_project_replaced(self, *_):
         self.stop()
         self._resume = False
+        self.coach.remove_technician()
         self.monitor = rh.RigMonitor()
         self.snap = None
         self.views, self.view_fail = {}, {}
         self._rebuild()
+        self.coach.sync_fields()
+        if self.mode == 'coach':
+            self.coach.rebuild()
 
     def _rebuild(self):
         cams = self._cams()
@@ -384,6 +413,12 @@ class RigPage(QWidget):
         while self.tile_grid.count():
             self.tile_grid.takeAt(0)
         tiles = list(self.tiles.values())
+        cu = self.coach.cam_uid() if self.mode == 'coach' else None
+        if cu in self.tiles:
+            for t in tiles:
+                t.setVisible(t.uid == cu)
+            self.tile_grid.addWidget(self.tiles[cu], 0, 0)
+            return
         if self.single and self.selected in self.tiles:
             for t in tiles:
                 t.setVisible(t.uid == self.selected)
@@ -520,6 +555,8 @@ class RigPage(QWidget):
             self._repaint()
             return
         self.monitor.start()
+        if self.mode == 'coach':
+            self.coach.install_technician()
         self.snap = self.monitor.snapshot()
         self.timer.start()
         self._sync_buttons()
@@ -573,7 +610,10 @@ class RigPage(QWidget):
         self.snap = self.monitor.snapshot()
         self._repaint()
         self._summary()
-        self._drift_step()
+        if self.mode == 'coach':
+            self.coach.tick()
+        else:
+            self._drift_step()
 
     def _repaint(self):
         for t in self.tiles.values():
@@ -705,6 +745,44 @@ class RigPage(QWidget):
         for t in self.tiles.values():
             if t.tag == tag:
                 t.update()
+
+    # ------------------------------------------------------------------ calibration coach
+    def set_mode(self, mode):
+        """'health' (every stream) or 'coach' (the calibration coach on one camera)."""
+        if mode not in dict(MODES) or mode == self.mode:
+            self.mode_seg.set_value(self.mode)
+            return
+        self.mode = mode
+        self.mode_seg.set_value(mode)
+        coach = mode == 'coach'
+        self.health_box.setVisible(not coach)
+        self.coach.setVisible(coach)
+        if coach:
+            self.coach.activate()
+        else:
+            self.coach.deactivate()
+        self._layout_tiles()
+        self._repaint()
+
+    def coach_camera_changed(self):
+        self._layout_tiles()
+        self._repaint()
+
+    def repaint_coach(self):
+        uid = self.coach.cam_uid()
+        if uid in self.tiles:
+            self.tiles[uid].update()
+
+    def coach_state(self):
+        """The coach's state (JSON-ready) while it is on, else None (for the assistant)."""
+        if self.mode != 'coach' or not self.coach.state.get('built'):
+            return None
+        from ...core import calib_coach as CC
+        st = self.coach.state
+        adv = st.get('advice')
+        return CC._clean({'camera': st['cam_tag'], 'lidar': st.get('lidar'), 'views': st['views'],
+                          'status': st.get('status'), 'next': adv.text if adv is not None else None,
+                          'next_vehicle': adv.text_vehicle if adv is not None else None})
 
     # ------------------------------------------------------------------ selection
     def select(self, uid):

@@ -89,7 +89,7 @@ _UID = re.compile(r'(?<![0-9a-f])[0-9a-f]{10}(?![0-9a-f])')
 # an absolute path inside a string (not a URL): its folders are dropped, its last part kept
 _ABS = re.compile(r'(?<![\w:/.\\-])(?:[A-Za-z]:[\\/]|~[\\/]|/)(?:[^\s"\'<>|*?\\/]+[\\/])+([^\s"\'<>|*?\\/]*)')
 _PATH_KEYS = ('path', 'source', 'file', 'folder', 'dir', 'out_dir', 'project_file')
-_UI_ONLY = ('live', 'heatmap', 'assistant', 'automation', 'copilot')
+_UI_ONLY = ('live', 'heatmap', 'assistant', 'automation', 'copilot', 'assistant_log')   # not the design: left out of the hash
 _BASE_ANALYSIS = ('cell_m', 'min_density', 'target_density', 'obstacle_mode', 'tol_deg', 'tol_mm', 'load_cases')
 
 # project.analysis key -> (core module, settings accessor): a function of the project or a settings class
@@ -108,7 +108,10 @@ _SETTINGS = {
     'guidelines': ('guidelines', 'GuidelineSettings'), 'stitched': ('stitched_objects', 'Settings'),
     'bowl': ('bowl', 'BowlShape'), 'experiments': ('experiments', 'settings_of'), 'sim': ('simrig', 'settings_of'),
     'detection': ('detection_eval', 'settings_of'), 'campaign': ('simcampaign', 'settings_of'),
-    'critical_carla': ('critical_carla', 'settings_of'),
+    'critical_carla': ('critical_carla', 'settings_of'), 'clock_tree': ('clock_tree', 'settings_of'),
+    'isp': ('isp_photometrics', 'settings_of'), 'calib_coach': ('calib_coach', 'settings_of'),
+    'diff_optim': ('diff_optim', 'settings_of'), 'thermo_vib': ('thermo_vib', 'settings_of'),
+    'splat': ('splat_reproject', 'settings_of'), 'online_calib': ('online_calib', 'settings_of'),
 }
 # study (a schema's name or an export format id) -> the project.analysis settings it reads besides the base ones
 STUDY_SETTINGS = {
@@ -126,7 +129,13 @@ STUDY_SETTINGS = {
     'sim_rig': ('sim', 'weather'), 'sim_run': ('sim', 'weather'), 'validation': (),
     'detection_quality': ('detection',), 'sim_campaign': ('campaign', 'sim', 'weather', 'detection'),
     'critical_carla': ('critical_carla', 'critical', 'perception', 'sim'), 'ground_truth_summary': (),
-    'sim_live': ('sim',),
+    'sim_live': ('sim',), 'clock_tree': ('clock_tree', 'timing', 'power'),
+    'isp': ('isp', 'exposure', 'weather', 'housings'),
+    'calib_coach': ('calib_coach', 'observability', 'lidar_calib', 'requirements'),
+    'diff_optim': ('diff_optim', 'critical', 'housings', 'terrain'),
+    'thermo_vib': ('thermo_vib', 'suspension', 'terrain', 'exposure', 'timing', 'observability', 'brackets'),
+    'splat': ('splat', 'detection', 'timing', 'housings'), 'log_replay': ('splat', 'detection', 'timing', 'housings'),
+    'online_calib': ('online_calib', 'drivelog', 'asbuilt', 'timing'),
 }
 # a batch output's schema name -> the option that writes it
 SCHEMA_OPTION = {
@@ -142,7 +151,9 @@ SCHEMA_OPTION = {
     'dataset': 'dataset', 'reproduce': 'reproduce', 'experiments': 'experiment', 'experiment_spec': 'experiment',
     'sim_rig': 'carla_rig', 'sim_run': 'carla_run', 'validation': 'validate',
     'detection_quality': 'detection_quality', 'sim_campaign': 'campaign', 'critical_carla': 'critical_carla',
-    'ground_truth_summary': 'ground_truth_summary', 'sim_live': 'carla_live',
+    'ground_truth_summary': 'ground_truth_summary', 'sim_live': 'carla_live', 'clock_tree': 'clock_tree',
+    'isp': 'isp', 'calib_coach': 'calib_coach', 'diff_optim': 'refine_rig',
+    'thermo_vib': 'thermo_vib', 'splat': 'log_replay', 'online_calib': 'online_calib',
 }
 
 
@@ -612,7 +623,9 @@ INPUT_ARGS = {'path': 'all', 'install_check': 'all', 'calibrate_lens': 'all', 'i
               'suspension_data': 'all', 'drive_log': 'first', 'as_built_check': 'first', 'lidar_calib_folder': 'all',
               'fleet_import': 'rest', 'watch': 'all', 'experiment': 'first', 'ground_truth_summary': 'first',
               'detection_recording': 'all', 'critical_carla_drives': 'all', 'carla_faults': 'json',
-              'carla_actors': 'json', 'carla_scenario_params': 'json'}
+              'carla_actors': 'json', 'carla_scenario_params': 'json', 'install_picks': 'all',
+              'sumo_net': 'json', 'log_replay': 'first',
+              'online_calib': 'first'}
 # ('json': a file or the JSON itself on the command line; only a file is an input to hash)
 
 
@@ -733,7 +746,7 @@ def batch_output(doc, dest, folder=None, name=None, option=None) -> dict:
 
 def _schema_stem(doc) -> str:
     s = doc.get('schema') if isinstance(doc, dict) else None
-    m = re.match(r'vantage\.([a-z0-9_]+)/\d+$', s or '')
+    m = re.match(r'vantage\.([a-z0-9_]+)/\d+(?:#[a-z0-9_]+)?$', s or '')      # (a part: vantage.isp/1#grid)
     return m.group(1) if m else ''
 
 

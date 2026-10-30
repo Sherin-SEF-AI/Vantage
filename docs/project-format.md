@@ -194,7 +194,15 @@ drop mm, rear axle drop mm]), `live` and `heatmap` (view settings), and one obje
 | `detection` | detection quality per rig on simulated drives (`detection_eval.py`) |
 | `campaign` | simulation campaigns: injected faults, weather sweeps, rig comparisons (`simcampaign.py`) |
 | `critical_carla` | critical targets placed as CARLA scenes (`critical_carla.py`) |
+| `splat` | log replay through a proposed rig: Gaussian-splat scenes from recorded drives (`splat_reproject.py`) |
+| `thermo_vib` | thermal warping of the rig and road-induced vibration (`thermo_vib.py`) |
+| `clock_tree` | the hardware clock tree (PPS, gPTP, FSYNC) and its timing faults (`clock_tree.py`) |
+| `diff_optim` | gradient refinement of the camera poses and seams (`diff_optim.py`) |
+| `online_calib` | targetless self-calibration over a recorded drive (`online_calib.py`) |
+| `isp` | auto-exposure metering masks and HDR / photometric seams (`isp_photometrics.py`) |
+| `calib_coach` | the live calibration coach on the Live rig page (`calib_coach.py`) |
 | `copilot` | the Copilot's approval records: the plans the user approved and their runs (`vantage/assistant/copilot.py`) |
+| `assistant_log` | the design log: decisions, rejected ideas, constraints and notes the assistant remembers (`vantage/assistant/memory.py`) |
 
 Each module's settings class (its `from_dict`) reads its object tolerantly: unknown keys are dropped, numbers clamped
 to the module's `LIMITS`, missing ones defaulted.
@@ -230,8 +238,13 @@ with `ms`, `drop` with `rate` or `frames`, `freeze` with `from_s` and `to_s`, `r
 `pedestrian_crossing`, `cyclist_crossing`, `parked` — and `params`, only the ones set), `actors` (an actors scene: each
 `id`, `kind` — `child`, `pedestrian`, `cyclist`, `car`, `truck`, `traffic_light`, `sign`, `cone`, `barrier` or
 `blueprint:<id>` — and `pose` `x`, `y`, `z` (m), `yaw` (°) in the vehicle frame), `spawn_point` (−1: a straight road
-chosen by the seed). Where CARLA is installed and its Python stay on the computer (the app's settings), never in
-the project; so do the live rig's cameras, render size and served size.
+chosen by the seed). `traffic_source` (`carla` | `sumo`, default `carla`) says who drives the `traffic` vehicles;
+`sumo` holds SUMO's settings: `net` (`auto`, `generate` or a `.net.xml` / `.sumocfg` path), `demand` (`count`:
+`traffic` vehicles at once; `period`: one every `period_s` s, 0.1–60), `classes` (of passenger, evehicle, authority,
+truck, motorcycle, bicycle), `tls` (`carla` | `sumo`: who runs the traffic lights), `binary` (`auto` or a path).
+Unknown keys are dropped and numbers clamped (`vantage.sim.sumo_cosim.clean_sumo`). Where CARLA is installed and its
+Python stay on the computer (the app's settings), never in the project; so do the live rig's cameras, render size and
+served size.
 
 `analysis.detection` (`DetectionSettings` in `detection_eval.py`): `recordings` (absolute paths of CARLA run folders
 with ground truth, the first the reference, as `drivelog.path`), the detector — `model` (`yolox_s`, `yolox_tiny`,
@@ -262,6 +275,77 @@ list; −1: a straight road chosen by the seed), `seed`, `duration_s` (1–10), 
 `vehicle` (`auto` or a `vehicle.*` blueprint), `actors` (target uid → `auto`, `standin`, `none` or
 `blueprint:<id>`).
 
+`analysis.clock_tree` (`ClockTreeSettings` in `clock_tree.py`): `seed`, `runs` (1–400), `duration_s` (5–600),
+`events` (a list of `{kind: pps_dropout|gm_loss|asymmetry|fsync_missed|fsync_late, t_s, dur_s, node, value}`;
+`dur_s` 0 for a grandmaster lost for good, `value` ns of asymmetry or ms of lateness, `node` a node id such as
+`deser:A`, `cam:<uid>`, `sensor:<uid>`), `nodes` (node id → {parameter: value}: only the user's edits over the
+typical values; parameters `pps_ns`, `ppm`, `aging_ppb_day`, `servo_hz`, `policy` (`step`, `slew`), `step_us`,
+`slew_ppm`, `priority`, `delay_ns`, `asym_ns`, `jitter_ns`, `sync_ms`, `fsync` (`locked`, `free`), `tick_us`,
+`rephase_s`, `stamping` (`trigger`, `arrival`, `ptp`, `pps`, `host`), `host_us`, `latency_us`, `readout_ms`,
+`exposure_ms`, `rate_hz`), `speed_kmh`, `yaw_rate_dps`, `surface` (`range`, `ground`), `range_m`,
+`rows_compensated`, `threshold_px`, `time_budget_us`, `holdover_need_s`, `bmca_s`, `slip_ms`, `preset`. Missing or
+bad values fall back to the defaults; the tree itself is built from the variant, the power budget (time server,
+switch) and the sync plan each time.
+
+`analysis.isp` (`IspSettings` in `isp_photometrics.py`, `vantage.isp/1`): `scenario` (the
+page's scene: campaign | low_sun | tunnel | night), `metering` (mean_log | centre), `grid_cols`, `grid_rows`
+(2–64, default 16), `weight_max` (15), `max_regions` (8), `horizon_margin_deg` (2), `mask_scale` (1 = sensor
+resolution), the campaign's `day_step` (30 d), `minutes` (30) and `heading_step` (45°, when the Sun glare study's
+headings are uniform), the photometry (`ground_albedo` 0.12, `body_albedo` 0.3, `turbidity` 3, `glare_k` 1,
+`veil_index` 0.02, `flare_margin_deg` 10), the camera (`f_number` 0 = the lens's, `iso_base` 100, `max_gain_db` 30,
+`max_exposure_ms` 0 = the frame period, `ae_target` 0.18, `output_gamma` 2.2, `hdr_exposures` 3, `hdr_ratio` 16),
+the scenes (`low_sun_el_deg` 8, `tunnel_sun_el_deg` 40, `exit_m` 3, `tunnel_width_m` 10, `tunnel_height_m` 5.5,
+`interior_cd` 5, `wall_cd` 3, `night_condition` 'night_lit') and the limits (`seam_limit_ev` 1, `body_limit` 0.3).
+Missing keys take the defaults; numbers are clamped; unknown keys are dropped.
+
+`analysis.calib_coach` (`CoachSettings` in `calib_coach.py`): `mode` (`lens`, `lidar`), `camera` and `lidar` (tags;
+empty: the first visible camera, the camera's best lidar partner), the lens board (`cols`, `rows`, `square_mm`),
+`pixel_sigma` and `need_deg` / `need_mm` (0: from the calibration observability settings, the scorecard or the
+lidar–camera tolerances), `near_m` / `far_m`, `low_m` / `high_m` (board centre height), `max_tilt_deg`,
+`min_square_px` (0: the observability settings'), `criterion` (`weakest`, `d_optimal`), `dup_m` / `dup_deg`,
+`sharp_min`, `detect_hz`, `max_views`, `technician` (`coached`, `random`), `jitter_m` / `jitter_deg`, `random_runs`,
+`seed`. Missing or bad values fall back to the defaults.
+
+`analysis.diff_optim` (`DiffSettings` in `diff_optim.py`, `vantage.diff_optim/1`): `start` (`variant` | `pareto`),
+`candidates` (Pareto candidates refined when none is selected, 1–5, default 3), weights `w_blind` (per m² blind, 1.0),
+`w_density` (per m² seen below the minimum density, 0.25), `w_critical` (per unresolved critical target, 0.5),
+`w_seam` (per critical target or obstacle near a seam, 0.1), limits from the start pose `max_move_mm` (per axis, 50),
+`max_turn_deg` (yaw and pitch, 8), `max_roll_deg` (3), `move` (positions free, true), `seams` (seam angles as
+variables, false), `seam_span_deg` (15), `sample_cell` (m, 0.10), `stages` (4), `sharp_end` (0.1), `iterations` (per
+stage, 40). Read tolerantly: unknown keys dropped, numbers clamped, junk falls back to the default. Results are not
+saved in the project; "Add as variant" adds a variant (manual seams when seam angles were variables).
+
+`analysis.thermo_vib` (`ThermoVibSettings` in `thermo_vib.py`): `date` (ISO date; empty: the exposure campaign's day
+with the highest noon sun), `heading_deg` (clockwise from north, or null for the worst of 12), `t_cal_c` (the
+calibration garage, −30-45, default 15), `t_max_c` (the day's peak air, −20-60, default 45), `daily_range_c` (0-30,
+default 12), `peak_hour` (10-18, default 15), `air_kmh` (airflow over the rig, 0-200, default 30), `material`
+(`al6061`, `stainless`, `cfrp`), `finish` (`black_anodised`, `clear_anodised`, `bare`, `white_paint`), `roof_paint`
+(`white`, `silver`, `colour`, `black`), `albedo` (0-0.9, default 0.2), `feet` (`sliding` or `clamped`), `tol_source`
+(`install`, `observability`, `custom`), `tol_deg` (0.001-10, default 1) and `tol_mm` (0.01-100, default 10) for
+`custom`, `px_limit` (a pair's drift in px, 0.05-20, default 1), `range_m` (the parallax range, 1-200, default 10),
+`road_class` (`A`-`H`, default `C`), `speed_kmh` (5-200, default 50), `zeta_body` (0.05-1, default 0.25),
+`zeta_mount` (default 0.02), `zeta_printed` (default 0.05), `bump_h_mm` (5-300, default 80), `bump_len_m` (0.1-10,
+default 0.6), `bump_kmh` (2-120, default 20), `joint_mm` (1-100, default 20), `cobble_class` (default `D`),
+`cobble_kmh` (5-120, default 30), `sett_m` (0.05-0.5, default 0.12).
+
+`analysis.splat` (`SplatSettings` in `splat_reproject.py`, `vantage.splat/1`): `drive` (path), `source` (`lidar` |
+`ply`), `ply_path`, `ply_xyz` (m), `ply_ypr` (deg), `ply_scale`, `max_gaussians` (2000–300000, 300000), `voxel_m`
+(0.05), `max_range_m` (80), `sweep_step` (1), `holdout_every` (8; 0 none), `dynamic` (`boxes` | `ignore`),
+`colour_step` (2), `optimise` (true), `optimise_positions` (true), `iterations` (600), `time_budget_s` (120),
+`train_scale` (0.25), `variant_a` (`recorded` or a variant uid), `variant_b` (a variant uid; empty: the active one),
+`eval_instants` (12), `render_scale` (0.5), `rolling_shutter` (`module` | `off`), `lidar_min_opacity` (0.5),
+`lidar_max_incidence_deg` (85), `lidar_depth` (`median` | `expected`), `detect` (true), `device` (`auto` | `cpu`),
+`gpu_mem_gb` (≤ 3), `seed` (0), `min_psnr_db` (18), `val_frames` (48), `val_sweeps` (8), `export_ply` (true). Unknown
+keys are dropped and numbers clamped on reading.
+
+`analysis.online_calib` (`OnlineCalibSettings` in `online_calib.py`): `path` (the drive last calibrated),
+`variant_uid` ('' = the active variant), `window_s` (10) and `stride_s` (10) seconds, `frames_per_window` (4),
+`max_frames` (400 instants over the whole drive at most), `search_deg` (1.5, the per-window search), the measurements
+`edges` (true), `outline` (false), `ground` (false), `fit_translation` (false), `lidar_state` (false: also estimate
+the lidar's own rotation against the body), `walk_deg_per_min` (0.05), `huber_k` (1.5), `tolerance_deg` (0.3: a knock
+beyond it is exit code 3), `min_step_deg` (0.1), `flex_min_deg` (0.1), `bic_margin` (6), `ground_range_m` (8), `tf_hz`
+(10) and `seed` (0, the ground plane's RANSAC). Topic mapping edits and stamp conventions are the drive-log check's.
+
 `analysis.copilot` (`vantage/assistant/copilot.py`): `plans`, the approval records of the plans the user approved
 (newest last, at most 60), each `vantage.copilot_record/1`: `id` (the plan's, kept by its revisions), `version`,
 `title`, `rationale`, `request` (the user's words that led to it), `provider` (`groq`, `claude`), `model`, `steps`
@@ -274,6 +358,14 @@ steps' `[{kind, settings}]`, `approved_utc`, `status` (`approved`, `running`, `d
 `message`, `output`, `summary`). A page's Run reached from a plan runs only when the record verifies (both hashes
 match its steps) and its step's settings are exactly the page's; batch `--run-plan ID` runs one. The records are an
 audit trail: undo never removes one, and the content hash leaves them out (their runs change as they run).
+
+`analysis.assistant_log` (`vantage/assistant/memory.py`): a list (old files without it load with an empty log), each
+entry `id`, `kind` (`decision`, `rejected`, `constraint`, `note`), `text` (at most 400 characters), `about` (camera or
+sensor uids), `date` (YYYY-MM-DD), `source` (`user`, or `assistant`: proposed by the assistant and accepted by the
+user) and optionally `changes` (each `camera`, `prop`, `delta` or `after`: the concrete change a decided or rejected
+entry is about, so the assistant recognises it when it would suggest it again). Discarding a proposed change writes a
+`rejected` entry. The user edits the log in the assistant panel (each edit one undo step). It is notes about the
+design, not the design: the content hash leaves it out.
 
 ### Boards, obstacles, rig, ECU
 

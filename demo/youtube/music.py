@@ -3,6 +3,7 @@
     python3 demo/youtube/music.py [--out DIR]       writes bed.wav (a seamless loop), whoosh.wav, logo.wav, part.wav,
                                                     card.wav and click.wav (48 kHz stereo float) into DIR
                                                     (default demo/build/youtube/music); cached by VERSION
+    python3 demo/youtube/music.py --variant as070   also the assistant episode's own bed, bed-as070.wav (VERSION_AS)
 
 The bed: soft pads in D major (detuned band-limited waves through a gentle low-pass), a sub bass, and in some
 sections a quiet pluck arpeggio and a soft heartbeat at 90 BPM; chords change every two bars; reverb by circular
@@ -254,11 +255,143 @@ def build(out):
     print(f'music: wrote {out}')
 
 
+# ====================================================================== the assistant episode's bed (as070)
+# A richer bed for "An AI assistant for sensor-rig design", selected per episode (chapters.EPISODES[...]['music']) and
+# written as bed-as070.wav beside bed.wav: the other episodes' bed and stings are untouched. Same tempo (90 BPM, so the
+# intro's cuts stay on the beat), A minor: warm detuned pads that breathe with a soft side-chain on every beat, a
+# moving sub bass, a soft kick, a swung shaker, a ping-pong pluck arpeggio and a bell motif, in three 32-bar sections
+# (full, sparse, building) over a 96-bar circular loop (256 s) that joins without a seam. The video starts at bar 0,
+# the full section, under the cold open.
+VERSION_AS = 2          # 2: no bell motif, a softer, narrower arpeggio an octave lower (v1's layers sounded like two pieces)
+CHORDS_AS = {
+    'Am9': [45, 52, 55, 59, 60], 'Fmaj9': [41, 48, 52, 55, 57], 'C69': [48, 52, 55, 57, 62],
+    'Gsus2': [43, 50, 55, 57, 62], 'Em7': [40, 47, 50, 55, 59], 'Dm9': [38, 45, 48, 52, 53],
+}
+PROG_AS = ['Am9', 'Fmaj9', 'C69', 'Gsus2', 'Am9', 'Fmaj9', 'Dm9', 'Em7',
+           'Fmaj9', 'C69', 'Am9', 'Gsus2', 'Dm9', 'Fmaj9', 'Em7', 'Gsus2']      # 16 chords x 2 bars = 32 bars
+SECTIONS_AS = [{'kick': True, 'arp': True, 'bell': False, 'shaker': True},      # bars 0-31: full (the cold open)
+               {'kick': False, 'arp': False, 'bell': False, 'shaker': True},    # 32-63: sparse, under the talk
+               {'kick': True, 'arp': True, 'bell': False, 'shaker': True}]      # 64-95: building back
+BELL_AS = [(0, 76), (1.5, 74), (2, 72), (3, 69), (4.5, 72), (6, 71)]           # (beat in a 4-bar phrase, midi)
+
+
+def _pluck(m, n, decay=5.0, bright=0.3):
+    tt = np.arange(n) / SR
+    f = hz(m)
+    return ((np.sin(2 * np.pi * f * tt) + bright * np.sin(4 * np.pi * f * tt) + 0.08 * np.sin(6 * np.pi * f * tt))
+            * np.exp(-tt * decay) * np.minimum(1, tt / 0.003)).astype(np.float32)
+
+
+def bed_as():
+    rng = np.random.default_rng(70)
+    n_chords = 3 * len(PROG_AS)
+    chord_len = 2 * BAR
+    L = int(round(n_chords * chord_len * SR))
+    pads = np.zeros((L, 2), np.float32)
+    bass = np.zeros(L, np.float32)
+    kick = np.zeros(L, np.float32)
+    perc = np.zeros((L, 2), np.float32)
+    tops = np.zeros((L, 2), np.float32)
+    for k in range(n_chords):
+        name = PROG_AS[k % len(PROG_AS)]
+        notes = CHORDS_AS[name]
+        t0 = k * chord_len
+        sec = SECTIONS_AS[k // len(PROG_AS)]
+        n_body = int(chord_len * SR)
+        total = n_body + int(2.4 * SR)
+        e = env_adsr(n_body, 1.1, 2.4, total)
+        for j, m in enumerate(notes):
+            f = hz(m)
+            for det, pn in ((-7, -0.55), (0, 0.0), (7, 0.55)):
+                s = osc(f * 2 ** (det / 1200), total, rng.random()) * e * (0.15 / (1 + 0.15 * j))
+                add_wrap(pads, int(t0 * SR), pan(s, pn * 0.85))
+        # an airy octave on top of the voicing, quieter, for width
+        s = osc(hz(notes[-1] + 12), total, rng.random()) * e * 0.06
+        add_wrap(pads, int(t0 * SR), pan(s, 0.3))
+        # the sub bass: root, then the fifth on beat 7, an octave below the voicing
+        tt_b = np.arange(int(1.5 * BAR * SR) + int(0.4 * SR)) / SR
+        for b0, interval, dur_b in ((0, 0, 6), (6, 7, 2)):
+            f = hz(notes[0] - 12 + interval)
+            n = int(dur_b * BEAT * SR)
+            tt = np.arange(n + int(0.25 * SR)) / SR
+            env = np.minimum(1, tt / 0.02) * np.where(tt < n / SR, 1.0, np.exp(-(tt - n / SR) * 18))
+            sig = (np.sin(2 * np.pi * f * tt) + 0.22 * np.sin(4 * np.pi * f * tt)) * env * 0.12
+            add_wrap(bass, int((t0 + b0 * BEAT) * SR), sig.astype(np.float32))
+        del tt_b
+        for b in range(8):                               # 8 beats per chord
+            tb = t0 + b * BEAT
+            if sec['kick'] and b % 2 == 0:               # a soft kick on beats 1 and 3
+                n = int(0.42 * SR)
+                tt = np.arange(n) / SR
+                fr = 48 + 70 * np.exp(-tt * 38)
+                th = (np.sin(2 * np.pi * np.cumsum(fr) / SR) * np.exp(-tt * 10)).astype(np.float32) * 0.28
+                add_wrap(kick, int(tb * SR), th)
+            if sec['shaker']:                            # a swung 16th shaker, accents on the off-beats
+                for q in range(4):
+                    swing = 0.055 * BEAT if q % 2 else 0.0
+                    n = int(0.06 * SR)
+                    tt = np.arange(n) / SR
+                    nz = rng.standard_normal(n).astype(np.float32) * np.exp(-tt * (70 if q % 2 else 55))
+                    vel = (0.060, 0.030, 0.085, 0.036)[q] * (0.8 + 0.4 * rng.random())
+                    add_wrap(perc, int((tb + q * BEAT / 4 + swing) * SR), pan(nz * vel, 0.25 if q % 2 else -0.15))
+            if sec['arp']:                               # a ping-pong pluck arpeggio in 8ths
+                up = [notes[i] + 12 for i in (0, 2, 4, 3, 1, 3, 4, 2)]       # inside the pads' range: one texture
+                for h in range(2):
+                    m = up[(b * 2 + h) % len(up)]
+                    pl = _pluck(m, int(0.8 * SR), 6.0) * 0.07 * (0.9 + 0.2 * rng.random())
+                    add_wrap(tops, int((tb + h * BEAT / 2) * SR), pan(pl, 0.15 if (b * 2 + h) % 2 else -0.15))
+        if sec['bell'] and k % 2 == 0:                   # the motif over each 4-bar phrase
+            for beat, m in BELL_AS:
+                n = int(2.6 * SR)
+                tt = np.arange(n) / SR
+                f = hz(m)
+                s = sum(a * np.sin(2 * np.pi * f * r_ * tt) * np.exp(-tt * d) for r_, a, d in
+                        ((1.0, 1.0, 1.6), (2.0, 0.25, 2.6), (2.76, 0.18, 3.6), (5.4, 0.05, 7.0)))
+                s = (s * np.minimum(1, tt / 0.003) * 0.09).astype(np.float32)
+                add_wrap(tops, int((t0 + beat * BEAT) * SR), pan(s, 0.15))
+    # the side-chain: every beat the pads and the bass duck a little and swell back (a soft pump)
+    tt = np.arange(L) / SR
+    ph = (tt % BEAT) / BEAT
+    pump = (1 - 0.28 * np.exp(-ph * BEAT * 7.0)).astype(np.float32)
+    pads = lowpass_fft(pads, 2600.0) * pump[:, None]
+    breathe = (0.9 + 0.1 * np.sin(2 * np.pi * tt / (8 * BAR))).astype(np.float32)
+    del tt, ph
+    bass = bass * pump
+    perc = lowpass_fft(perc, 9000.0)
+    hp = perc - lowpass_fft(perc, 2500.0)                # the shaker is a high, airy tick
+    mix = pads * breathe[:, None] + np.stack([bass, bass], 1) + np.stack([kick, kick], 1) + hp * 1.3 + \
+        lowpass_fft(tops, 6500.0)
+    del pads, perc, hp, tops
+    wet = reverb_circ(mix, 2.6, 0.30, seed=11)
+    wet /= np.sqrt(np.mean(wet ** 2)) / 10 ** (-20 / 20)                 # RMS -20 dBFS, as the tour's bed
+    return wet.astype(np.float32)
+
+
+def build_variant(out, name):
+    """The bed of an episode that has its own (chapters.EPISODES[...]['music']): bed-<name>.wav in `out`, cached by
+    its version. The stings and the click stay the shared ones (build(out))."""
+    build(out)
+    if name != 'as070':
+        raise SystemExit(f'no music variant {name!r}')
+    path = os.path.join(out, f'bed-{name}.wav')
+    stamp = os.path.join(out, f'version-{name}.json')
+    if os.path.exists(stamp) and os.path.exists(path) and json.load(open(stamp)).get('version') == VERSION_AS:
+        print(f'music {name}: up to date')
+        return path
+    write(path, bed_as())
+    json.dump({'version': VERSION_AS, 'sr': SR, 'bpm': BPM, 'loop_s': round(96 * BAR, 3)}, open(stamp, 'w'))
+    print(f'music {name}: wrote {path}')
+    return path
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--out', default=os.path.join(common.BUILD, 'music'))
+    ap.add_argument('--variant', help='also an episode\'s own bed (as070)')
     a = ap.parse_args()
     build(a.out)
+    if a.variant:
+        build_variant(a.out, a.variant)
 
 
 if __name__ == '__main__':

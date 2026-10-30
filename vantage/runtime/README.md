@@ -38,3 +38,14 @@ where the camera does not see `p`. `weight_c[p]` (0..255) is its share; the shar
 `--balance` estimates `gain_c` per camera and channel from the ground two cameras share (Brown and Lowe gain
 compensation), so cameras that auto-exposed differently meet without a step in brightness. On video it re-estimates
 every few frames and smooths the gains so the view does not flicker.
+
+## Licence
+
+The two stitchers, `CMakeLists.txt` and this README are licensed under the **Apache License 2.0** (`LICENSE` in this
+folder), not under the GPL that covers the rest of Vantage, so they can be built into proprietary and production
+software (an ECU's surround-view pipeline, a data-collection recorder) without opening that software's source. Keep
+the licence notice when you copy them.
+
+The remap tables and every other file Vantage exports (calibration, URDF, dataset tables, reports, meshes, images) are
+the output of the program, made from your project: they are yours, under no licence of Vantage's, and can be used
+anywhere.

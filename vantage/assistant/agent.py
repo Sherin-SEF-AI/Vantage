@@ -40,10 +40,20 @@ change that solves the problem, and keep left/right pairs symmetric unless asked
 ground. Yaw is positive to the left, pitch positive pointing down. Pixel density is sqrt(radial × tangential \
 sampling) / range.
 - Name cameras by their tags (F, R, ML, ...).
-- run_study, compare_variants and optimise_camera compute for a few seconds: use them when the question needs \
-them. show_in_app points the user at what you describe (select cameras, frame a point, switch a heatmap); use it when \
+- run_study, compare_variants, optimise_camera (one camera) and optimise_rig (the whole layout, camera count, \
+rig-wide targets; up to 90 s) compute: use them when the question needs them; add_camera_options when moving cameras \
+cannot close a gap (offer an option's change unchanged with propose_changes). show_in_app points the user at what you describe (select cameras, frame a point, switch a heatmap); use it when \
 it helps them see the answer, once or twice per answer, not routinely.
 - If the user has written a project brief (requirements, constraints), check your answers and proposals against it.
+- look shows you a picture drawn from the analysis: the bird's-eye coverage map (view top), a close-up around a \
+ground point (closeup) or a camera's synthetic view (camera). Look when the question is spatial: where something is, \
+which side, the shape or extent of a gap, what a camera sees. State numbers from the tools (the picture's caption and \
+figures, the read tools), never from reading pixels; say what the picture shows in words the user can check in the \
+app. One or two looks per answer.
+- THE DESIGN LOG. The project keeps a log of decisions, rejected ideas, constraints and notes; when it has entries \
+you are given it. Respect every constraint; never propose a change that was rejected (or a larger move in the same \
+direction) unless the user asks again; if a tool result says a change repeats a rejected one, drop it or say so. When \
+the user states a decision or a constraint worth keeping, offer it with add_design_log (they accept it or not).
 
 How to answer:
 - Lead with the answer in one or two sentences, then the evidence. Be specific and brief: no filler, no restating \
@@ -85,10 +95,14 @@ AGENT MODE. The user has given you a goal to work towards on your own:
 1. First call update_plan with 3-7 concrete steps.
 2. Work through them, calling update_plan as each step starts (in_progress) and ends (done or skipped).
 3. Measure before you change anything: read the figures, run the studies the goal needs, and compare options with \
-simulate_changes and optimise_camera. Prefer changes that keep left/right pairs symmetric.
+simulate_changes, optimise_camera and optimise_rig (offer an option's changes unchanged with propose_changes). \
+Prefer changes that keep left/right pairs symmetric.
 4. Finish with propose_changes for the best option you found (or say plainly that none is needed or none works), then \
 a short report: what you tried, the measured effect of each option, the trade-offs, and what is left open.
 You have about {rounds} rounds of tool calls and {seconds:.0f} seconds; the user can stop you at any time."""
+
+NO_VISION = ('\n\nThis model does not take images: the look tool is not available (pictures need Claude). '
+             'Answer spatial questions from find_blind_regions, explain_point and get_coverage.')
 
 WRAP_UP = ('[Vantage: the budget for this request is used up. Do not call tools any more; answer now with what you '
            'have found.]')
@@ -107,7 +121,7 @@ class Settings:
 
 @dataclass
 class Event:
-    kind: str                   # turn | reasoning | content | tool_start | tool_done | proposal | next_steps | status | usage | error | done
+    kind: str                   # turn | reasoning | content | tool_start | tool_done | proposal | log_proposal | next_steps | status | usage | error | done
     data: dict = field(default_factory=dict)
 
 
@@ -150,6 +164,16 @@ def mask(text: str) -> str:
     return text
 
 
+HANDOVER_HEAD = '[Earlier in this conversation'
+
+
+def strip_handover(text: str) -> str:
+    """The user's words without the hand-over summary sent in front of them."""
+    if isinstance(text, str) and text.startswith(HANDOVER_HEAD) and ']\n\n' in text:
+        return text.split(']\n\n', 1)[1]
+    return text
+
+
 def context_note(tc: T.ToolContext, agent_text=False) -> str:
     p = tc.project
     bits = [f'project "{p.name}"', f'variant "{p.variant.name}"']
@@ -181,18 +205,32 @@ class BaseSession:
         self.usage = PR.Usage(provider=self.provider, model=settings.model)
         self.lock = threading.Lock()
         self.last_payload = None            # the last request as it was sent (the "What was sent" inspector)
+        self.handover = ''                  # a summary of an earlier conversation with another provider: sent once,
+                                            # with the first question (see routing.handover_text)
+
+    @property
+    def vision(self) -> bool:
+        """The model takes images (the look tool returns a picture)."""
+        return bool(getattr(PR.model_info(self.provider, self.settings.model), 'vision', False))
+
+    def _take_handover(self, text: str) -> str:
+        h, self.handover = self.handover, ''
+        return f'{h}\n\n{text}' if h else text
 
     # ---------------------------------------------------------------- one question
     def run_turn(self, text: str, tc: T.ToolContext, emit, cancel: threading.Event):
         with self.lock:
             self.usage.model = self.settings.model
             mark = self._mark()
+            handover = self.handover
             tc.request = tc.request or text          # recorded with a plan proposed this turn
-            self._begin(mask(text), tc)
+            self._begin(mask(self._take_handover(text)), tc)
             tc.on_proposal = lambda prop: emit(Event('proposal', {'proposal': prop}))
             tc.on_plan = lambda steps: emit(Event('plan', {'steps': steps}))
             tc.on_status = lambda text: emit(Event('tool_status', {'text': text}))
             tc.on_next = lambda items: emit(Event('next_steps', {'items': items}))
+            tc.on_log = lambda entry: emit(Event('log_proposal', {'entry': entry}))
+            tc.vision = self.vision
             prev = tc.on_copilot
 
             def on_copilot(plan, prev=prev):
@@ -210,6 +248,7 @@ class BaseSession:
                 emit(Event('error', {'kind': 'internal', 'message': f'{type(e).__name__}: {e}'}))
             if not ok:
                 self._rollback(mark)                # a failed or stopped turn leaves no half answer behind
+                self.handover = handover            # ... and the hand-over goes with the next question
             emit(Event('done', {'ok': ok, 'usage': self.usage}))
 
     def _loop(self, tc, emit, cancel) -> bool:
@@ -262,6 +301,7 @@ class BaseSession:
                 emit(Event('tool_start', {'id': call.id, 'name': call.name, 'label': tool.label if tool else call.name,
                                           'kind': tool.kind if tool else 'read', 'args': call.args or {}}))
                 t1 = time.perf_counter()
+                pics = []
                 if call.args is None:
                     result, ok = T.dump({'error': 'the arguments were not valid JSON',
                                          'INVALID_JSON': call.raw[:2000]}), False
@@ -271,11 +311,11 @@ class BaseSession:
                         result, ok = T.dump({'error': 'the input does not match the tool\'s schema: ' + '; '.join(bad)}), \
                             False
                     else:
-                        result, ok = T.run(tc, call.name, call.args)
+                        result, ok, pics = T.run_full(tc, call.name, call.args)
                 result = mask(result)
                 emit(Event('tool_done', {'id': call.id, 'name': call.name, 'result': result, 'ok': ok,
-                                         'ms': (time.perf_counter() - t1) * 1000}))
-                results.append((call, result, ok))
+                                         'ms': (time.perf_counter() - t1) * 1000, 'pictures': pics}))
+                results.append((call, result, ok, pics))
             self._append_results(results, wrap=False)
             rounds += 1
 
@@ -325,6 +365,7 @@ class Session(BaseSession):
         super().__init__(settings)
         self.client = Client(key, url)
         self.messages: list = [{'role': 'system', 'content': SYSTEM}]
+        self.design_log = ''                # the project's design log, in the system message (memory.prompt_block)
         self._plain = False                 # the model refused the reasoning parameters once: stop sending them
 
     def reset(self):
@@ -338,20 +379,27 @@ class Session(BaseSession):
         del self.messages[mark:]
 
     def _begin(self, text, tc):
+        from . import memory as M
+        self.design_log = M.prompt_block(tc.project)
         self.messages.append({'role': 'user', 'content': f'{text}\n\n{context_note(tc)}'})
 
     def _system(self):
         st = self.settings
+        out = SYSTEM + ('' if self.vision else NO_VISION)
+        log = getattr(self, 'design_log', '')
+        if log:
+            out += '\n\n' + log
         if not st.agent:
-            return SYSTEM
-        return SYSTEM + AGENT.format(rounds=AGENT_ROUNDS - 2, seconds=AGENT_SECONDS)
+            return out
+        return out + AGENT.format(rounds=AGENT_ROUNDS - 2, seconds=AGENT_SECONDS)
 
     def _payload(self, wrap_up=False):
         st = self.settings
         msgs = [{'role': 'system', 'content': self._system()}] + self._history()[1:]
         if wrap_up:
             msgs.append({'role': 'user', 'content': WRAP_UP})
-        out = {'model': st.model, 'messages': msgs, 'tools': T.schemas(), 'tool_choice': 'none' if wrap_up else 'auto',
+        out = {'model': st.model, 'messages': msgs, 'tools': T.schemas(self.vision, nullable=True),
+               'tool_choice': 'none' if wrap_up else 'auto',
                'max_completion_tokens': int(st.max_tokens)}
         if not self._plain:
             out.update(reasoning_params(st.model, st.effort, st.show_reasoning))
@@ -360,6 +408,9 @@ class Session(BaseSession):
     def _retry(self, e, emit, cancel, retries) -> bool:
         if e.kind == 'tool_use_failed' and not retries.get('tool'):
             retries['tool'] = True
+            self.messages.append({'role': 'user', 'content': 'The API refused your last tool call: '
+                                  + (e.detail or e.message)[:400] + ' Call the tool again with arguments that match '
+                                  'its schema; leave out the optional ones you do not set.'})
             emit(Event('status', {'text': 'The model wrote an invalid tool call; asking again…'}))
             return True
         if e.kind == 'bad_request' and not self._plain and 'reason' in (e.message + e.detail).lower():
@@ -402,7 +453,7 @@ class Session(BaseSession):
         for c in native:
             try:
                 args = json.loads(c['function'].get('arguments') or '{}')
-                args = args if isinstance(args, dict) else None
+                args = {k: v for k, v in args.items() if v is not None} if isinstance(args, dict) else None   # null = not set
             except ValueError:
                 args = None
             calls.append(Call(c['id'], c['function']['name'], args, c['function'].get('arguments') or ''))
@@ -415,7 +466,7 @@ class Session(BaseSession):
         self.messages.append(msg)
 
     def _append_results(self, results, wrap):
-        for call, result, ok in results:
+        for call, result, ok, *_ in results:        # pictures never go to a model without image input
             self.messages.append({'role': 'tool', 'tool_call_id': call.id, 'name': call.name, 'content': result})
 
     def _history(self):
@@ -435,7 +486,7 @@ class Session(BaseSession):
         lines = []
         for m in self.messages:
             if m['role'] == 'user':
-                text = m['content'].rsplit('\n\n[Vantage context:', 1)[0]
+                text = strip_handover(m['content'].rsplit('\n\n[Vantage context:', 1)[0])
                 lines += ['### You', '', text, '']
             elif m['role'] == 'assistant' and m.get('content'):
                 lines += ['### Assistant', '', m['content'], '']

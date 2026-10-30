@@ -53,6 +53,12 @@ What a run does
    * a scenario (--scenario, SCENARIOS: the ego and its actors on a straight lane chosen by the seed, events in
      run.json scenario) or an actors scene (--actors: the ego still with the actors placed around it, no traffic);
      pedestrians on CARLA's walker AI (--walkers).
+   * SUMO traffic (--traffic-source sumo, the rig's traffic_source; vantage.sim.sumo_cosim): instead of the traffic
+     manager's vehicles, Eclipse SUMO drives the traffic, stepped once before every synchronous tick through CARLA's
+     own co-simulation package (Co-Simulation/Sumo/sumo_integration); its vehicles are CARLA actors (role
+     vantage_sumo), so they have boxes, instance ids and lidar labels like any other; the ego and a scenario's
+     vehicles are mirrored into SUMO after each tick; run.json traffic_source says what SUMO did. Walkers stay on
+     CARLA's walker AI.
 5. Writes the nuScenes tables, dataset.json, README.md and run.json (this run's report), then tidies up in all cases:
    stops and destroys every sensor and vehicle it spawned, restores the world's settings and the traffic manager's
    asynchronous mode. A cancel (SIGINT / SIGTERM) or an error removes what was written; run.json then says why.
@@ -101,6 +107,8 @@ SIGNAL_GRACE_S = 15.0            # after SIGINT / SIGTERM: this long to tidy up,
 ROLE_PREFIX = 'vantage_'
 ROLE_SENSOR, ROLE_TRAFFIC, ROLE_WALKER, ROLE_TARGET = 'vantage_sensor', 'vantage_traffic', 'vantage_walker', \
     'vantage_target'
+ROLE_SUMO = 'vantage_sumo'          # the vehicles SUMO drives (sumo_cosim.ROLE_SUMO)
+TRAFFIC_SOURCES = ('carla', 'sumo')
 
 
 class Cancelled(Exception):
@@ -557,6 +565,9 @@ class Bridge:
         self.world_actor_ids = set()
         self._gt_seconds = 0.0
         self.part_tags = {}              # 'traffic_light' / 'traffic_sign' -> raw CARLA tag counts of their pixels
+        self.traffic_source = getattr(args, 'traffic_source', None) or 'carla'
+        self.cosim = None                # vantage.sim.sumo_cosim.CoSim when SUMO drives the traffic
+        self.sumo_ids = {}               # CARLA actor id -> SUMO vehicle id (the vehicles SUMO drives)
         import threading
         self._lock = threading.Lock()
         if self.faults:
@@ -646,11 +657,60 @@ class Bridge:
                 bp.set_attribute(k, str(v))
         return bp
 
+    # ------------------------------------------------------------------ SUMO traffic (vantage.sim.sumo_cosim)
+    def _tick(self, world, timeout=None, recording=False):
+        """One synchronous step: with SUMO traffic, SUMO steps first and its vehicles move in CARLA, and the bridge's
+        own vehicles are mirrored into SUMO after it (run_synchronization.py's order)."""
+        cs = getattr(self, 'cosim', None)
+        if cs is not None:
+            cs.before_tick()
+        frame = world.tick(timeout) if timeout is not None else world.tick()
+        if cs is not None:
+            cs.after_tick(recording)
+        return frame
+
+    def _start_sumo(self, client, world, n, mode):
+        """SUMO started as the background traffic (n vehicles at once, or the insertion period), stepped with every
+        tick from here on; nothing to start when the scene has no traffic."""
+        from . import sumo_cosim as SUMO
+        a = self.a
+        if int(getattr(a, 'walkers', 0) or 0):
+            self._note(SUMO.WALKERS_NOTE)
+        if n <= 0 and mode in ('actors', 'parked'):
+            self._note('SUMO traffic not started: ' + ('an actors scene' if mode == 'actors' else 'the parked scene')
+                       + ' has no traffic.')
+            return
+        if n <= 0:
+            self._note('SUMO traffic not started: no traffic asked for.')
+            return
+        warm_s = float(a.warmup if a.warmup is not None else self.rig['scenario'].get('warmup_s', 2.0))
+        horizon = warm_s + float(a.duration) + (int(self.rig['simulation']['warmup_ticks']) + 2) / self.R + 30.0
+
+        def mine():                                    # the bridge's own CARLA vehicles, in spawn order
+            return [x for x in self.actors if x.type_id.startswith('vehicle.') and int(x.id) not in self.sumo_ids]
+
+        def spawned(actor, sid):
+            self.sumo_ids[int(actor.id)] = sid
+            self._own(actor)
+
+        def gone(aid):
+            self.actors = [x for x in self.actors if int(x.id) != int(aid)]
+        self.progress(0.02, 'Starting SUMO')
+        self.cosim = SUMO.CoSim(self.carla, client, world, a.sumo, seed=int(a.seed), dt=self.dt, vehicles=n,
+                                horizon_s=horizon, work_dir=os.path.join(self.out_dir, 'sumo'),
+                                cache_dir=getattr(a, 'sumo_cache', '') or '',
+                                carla_root=getattr(a, 'carla_root', '') or '', on_spawn=spawned, on_destroy=gone,
+                                carla_vehicles=mine, check=self._check, note=self._note)
+        self.cosim.start()
+
     # ------------------------------------------------------------------ the run
     def run(self) -> dict:
         t_wall = time.perf_counter()
         carla = self.carla
         a = self.a
+        if self.traffic_source == 'sumo':              # refused before CARLA is touched when SUMO is not there
+            from . import sumo_cosim as SUMO
+            self._sumo_pre = SUMO.preflight(a.sumo, getattr(a, 'carla_root', '') or '')
         client = carla.Client(a.host, int(a.port))
         client.set_timeout(float(a.timeout))
         self.report['client_version'] = client.get_client_version()
@@ -756,8 +816,9 @@ class Bridge:
         cars = [b for b in lib.filter('vehicle.*') if (not b.has_attribute('number_of_wheels') or
                                                         b.get_attribute('number_of_wheels').as_int() == 4)]
         traffic = []
+        sumo_n = n_traffic if self.traffic_source == 'sumo' else 0
         for sp in free:
-            if len(traffic) >= n_traffic:
+            if len(traffic) >= n_traffic or sumo_n:
                 break
             b = cars[int(rng.integers(len(cars)))]
             if b.has_attribute('role_name'):
@@ -773,9 +834,11 @@ class Bridge:
         self.report['walkers'] = len(walkers)
         # ground-truth ids by spawn order, not CARLA's actor ids: the same seed gives the same tokens on every run
         self.gt_id = self.spawn_index
-        if len(traffic) < n_traffic:
+        if self.traffic_source == 'sumo':
+            self._start_sumo(client, world, sumo_n, mode)
+        elif len(traffic) < n_traffic:
             self._note(f'{len(traffic)} of {n_traffic} traffic vehicles found a free spawn point.')
-        world.tick()
+        self._tick(world)
         for v in traffic:
             v.set_autopilot(True, tm_port)
         if mode == 'free_drive':
@@ -796,7 +859,7 @@ class Bridge:
         self.progress(0.03, 'Traffic settling')
         for _ in range(int(round(warm_s * self.R))):
             self._check()
-            world.tick()
+            self._tick(world)
         # ---- where the ego origin lies in the CARLA vehicle
         self._measure_ego()
         self._mount_check(world)
@@ -822,6 +885,10 @@ class Bridge:
         if mode != 'free_drive' or self.faults:        # (a plain drive keeps the tokens it always had)
             key_parts.append(json.dumps({'scenario': self.scen, 'actors': self.actor_list, 'faults': self.faults},
                                         sort_keys=True))
+        if getattr(self, 'cosim', None) is not None:   # (and a CARLA-traffic drive too)
+            so = dict(self.a.sumo, binary=None)        # (the tokens never depend on where files lie)
+            so['net'] = os.path.basename(so['net'])
+            key_parts.append(json.dumps({'traffic_source': 'sumo', 'sumo': so}, sort_keys=True))
         run_key = token(*key_parts)
         nus_rows = rig['nuscenes']
         chan_names = {c.channel for c in P['chans'] if c.channel}
@@ -1084,7 +1151,7 @@ class Bridge:
             placed.append((row, act))
         for _ in range(max(int(round(0.5 * self.R)), 3)):       # let the walkers settle on their feet
             self._check()
-            self.world.tick()
+            self._tick(self.world)
         snap = self.world.get_snapshot()
         Mi = np.linalg.inv(_mirror(_m(self.ego.get_transform())) @ self.T_actor_ego)
         for row, act in placed:
@@ -1444,7 +1511,7 @@ class Bridge:
                 self._spawn_camera(world, lib, c)
             t0 = time.perf_counter()
             self._alive('run')
-            frame = world.tick(timeout)
+            frame = self._tick(world, timeout, i >= warm)
             self._alive()
             perf['tick_s'] += time.perf_counter() - t0
             if frame0 is None:
@@ -2055,12 +2122,20 @@ class Bridge:
             if math.hypot(centre[0] - ex[0], centre[1] - ex[1]) > rng:
                 continue
             Rg = Mg[:3, :3]
-            v = FR.to_vantage([s.get_velocity().x, s.get_velocity().y, s.get_velocity().z])
+            vel = s.get_velocity()
+            sid = getattr(self, 'sumo_ids', {}).get(int(a.id))
+            if sid is not None and math.hypot(vel.x, vel.y) < 1e-6:     # kinematic: CARLA reports no velocity
+                vv = self.cosim.velocity(a.id, s.get_transform().rotation.yaw) if self.cosim is not None else None
+                v = FR.to_vantage(vv) if vv is not None else FR.to_vantage([vel.x, vel.y, vel.z])
+            else:
+                v = FR.to_vantage([vel.x, vel.y, vel.z])
             out.append({'id': int(self.gt_id.get(a.id, 100_000 + a.id)), 'actor_id': int(a.id),
                         'category': self._category(a), 'name': a.type_id, 'centre': centre,
                         'R': Rg, 'yaw': math.atan2(Rg[1, 0], Rg[0, 0]),
                         'size_lwh': [2 * bb.extent.x, 2 * bb.extent.y, 2 * bb.extent.z], 'velocity': v,
                         'moving': float(np.hypot(v[0], v[1])) > 0.3, 'static': False})
+            if sid is not None:
+                out[-1]['sumo_id'] = sid
         return out
 
     def _box_of(self, a):
@@ -2368,6 +2443,11 @@ class Bridge:
         self.report.update({
             'faults_injected': self.faults_injected, 'scenario': scen, 'ground_truth': gtr,
             'actors': self.scene_actors})
+        if getattr(self, 'cosim', None) is not None:   # SUMO drove the traffic: its block (only then)
+            tr = self.cosim.report()
+            self.report['traffic_source'] = tr
+            self.report['traffic'] = tr['vehicles_spawned']
+            scene['traffic'] = tr['vehicles_spawned']
         self.report.update({
             'status': 'ok', 'scene': scene, 'cameras': cam_frames, 'lidars': lid_rep,
             'performance': {'wall_s': round(wall, 2), 'recording_wall_s': round(rec_wall, 2),
@@ -2392,6 +2472,12 @@ class Bridge:
         the manager and the world go back to asynchronous mode."""
         dead = []
         self._alive('tidy')
+        cs = getattr(self, 'cosim', None)
+        if cs is not None:                             # SUMO stopped, CARLA's lights given back (never raises)
+            try:
+                cs.close(ok=getattr(self, 'report', {}).get('status') == 'ok')
+            except Exception:                          # noqa: BLE001
+                pass
 
         def quiet(fn, *args):
             if dead:                                   # the server stopped answering: nothing more to ask it
@@ -2896,6 +2982,11 @@ def _watchdog(b, stop, life, sigs, timeout):
             continue
         status, msg = why
         try:
+            if getattr(b, 'cosim', None) is not None:
+                b.cosim.kill()
+        except Exception:                              # noqa: BLE001
+            pass
+        try:
             if b.rec is not None:
                 b.rec.cleanup()
             b.report.update(status=status, error=msg, notes=b.notes, server_stopped=status == 'failed')
@@ -2955,6 +3046,9 @@ def tidy_server(carla, host: str, port: int, timeout: float = 20.0) -> dict:
     if sync:
         quiet(world.tick)
     gone = sum(1 for a in ctrls + sensors + mine if quiet(a.destroy))
+    if any(_role(a) == ROLE_SUMO for a in mine):       # a SUMO run may have frozen the lights: CARLA runs them again
+        for tl in [a for a in acts if a.type_id == 'traffic.traffic_light' and hasattr(a, 'freeze')]:
+            quiet(tl.freeze, False)
     if sync:
         quiet(world.tick)
     st = world.get_settings()
@@ -3015,6 +3109,18 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument('--spawn-point', type=int, default=None, metavar='N',
                     help='the ego\'s spawn point (default: the rig\'s; −1: chosen by the seed, on a straight road '
                          'for a scenario or an actors scene)')
+    ap.add_argument('--traffic-source', default=None, choices=list(TRAFFIC_SOURCES),
+                    help='who drives the other vehicles: CARLA\'s traffic manager or SUMO co-simulated in lockstep '
+                         '(default: the rig\'s, carla)')
+    ap.add_argument('--sumo-net', default=None, metavar='FILE',
+                    help='SUMO traffic: "auto" (CARLA\'s bundled net for Town01, 04, 05, else generated from the map), '
+                         '"generate", or a .net.xml or .sumocfg (default: the rig\'s)')
+    ap.add_argument('--sumo-cache', default=None, metavar='DIR',
+                    help='SUMO traffic: where nets generated from a map\'s OpenDRIVE are cached (default: the working '
+                         'folder\'s sumo-nets)')
+    ap.add_argument('--carla-root', default=None, metavar='DIR',
+                    help='SUMO traffic: the CARLA folder holding Co-Simulation/Sumo (default: found next to this '
+                         'Python\'s environment)')
     return ap
 
 
@@ -3080,6 +3186,25 @@ def resolve_args(a, rig: dict):
         raise ValueError('Actors: ' + ' '.join(bad))
     if a.spawn_point is None:
         a.spawn_point = int((rig.get('actors') or {}).get('spawn_point', -1))
+    # who drives the traffic: the rig's traffic_source block (absent: CARLA's traffic manager), the command line over it
+    ts = rig.get('traffic_source') or {}
+    src = getattr(a, 'traffic_source', None) or ts.get('source') or 'carla'
+    if getattr(a, 'sumo_net', None) and not getattr(a, 'traffic_source', None):
+        src = 'sumo'                                   # (--sumo-net alone asks for SUMO traffic)
+    if src not in TRAFFIC_SOURCES:
+        raise ValueError(f'Traffic source {src!r}: one of {", ".join(TRAFFIC_SOURCES)}.')
+    a.traffic_source = src
+    if src == 'sumo':
+        from . import sumo_cosim as SUMO
+        d = dict(ts.get('sumo') or {})
+        if getattr(a, 'sumo_net', None):
+            n = str(a.sumo_net)
+            d['net'] = n if n in SUMO.NET_CHOICES else os.path.abspath(os.path.expanduser(n))
+        a.sumo, bad = SUMO.clean_sumo(d)
+        if bad:
+            raise ValueError('SUMO: ' + '; '.join(bad) + '.')
+    else:
+        a.sumo = None
     return a
 
 

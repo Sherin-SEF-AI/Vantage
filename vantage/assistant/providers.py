@@ -24,9 +24,9 @@ INSTALL = ('The Claude provider needs Anthropic\'s Python SDK, which this instal
 CLAUDE_DEFAULT = 'claude-opus-5-5'
 CLAUDE_MODELS = {
     'claude-opus-5-5': C.ModelInfo('claude-opus-5-5', 'Claude Opus 5.5', 'claude', ('medium', 'high'), 'high', 0,
-                                   'Most capable · adaptive thinking'),
+                                   'Most capable · adaptive thinking', vision=True),
     'claude-sonnet-5-5': C.ModelInfo('claude-sonnet-5-5', 'Claude Sonnet 5.5', 'claude', ('medium', 'high'), 'high',
-                                     10, 'Faster, lower cost · adaptive thinking'),
+                                     10, 'Faster, lower cost · adaptive thinking', vision=True),
 }
 # USD per million tokens: input, output, 5-minute cache write, cache read. Source: Anthropic's model documentation
 # (the model-migration guide's "Migrating to Claude Opus 5.5" and "Migrating to Claude Sonnet 5.5"), read 2026-10-28.
@@ -52,7 +52,8 @@ def models(provider) -> list:
 
 def model_info(provider, model_id) -> C.ModelInfo:
     if provider == CLAUDE:
-        return CLAUDE_MODELS.get(model_id) or C.ModelInfo(model_id, model_id, 'claude', ('medium', 'high'), 'high', 60)
+        return CLAUDE_MODELS.get(model_id) or C.ModelInfo(model_id, model_id, 'claude', ('medium', 'high'), 'high', 60,
+                                                          vision=True)
     return C.model_info(model_id)
 
 

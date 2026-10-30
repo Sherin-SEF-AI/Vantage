@@ -135,6 +135,7 @@ from .lens import resolve
 from .mathutil import BODY_TO_OPTICAL, rot_zyx
 from ..sim import carla_bridge as CB
 from ..sim import frames as FR
+from ..sim import sumo_cosim as SUMO
 
 SCHEMA = 'vantage.sim_rig/1'
 RUN_SCHEMA = 'vantage.sim_run/1'
@@ -274,6 +275,9 @@ class SimSettings:
     scenario: dict = field(default_factory=lambda: {'name': 'free_drive', 'params': {}})
     actors: list = field(default_factory=list)          # ACTORS.json's list: an actors scene around the ego, still
     spawn_point: int = -1                               # the ego's spawn point (−1: a straight road, by the seed)
+    # round 10: who drives the traffic (`traffic` vehicles either way): CARLA's traffic manager or SUMO in lockstep
+    traffic_source: str = 'carla'                       # 'carla' | 'sumo' (vantage.sim.sumo_cosim)
+    sumo: dict = field(default_factory=SUMO.default)    # net, demand, period_s, classes, tls, binary (SUMO.clean_sumo)
 
     def to_dict(self):
         return asdict(self)
@@ -325,6 +329,9 @@ class SimSettings:
             s.scenario['params'] = {k: v for k, v in s.scenario['params'].items()
                                     if k in (sc.get('params') or {})}       # only what was set (defaults implied)
         s.actors = CB.clean_actors(d.get('actors'))[0]
+        if d.get('traffic_source') in SUMO.SOURCES:
+            s.traffic_source = d['traffic_source']
+        s.sumo = SUMO.clean_sumo(d.get('sumo'))[0]
         return s
 
 
@@ -792,6 +799,51 @@ def _m4(T) -> list:
     return [[round(float(v), 10) for v in row] for row in np.asarray(T, float)]
 
 
+SUMO_MEMORY_GB = 0.3                # SUMO and its sumolib net beside the bridge (Town10HD's net: about 150 MB measured)
+
+
+def sumo_block(st: SimSettings, scen: dict, actors: list, dt: float) -> tuple[dict | None, list]:
+    """(the rig's traffic_source block or None, notes): SUMO traffic as the bridge will run it, checked against the
+    rig (what it does with this scene, the net for the town, files that are not there)."""
+    if st.traffic_source != 'sumo':
+        return None, []
+    so = dict(st.sumo)
+    notes = []
+    kind = SUMO.net_kind(so, st.town)
+    n = st.traffic if scen['name'] == 'free_drive' else int(round(scen['params'].get('traffic', 0)))
+    if actors or scen['name'] == 'parked':
+        notes.append('SUMO traffic: not started (' + ('an actors scene' if actors else 'the parked scene') + ' has no '
+                     'traffic).')
+        n = 0
+    elif n <= 0:
+        notes.append('SUMO traffic: no vehicles asked for, SUMO is not started.')
+    else:
+        what = {'bundled': f'CARLA\'s bundled net of {st.town}',
+                'generated': f'a net generated from {st.town}\'s OpenDRIVE on the first run (CARLA\'s '
+                             'netconvert_carla.py; cached by the map\'s hash)',
+                'user': f'the net {os.path.basename(so["net"])} (it must be {st.town}\'s)',
+                'user_config': f'the configuration {os.path.basename(so["net"])} with its own demand (its net must be '
+                               f'{st.town}\'s)'}[kind]
+        demand = (f'{n} vehicles at once' if so['demand'] == 'count' else
+                  f'one vehicle every {so["period_s"]:g} s, at most {n} at once')
+        k = SUMO.sumo_substeps(dt)
+        notes.append(f'SUMO traffic: {demand} on {what}, SUMO stepping every {k * dt * 1000:.4g} ms'
+                     + (f' ({k} simulation steps: SUMO\'s clock is whole milliseconds; its vehicles move on along their '
+                        'heading in between)' if k > 1 else ' with every simulation step')
+                     + f', seed {st.seed}; the traffic lights run by {"SUMO" if so["tls"] == "sumo" else "CARLA"}.')
+        if kind == 'bundled':
+            notes.append(f'CARLA\'s bundled net of {st.town} has no traffic lights: SUMO\'s vehicles do not stop at '
+                         'CARLA\'s lights (choose the net "generate" for a net with them).')
+        if st.walkers:
+            notes.append('SUMO traffic: ' + SUMO.WALKERS_NOTE)
+    for p in SUMO.problems(so):
+        notes.append(f'SUMO traffic: {p} The bridge refuses the run.')
+    doc = {'source': 'sumo', 'vehicles': int(n), 'sumo': so, 'net_kind': kind,
+           'step_s': round(SUMO.sumo_substeps(dt) * dt, 3), 'seed': st.seed,
+           'bundled_towns': list(SUMO.BUNDLED_TOWNS), 'limits': SUMO.LIMITS_TEXT}
+    return doc, notes
+
+
 def build(project, settings: SimSettings | None = None, variant=None, progress=None, cancel=None,
           tables: bool = True) -> SimRig | None:
     """The simulator rig of a variant (the active one by default). tables=False leaves the remap tables out (a
@@ -1083,11 +1135,13 @@ def build(project, settings: SimSettings | None = None, variant=None, progress=N
     notes += abad
     if actors and scen['name'] != 'free_drive':
         notes.append(f'An actors scene: the {scen["name"]} scenario is not run (the ego stands still with the actors).')
+    traffic_doc, tnotes = sumo_block(st, scen, actors, 1.0 / R)
+    notes += tnotes
     rgb_mpx = sum(c['render_mpx'] for c in doc_cams)
     gt_mpx = sum(c['gt_render_mpx'] for c in doc_cams)
     gt_doc = dict(gt, camera_kinds=gt_kinds, render_mpx=round(rgb_mpx, 3), gt_render_mpx=round(gt_mpx, 3),
                   lidar_sensors=len(doc_lid) if gt.get('lidar_labels') else 0, note=GT_NOTE)
-    mem = bridge_memory_gb(doc_cams, gt_kinds)
+    mem = bridge_memory_gb(doc_cams, gt_kinds) + (SUMO_MEMORY_GB if traffic_doc else 0.0)
     if mem > 3.5:
         notes.append(f'The bridge needs about {mem:.1f} GB (its cap is set from this; full-size images with ground '
                      'truth are the heavy case).')
@@ -1135,6 +1189,7 @@ def build(project, settings: SimSettings | None = None, variant=None, progress=N
         'scenario': {'town': st.town, 'weather': st.weather, 'duration_s': st.duration_s, 'traffic': st.traffic,
                      'seed': st.seed, 'warmup_s': st.warmup_s, 'name': scen['name'], 'params': scen['params'],
                      'walkers': st.walkers},
+        **({'traffic_source': traffic_doc} if traffic_doc else {}),     # (a CARLA-traffic rig is as it was)
         'ground_truth': gt_doc,
         'faults': faults,
         'actors': {'items': actors, 'spawn_point': int(st.spawn_point),

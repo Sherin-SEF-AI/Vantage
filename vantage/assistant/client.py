@@ -32,10 +32,12 @@ class ModelInfo:
     default_effort: str = ''
     rank: int = 50                # lower first in the picker
     note: str = ''
+    vision: bool = False          # takes images (the look tool); Groq documents none of the models below as taking images
 
 
 # What Groq's documentation says about each model (October 2026). Unknown models still work: they get no reasoning
-# parameters, and the picker lists them after these.
+# parameters, and the picker lists them after these. None of them is documented to take image input, so the look
+# tool (pictures of the design) is not offered on Groq: the panel says pictures need Claude.
 KNOWN = {
     'openai/gpt-oss-120b': ModelInfo('openai/gpt-oss-120b', 'GPT-OSS 120B', 'gpt-oss', ('low', 'medium', 'high'),
                                      'medium', 0, 'Most capable · reasoning · production'),

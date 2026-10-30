@@ -1,0 +1,4 @@
+Metadata-Version: 2.1
+Name: traci
+Version: 1.23.1
+Summary: fake for tests (tests/fake_sumo)

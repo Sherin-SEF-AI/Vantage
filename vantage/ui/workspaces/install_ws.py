@@ -1,5 +1,6 @@
 """D1 · Installation check: capture each camera, find the floor boards, solve the installed pose,
-compare with the plan and stitch the bird's-eye view with planned and measured poses."""
+compare with the plan and stitch the bird's-eye view with planned and measured poses. Where the detection fails
+(glare, a half-hidden board), Pick corners lets the board corners be dragged onto the image by hand."""
 from __future__ import annotations
 
 import json
@@ -11,13 +12,13 @@ import traceback
 
 import numpy as np
 from PyQt6.QtCore import Qt, QTimer, QObject, QRectF, QPointF, pyqtSignal
-from PyQt6.QtGui import QPainter, QImage, QPixmap, QPen, QColor, QFont, QPainterPath
+from PyQt6.QtGui import QPainter, QImage, QPixmap, QPen, QColor, QFont, QPainterPath, QBrush
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QSplitter, QCheckBox, QComboBox, QTableWidget,
                              QTableWidgetItem, QHeaderView, QAbstractItemView, QProgressBar, QFileDialog, QScrollArea,
                              QFrame, QLineEdit, QSizePolicy)
 
 from ...core import capture as cap
-from ...core.install import InstallSettings, check_all
+from ...core.install import InstallSettings, check_all, planned_corners, picks_to_rows
 from ...core.joint import pose_dict, report as joint_report
 from ...core.mathutil import rot_zyx, wrap180
 from ...core.project import Variant, new_uid
@@ -58,9 +59,121 @@ class CaptureTile(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._pix = None
         self._pix_key = None
+        self._full = None           # (key, QImage at full size) for the magnifier
+        self._drag = None           # (target uid, corner) being dragged in Pick corners
+        self._cursor = None         # QPointF of the drag, for the magnifier
+        self.setMouseTracking(True)
 
     def _cam(self):
         return self.page.ctx.store.cam(self.uid)
+
+    def picking(self) -> bool:
+        return self.page.pick_mode and self.page.selected == self.uid and self.uid in self.page.images
+
+    def _geometry(self):
+        """(rect, scale) of the frozen image in the tile, or None."""
+        img = self.page.images.get(self.uid)
+        if img is None:
+            return None
+        return self._fit(img.shape[1], img.shape[0])
+
+    def handles(self):
+        """[(target uid, board name, corner, screen point, guide screen point, picked)] of Pick corners: every
+        corner in view of every board, at its pick when picked, else where the plan (or the measured pose) puts it."""
+        g = self._geometry()
+        if g is None:
+            return []
+        rect, s = g
+        picks = self.page.picks.get(self.uid, {})
+        out = []
+        for tu, name, uv, ok in self.page.pick_guides(self.uid):
+            for k in range(4):
+                if not ok[k] and k not in picks.get(tu, {}):
+                    continue
+                guide = QPointF(rect.left() + uv[k][0] * s, rect.top() + uv[k][1] * s)
+                pk = picks.get(tu, {}).get(k)
+                at = QPointF(rect.left() + pk[0] * s, rect.top() + pk[1] * s) if pk is not None else guide
+                out.append((tu, name, k, at, guide, pk is not None))
+        return out
+
+    def _handle_at(self, pos, picked_only=False):
+        best = None
+        for h in self.handles():
+            if picked_only and not h[5]:
+                continue
+            d = math.hypot(h[3].x() - pos.x(), h[3].y() - pos.y())
+            if d <= 12 and (best is None or d < best[0]):
+                best = (d, h)
+        return best[1] if best else None
+
+    def _to_image(self, pos):
+        rect, s = self._geometry()
+        h, w = self.page.images[self.uid].shape[:2]
+        return (min(max((pos.x() - rect.left()) / s, 0.0), w - 1.0), min(max((pos.y() - rect.top()) / s, 0.0), h - 1.0))
+
+    def _paint_picks(self, p, rect, s):
+        cam = self._cam()
+        ink = THEME.color('ink')
+        acc = THEME.cam(cam.slot) if cam is not None else QColor('#E0A030')
+        p.setFont(mono(9, QFont.Weight.DemiBold))
+        for tu, name, k, at, guide, picked in self.handles():
+            if picked:
+                p.setPen(QPen(THEME.color('ink', 0.55), 1, Qt.PenStyle.DotLine))
+                p.drawLine(guide, at)
+                p.setPen(QPen(QColor('#111111'), 1.2))
+                p.setBrush(acc)
+                p.drawEllipse(at, 5.5, 5.5)
+                p.setPen(QPen(QColor('#111111'), 1))
+                p.drawLine(QPointF(at.x() - 2.5, at.y()), QPointF(at.x() + 2.5, at.y()))
+                p.drawLine(QPointF(at.x(), at.y() - 2.5), QPointF(at.x(), at.y() + 2.5))
+            else:
+                p.setPen(QPen(ink, 1.4))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawEllipse(at, 5.5, 5.5)
+            p.setPen(ink)
+            p.drawText(QPointF(at.x() + 7, at.y() - 6), f'{name}·{k}')
+        # how to use it, along the bottom
+        p.setFont(sans(10))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(THEME.color('viewport', 0.82))
+        band = QRectF(rect.left(), rect.bottom() - 20, rect.width(), 20)
+        p.drawRect(band)
+        p.setPen(THEME.color('ink2'))
+        p.drawText(band.adjusted(8, 0, -8, 0), Qt.AlignmentFlag.AlignVCenter,
+                   'Drag a corner\'s ring onto that corner in the image · right-click a pick to remove it · '
+                   '4+ corners: the whole pose, 2–3: the rotation')
+        if self._drag is not None and self._cursor is not None:
+            self._paint_loupe(p, rect, s)
+
+    def _paint_loupe(self, p, rect, s):
+        """A 4× magnifier of the full-size image under the dragged corner."""
+        img = self.page.images.get(self.uid)
+        key = (self.page.version.get(self.uid, 0), img.shape)
+        if self._full is None or self._full[0] != key:
+            self._full = (key, to_qimage(img))
+        full = self._full[1]
+        u, v = self._to_image(self._cursor)
+        R, zoom = 64.0, 4.0
+        src = QRectF(u - R / zoom, v - R / zoom, 2 * R / zoom, 2 * R / zoom)
+        c = QPointF(self._cursor.x() + (R + 24 if self._cursor.x() < self.width() / 2 else -R - 24),
+                    self._cursor.y() + (R + 24 if self._cursor.y() < self.height() / 2 else -R - 24))
+        dst = QRectF(c.x() - R, c.y() - R, 2 * R, 2 * R)
+        p.save()
+        clip = QPainterPath()
+        clip.addEllipse(dst)
+        p.setClipPath(clip)
+        p.fillRect(dst, QColor('#000000'))
+        p.drawImage(dst, full, src)
+        p.setClipping(False)
+        p.setPen(QPen(THEME.color('ink'), 1.5))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawEllipse(dst)
+        p.setPen(QPen(QColor('#FF3B30'), 1))
+        p.drawLine(QPointF(c.x() - 10, c.y()), QPointF(c.x() - 3, c.y()))
+        p.drawLine(QPointF(c.x() + 3, c.y()), QPointF(c.x() + 10, c.y()))
+        p.drawLine(QPointF(c.x(), c.y() - 10), QPointF(c.x(), c.y() - 3))
+        p.drawLine(QPointF(c.x(), c.y() + 3), QPointF(c.x(), c.y() + 10))
+        p.restore()
 
 
     def _fit(self, w, h):
@@ -150,12 +263,42 @@ class CaptureTile(QWidget):
                 p.setFont(sans(10))
                 c0 = b.outline.mean(axis=0)
                 p.drawText(QPointF(rect.left() + c0[0] * sx + 4, rect.top() + c0[1] * sx - 4), b.name)
+        if self.picking():
+            self._paint_picks(p, rect, s)
         p.end()
 
     def mousePressEvent(self, e):
+        if self.picking():
+            pos = e.position()
+            if e.button() == Qt.MouseButton.RightButton:
+                h = self._handle_at(pos, picked_only=True)
+                if h is not None:
+                    self.page.remove_pick(self.uid, h[0], h[2])
+                return
+            h = self._handle_at(pos)
+            if h is not None and e.button() == Qt.MouseButton.LeftButton:
+                self._drag, self._cursor = (h[0], h[2]), pos
+                self.page.set_pick(self.uid, h[0], h[2], self._to_image(pos), final=False)
+                return
         self.clicked.emit(self.uid)
 
+    def mouseMoveEvent(self, e):
+        if self._drag is not None:
+            self._cursor = e.position()
+            self.page.set_pick(self.uid, *self._drag, self._to_image(self._cursor), final=False)
+            return
+        if self.picking():
+            on = self._handle_at(e.position()) is not None
+            self.setCursor(Qt.CursorShape.CrossCursor if on else Qt.CursorShape.ArrowCursor)
+
+    def mouseReleaseEvent(self, e):
+        if self._drag is not None:
+            drag, self._drag, self._cursor = self._drag, None, None
+            self.page.set_pick(self.uid, *drag, self._to_image(e.position()), final=True)
+
     def mouseDoubleClickEvent(self, e):
+        if self.picking():
+            return
         self.double_clicked.emit(self.uid)
 
 
@@ -227,6 +370,9 @@ class InstallPage(QWidget):
         self.selected = None
         self.single = False
         self.busy = False
+        self.picks = {}            # uid -> {target uid: {corner 0-3: (u, v) pixels of the frozen capture}}
+        self.pick_mode = False
+        self._single_before = False
         self.sig = _Signals()
         self.sig.progress.connect(self._progress)
         self.sig.done.connect(self._done)
@@ -403,6 +549,16 @@ class InstallPage(QWidget):
         self.show_overlay.toggled.connect(self._repaint_tiles)
         h.addWidget(self.show_overlay)
         h.addWidget(label('dashed: planned board · dots: detected corners · double-click to enlarge', muted=True, small=True))
+        self.b_pick = button('Pick corners', None, 'target',
+                             'For a camera the detection fails on (glare, a board half hidden): drag the board corners '
+                             'onto the image by hand. Four or more give the whole pose, two or three the rotation; the '
+                             'picked pose then looks for the boards again.')
+        self.b_pick.setCheckable(True)
+        self.b_pick.toggled.connect(self.set_pick_mode)
+        self.b_clear_picks = button('Clear picks', None, 'trash', 'Remove the picked corners of the selected camera')
+        self.b_clear_picks.clicked.connect(lambda: self.clear_picks(self.selected))
+        h.addWidget(self.b_pick)
+        h.addWidget(self.b_clear_picks)
         tl.addLayout(h)
         self.tile_host = QWidget()
         self.tile_grid = QGridLayout(self.tile_host)
@@ -556,6 +712,7 @@ class InstallPage(QWidget):
         self.stop_live()
         self.sources, self.images, self.truth, self.results, self.stitched, self.luts = {}, {}, {}, {}, {}, {}
         self.joint, self.board_truth, self.gains, self.exposure_truth = None, {}, {}, {}
+        self.picks = {}
         self._rebuild()
 
     def _rebuild(self):
@@ -575,6 +732,8 @@ class InstallPage(QWidget):
                 self.sources[c.uid] = dict(src)
                 if old in self.images:
                     self.set_image(c.uid, self.images[old])
+                if old in self.picks:
+                    self.picks[c.uid] = self.picks.pop(old)
             s = self.sources.setdefault(c.uid, {'kind': 'synthetic', 'path': '', 'spec': self._stream_spec(c)})
             s['tag'] = c.tag
             chip = Chip(c.slot, c.tag)
@@ -814,6 +973,8 @@ class InstallPage(QWidget):
             self.live_timer.stop()
 
     def set_image(self, uid, img):
+        if img is not self.images.get(uid):
+            self.picks.pop(uid, None)        # picks belong to the image they were made on
         if img is None:
             self.images.pop(uid, None)
         else:
@@ -845,7 +1006,93 @@ class InstallPage(QWidget):
         cams = [c.uid for c in self._cams()]
         if uid in cams:
             self.table.selectRow(cams.index(uid))
+        if self.single:
+            self._layout_tiles()
         self._repaint_tiles()
+        self._sync_buttons()
+
+    # ------------------------------------------------------------------ corners picked by hand
+    def set_pick_mode(self, on):
+        on = bool(on)
+        if on and self.selected not in self.images:
+            self.ctx.msg('Capture or load an image for the camera first: corners are picked on a still image.', 5000)
+            self.b_pick.blockSignals(True)
+            self.b_pick.setChecked(False)
+            self.b_pick.blockSignals(False)
+            return
+        if on == self.pick_mode:
+            return
+        self.pick_mode = on
+        if on:
+            self._single_before, self.single = self.single, True
+        else:
+            self.single = self._single_before
+        self.b_pick.blockSignals(True)
+        self.b_pick.setChecked(on)
+        self.b_pick.blockSignals(False)
+        self._layout_tiles()
+        self._repaint_tiles()
+        self._pick_status()
+
+    def pick_guides(self, uid):
+        """Where each board's corners should be in the camera's capture: through the measured pose when the camera
+        was solved, else the plan (planned_corners)."""
+        c = self.ctx.store.cam(uid)
+        img = self.images.get(uid)
+        if c is None or img is None:
+            return []
+        r = self.results.get(uid)
+        pose = (rot_zyx(r.yaw, r.pitch, r.roll), r.pos) if r is not None and r.pos is not None else None
+        try:
+            return planned_corners(self.ctx.store.project, c, img.shape, pose=pose)
+        except Exception:
+            return []
+
+    def set_pick(self, uid, target_uid, corner, uv, final=True):
+        self.picks.setdefault(uid, {}).setdefault(target_uid, {})[int(corner)] = (float(uv[0]), float(uv[1]))
+        t = self.tiles.get(uid)
+        if t is not None:
+            t.update()
+        if final:
+            self._pick_status()
+            self._fill_table()
+            self._sync_buttons()
+
+    def remove_pick(self, uid, target_uid, corner):
+        cs = self.picks.get(uid, {}).get(target_uid, {})
+        cs.pop(int(corner), None)
+        if not cs:
+            self.picks.get(uid, {}).pop(target_uid, None)
+        if not self.picks.get(uid):
+            self.picks.pop(uid, None)
+        self._repaint_tiles()
+        self._pick_status()
+        self._fill_table()
+        self._sync_buttons()
+
+    def clear_picks(self, uid=None):
+        if uid is None:
+            self.picks = {}
+        else:
+            self.picks.pop(uid, None)
+        self._repaint_tiles()
+        self._pick_status()
+        self._fill_table()
+        self._sync_buttons()
+
+    def n_picks(self, uid) -> int:
+        return sum(len(cs) for cs in self.picks.get(uid, {}).values())
+
+    def _pick_status(self):
+        if self.busy:
+            return
+        c = self.ctx.store.cam(self.selected) if self.selected else None
+        n = self.n_picks(self.selected) if self.selected else 0
+        if self.pick_mode and c is not None:
+            need = ('Run check to solve from them.' if n >= 4 else
+                    'Run check for the rotation, or pick more for the position too.' if n >= 2 else
+                    'Pick at least two corners.')
+            self.status.setText(f'{c.tag}: {n} corner{"s" if n != 1 else ""} picked · {need}')
 
     def toggle_single(self, uid):
         self.selected = uid
@@ -895,15 +1142,15 @@ class InstallPage(QWidget):
         jobs = []
         for c in cams:
             s = self.sources[c.uid]
-            if s['kind'] == 'live':
+            if s['kind'] == 'live' and not (self.picks.get(c.uid) and c.uid in self.images):
                 ls = self.live.get(c.uid)
                 f = ls.latest() if ls else None
                 if f is None:
                     self.ctx.msg(f'{c.tag}: no frame from {s["spec"]}' + (f' ({ls.error})' if ls and ls.error else ''), 6000)
                     continue
                 self.set_image(c.uid, f)
-            if s['kind'] == 'synthetic':
-                jobs.append(('render', c.uid))
+            if s['kind'] == 'synthetic' and not (self.picks.get(c.uid) and c.uid in self.images):
+                jobs.append(('render', c.uid))      # a capture with picked corners is kept, not rendered again
             elif c.uid in self.images:
                 jobs.append(('have', c.uid))
         sim = self.sim.isChecked()
@@ -932,6 +1179,7 @@ class InstallPage(QWidget):
         eng = self.ctx.window._shared_engine()
         result = self.ctx.analysis.result
         images = dict(self.images)
+        picks = {u: {t: dict(cs) for t, cs in pk.items()} for u, pk in self.picks.items() if pk}
         self._run_variant = project.active_uid
         self.busy = True
         self._sync_buttons()
@@ -970,7 +1218,8 @@ class InstallPage(QWidget):
                     def prog(f, text):
                         self.sig.progress.emit((k0 + f * m) / n, text)
                     cams_ = [snap.variant.cam(uid) for _, uid in jobs]
-                    out['results'], out['joint'] = check_all(snap, cams_, out['images'], st, progress=prog)
+                    out['results'], out['joint'] = check_all(snap, cams_, out['images'], st, progress=prog,
+                                                             picks=picks)
                     k += m
                     if result is not None:
                         from ...core.stitch import build_lut
@@ -1094,6 +1343,9 @@ class InstallPage(QWidget):
         self.b_lut.setEnabled(bool(self.luts))
         self.b_png.setEnabled(bool(self.stitched))
         self.b_save_caps.setEnabled(bool(self.images))
+        if hasattr(self, 'b_pick'):
+            self.b_pick.setEnabled(not self.busy)
+            self.b_clear_picks.setEnabled(not self.busy and bool(self.picks.get(self.selected)))
 
     # ------------------------------------------------------------------ results
     def _fill_table(self):
@@ -1103,6 +1355,8 @@ class InstallPage(QWidget):
         for i, c in enumerate(cams):
             r = self.results.get(c.uid)
             src = dict(SOURCES)[self.sources.get(c.uid, {}).get('kind', 'synthetic')]
+            if self.n_picks(c.uid):
+                src += f' · {self.n_picks(c.uid)} picked'
             vals = [c.tag, src]
             if r is None:
                 vals += ['–'] * 9 + ['Not checked' if c.uid in self.images or src == 'Synthetic' else 'No image']
@@ -1215,7 +1469,13 @@ class InstallPage(QWidget):
             row = {'tag': c.tag, 'source': self.sources.get(c.uid, {}).get('kind', ''),
                    'planned': {'x': c.x, 'y': c.y, 'z': c.z, 'yaw': c.yaw, 'pitch': c.pitch, 'roll': c.roll}}
             if r is not None:
-                row.update(status=r.status, message=r.message, boards=[b.name for b in r.boards], corners=r.n_corners)
+                row.update(status=r.status, message=r.message, boards=[b.name for b in r.boards], corners=r.n_corners,
+                           method=r.method)
+                if self.picks.get(c.uid):
+                    names = {t.uid: t.name for t in self.ctx.store.project.targets}
+                    row['picked_corners'] = picks_to_rows(self.ctx.store.project, self.picks[c.uid])
+                    row['pick_error_px'] = [{'board': names.get(u, u), 'corner': k, 'px': round(e, 2)}
+                                            for u, k, e in r.pick_err_px]
                 if r.pos is not None:
                     row['measured'] = {'x': round(float(r.pos[0]), 4), 'y': round(float(r.pos[1]), 4),
                                        'z': round(float(r.pos[2]), 4), 'yaw': round(r.yaw, 3), 'pitch': round(r.pitch, 3),

@@ -227,7 +227,9 @@ def get_plan_settings(tc, kind='', **_):
                        'them); faults and actors are lists (get_catalogue faults / actors); traffic is a free '
                        'drive\'s: a scenario has its own scenario.params.traffic (a traffic asked for with a scenario '
                        'goes there), an actors scene or parked none; min_tick_hz and max_tick_hz only apply when '
-                       'tick_hz is 0')
+                       'tick_hz is 0; traffic_source: carla (the traffic manager) or sumo (Eclipse SUMO in lockstep, '
+                       'needs SUMO in CARLA\'s Python); sumo: {net: auto|generate|a .net.xml or .sumocfg path, '
+                       'demand: count|period, period_s, classes, tls: carla|sumo}')
     if kind == 'campaign':
         out['note'] = ('template ("fault_detectability", "weather_sweep", "rig_ab") starts from that design fitted to '
                        'the variant; fault_sets are lists of {kind, tags, axes, magnitudes, signs}')

@@ -1,0 +1,753 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Sherin-SEF-AI/Vantage/blob/main/docs/sim_rig.schema.json",
+  "title": "Vantage simulator rig (sim_rig.json), schema vantage.sim_rig/1",
+  "description": "What a simulator bridge reads: one variant of a Vantage project as a simulator needs it (core/simrig.py; `vantage project.vantage --carla-rig OUT` writes it with sim_remap.npz beside it). Vehicle frame: ISO 8855, x forward, y left, z up, metres, origin at the rear-axle centre on the ground. Orientations: intrinsic Z-Y-X yaw, pitch, roll in degrees, pitch positive DOWN. Blocks named 'carla' and 'blueprint', and the views/atlas/remap of a camera, are CARLA's encoding of the same rig. docs/simulator-bridge.md explains every field and what a bridge must write back. The schema is strict (an unknown key is an error) so that it documents every field Vantage writes; the CARLA bridge reads the file tolerantly.",
+  "type": "object",
+  "required": [
+    "schema",
+    "carla_version",
+    "project",
+    "variant",
+    "variant_uid",
+    "created",
+    "frames",
+    "vehicle",
+    "simulation",
+    "scenario",
+    "ground_truth",
+    "faults",
+    "actors",
+    "server",
+    "weather",
+    "output",
+    "cameras",
+    "lidars",
+    "radars",
+    "imus",
+    "gnss",
+    "nuscenes",
+    "tf_static",
+    "assumptions",
+    "notes"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "vantage.sim_rig/1", "description": "Marks the file and its version."},
+    "carla_version": {"type": "string", "description": "The CARLA release the CARLA-specific blocks were planned for ('0.9.16')."},
+    "project": {"type": "string", "description": "The project's name."},
+    "variant": {"type": "string", "description": "The variant's name."},
+    "variant_uid": {"type": "string", "description": "The variant's uid in the project."},
+    "created": {"type": "string", "description": "When the file was written: ISO 8601 UTC, seconds."},
+    "frames": {"$ref": "#/$defs/frames"},
+    "vehicle": {"$ref": "#/$defs/vehicle"},
+    "simulation": {"$ref": "#/$defs/simulation"},
+    "scenario": {"$ref": "#/$defs/scenario"},
+    "traffic_source": {"$ref": "#/$defs/traffic_source"},
+    "ground_truth": {"$ref": "#/$defs/ground_truth"},
+    "faults": {"type": "array", "description": "Faults to inject, with known answers (the same list faults.json holds).", "items": {"$ref": "#/$defs/fault"}},
+    "actors": {"$ref": "#/$defs/actors"},
+    "server": {"$ref": "#/$defs/server"},
+    "weather": {"$ref": "#/$defs/weather"},
+    "output": {"$ref": "#/$defs/output"},
+    "cameras": {"type": "array", "items": {"$ref": "#/$defs/camera"}},
+    "lidars": {"type": "array", "items": {"$ref": "#/$defs/lidar"}},
+    "radars": {"type": "array", "items": {"$ref": "#/$defs/radar"}},
+    "imus": {"type": "array", "items": {"$ref": "#/$defs/imu"}},
+    "gnss": {"type": "array", "items": {"$ref": "#/$defs/gnss"}},
+    "nuscenes": {"$ref": "#/$defs/nuscenes"},
+    "tf_static": {"type": "array", "description": "The static transforms the bag's /tf_static carries.", "items": {"$ref": "#/$defs/tf"}},
+    "assumptions": {"type": "string", "description": "What the CARLA run assumes, in prose (copied into dataset.json and README.md)."},
+    "notes": {"type": "array", "items": {"type": "string"}, "description": "What planning the rig found worth saying (rates rounded to the step, lidar resampling, render cost)."},
+    "provenance": {"type": "object", "description": "Added by a batch run (core/provenance.py, schema vantage.provenance/1); the bridge ignores it."}
+  },
+  "$defs": {
+    "vec3": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}},
+    "size2": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "integer", "minimum": 0}},
+    "mat3": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"$ref": "#/$defs/vec3"}},
+    "mat4": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number"}}},
+    "quat": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number"}, "description": "Quaternion [w, x, y, z]."},
+    "pose": {
+      "type": "object",
+      "description": "A mount in the vehicle frame: position of the optical centre (a GNSS antenna's phase centre, an IMU's axis origin), metres; yaw, pitch, roll degrees (intrinsic Z-Y-X, pitch positive down). The sensor's own frame is x forward, y left, z up (REP 103); a camera's optical frame is BODY_TO_OPTICAL · Rᵀ.",
+      "required": ["x", "y", "z", "yaw", "pitch", "roll"],
+      "additionalProperties": false,
+      "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"}, "yaw": {"type": "number"}, "pitch": {"type": "number"}, "roll": {"type": "number"}}
+    },
+    "carla_pose": {
+      "type": "object",
+      "description": "CARLA only: the mount relative to the ego origin in CARLA's left-handed axes (location (x, −y, z)) and a carla.Rotation in degrees (pitch = −pitch, yaw = −yaw, roll = roll for a plain pose).",
+      "required": ["location", "rotation"],
+      "additionalProperties": false,
+      "properties": {
+        "location": {"$ref": "#/$defs/vec3"},
+        "rotation": {"type": "object", "required": ["pitch", "yaw", "roll"], "additionalProperties": false, "properties": {"pitch": {"type": "number"}, "yaw": {"type": "number"}, "roll": {"type": "number"}}}
+      }
+    },
+    "frames": {
+      "type": "object",
+      "description": "The frames, in words.",
+      "required": ["vehicle", "carla", "conversion", "sensor_locations"],
+      "additionalProperties": false,
+      "properties": {"vehicle": {"type": "string"}, "carla": {"type": "string"}, "conversion": {"type": "string"}, "sensor_locations": {"type": "string"}}
+    },
+    "vehicle": {
+      "type": "object",
+      "description": "The ego vehicle: the project's dimensions and the CARLA vehicle nearest them.",
+      "required": ["blueprint", "how", "project", "note", "candidates", "carla", "size_error", "name", "measured"],
+      "additionalProperties": false,
+      "properties": {
+        "blueprint": {"type": "string", "description": "CARLA only: the ego's blueprint id."},
+        "how": {"type": "string", "description": "How it was chosen: 'chosen', 'nearest by size', or no body ('a typical small car')."},
+        "project": {"type": "object", "description": "The project body's length, width, height, wheelbase (m), lower-case keys; empty without a body.", "additionalProperties": {"type": "number"}},
+        "note": {"type": "string"},
+        "candidates": {
+          "type": "array",
+          "description": "CARLA only: the four nearest blueprints and their scores (mean relative size difference).",
+          "items": {"type": "object", "required": ["blueprint", "score"], "additionalProperties": false, "properties": {"blueprint": {"type": "string"}, "score": {"type": "number"}}}
+        },
+        "carla": {
+          "type": ["object", "null"],
+          "description": "CARLA only: the chosen blueprint's measured box (m): null for a blueprint not in Vantage's table.",
+          "additionalProperties": false,
+          "properties": {
+            "base_type": {"type": "string"},
+            "length": {"type": "number"},
+            "width": {"type": "number"},
+            "height": {"type": "number"},
+            "wheelbase": {"type": "number"},
+            "rear_axle_x": {"type": "number", "description": "The rear axle's x in the actor frame (m)."}
+          }
+        },
+        "size_error": {"type": ["number", "null"], "description": "The chosen vehicle's mean relative size difference from the project's body."},
+        "name": {"type": "string", "description": "The project vehicle's model name."},
+        "measured": {"type": "object", "description": "The project body measured in the vehicle frame (m): Length, Width, Height, Wheelbase, front_x, rear_x.", "additionalProperties": {"type": "number"}}
+      }
+    },
+    "simulation": {
+      "type": "object",
+      "required": ["tick_hz", "dt_s", "warmup_ticks", "tick_candidates", "bridge_memory_gb", "render_mpx_per_frame", "timing"],
+      "additionalProperties": false,
+      "properties": {
+        "tick_hz": {"type": "number", "exclusiveMinimum": 0, "description": "Simulation steps per second; every planned stamp is a whole number of steps from the sync pulse."},
+        "dt_s": {"type": "number", "exclusiveMinimum": 0, "description": "1 / tick_hz."},
+        "warmup_ticks": {"type": "integer", "minimum": 0, "description": "Steps run with the sensors attached before t = 0: a whole number of lidar rotations, at least 3 and one camera period."},
+        "tick_candidates": {"type": "array", "items": {"type": "number"}, "description": "The step rates considered."},
+        "bridge_memory_gb": {"type": "number", "description": "CARLA only: the bridge's estimated peak memory."},
+        "render_mpx_per_frame": {"type": "number", "description": "CARLA only: megapixels rendered per frame of all cameras (images and ground truth)."},
+        "timing": {
+          "type": "object",
+          "required": ["lidar_period_s", "readout_s", "exposure_s"],
+          "additionalProperties": false,
+          "properties": {
+            "lidar_period_s": {"type": ["number", "null"], "description": "The sync plan's period (the reference lidar's rotation), null without a lidar."},
+            "readout_s": {"type": "number", "description": "The cameras' readout time in the sync plan."},
+            "exposure_s": {"type": "number", "description": "The cameras' exposure time in the sync plan."}
+          }
+        }
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "required": ["town", "weather", "duration_s", "traffic", "seed", "warmup_s", "name", "params", "walkers"],
+      "additionalProperties": false,
+      "properties": {
+        "town": {"type": "string", "description": "CARLA only: the map."},
+        "weather": {"type": "string", "description": "The weather setting: 'project', 'vantage:<id>' or a CARLA preset (the mapped values are in 'weather')."},
+        "duration_s": {"type": "number", "exclusiveMinimum": 0, "description": "Seconds recorded from t = 0."},
+        "traffic": {"type": "integer", "minimum": 0, "description": "Other vehicles on autopilot."},
+        "seed": {"type": "integer", "minimum": 0, "description": "Seeds the spawn choices, the traffic and every random choice of the run."},
+        "warmup_s": {"type": "number", "minimum": 0, "description": "Seconds of traffic before the sensors are attached."},
+        "name": {"enum": ["free_drive", "lead_vehicle_brake", "cut_in", "pedestrian_crossing", "cyclist_crossing", "parked"], "description": "The built-in scenario (carla_bridge.SCENARIOS)."},
+        "params": {"type": "object", "description": "The scenario's parameters that were set (the rest take their defaults).", "additionalProperties": {"type": ["number", "string"]}},
+        "walkers": {"type": "integer", "minimum": 0, "description": "Pedestrians on the walker AI."}
+      }
+    },
+    "traffic_source": {
+      "type": "object",
+      "description": "SUMO traffic (CARLA): present only when Eclipse SUMO drives the other vehicles, co-simulated in lockstep with the simulator (vantage/sim/sumo_cosim.py); absent, the simulator's own traffic (CARLA's traffic manager) drives them.",
+      "required": ["source", "vehicles", "sumo", "net_kind", "step_s", "seed"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {"const": "sumo"},
+        "vehicles": {"type": "integer", "minimum": 0, "description": "Vehicles in the network at once (a free drive's traffic, a scenario's Other traffic; 0: SUMO is not started)."},
+        "sumo": {
+          "type": "object",
+          "description": "The settings (analysis.sim.sumo, sumo_cosim.clean_sumo).",
+          "required": ["net", "demand", "period_s", "classes", "tls", "binary"],
+          "additionalProperties": false,
+          "properties": {
+            "net": {"type": "string", "description": "auto (CARLA's bundled net for Town01, Town04, Town05, else one generated from the map's OpenDRIVE), generate, or the path of a .net.xml or .sumocfg."},
+            "demand": {"enum": ["count", "period"], "description": "count: vehicles at once; period: one inserted every period_s."},
+            "period_s": {"type": "number", "minimum": 0.1, "maximum": 60},
+            "classes": {
+              "type": "array",
+              "minItems": 1,
+              "items": {"enum": ["passenger", "evehicle", "authority", "truck", "motorcycle", "bicycle"]},
+              "description": "SUMO vehicle classes drawn (CARLA's vtypes.json maps them to blueprints)."
+            },
+            "tls": {"enum": ["carla", "sumo"], "description": "Who runs the traffic lights (run_synchronization.py --tls-manager)."},
+            "binary": {"type": "string", "description": "auto (SUMO_HOME/bin/sumo of CARLA's Python's sumo package) or a path."}
+          }
+        },
+        "net_kind": {"enum": ["bundled", "generated", "user", "user_config"], "description": "What the net will be for the rig's town."},
+        "step_s": {"type": "number", "exclusiveMinimum": 0, "description": "SUMO's step: the simulation step, or the fewest whole simulation steps that are whole milliseconds (SUMO's clock)."},
+        "seed": {"type": "integer", "description": "SUMO's --seed and randomTrips' (the scenario's seed)."},
+        "bundled_towns": {"type": "array", "items": {"type": "string"}},
+        "limits": {"type": "string"}
+      }
+    },
+    "ground_truth": {
+      "type": "object",
+      "required": ["semantic", "instance", "range", "lidar_labels", "camera_kinds", "render_mpx", "gt_render_mpx", "lidar_sensors", "note"],
+      "additionalProperties": false,
+      "properties": {
+        "semantic": {"type": "boolean", "description": "Semantic label images per camera frame."},
+        "instance": {"type": "boolean", "description": "Instance images and the objects per camera frame."},
+        "range": {"type": "boolean", "description": "Range images per camera frame."},
+        "lidar_labels": {"type": "boolean", "description": "nuScenes-lidarseg and -panoptic labels per lidar sweep."},
+        "camera_kinds": {"type": "array", "items": {"enum": ["instance_segmentation", "semantic_segmentation", "depth"]}, "description": "CARLA only: the label cameras rendered beside every view."},
+        "render_mpx": {"type": "number"},
+        "gt_render_mpx": {"type": "number"},
+        "lidar_sensors": {"type": "integer", "minimum": 0, "description": "Lidars labelled."},
+        "note": {"type": "string"}
+      }
+    },
+    "fault": {
+      "type": "object",
+      "description": "A fault with a known answer (carla_bridge.FAULT_KINDS). rotation: deg [yaw, pitch, roll] in the sensor's own frame (R_actual = R_plan · R(deg)); translation: m [x, y, z] in the vehicle frame; clock_offset: ms (data captured at t stamped t + ms); drop: rate (0-0.9, seeded) or frames [k, ...]; freeze: from_s, to_s (frames stamped in [from, to) repeat the last one before); range_bias: m along every lidar or radar ray.",
+      "required": ["tag", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "tag": {"type": "string", "description": "The sensor's tag."},
+        "kind": {"enum": ["rotation", "translation", "clock_offset", "drop", "freeze", "range_bias"]},
+        "deg": {"$ref": "#/$defs/vec3"},
+        "m": {"type": ["array", "number"], "items": {"type": "number"}, "description": "translation: [x, y, z] m; range_bias: m."},
+        "ms": {"type": "number"},
+        "rate": {"type": "number", "minimum": 0, "maximum": 0.9},
+        "frames": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+        "from_s": {"type": "number", "minimum": 0},
+        "to_s": {"type": "number", "minimum": 0}
+      }
+    },
+    "actors": {
+      "type": "object",
+      "required": ["items", "spawn_point", "frame"],
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "type": "array",
+          "description": "An actors scene: the ego stands still with these around it, no traffic (the same list actors.json holds).",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "pose"],
+            "additionalProperties": false,
+            "properties": {
+              "id": {"type": "string", "description": "Unique in the scene (a critical target's uid)."},
+              "kind": {"type": "string", "description": "child, pedestrian, cyclist, car, truck, traffic_light, sign, cone, barrier, or blueprint:<id> (CARLA only)."},
+              "pose": {
+                "type": "object",
+                "required": ["x", "y", "z", "yaw"],
+                "additionalProperties": false,
+                "description": "Vehicle frame: x, y the box's ground-contact centre, z its lowest point (m), yaw its heading (degrees, counter-clockwise from +x).",
+                "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"}, "yaw": {"type": "number"}}
+              }
+            }
+          }
+        },
+        "spawn_point": {"type": "integer", "minimum": -1, "description": "CARLA only: the ego's spawn point; −1: a straight road chosen by the seed."},
+        "frame": {"type": "string"}
+      }
+    },
+    "server": {
+      "type": "object",
+      "description": "CARLA only: the server the run talks to.",
+      "required": ["port", "tm_port", "quality", "memory_gb", "timeout_s"],
+      "additionalProperties": false,
+      "properties": {"port": {"type": "integer"}, "tm_port": {"type": "integer"}, "quality": {"enum": ["Epic", "Low"]}, "memory_gb": {"type": "number"}, "timeout_s": {"type": "number"}}
+    },
+    "weather": {
+      "type": "object",
+      "required": ["source", "label", "preset", "params", "night", "beam", "notes"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {"enum": ["carla", "vantage"], "description": "A CARLA preset, or a Vantage weather condition mapped onto CARLA's parameters."},
+        "label": {"type": "string", "description": "The condition's or preset's name."},
+        "condition": {"type": "string", "description": "The Vantage condition's id (source vantage only)."},
+        "preset": {"type": "string", "description": "The CARLA preset; empty for a mapped condition."},
+        "params": {
+          "type": "object",
+          "description": "CARLA's WeatherParameters for a mapped condition (empty for a preset): cloudiness, precipitation, precipitation_deposits, wind_intensity, wetness, fog_density 0-100; sun_azimuth_angle, sun_altitude_angle degrees; fog_distance m; fog_falloff.",
+          "additionalProperties": false,
+          "properties": {
+            "cloudiness": {"type": "number"},
+            "precipitation": {"type": "number"},
+            "precipitation_deposits": {"type": "number"},
+            "wind_intensity": {"type": "number"},
+            "sun_azimuth_angle": {"type": "number"},
+            "sun_altitude_angle": {"type": "number"},
+            "fog_density": {"type": "number"},
+            "fog_distance": {"type": "number"},
+            "fog_falloff": {"type": "number"},
+            "wetness": {"type": "number"}
+          }
+        },
+        "night": {"type": "boolean", "description": "Night: the ego's headlights on."},
+        "beam": {"enum": ["low", "high"], "description": "The headlight beam at night."},
+        "notes": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": [
+        "image_scale",
+        "jpeg_quality",
+        "nuscenes",
+        "rosbag",
+        "channel_names",
+        "bag_name",
+        "keyframe_hz",
+        "keyframe_ref_hz",
+        "lidar_noise_cm",
+        "drop_self_hits",
+        "camera_rate",
+        "undistort",
+        "exposure",
+        "exposure_ev",
+        "gt_range_m",
+        "dataset_version",
+        "epoch_us"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "image_scale": {"type": "number", "exclusiveMinimum": 0, "maximum": 1, "description": "Images are this share of the sensor's size (cameras[].image has the result)."},
+        "jpeg_quality": {"type": "integer", "minimum": 1, "maximum": 100},
+        "nuscenes": {"type": "boolean", "description": "Write the nuScenes folder."},
+        "rosbag": {"type": "boolean", "description": "Write the ROS 2 bag."},
+        "channel_names": {"enum": ["tags", "nuscenes"], "description": "tags: CAM_<TAG>, LIDAR_<TAG>, RADAR_<TAG>; nuscenes: CAM_FRONT, LIDAR_TOP … (the channels in cameras[].channel are already the chosen ones)."},
+        "bag_name": {"type": "string", "description": "The bag's folder under rosbag/."},
+        "keyframe_hz": {"type": "number", "exclusiveMinimum": 0, "description": "nuScenes samples per second asked for."},
+        "keyframe_ref_hz": {"type": "number", "description": "The rate of the stream keyframes are taken from (the first lidar's, else the first camera's)."},
+        "lidar_noise_cm": {"type": "number", "minimum": 0, "description": "Range noise (1 sigma) along each lidar ray."},
+        "drop_self_hits": {"type": "boolean", "description": "Drop lidar points inside the ego's own box."},
+        "camera_rate": {"enum": ["lidar", "module"], "description": "lidar: one frame per lidar rotation at the sync plan's trigger; module: the module's frame rate."},
+        "undistort": {"type": "boolean", "description": "Rectified pinhole images instead of the real lens's."},
+        "exposure": {"enum": ["manual", "histogram"], "description": "CARLA only: manual (every view of a camera alike) or CARLA's auto exposure."},
+        "exposure_ev": {"type": "number", "description": "CARLA only: exposure compensation."},
+        "gt_range_m": {"type": "number", "description": "Actors are annotated within this horizontal distance of the ego."},
+        "dataset_version": {"type": "string", "description": "The nuScenes version folder: 'v1.0-vantage'."},
+        "epoch_us": {"type": "integer", "description": "t = 0 of the drive (the first sync pulse) in microseconds since 1970-01-01 UTC."}
+      }
+    },
+    "image": {
+      "type": "object",
+      "description": "The image the bridge writes and the calibration the outputs state for it (OpenCV pixel coordinates: centres on integers).",
+      "required": ["width", "height", "K", "distortion_model", "D", "rectified", "sensor_size", "lens_projection", "max_theta_deg"],
+      "additionalProperties": false,
+      "properties": {
+        "width": {"type": "integer", "minimum": 16},
+        "height": {"type": "integer", "minimum": 16},
+        "K": {"$ref": "#/$defs/mat3", "description": "3x3 camera matrix at the image's size."},
+        "distortion_model": {"enum": ["equidistant", "plumb_bob"], "description": "equidistant: Kannala-Brandt k1..k4 (cv2.fisheye; ROS's name for it); plumb_bob: a pinhole (all zero)."},
+        "D": {"type": "array", "items": {"type": "number"}, "description": "The distortion coefficients of distortion_model."},
+        "rectified": {"type": "boolean"},
+        "sensor_size": {"$ref": "#/$defs/size2", "description": "The module's sensor in pixels [width, height]."},
+        "lens_projection": {"type": "string", "description": "The lens model's projection (lens.projection)."},
+        "max_theta_deg": {"type": "number", "description": "The lens's field: the largest angle off the axis that reaches the image."}
+      }
+    },
+    "lens": {
+      "anyOf": [
+        {
+          "type": "object",
+          "description": "The real lens: an optical-frame ray at angle θ off the axis lands at image height r(θ) from (cx, cy) in the sensor's pixel-edge coordinates (pixel i covers [i, i+1)), y scaled by aspect; scaled by image_size / sensor_size into the image. Rays beyond max_theta_deg see nothing (black).",
+          "required": ["model", "projection", "f_px", "kb", "cx", "cy", "aspect", "max_theta_deg", "sensor_size", "image_size"],
+          "additionalProperties": false,
+          "properties": {
+            "model": {"const": "lens"},
+            "projection": {
+              "enum": ["rectilinear", "equidistant", "equisolid", "stereographic", "orthographic", "kannala_brandt"],
+              "description": "r(θ) = f tan θ, f θ, 2f sin(θ/2), 2f tan(θ/2), f sin θ, or f θ (1 + k1 θ² + k2 θ⁴ + k3 θ⁶ + k4 θ⁸)."
+            },
+            "f_px": {"type": "number", "exclusiveMinimum": 0, "description": "Focal length in sensor pixels."},
+            "kb": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number"}, "description": "k1..k4 (kannala_brandt)."},
+            "cx": {"type": "number"},
+            "cy": {"type": "number"},
+            "aspect": {"type": "number", "exclusiveMinimum": 0, "description": "fy / fx."},
+            "max_theta_deg": {"type": "number"},
+            "sensor_size": {"$ref": "#/$defs/size2"},
+            "image_size": {"$ref": "#/$defs/size2"}
+          }
+        },
+        {
+          "type": "object",
+          "description": "Rectified images (output.undistort with a non-rectilinear lens): a pinhole with K (OpenCV coordinates) at the image's size, up to max_theta_deg (at most 89°).",
+          "required": ["model", "K", "max_theta_deg", "image_size"],
+          "additionalProperties": false,
+          "properties": {"model": {"const": "pinhole"}, "K": {"$ref": "#/$defs/mat3"}, "max_theta_deg": {"type": "number"}, "image_size": {"$ref": "#/$defs/size2"}}
+        }
+      ]
+    },
+    "camera": {
+      "type": "object",
+      "required": ["uid", "tag", "safe_tag", "name", "channel", "topic", "frame_id", "pose_vehicle", "image", "views", "atlas", "remap", "capture", "lens", "render_mpx", "gt_render_mpx"],
+      "additionalProperties": false,
+      "properties": {
+        "uid": {"type": "string"},
+        "tag": {"type": "string", "description": "The camera's tag in the project (F, ML …)."},
+        "safe_tag": {"type": "string", "description": "The tag as file names and frame ids use it."},
+        "name": {"type": "string"},
+        "channel": {"type": "string", "description": "Its nuScenes channel (CAM_<TAG> or a nuScenes name)."},
+        "topic": {"type": "string", "description": "Its bag topic prefix: /<tag in lower case>."},
+        "frame_id": {"type": "string", "description": "<safe_tag>_optical_frame."},
+        "pose_vehicle": {"$ref": "#/$defs/pose"},
+        "image": {"$ref": "#/$defs/image"},
+        "views": {
+          "type": "array",
+          "description": "The pinhole views the image is remapped from (one, or the cube faces it needs), all from the camera's optical centre.",
+          "items": {
+            "type": "object",
+            "required": ["name", "width", "height", "f_px", "fov_deg", "optical", "carla"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {"enum": ["front", "right", "left", "down", "up", "back"]},
+              "width": {"type": "integer", "minimum": 1},
+              "height": {"type": "integer", "minimum": 1},
+              "f_px": {"type": "number", "description": "Focal length, px; principal point at the view's centre (W/2 − 0.5 in OpenCV coordinates)."},
+              "fov_deg": {"type": "number", "description": "Horizontal field over the full width: 2 atan(W / 2f)."},
+              "optical": {"$ref": "#/$defs/mat3", "description": "Columns: the view's optical x, y, z in the camera's optical frame."},
+              "carla": {"$ref": "#/$defs/carla_pose"}
+            }
+          }
+        },
+        "atlas": {
+          "type": "object",
+          "description": "The views stacked vertically into one image: view k's rows start at offsets[k], its columns at 0.",
+          "required": ["offsets", "width", "height"],
+          "additionalProperties": false,
+          "properties": {"offsets": {"type": "array", "items": {"type": "integer", "minimum": 0}}, "width": {"type": "integer", "minimum": 0}, "height": {"type": "integer", "minimum": 0}}
+        },
+        "remap": {
+          "type": "object",
+          "description": "Names of the arrays in sim_remap.npz: x, y float32 (height, width) where each image pixel reads in the atlas (−1: outside the lens's field); blend (cameras of more than one view): the seam feathering's idx, x, y, w.",
+          "required": ["x", "y"],
+          "additionalProperties": false,
+          "properties": {
+            "x": {"type": "string"},
+            "y": {"type": "string"},
+            "blend": {
+              "type": "object",
+              "required": ["idx", "x", "y", "w"],
+              "additionalProperties": false,
+              "properties": {"idx": {"type": "string"}, "x": {"type": "string"}, "y": {"type": "string"}, "w": {"type": "string"}}
+            },
+            "seam_blend_deg": {"type": "number", "description": "Width of the band across each seam the faces are feathered over."}
+          }
+        },
+        "capture": {
+          "type": "object",
+          "description": "When the camera's frames are taken: tick phase_ticks + k · every_ticks from the sync pulse.",
+          "required": ["rate_hz", "every_ticks", "phase_ticks", "recorded_hz", "exposure_centre_s", "recorded_centre_s", "offset_error_ms", "triggered", "trigger_ms"],
+          "additionalProperties": false,
+          "properties": {
+            "rate_hz": {"type": "number", "exclusiveMinimum": 0, "description": "The planned rate."},
+            "every_ticks": {"type": "integer", "minimum": 1},
+            "phase_ticks": {"type": "integer", "minimum": 0},
+            "recorded_hz": {"type": "number", "description": "tick_hz / every_ticks."},
+            "exposure_centre_s": {"type": "number", "description": "The sync plan's exposure centre after the sync pulse."},
+            "recorded_centre_s": {"type": "number", "description": "That centre rounded to a step (the frames' stamps are k / recorded_hz from here)."},
+            "offset_error_ms": {"type": "number", "description": "recorded − planned centre."},
+            "triggered": {"type": "boolean", "description": "The sync plan triggers the camera."},
+            "trigger_ms": {"type": ["number", "null"], "description": "The planned trigger after the sync pulse, ms."}
+          }
+        },
+        "lens": {"$ref": "#/$defs/lens"},
+        "render_mpx": {"type": "number", "description": "CARLA only: megapixels of its views."},
+        "gt_render_mpx": {"type": "number", "description": "CARLA only: megapixels of its ground-truth views."}
+      }
+    },
+    "lidar": {
+      "type": "object",
+      "required": [
+        "uid",
+        "tag",
+        "safe_tag",
+        "name",
+        "model",
+        "channel",
+        "topic",
+        "frame_id",
+        "pose_vehicle",
+        "carla",
+        "mount_turn_deg",
+        "blueprint",
+        "keep",
+        "rings",
+        "elevation_error_deg",
+        "plan_note",
+        "columns",
+        "azimuth_step_deg",
+        "oversample",
+        "steps_per_rotation",
+        "rate_hz",
+        "range_min_m",
+        "scan",
+        "rotation",
+        "rays_per_s"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "uid": {"type": "string"},
+        "tag": {"type": "string"},
+        "safe_tag": {"type": "string"},
+        "name": {"type": "string"},
+        "model": {"type": "string", "description": "Vendor and model."},
+        "channel": {"type": "string", "description": "LIDAR_<TAG> (or LIDAR_TOP)."},
+        "topic": {"type": "string"},
+        "frame_id": {"type": "string", "description": "<safe_tag>_link."},
+        "pose_vehicle": {"$ref": "#/$defs/pose"},
+        "carla": {"$ref": "#/$defs/carla_pose", "description": "CARLA only: the mount turned by mount_turn_deg about its z."},
+        "mount_turn_deg": {"type": "number", "description": "The turn about z that puts CARLA's start direction (backwards) on the planned phase: phase = 180 + mount_turn_deg (360° lidars; 0 otherwise)."},
+        "blueprint": {
+          "type": "object",
+          "description": "CARLA only: sensor.lidar.ray_cast attributes. channels evenly spaced from upper_fov (channel 0) to lower_fov, degrees; range m; horizontal_fov degrees; rotation_frequency Hz.",
+          "required": [
+            "channels",
+            "upper_fov",
+            "lower_fov",
+            "points_per_second",
+            "rotation_frequency",
+            "range",
+            "horizontal_fov",
+            "dropoff_general_rate",
+            "dropoff_intensity_limit",
+            "dropoff_zero_intensity",
+            "noise_stddev",
+            "atmosphere_attenuation_rate",
+            "sensor_tick"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "channels": {"type": "integer", "minimum": 1},
+            "upper_fov": {"type": "number"},
+            "lower_fov": {"type": "number"},
+            "points_per_second": {"type": "integer"},
+            "rotation_frequency": {"type": "number"},
+            "range": {"type": "number"},
+            "horizontal_fov": {"type": "number"},
+            "dropoff_general_rate": {"type": "number"},
+            "dropoff_intensity_limit": {"type": "number"},
+            "dropoff_zero_intensity": {"type": "number"},
+            "noise_stddev": {"type": "number"},
+            "atmosphere_attenuation_rate": {"type": "number"},
+            "sensor_tick": {"type": "number"}
+          }
+        },
+        "keep": {"type": "array", "items": {"type": "integer", "minimum": -1}, "description": "Per blueprint channel the ring it records (ring 0 the lowest beam), −1 dropped."},
+        "rings": {"type": "integer", "minimum": 1, "description": "The model's beams."},
+        "elevation_error_deg": {"type": "number", "description": "The largest beam elevation error of the channel grid (0: exact)."},
+        "plan_note": {"type": "string"},
+        "columns": {"type": "integer", "minimum": 1, "description": "Firings per rotation (h_fov / h_res)."},
+        "azimuth_step_deg": {"type": "number"},
+        "oversample": {"type": "integer", "minimum": 1, "description": "CARLA only: the azimuth cast this many times finer and thinned back."},
+        "steps_per_rotation": {"type": "integer", "minimum": 1, "description": "Simulation steps per rotation: tick_hz / rate_hz."},
+        "rate_hz": {"type": "number", "exclusiveMinimum": 0},
+        "range_min_m": {"type": "number", "minimum": 0},
+        "scan": {"enum": ["spinning", "solid", "nonrepetitive"]},
+        "rotation": {"enum": ["clockwise", "counter-clockwise"], "description": "The model's direction, seen from above (CARLA's lidar always turns clockwise)."},
+        "rays_per_s": {"type": "number"}
+      }
+    },
+    "radar": {
+      "type": "object",
+      "required": ["uid", "tag", "safe_tag", "name", "model", "channel", "topic", "frame_id", "pose_vehicle", "carla", "zones", "rate_hz", "recorded_hz", "range_min_m"],
+      "additionalProperties": false,
+      "properties": {
+        "uid": {"type": "string"},
+        "tag": {"type": "string"},
+        "safe_tag": {"type": "string"},
+        "name": {"type": "string"},
+        "model": {"type": "string"},
+        "channel": {"type": "string", "description": "RADAR_<TAG> (or a nuScenes name)."},
+        "topic": {"type": "string"},
+        "frame_id": {"type": "string"},
+        "pose_vehicle": {"$ref": "#/$defs/pose"},
+        "carla": {"$ref": "#/$defs/carla_pose"},
+        "zones": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "description": "A detection zone: a rectangle in azimuth × elevation (degrees from the radar's axis; elevation from its horizontal plane) up to range m.",
+            "required": ["range", "az_half_deg", "el_half_deg", "inside_share", "blueprint"],
+            "additionalProperties": false,
+            "properties": {
+              "range": {"type": "number"},
+              "az_half_deg": {"type": "number"},
+              "el_half_deg": {"type": "number"},
+              "inside_share": {"type": "number", "description": "CARLA only: the share of the cone's rays inside the rectangle."},
+              "blueprint": {
+                "type": "object",
+                "description": "CARLA only: sensor.other.radar attributes of the cone that holds the zone.",
+                "required": ["horizontal_fov", "vertical_fov", "range", "points_per_second", "sensor_tick"],
+                "additionalProperties": false,
+                "properties": {"horizontal_fov": {"type": "number"}, "vertical_fov": {"type": "number"}, "range": {"type": "number"}, "points_per_second": {"type": "integer"}, "sensor_tick": {"type": "number"}}
+              }
+            }
+          }
+        },
+        "rate_hz": {"type": "number", "exclusiveMinimum": 0, "description": "Scans per second."},
+        "recorded_hz": {"type": "number", "description": "min(rate_hz, tick_hz)."},
+        "range_min_m": {"type": "number", "minimum": 0}
+      }
+    },
+    "imu": {
+      "type": "object",
+      "required": [
+        "uid",
+        "tag",
+        "safe_tag",
+        "name",
+        "model",
+        "channel",
+        "topic",
+        "frame_id",
+        "pose_vehicle",
+        "carla",
+        "rate_hz",
+        "recorded_hz",
+        "antennas",
+        "attitude_sigma_deg",
+        "heading_sigma_deg",
+        "heading_baseline_m",
+        "noise"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "uid": {"type": "string"},
+        "tag": {"type": "string"},
+        "safe_tag": {"type": "string"},
+        "name": {"type": "string"},
+        "model": {"type": "string"},
+        "channel": {"const": "", "description": "Not a nuScenes sensor: bag only."},
+        "topic": {"type": "string"},
+        "frame_id": {"type": "string"},
+        "pose_vehicle": {"$ref": "#/$defs/pose"},
+        "carla": {"$ref": "#/$defs/carla_pose"},
+        "rate_hz": {"type": "number", "exclusiveMinimum": 0},
+        "recorded_hz": {"type": "number"},
+        "antennas": {"type": "integer", "minimum": 0, "description": "A GNSS/INS's antennas (0: an IMU alone, no orientation)."},
+        "attitude_sigma_deg": {"type": "number"},
+        "heading_sigma_deg": {"type": "number"},
+        "heading_baseline_m": {"type": "number"},
+        "noise": {
+          "type": "object",
+          "description": "accel_sigma m/s², gyro_sigma rad/s (white, per sample), accel_bias m/s², gyro_bias rad/s (constant, drawn per run).",
+          "required": ["accel_sigma", "gyro_sigma", "accel_bias", "gyro_bias"],
+          "additionalProperties": false,
+          "properties": {"accel_sigma": {"type": "number"}, "gyro_sigma": {"type": "number"}, "accel_bias": {"type": "number"}, "gyro_bias": {"type": "number"}}
+        }
+      }
+    },
+    "gnss": {
+      "type": "object",
+      "required": ["uid", "tag", "safe_tag", "name", "model", "channel", "topic", "frame_id", "pose_vehicle", "carla", "rate_hz", "recorded_hz", "sigma_h_m", "blueprint"],
+      "additionalProperties": false,
+      "properties": {
+        "uid": {"type": "string"},
+        "tag": {"type": "string"},
+        "safe_tag": {"type": "string"},
+        "name": {"type": "string"},
+        "model": {"type": "string"},
+        "channel": {"const": "", "description": "Not a nuScenes sensor: bag only."},
+        "topic": {"type": "string"},
+        "frame_id": {"type": "string"},
+        "pose_vehicle": {"$ref": "#/$defs/pose"},
+        "carla": {"$ref": "#/$defs/carla_pose"},
+        "rate_hz": {"type": "number", "exclusiveMinimum": 0},
+        "recorded_hz": {"type": "number"},
+        "sigma_h_m": {"type": "number", "description": "Horizontal position noise (1 sigma), m; the vertical is twice it."},
+        "blueprint": {
+          "type": "object",
+          "description": "CARLA only: sensor.other.gnss noise in degrees (lat, lon) and metres (alt).",
+          "required": ["noise_lat_stddev", "noise_lon_stddev", "noise_alt_stddev", "sensor_tick"],
+          "additionalProperties": false,
+          "properties": {"noise_lat_stddev": {"type": "number"}, "noise_lon_stddev": {"type": "number"}, "noise_alt_stddev": {"type": "number"}, "sensor_tick": {"type": "number"}}
+        }
+      }
+    },
+    "nuscenes": {
+      "type": "object",
+      "description": "Rows the bridge copies into its nuScenes tables (for the channels it writes).",
+      "required": ["sensor", "calibrated_sensor", "categories", "attributes", "visibility"],
+      "additionalProperties": false,
+      "properties": {
+        "sensor": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["token", "channel", "modality"],
+            "additionalProperties": false,
+            "properties": {"token": {"type": "string"}, "channel": {"type": "string"}, "modality": {"enum": ["camera", "lidar", "radar"]}}
+          }
+        },
+        "calibrated_sensor": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "description": "The PLAN's calibration (a fault never changes it). p_ego = R(rotation) · p_sensor + translation; a camera's frame is its optical frame.",
+            "required": ["token", "sensor_token", "translation", "rotation", "camera_intrinsic"],
+            "additionalProperties": false,
+            "properties": {
+              "token": {"type": "string"},
+              "sensor_token": {"type": "string"},
+              "translation": {"$ref": "#/$defs/vec3"},
+              "rotation": {"$ref": "#/$defs/quat"},
+              "camera_intrinsic": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}, "description": "3x3 at the image's size (cameras); empty for lidars and radars."},
+              "vantage_distortion": {
+                "type": "object",
+                "description": "Cameras: the lens beside camera_intrinsic.",
+                "additionalProperties": false,
+                "required": ["model", "coefficients", "image_size"],
+                "properties": {
+                  "model": {"type": "string", "description": "kannala_brandt (cv2.fisheye k1..k4), 'none (pinhole)', or 'none (rectified pinhole images)'."},
+                  "coefficients": {"type": "array", "items": {"type": "number"}},
+                  "image_size": {"$ref": "#/$defs/size2"},
+                  "camera": {"type": "string"},
+                  "name": {"type": "string"},
+                  "source": {"enum": ["unit_calibration", "library_lens"]},
+                  "image_scale": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "number"}},
+                  "rectified_from": {
+                    "type": "object",
+                    "description": "With rectified images: the lens they were rectified from.",
+                    "additionalProperties": false,
+                    "properties": {"model": {"type": "string"}, "coefficients": {"type": "array", "items": {"type": "number"}}}
+                  }
+                }
+              },
+              "vantage_sensor": {
+                "type": "object",
+                "description": "Lidars and radars.",
+                "additionalProperties": false,
+                "required": ["tag", "model", "kind"],
+                "properties": {"tag": {"type": "string"}, "model": {"type": "string"}, "kind": {"enum": ["lidar", "radar"]}}
+              }
+            }
+          }
+        },
+        "categories": {"type": "array", "description": "[name, description] of the nuScenes categories the drive may use.", "items": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "string"}}},
+        "attributes": {"type": "array", "description": "[name, description] of the nuScenes attributes.", "items": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "string"}}},
+        "visibility": {"type": "array", "description": "[token, level, description] of nuScenes' four visibility bins.", "items": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "string"}}}
+      }
+    },
+    "tf": {
+      "type": "object",
+      "required": ["parent", "child", "matrix"],
+      "additionalProperties": false,
+      "properties": {
+        "parent": {"type": "string", "description": "base_link (the vehicle frame) or <safe_tag>_link."},
+        "child": {"type": "string", "description": "<safe_tag>_link (the sensor body) or <safe_tag>_optical_frame (a camera's image)."},
+        "matrix": {"$ref": "#/$defs/mat4", "description": "4x4 parent <- child."}
+      }
+    }
+  }
+}

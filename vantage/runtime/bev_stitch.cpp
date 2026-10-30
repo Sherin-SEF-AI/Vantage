@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sherin Joseph Roy. Licensed under the Apache License 2.0 (LICENSE in this folder), unlike the
+// rest of Vantage (GPL-3.0-or-later): embed it in proprietary and production code freely.
+//
 // Vantage reference bird's-eye stitcher. C++17, no dependencies; OpenMP when available.
 //
 // Loads the remap tables Vantage exports (bev_lut.txt, <tag>_map.bin, <tag>_weight.bin, body_mask.bin) and stitches

@@ -155,6 +155,18 @@ def _terrain_names(p, v):
         ['terrain/terrain_profile.csv', 'terrain/terrain_profile.png'] if road else [])
 
 
+def _isp_names(p, v):
+    """A metering mask per visible camera with a finite pose, beside the JSON and the seam CSV."""
+    from . import isp_photometrics as ISP
+    return ['isp/isp.json', 'isp/isp_grids.json', 'isp/isp_regions.json', 'isp/isp_seams.csv'] + [
+        f'isp/isp_mask_{ISP.file_tag(c.tag)}.png' for c in v.cameras if c.visible and ISP._finite_pose(c)]
+
+
+def _clock_tree_names(p, v):
+    return ['clock_tree/clock_tree.json', 'clock_tree/clock_tree_sensors.csv', 'clock_tree/clock_tree_projection.csv',
+            'clock_tree/clock_tree.png']
+
+
 def _experiment_names(p, v):
     """The experiment stored in the project (Analysis ▸ Experiments), when it can run: the spec, the points, the
     analysis and the plots its design draws (a plot whose data are all missing is left out)."""
@@ -204,6 +216,24 @@ def _sim_campaign_names(p, v):
     return [f'sim_campaign/{n}' for n in _CAMPAIGN_FILES]
 
 
+def _diff_optim_names(p, v):
+    """The refinement needs a vehicle body and a visible camera to move."""
+    if getattr(p.vehicle.mesh, 'n_tris', 0) == 0 or not _view_cams(v):
+        return []
+    return ['diff_optim/diff_optim.json', 'diff_optim/diff_optim_cameras.csv', 'diff_optim/diff_optim_history.csv']
+
+
+def _log_replay_names(p, v):
+    """With a recorded drive chosen on Simulate ▸ Log replay: the JSON, two CSVs, two PNGs and (export_ply) the .ply."""
+    from . import splat_reproject as SP
+    st = SP.settings_of(p)
+    if not st.drive or not SP.is_drive(st.drive):
+        return []
+    return ['log_replay/log_replay.json', 'log_replay/log_replay_recall.csv', 'log_replay/log_replay_validation.csv',
+            'log_replay/log_replay_cameras.png', 'log_replay/log_replay_lidar.png'] + (
+        ['log_replay/log_replay_scene.ply'] if st.export_ply else [])
+
+
 def _detection_names(p, v):
     """The detection quality of the project's recordings (Simulate ▸ Detection quality), when every one has ground
     truth and the detector model is downloaded and verified: the detector runs when exported (its detections are
@@ -236,6 +266,8 @@ FORMATS: list[ExportFormat] = [
                  'binary', multi=True),
     ExportFormat('sync_plan', 'Documents', 'Sync and timing plan', 'JSON, PNG',
                  lambda p, v: ['sync_plan/sync_plan.json', 'sync_plan/sync_plan.png'], 'binary', multi=True),
+    ExportFormat('clock_tree', 'Documents', 'Clock tree and time sync', 'JSON, CSV, PNG', _clock_tree_names, 'binary',
+                 multi=True),
     ExportFormat('recording_budget', 'Documents', 'Recording budget', 'JSON, CSV',
                  lambda p, v: ['recording_budget/recording_budget.json', 'recording_budget/recording_budget.csv'],
                  'text', multi=True),
@@ -247,6 +279,8 @@ FORMATS: list[ExportFormat] = [
                  'binary', multi=True),
     ExportFormat('exposure', 'Documents', 'Sun glare and dirt', 'JSON, PNG',
                  lambda p, v: ['exposure/exposure.json', 'exposure/exposure.png'], 'binary', multi=True),
+    ExportFormat('isp', 'Documents', 'Exposure metering masks, grids and AE regions', 'JSON, PNG, CSV', _isp_names,
+                 'binary', multi=True),
     ExportFormat('brackets', 'Mount points', 'Mount brackets', 'STL, JSON, PNG', _bracket_names, 'binary', multi=True),
     ExportFormat('requirements', 'Documents', 'Requirements scorecard and review pack', 'JSON, CSV, PDF',
                  lambda p, v: ['requirements/requirements.json', 'requirements/requirements.csv',
@@ -260,8 +294,15 @@ FORMATS: list[ExportFormat] = [
     ExportFormat('fleet', 'Documents', 'Fleet', 'JSON, CSV, PNG',
                  lambda p, v: ['fleet/fleet.json', 'fleet/fleet.csv', 'fleet/fleet.png'], 'binary', multi=True),
     ExportFormat('terrain', 'Documents', 'Road and body motion', 'JSON, CSV, PNG', _terrain_names, 'binary', multi=True),
+    ExportFormat('thermo_vib', 'Documents', 'Thermal and vibration drift', 'JSON, CSV, PNG',
+                 lambda p, v: ['thermo_vib/thermo_vib.json', 'thermo_vib/thermo_vib_thermal.csv',
+                               'thermo_vib/thermo_vib_pairs.csv', 'thermo_vib/thermo_vib_vibration.csv',
+                               'thermo_vib/thermo_vib_psd.csv', 'thermo_vib/thermo_vib.png'], 'binary', multi=True),
     ExportFormat('observability', 'Documents', 'Calibration observability', 'JSON, CSV, PNG', _observability_names,
                  'binary', multi=True),
+    ExportFormat('calib_coach', 'Documents', 'Calibration coach (views to the requirement)', 'JSON, CSV',
+                 lambda p, v: ['calib_coach/calib_coach.json', 'calib_coach/calib_coach_views.csv']
+                 if any(c.visible for c in v.cameras) else [], 'binary', multi=True, default=False),
     ExportFormat('harness', 'Documents', 'Cable harness', 'JSON, CSV, PNG',
                  lambda p, v: ['harness/harness.json', 'harness/harness.csv', 'harness/harness.png'], 'binary',
                  multi=True),
@@ -275,12 +316,16 @@ FORMATS: list[ExportFormat] = [
     ExportFormat('weather', 'Documents', 'Weather comparison', 'JSON, CSV, PNG',
                  lambda p, v: ['weather/weather.json', 'weather/weather_conditions.csv', 'weather/weather_sensors.csv',
                                'weather/weather.png'], 'binary', multi=True),
+    ExportFormat('diff_optim', 'Documents', 'Gradient refinement', 'JSON, CSV', _diff_optim_names, 'binary',
+                 multi=True, default=False),
     ExportFormat('experiment', 'Documents', 'Designed experiment (sensitivity, uncertainty)', 'JSON, CSV, PNG',
                  _experiment_names, 'binary', multi=True, default=False),
     ExportFormat('sim_campaign', 'Documents', 'Simulation campaign (CARLA)', 'JSON, CSV, PNG, HTML',
                  _sim_campaign_names, 'binary', multi=True, default=False),
     ExportFormat('detection_quality', 'Documents', 'Detection quality (CARLA drives)', 'JSON, CSV, PNG',
                  _detection_names, 'binary', multi=True, default=False),
+    ExportFormat('log_replay', 'Documents', 'Log replay: reconstruction, validation and rig A/B',
+                 'JSON, CSV, PNG, 3DGS .ply', _log_replay_names, 'binary', multi=True, default=False),
     ExportFormat('ci_templates', 'Documents', 'CI templates (GitHub Actions, GitLab CI)', 'YAML, MD',
                  lambda p, v: ['ci/github/vantage.yml', 'ci/gitlab/vantage.gitlab-ci.yml', 'ci/README.md'],
                  'text', multi=True),
@@ -319,7 +364,8 @@ FORMATS: list[ExportFormat] = [
                  'binary', multi=True),
     ExportFormat('bev_stitcher', 'Surround view', 'Reference stitcher', 'C++, PY',
                  lambda p, v: ['bev_lut/stitcher/bev_stitch.cpp', 'bev_lut/stitcher/CMakeLists.txt',
-                               'bev_lut/stitcher/bev_stitch.py', 'bev_lut/stitcher/README.md'], 'text', multi=True),
+                               'bev_lut/stitcher/bev_stitch.py', 'bev_lut/stitcher/README.md',
+                               'bev_lut/stitcher/LICENSE'], 'text', multi=True),
     ExportFormat('viewport_png', 'Images', 'Viewport', 'PNG', lambda p, v: 'viewport.png', 'binary'),
     ExportFormat('bev_png', 'Images', "Bird's-eye", 'PNG', lambda p, v: 'birds-eye.png', 'binary'),
     ExportFormat('camera_views_png', 'Images', 'All camera views', 'PNG ×N',
@@ -3004,6 +3050,10 @@ def _render_files(fmt_id: str, ctx: _Ctx) -> list:
         return [(f'sensor_coverage/{n}', d) for n, d in _sensor_coverage(ctx)]
     if fmt_id == 'sync_plan':
         return [(f'sync_plan/{n}', d) for n, d in _sync_plan(ctx)]
+    if fmt_id == 'clock_tree':
+        from . import clock_tree as CT
+        res = CT.run(ctx.project, variant=ctx.variant)
+        return [(f'clock_tree/{n}', d) for n, d in CT.files(res, ctx.project)]
     if fmt_id == 'recording_budget':
         from . import recording as RB
         return [(f'recording_budget/{n}', d) for n, d in RB.files(RB.budget(ctx.project, ctx.variant), ctx.project)]
@@ -3038,6 +3088,21 @@ def _render_files(fmt_id: str, ctx: _Ctx) -> list:
         from .analysis import Engine
         res = XP.run(ctx.project, ctx.opts.engine or Engine(), variant=ctx.variant)
         return [(f'exposure/{n}', d) for n, d in XP.files(res, ctx.project)]
+    if fmt_id == 'isp':
+        from . import isp_photometrics as ISP
+        from .analysis import Engine
+        res = ISP.run(ctx.project, ctx.opts.engine or Engine(), variant=ctx.variant)
+        return [(f'isp/{n}', d) for n, d in ISP.files(res, ctx.project)]
+    if fmt_id == 'calib_coach':
+        from . import calib_coach as CCH
+        from .analysis import Engine
+        if not any(c.visible for c in ctx.variant.cameras):
+            return []                                   # nothing to coach (its names are none, too)
+        try:
+            res = CCH.run(ctx.project, ctx.opts.engine or Engine(), variant=ctx.variant)
+        except ValueError:                              # lidar mode without a camera–lidar pair
+            return []
+        return [(f'calib_coach/{n}', d) for n, d in CCH.files(res, ctx.project)] if res is not None else []
     if fmt_id == 'observability':
         from . import observability as OB
         from .analysis import Engine
@@ -3052,6 +3117,9 @@ def _render_files(fmt_id: str, ctx: _Ctx) -> list:
         from .analysis import Engine
         res = TR.run(ctx.project, ctx.opts.engine or Engine(), variant=ctx.variant)
         return [(f'terrain/{n}', d) for n, d in TR.files(res, ctx.project)]
+    if fmt_id == 'thermo_vib':
+        from . import thermo_vib as TV
+        return [(f'thermo_vib/{n}', d) for n, d in TV.files(TV.run(ctx.project, variant=ctx.variant), ctx.project)]
     if fmt_id == 'critical_targets':
         from . import critical as CR
         from .analysis import Engine
@@ -3070,6 +3138,13 @@ def _render_files(fmt_id: str, ctx: _Ctx) -> list:
     if fmt_id == 'ci_templates':
         from . import automation as AU
         return AU.ci_files(ctx.project, now=_now().timestamp())
+    if fmt_id == 'diff_optim':
+        from . import diff_optim as DO
+        from .analysis import Engine
+        if not _diff_optim_names(ctx.project, ctx.variant):
+            return []
+        res = DO.run(ctx.project, ctx.opts.engine or Engine(), variant=ctx.variant)
+        return [(f'diff_optim/{n}', d) for n, d in DO.files(res, ctx.project)]
     if fmt_id == 'experiment':
         from . import experiments as EXP
         from .analysis import Engine
@@ -3091,6 +3166,13 @@ def _render_files(fmt_id: str, ctx: _Ctx) -> list:
             return []
         res = DE.run(ctx.project, settings=DE.settings_of(ctx.project))
         return [(f'detection_quality/{n}', d) for n, d in DE.files(res, ctx.project)] if res is not None else []
+    if fmt_id == 'log_replay':
+        from . import splat_reproject as SP
+        from .analysis import Engine
+        if not _log_replay_names(ctx.project, ctx.variant):
+            return []
+        res = SP.run(ctx.project, ctx.opts.engine or Engine(), variant=ctx.variant)
+        return [(f'log_replay/{n}', d) for n, d in SP.files(res, ctx.project)] if res is not None else []
     if fmt_id == 'sim_rig':
         from . import simrig as SR
         if not _sim_rig_names(ctx.project, ctx.variant):
@@ -3434,6 +3516,17 @@ def preview(fmt_id: str, project: Project, result, opts: ExportOptions) -> tuple
                 + (f' · sector checks: {counts}' if counts else '') + f' · {_size_text(total)}\n\n'
                 f'(the per-direction ranges, per-lidar figures and the ground density are left out of this preview)\n'
                 + _json(head), total)
+    if fmt_id == 'diff_optim':                  # 10–40 s of refinement: described, not run, for the preview
+        if not names:
+            return first, 'Nothing to refine: the variant needs a vehicle body and a visible camera.', 0
+        return (first, f'The gradient refinement of {ctx.variant.name} runs when exported (10–40 s on the sample) · '
+                       f'{len(names)} files: ' + ', '.join(os.path.basename(x) for x in names), 0)
+    if fmt_id == 'calib_coach':                 # seconds of simulated technicians: described, not run
+        if not names:
+            return first, 'No visible camera in this variant: nothing to coach.', 0
+        return (first, 'The calibration coach\'s views to the requirement, coached against random technicians, are '
+                       'counted when exported (seconds per camera) · ' + ', '.join(os.path.basename(x) for x in names),
+                0)
     if fmt_id == 'experiment':
         from . import experiments as EXP
         if not names:
@@ -3460,6 +3553,13 @@ def preview(fmt_id: str, project: Project, result, opts: ExportOptions) -> tuple
                        'an HTML report. Nothing is driven or checked when exported (Simulate ▸ Simulation campaigns '
                        'runs it) · '
                        f'{len(names)} files or more: ' + ', '.join(os.path.basename(x) for x in names), 0)
+    if fmt_id == 'log_replay':                  # minutes on a recorded drive: described, not run, for the preview
+        if not names:
+            return first, ('No recorded drive chosen: open one on Simulate ▸ Log replay (a nuScenes folder, a CARLA '
+                           'run or a ROS 2 bag).'), 0
+        return (first, 'The drive is rebuilt as 3D Gaussians, validated and rendered through both rigs when exported '
+                       '(minutes; the scene is cached in the working folder) · ' +
+                       ', '.join(os.path.basename(x) for x in names), 0)
     if fmt_id == 'detection_quality':
         from . import detection as DT
         from . import detection_eval as DE

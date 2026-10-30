@@ -113,7 +113,7 @@ class Issue:
     where: tuple | None = None
 
 
-def collect_issues(project: Project, result, vg, mounts: dict | None = None) -> list[Issue]:
+def collect_issues(project: Project, result, vg, mounts: dict | None = None, engine=None) -> list[Issue]:
     out: list[Issue] = []
     v = project.variant
     cams = v.cameras
@@ -180,9 +180,9 @@ def collect_issues(project: Project, result, vg, mounts: dict | None = None) -> 
             out.append(Issue('warning', f'Camera sits {worst:.0f} mm from the body edge; the clearance rule is {EDGE_RULE_MM:.0f} mm.',
                              ', '.join(c.tag for c, _ in edge_cams), [c.uid for c, _ in edge_cams]))
     out += sensor_issues(project, vg)
-    from . import (asbuilt, automation, critical, exposure, fleet, gnss, harness,      # they import
-                   housings, materials, observability, power, recording,                # this module
-                   requirements, suspension, terrain, timing)
+    from . import (asbuilt, automation, clock_tree, critical, exposure, fleet, gnss,   # they import
+                   harness, housings, materials, observability, power, recording,       # this module
+                   requirements, suspension, terrain, thermo_vib, timing)
     out += housings.issues(project, vg)
     out += recording.issues(project)
     out += power.issues(project)
@@ -193,10 +193,17 @@ def collect_issues(project: Project, result, vg, mounts: dict | None = None) -> 
     out += suspension.issues(project, vg)
     out += asbuilt.issues(project)
     out += materials.issues(project, vg)          # radars through the fascia, cameras behind glass, the wipers
+    out += thermo_vib.issues(project, vg)         # a mount resonating on the road, drift in full sun past the tolerance
     out += critical.issues(project, vg)           # critical targets no camera resolves, mounts tighter than the install
     out += terrain.issues(project, vg)            # on the road: a wheel lifting, the body or a sensor touching it
     out += harness.issues(project, vg)            # cables over their link's limit, GNSS RF margin, entry points
     out += timing.issues(project, vg)             # stereo pairs and trigger lines split over two deserializers
+    out += clock_tree.issues(project, vg)         # grandmaster holdover, free-running FSYNC, timestamp error in pixels
+    if engine is not None:                        # (its occlusion cube maps): the body filling a camera's AE metering
+        from . import isp_photometrics
+        out += [Issue(i['severity'], i['message'], ', '.join(c.tag for c in project.variant.cameras
+                                                             if c.uid in i['uids']), list(i['uids']))
+                for i in isp_photometrics.issues(project, engine)]
     out += observability.issues(project, vg, result)   # cameras the planned boards cannot pin, radars short of reflectors
     out += automation.issues(project, vg)         # dropped automation settings, the last automated run failing
     out.sort(key=lambda i: SEVERITY_ORDER.get(i.severity, 9))

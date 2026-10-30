@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- fake SUMO net of Town01 -->
+<net version="1.20">
+    <location netOffset="100.00,50.00" convBoundary="0,0,280,20" projParameter="!"/>
+    <edge id="east" from="a_east" to="b_east" priority="1">
+        <lane id="east_0" index="0" speed="13.89" length="280.00" shape="-40.00,50.00 240.00,50.00"/>
+    </edge>
+    <edge id="east2" from="a_east2" to="b_east2" priority="1">
+        <lane id="east2_0" index="0" speed="13.89" length="280.00" shape="-40.00,46.50 240.00,46.50"/>
+    </edge>
+    <edge id="west" from="a_west" to="b_west" priority="1">
+        <lane id="west_0" index="0" speed="13.89" length="280.00" shape="240.00,53.50 -40.00,53.50"/>
+    </edge>
+    <edge id="west2" from="a_west2" to="b_west2" priority="1">
+        <lane id="west2_0" index="0" speed="13.89" length="280.00" shape="240.00,57.00 -40.00,57.00"/>
+    </edge>
+</net>

@@ -60,7 +60,9 @@ def ask_text(parent, title, lab, default='') -> str | None:
 # ------------------------------------------------------------------------------------- preferences
 class PreferencesDialog(VDialog):
     def __init__(self, ctx, parent=None, settings=None, tab='general'):
-        super().__init__(parent, 'Preferences', '', (660, 520), resizable=False)
+        from ..theme import THEME
+        k = max(1.0, float(getattr(THEME, 'scale', 1.0) or 1.0))          # its wrapped notes need room at 115 %, 130 %
+        super().__init__(parent, 'Preferences', '', (int(660 * k), int(520 * k)), resizable=True)
         self.ctx = ctx
         self.settings = settings or (ctx.settings if ctx else QSettings('Vantage', 'Vantage'))
         from PyQt6.QtWidgets import QTabWidget

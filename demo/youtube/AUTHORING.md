@@ -267,6 +267,7 @@ deliverables are called and say. `chapters.EPISODES` holds them:
 | `tour` (the default) | `vantage-tour.mp4`: the full app tour, v0.1.1 | `00_intro` ... `38_install-anywhere`, `99_outro` | 5 |
 | `v020` | `vantage-whats-new-0.2.0.mp4`: what is new in 0.2.0 | `40_intro-v020`, `41_new-critical` ... `48_new-automation`, `49_outro-v020` | 3 |
 | `gt040` | `vantage-carla-ground-truth.mp4`: ground truth from CARLA, 0.4.0 | `50_intro-gt040`, `51_gt-rig` ... `55_gt-app`, `59_outro-gt040` | 2 |
+| `as070` | `vantage-assistant.mp4`: the AI assistant, real Groq replies, no version on screen | `60_intro-as070`, `61_as-ask` ... `68_as-bench`, `69_outro-as070` | 3 |
 
 * `produce.py --episode v020` chooses it, and every child (voice, record, cards, assemble) gets it as
   `VANTAGE_EPISODE`. `--only` with ids of one episode chooses that episode without `--episode`; ids of another episode
@@ -343,3 +344,39 @@ systemd-run --user --scope -q -p MemoryMax=2G -p MemorySwapMax=0 python3 demo/yo
   `stage.tilde_path_label(page)`; the throw-away home is `/tmp/h...` and must never appear. Check stills.
 * **Never edit `vantage/`, `tests/`, `site/` or the website clip code** for a chapter; if the app misbehaves on
   camera, work around it in the scene and report it to the lead with the steps and the traceback.
+
+## The assistant episode (as070): real model replies
+
+as070 is the one episode whose assistant replies are the real model's (GPT-OSS 120B on Groq), as the user approved for
+it. Everything else in the rules above still holds; what differs:
+
+* `helpers_as.py` holds the shared parts. `groq_on()` loads the user's key read-only with the app's own
+  `vantage.assistant.secrets.load('groq')`, puts it into `GROQ_API_KEY` of the recording process only (studio.py drops
+  it on import) and deletes the local name; `groq_off()` removes it at the end of the scene. It is never printed,
+  logged, shown or written; the throw-away settings hold the assistant's switches only, and no Claude key, so nothing
+  goes to Anthropic. Only the built-in sample is open while it is set.
+* `window(stage, ...)` opens the sample at Preferences ▸ General ▸ UI scale 130 % (THEME.apply with scale 1.3) with the
+  panel 660 px wide, in a fresh assistant profile (every `assistant/*` setting cleared, then Groq · GPT-OSS 120B,
+  consent given unless the chapter shows the consent card). `chat_rect(r, w, h)` is a 16:9 frame on the panel about
+  1080 / h times larger: at h = 620 the chat's text is about 27 px high at 1080p, legible on a phone.
+* `Chat` asks like a user (types into the composer, Return), waits in real time or as a marked time-lapse, raises on
+  an API error, and reads the tool calls and their results from the session (`calls()`, `last(name)`), so figures are
+  checked against the tools with `r.expect`. Every take writes its transcript and usage to
+  `$VANTAGE_SCRATCH/as070-takes/` (no key in them): read it after each take, and record again (never edit a reply) when
+  the model got a number wrong, invented something or was clumsy. The narration is written before the take: it says
+  what the feature does, never what the model will say.
+* `gfx_as.py`: `Kinetic` (a key statement whose words rise in one by one on frosted glass, accented words underlined;
+  `helpers_as.kinetic(r, text, accent=...)`), the logo without a version line, the title card, the thumbnail.
+* The episode has its own music bed (`music.build_variant(out, 'as070')`, bed-as070.wav: pads with a soft side-chain,
+  a moving sub bass, a soft kick, a swung shaker, a pluck arpeggio and a bell motif; 96 bars, 90 BPM), chosen by
+  `EPISODES['as070']['music']`, and shorter cards (`EPISODES['as070']['cards']`: 3.0 s chapter cards, 3.8 s part cards).
+  The other episodes' bed, stings and card lengths are unchanged.
+* The intro's cold open quotes the chapters at their `r.mark('cold', shot=...)` marks: record it after them.
+* Chapter 8 replays the real benchmark run made before the recording, from `$VANTAGE_SCRATCH/as070-bench/` (run.log,
+  results.json, report.md); `$S/ytas/bench.py` made it the same way the scenes load the key.
+
+```bash
+source $S/ytas/env.sh      # VANTAGE_SCRATCH=$S/yt, VANTAGE_TTS, VANTAGE_ESPEAK, VANTAGE_LOCK, VANTAGE_CFG
+systemd-run --user --scope -q -p MemoryMax=2G -p MemorySwapMax=0 python3 demo/youtube/produce.py --episode as070 --draft --only as-ask --record-only
+systemd-run --user --scope -q -p MemoryMax=2G -p MemorySwapMax=0 python3 demo/youtube/produce.py --episode as070
+```

@@ -12,7 +12,8 @@ The intro is 00_intro.py (part 0) and the outro 99_outro.py (part 6). META and L
 Episodes: the chapter files of every video live here side by side (ids are unique across them); an episode is a plan
 over them (EPISODES: its parts, chapters, intro, outro and the texts of its deliverables). 'tour' is the full app tour
 (PLAN, PARTS); 'v020' is "What's new in Vantage 0.2.0" (files 40_intro-v020 ... 49_outro-v020); 'gt040' is "Ground
-truth from CARLA · Vantage 0.4.0" (files 50_intro-gt040 ... 59_outro-gt040). The episode in use is
+truth from CARLA · Vantage 0.4.0" (files 50_intro-gt040 ... 59_outro-gt040); 'as070' is "An AI assistant for
+sensor-rig design · Vantage" (files 60_intro-as070 ... 69_outro-as070, real Groq replies). The episode in use is
 $VANTAGE_EPISODE (default 'tour'; produce.py --episode sets it for every child process); a chapter's own episode is
 episode_of(cid), so record.py and cards.py need no variable.
 """
@@ -109,6 +110,24 @@ PLAN_GT040 = [
     (5, 'gt-app', 2, 'In the app'),
 ]
 
+# "An AI assistant for sensor-rig design · Vantage": the files are 61_as-ask.py ... 68_as-bench.py (numbered 1 to 8
+# on screen); every reply in them is the real model's (GPT-OSS 120B on Groq), unedited; no version on screen
+PARTS_AS070 = {
+    1: ('Ask and decide', 'Questions answered from the analysis, changes simulated and proposed, advice as you work.'),
+    2: ('Design the rig', 'The whole layout searched against your targets, and a log of what was decided.'),
+    3: ('Plan, route, measure', 'Runs planned for approval, the model chosen per request, and a benchmark.'),
+}
+PLAN_AS070 = [
+    (1, 'as-ask', 1, 'Ask the design'),
+    (2, 'as-whatif', 1, 'What-ifs and proposals'),
+    (3, 'as-live', 1, 'Recommendations as you work'),
+    (4, 'as-rig', 2, 'Whole-rig design'),
+    (5, 'as-log', 2, 'The design log'),
+    (6, 'as-copilot', 3, 'The Copilot plans a drive'),
+    (7, 'as-models', 3, 'Automatic model choice and pictures'),
+    (8, 'as-bench', 3, 'The benchmark'),
+]
+
 # what an episode is: its plan, and what its deliverables say (assemble.py reads the texts; None = the tour's own)
 EPISODES = {
     'tour': {
@@ -147,6 +166,19 @@ EPISODES = {
         'thumb': {'still': 'intro-gt040', 'shot_x': 640, 'eyebrow': 'VANTAGE 0.4.0', 'word': 'Ground truth',
                   'word_px': 150, 'lines': ('Every camera frame and', 'lidar point, from CARLA.'),
                   'foot': 'FREE AND OPEN SOURCE'},
+    },
+    'as070': {
+        'parts': PARTS_AS070, 'plan': PLAN_AS070, 'intro': 'intro-as070', 'outro': 'outro-as070', 'version': '',
+        'name': 'vantage-assistant',
+        'title': 'An AI assistant for sensor-rig design · Vantage: real answers, proposals, whole-rig search, Copilot',
+        'video_title': 'An AI assistant for sensor-rig design · Vantage',
+        'marks': ('Intro: an assistant for sensor-rig design', 'Get Vantage: website and releases'),
+        'texts': ('{name}-chapters.txt', '{name}-description.md', '{name}-thumbnail.png'),
+        'description': 'as070',
+        'tags': 'as070',
+        'music': 'as070',
+        'cards': {'chapter': 3.0, 'part': 3.8},           # shorter cards: eight chapters in under eight minutes
+        'thumb': {'maker': 'as070', 'still': 'intro-as070'},
     },
 }
 DEFAULT_EPISODE = 'tour'

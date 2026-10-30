@@ -1020,10 +1020,18 @@ def nus_streams(drive_dir) -> dict:
     return out
 
 
-def _channel_of(tag, streams) -> str | None:
-    for ch in (f'CAM_{tag}', f'LIDAR_{tag}', f'RADAR_{tag}', tag):
-        if ch in streams:
-            return ch
+def _channel_of(tag, streams, rig_doc=None) -> str | None:
+    """The drive's channel of a sensor: the rig's own channel for the tag (what the bridge wrote, nuScenes names such
+    as CAM_FRONT included), else CAM_/LIDAR_/RADAR_ + the tag or the bare tag, ignoring case (channels carry the tag
+    upper-cased)."""
+    for key in ('cameras', 'lidars', 'radars', 'imus', 'gnss'):
+        for d in (rig_doc or {}).get(key, []) or []:
+            if isinstance(d, dict) and str(d.get('tag', '')).lower() == str(tag).lower() and d.get('channel') in streams:
+                return d['channel']
+    low = {str(ch).lower(): ch for ch in streams}
+    for ch in (f'CAM_{tag}', f'LIDAR_{tag}', f'RADAR_{tag}', str(tag)):
+        if ch.lower() in low:
+            return low[ch.lower()]
     return None
 
 
@@ -1137,7 +1145,7 @@ def _eval_rig_health(project, var, drive_dir, rig_doc, bodies, st: CampaignSetti
     for cam in _cams(var):
         if cancel is not None and cancel():
             raise Cancelled()
-        ch = _channel_of(cam.tag, streams)
+        ch = _channel_of(cam.tag, streams, rig_doc)
         if ch is None:
             cams[cam.tag] = {'frames': 0, 'verdict': 'fault', 'reasons': [['fault', 'no frames']]}
             continue
@@ -1275,11 +1283,12 @@ def image_stats(img, valid=None) -> dict:
 def _eval_image_stats(project, var, drive_dir, cancel) -> dict:
     import cv2
     streams = nus_streams(drive_dir)
+    rig_doc = _read_json(os.path.join(drive_dir, 'rig', 'sim_rig.json'))     # the channels the bridge wrote
     out = {}
     for cam in _cams(var):
         if cancel is not None and cancel():
             raise Cancelled()
-        ch = _channel_of(cam.tag, streams)
+        ch = _channel_of(cam.tag, streams, rig_doc)
         if ch is None:
             continue
         frames = streams[ch]['frames']
@@ -1322,11 +1331,12 @@ def _pcd_points(path) -> int | None:
 
 def _eval_returns(project, var, drive_dir, cancel) -> dict:
     streams = nus_streams(drive_dir)
+    rig_doc = _read_json(os.path.join(drive_dir, 'rig', 'sim_rig.json'))     # the channels the bridge wrote
     out = {}
     for s in var.sensors:
         if not s.visible or s.kind not in ('lidar', 'radar'):
             continue
-        ch = _channel_of(s.tag, streams)
+        ch = _channel_of(s.tag, streams, rig_doc)
         if ch is None:
             continue
         counts, inten, far = [], [], []

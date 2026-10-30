@@ -342,15 +342,27 @@ class AnalysisSettings:
     detection: dict = field(default_factory=dict)     # detection quality per rig (core.detection_eval)
     campaign: dict = field(default_factory=dict)      # simulation campaigns: faults, weather sweeps (core.simcampaign)
     critical_carla: dict = field(default_factory=dict)   # critical targets as CARLA scenes (core.critical_carla)
+    splat: dict = field(default_factory=dict)         # log replay through a proposed rig (core.splat_reproject)
+    thermo_vib: dict = field(default_factory=dict)    # thermal warping and road vibration of the rig (core.thermo_vib)
+    clock_tree: dict = field(default_factory=dict)    # PPS, gPTP and FSYNC timing and its faults (core.clock_tree)
+    diff_optim: dict = field(default_factory=dict)    # gradient refinement of poses and seams (core.diff_optim)
+    online_calib: dict = field(default_factory=dict)  # targetless self-calibration over a drive (core.online_calib)
+    isp: dict = field(default_factory=dict)           # exposure metering masks and HDR seams (core.isp_photometrics)
+    calib_coach: dict = field(default_factory=dict)   # the live calibration coach (core.calib_coach)
     copilot: dict = field(default_factory=dict)       # the Copilot's approval records: {'plans': [record, ...]}
                                                       # (vantage.assistant.copilot; an audit trail: undo keeps it)
+    assistant_log: list = field(default_factory=list)  # the design log: decisions, rejected ideas, constraints,
+                                                       # notes (vantage.assistant.memory; older files: empty)
 
     def to_dict(self):
         return asdict(self)
 
     @staticmethod
     def from_dict(d):
-        return AnalysisSettings(**{k: v for k, v in d.items() if k in AnalysisSettings.__dataclass_fields__})
+        a = AnalysisSettings(**{k: v for k, v in d.items() if k in AnalysisSettings.__dataclass_fields__})
+        if not isinstance(a.assistant_log, list):          # a damaged or hand-edited file: an empty log
+            a.assistant_log = []
+        return a
 
 
 @dataclass

@@ -8,7 +8,8 @@ with crease angles, lighting in linear space with a gentle filmic shoulder and a
 (clear-coated paint reflecting a procedural studio environment, dark see-through glass, matte tyres, black trim, light
 lenses, rig metal), sky occlusion (ambient occlusion) from depth maps of the body and the rig seen from many directions
 over the sky, soft shadow maps (Poisson-disc PCF with a normal-offset bias) on the body, the rig and the ground, a
-contact shadow under the body, a ground plane that fades into the background, the textured 3D surround-view bowl,
+contact shadow under the body, a ground plane that fades into the background (with an anti-aliased floor grid on the
+display frame's 0.5 m and 1 m marks and its x and y axes), the textured 3D surround-view bowl,
 round depth-tested point sprites, crisp screen-space outlines around selected triangles, and "camera light": every
 camera's real lens model and occlusion (the body, the rig and the sensor and camera housings: the cube maps the
 analysis uses, housings composited in) evaluated per pixel, so the body and the ground show exactly what each camera
@@ -69,6 +70,12 @@ class Style:
     materials: bool = True       # MeshDraw.materials honoured; False = everything is paint
     outline_px: float = 2.0      # TriDraw.outline width, logical pixels
     backdrop: bool = True        # studio backdrop behind perspective views (sky gradient, horizon haze, the floor)
+    grid: bool = False           # the floor grid drawn by the ground shader (anti-aliased, fades with distance)
+    grid_minor: tuple = (0.5, 0.5, 0.5, 0.10)     # RGBA of the 0.5 m lines
+    grid_major: tuple = (0.6, 0.6, 0.6, 0.22)     # RGBA of the 1 m lines
+    grid_step: tuple = (0.5, 1.0)                 # minor and major spacing, m
+    axes: bool = False           # the vehicle frame's x (red) and y (green) axes on the floor
+    origin: tuple = (0.0, 0.0)   # world x, y of the display frame's origin (the grid and the axes start there)
 
 
 @dataclass
@@ -389,7 +396,23 @@ uniform vec4 uAOInfo;        // on, -, -, -
 uniform vec3 uTarget;
 uniform vec2 uFade;
 uniform float uPlane;        // 1 = draw the plane colour, 0 = only the texture
+uniform vec4 uGrid;          // on, minor step (m), major step (m), axes on
+uniform vec4 uGridC1;        // minor line RGBA
+uniform vec4 uGridC2;        // major line RGBA
+uniform vec2 uOrigin;        // the display frame's origin
 ''' + _COMMON + '''
+float grid_lines(vec2 p, float step) {
+    // anti-aliased lines about one pixel wide; they fade out where they would crowd closer than a few pixels
+    vec2 q = p / step;
+    vec2 w = max(fwidth(q), vec2(1e-6));
+    vec2 d = abs(fract(q - 0.5) - 0.5) / w;
+    float l = 1.0 - min(min(d.x, d.y), 1.0);
+    return l * (1.0 - smoothstep(0.12, 0.35, max(w.x, w.y)));
+}
+float axis_line(float v, float px) {
+    float w = max(fwidth(v), 1e-6);
+    return 1.0 - smoothstep(px * 0.5, px * 0.5 + 1.0, abs(v) / w);
+}
 float ao_at(vec2 xy) {
     if (uAOInfo.x < 0.5) return 1.0;
     vec4 q = uAOVP * vec4(xy, 0.0, 1.0);
@@ -411,8 +434,24 @@ void main() {
     float ao = ao_at(vPos.xy);
     col.rgb *= (0.55 + 0.45 * sh) * ao;
     col.a = max(col.a, (1.0 - min(sh, ao)) * 0.85);
-    col.rgb = camlight(col.rgb, vPos);
     float dist = length(vPos.xy - uTarget.xy);
+    // the camera light at full strength near the rig, toned down far out on the floor (it reaches the horizon)
+    col.rgb = mix(col.rgb, camlight(col.rgb, vPos), 1.0 - 0.65 * smoothstep(9.0, 26.0, dist));
+    if (uGrid.x > 0.5) {
+        float g1 = grid_lines(vPos.xy - uOrigin, uGrid.y) * uGridC1.a;
+        float g2 = grid_lines(vPos.xy - uOrigin, uGrid.z) * uGridC2.a;
+        col.rgb = mix(col.rgb, uGridC1.rgb, g1);
+        col.rgb = mix(col.rgb, uGridC2.rgb, g2);
+        col.a = max(col.a, max(g1, g2));
+    }
+    if (uGrid.w > 0.5) {         // the vehicle frame's axes through the origin: x red, y green
+        vec2 o = vPos.xy - uOrigin;
+        float ax = axis_line(o.y, 1.6) * step(0.0, o.x) * 0.85;
+        float ay = axis_line(o.x, 1.6) * step(0.0, o.y) * 0.85;
+        col.rgb = mix(col.rgb, vec3(0.88, 0.33, 0.25), ax);
+        col.rgb = mix(col.rgb, vec3(0.25, 0.68, 0.29), ay);
+        col.a = max(col.a, max(ax, ay));
+    }
     col.a *= 1.0 - smoothstep(uFade.x, uFade.y, dist);
     gl_FragColor = col;
 }
@@ -1295,7 +1334,7 @@ class GLRenderer:
         except Exception:
             self._msaa, self._stencil = False, False
         # ground plane (no depth write, so lines and boards on the ground stay visible)
-        if st.ground_plane or f.ground is not None:
+        if st.ground_plane or st.grid or f.ground is not None:
             self._draw_ground(f, VP)
         self._fixed(f)
         for l in f.lines:
@@ -1361,6 +1400,10 @@ class GLRenderer:
         self._set(p, 'uPlane', 1.0 if st.ground_plane else 0.0)
         self._set(p, 'uTarget', f.target)
         self._set(p, 'uFade', st.fade)
+        self._set(p, 'uGrid', (1.0 if st.grid else 0.0, st.grid_step[0], st.grid_step[1], 1.0 if st.axes else 0.0))
+        self._set(p, 'uGridC1', st.grid_minor)
+        self._set(p, 'uGridC2', st.grid_major)
+        self._set(p, 'uOrigin', st.origin)
         g = f.ground
         if g is not None:
             from PyQt6.QtGui import QImage

@@ -1,8 +1,10 @@
 """What the assistant can look at and suggest: tools over a snapshot of the project and its analysis.
 
 Every tool returns plain JSON in metres, degrees, m² and px/cm, in the ISO 8855 vehicle frame (x forward, y left,
-z up, origin at the rear-axle centre on the ground). Only text summaries leave the machine: camera poses, lens and
-module names, analysis figures. Never the vehicle model, images or files.
+z up, origin at the rear-axle centre on the ground). What leaves the machine: text summaries (camera poses, lens and
+module names, analysis figures) and, with a provider that takes images (Claude), the pictures look draws from the
+design itself (the coverage map of the analysis grid, a camera's synthetic view: assistant/vision.py), inside a
+question the user sends. Never the vehicle model file, photos, recordings, point clouds or files.
 
 The model cannot change the project, and no tool starts, stops or deletes anything. simulate_changes runs the
 analysis on a modified copy; propose_changes does the same and hands the result to the UI as a Proposal, which the
@@ -66,6 +68,8 @@ class ToolContext:
     detection: dict | None = None        # the Detection quality page's last result (core.detection_eval.summary)
     campaign: dict | None = None         # the Simulation campaigns page's last result (core.simcampaign.summary)
     critical_carla: dict | None = None   # the Critical targets in CARLA page's last result (core.critical_carla)
+    splat: dict | None = None            # the Log replay page's last result (core.splat_reproject.summary)
+    online_calib: dict | None = None     # the Online self-calibration page's last result (core.online_calib.summary)
     carla_live: dict | None = None       # the CARLA page's live rig panel (summary(): state, cameras, faults; no URLs)
     working_dir: str = ''                # where outputs go (workdir.get of the settings); never sent to the model
     plan: object = None                  # the Copilot plan on screen (copilot.Plan), which a follow-up revises
@@ -74,6 +78,8 @@ class ToolContext:
     model: str = ''
     on_copilot: object = None            # callable(copilot.Plan): a proposed plan to show
     on_next: object = None               # callable(list of Recommendation): next-step chips to show under the answer
+    on_log: object = None                # callable(dict): a design-log entry the model proposes (the user accepts it)
+    vision: bool = False                 # the model takes images: look returns a picture (else its caption only)
     _proposals: int = 0
 
     def status(self, text):
@@ -737,6 +743,36 @@ def get_road_and_body_motion(tc, **_):
                        'body motion'}
 
 
+def get_thermal_and_vibration(tc, **_):
+    from ..core import thermo_vib as TV
+    tc.status('Thermal and vibration drift…')
+    res = TV.run(tc.project, cancel=tc.cancelled)
+    if res is None:
+        return {'error': 'cancelled'}
+    return {**TV.summary(res),
+            'meaning': 'how far the midday sun and the road move each camera and sensor from its calibration: the '
+                       'hottest day of the exposure campaign hour by hour (each device\'s worst turn in degrees and '
+                       'move in mm, camera-lidar and stereo pairs in px through the lens, against the calibration '
+                       'tolerance), and on an ISO 8608 road each mount\'s first mode (Hz) against the body (1-2 Hz) '
+                       'and wheel-hop (10-15 Hz) bands, its flex and blur; findings. Typical materials, finishes '
+                       'and damping; the user edits it on Analysis ▸ Thermal and vibration drift'}
+
+
+def get_clock_tree(tc, **_):
+    from ..core import clock_tree as CT
+    tc.status('Clock tree and time sync…')
+    res = CT.run(tc.project, cancel=tc.cancelled)
+    if res is None:
+        return {'error': 'cancelled'}
+    return {**CT.summary(res),
+            'meaning': 'the rig\'s time distribution (GNSS PPS, the gPTP grandmaster, the switch, the deserializers\' '
+                       'FSYNC timers) simulated over the fault scenario as a seeded Monte Carlo: the grandmaster and '
+                       'its holdover within the time budget (s), the worst camera–lidar timestamp error in 95 % of '
+                       'frames (ms) and how far it moves lidar points in the camera images (px, 95 % of frames and '
+                       'the worst frame) at the study\'s speed and yaw rate; findings. Typical oscillator and link '
+                       'figures unless edited; the user edits it on Analysis ▸ Clock tree and time sync'}
+
+
 def get_critical_targets(tc, envelopes=True, **_):
     from ..core import critical as CR
     if not any(t['enabled'] for t in CR.settings_of(tc.project).targets):
@@ -974,6 +1010,34 @@ def get_critical_carla(tc, **_):
             'note': 'not run yet: Simulate ▸ Critical targets in CARLA ▸ Run (it drives CARLA; the assistant cannot)'}
 
 
+def get_log_replay(tc, **_):
+    """The Log replay page's last result in brief: it needs a recorded drive and minutes, so the assistant never runs it."""
+    if tc.splat:
+        from ..core import provenance as PV
+        return {'run': True, **PV.scrub(tc.splat),
+                'meaning': 'a recorded drive rebuilt as 3D Gaussians from its lidar and images, validated on held-out '
+                           'frames (PSNR, dB) and lidar sweeps (range error), and re-rendered through the recorded rig '
+                           '(A) and a proposed rig (B): objects each rig shows and the detector finds per class and '
+                           'range, lidar returns and own-vehicle hits. Re-rendered images, not real ones: compare the '
+                           'rigs, not the absolute figures'}
+    return {'run': False, 'note': 'not run yet: Simulate ▸ Log replay ▸ open a recorded drive and Run (minutes; the '
+                                  'assistant cannot run it)'}
+
+
+def get_online_calib(tc, **_):
+    """The Online self-calibration page's last result in brief: a run reads a whole drive, so the assistant never
+    starts one."""
+    if tc.online_calib:
+        from ..core import provenance as PV
+        return {'run': True, **PV.scrub(tc.online_calib),
+                'meaning': 'every camera\'s rotation relative to the lidar followed through a recorded drive window by '
+                           'window: knocks (a step that stays, with its time and size), excursions (a step that comes '
+                           'back) and flex (varies with speed, braking, turning or the time of day), each with σ; a '
+                           'knock beyond the tolerance is what fails the batch check'}
+    return {'run': False, 'note': 'not run yet: Calibrate ▸ Online self-calibration ▸ open a recorded drive and Run '
+                                  '(it reads the whole drive; the assistant cannot run it)'}
+
+
 def get_carla_live(tc, **_):
     """The CARLA live rig (the CARLA page's panel): its state, each camera's served rate, latency, faults and rig
     health's verdict. Read-only: the assistant neither starts it nor injects faults."""
@@ -1190,10 +1254,18 @@ def apply_changes(p, changes):
     targets, before = {}, {}
     if not isinstance(changes, list) or not changes:
         return rows, targets, before, ['changes must be a non-empty list']
-    named = {str(ch.get('camera', '')).lower() for ch in changes if isinstance(ch, dict)}
+    named = {str(ch.get('camera', '')).lower() for ch in changes if isinstance(ch, dict) and not ch.get('add')}
     for ch in changes:
         if not isinstance(ch, dict):
             errors.append(f'not a change: {ch!r}')
+            continue
+        if ch.get('add'):                   # a new camera (add_camera_options): rig_tools builds it
+            from .rig_tools import apply_add
+            arows, made, aerr = apply_add(p, ch)
+            errors += aerr
+            rows += arows
+            for c in made:
+                targets[c.uid] = {'__add__': c.to_dict()}
             continue
         c = _by_tag(p, ch.get('camera'))
         if c is None:
@@ -1406,7 +1478,8 @@ def _simulate(tc, changes=None, seams=None, settings=None):
     sev = lambda lst: {s: sum(1 for i in lst if i.severity == s) for s in ('critical', 'serious', 'warning')}
     allrows = rows + srows + grows
     report = {
-        'changes': [{({'camera': 'camera', 'seam': 'seam'}.get(r.get('kind', 'camera'), 'setting')): r['camera'] or r['label'],
+        'changes': [{({'camera': 'camera', 'add': 'camera', 'seam': 'seam'}.get(r.get('kind', 'camera'), 'setting')):
+                     r['camera'] or r['label'],
                      'property': r['prop'],
                      'from': _r(r['before'], 4) if not isinstance(r['before'], str) else r['before'],
                      'to': _r(r['after'], 4) if not isinstance(r['after'], str) else r['after'],
@@ -1424,9 +1497,22 @@ def _simulate(tc, changes=None, seams=None, settings=None):
     return sim, report
 
 
-def simulate_changes(tc, changes=None, seams=None, settings=None, **_):
-    _, report = _simulate(tc, changes, seams, settings)
+def _log_check(tc, sim, report):
+    """A change that repeats a rejected design-log entry says so (the model should not offer it again unasked)."""
+    from . import memory as M
+    if sim is None:
+        return report
+    hit = M.matches_rejected(tc.project, M.changes_of_rows(sim['rows']))
+    if hit:
+        report['design_log'] = {'repeats_rejected': [M.for_model(tc.project, e) for e in hit[:3]],
+                                'note': 'The user rejected this before (design log). Do not propose it again unless '
+                                        'they ask for it; say so if it is the only fix.'}
     return report
+
+
+def simulate_changes(tc, changes=None, seams=None, settings=None, **_):
+    sim, report = _simulate(tc, changes, seams, settings)
+    return _log_check(tc, sim, report)
 
 
 def propose_changes(tc, changes=None, seams=None, settings=None, title='', rationale='', **_):
@@ -1440,8 +1526,87 @@ def propose_changes(tc, changes=None, seams=None, settings=None, title='', ratio
                     settings_before=sim['settings_before'], variant_uid=tc.project.active_uid)
     if tc.on_proposal is not None:
         tc.on_proposal(prop)
-    return {'proposal': prop.id, 'status': 'shown to the user with its predicted effect; they decide whether to apply it',
-            **report}
+    return _log_check(tc, sim, {'proposal': prop.id, 'status': 'shown to the user with its predicted effect; they '
+                                                               'decide whether to apply it', **report})
+
+
+# =========================================================================== pictures and the design log
+def look(tc, view='top', layer='density', camera='', x=None, y=None, radius_m=None, **_):
+    """A picture of the design for the model (assistant/vision.py) with its caption and figures. Without a model
+    that takes images (tc.vision False) only the caption and the figures are returned."""
+    from . import vision as VI
+    p = tc.project
+    if view not in VI.VIEWS:
+        return {'error': f'view must be one of {", ".join(VI.VIEWS)}'}
+    res = tc.result if tc.result is not None else _base(tc)
+    if view in ('top', 'closeup') and res is None:
+        return {'error': 'No analysis result yet (the vehicle or the ROI may be missing).'}
+    try:
+        if view == 'camera':
+            c = _by_tag(p, camera)
+            if c is None:
+                return {'error': 'name the camera by its tag; cameras: ' + ', '.join(x.tag for x in p.variant.cameras)}
+            fov = _fov(resolve(p.module_for(c), p.lens_for(c)))
+            if not tc.vision:
+                pic = None
+                info = {'camera': c.tag, 'fov_deg': {'horizontal': _r(fov[0], 1), 'vertical': _r(fov[1], 1)}}
+                d = res.per_cam.get(c.uid, {}) if res is not None else {}
+                caption = (f'(No picture: this model does not take images; Claude does.) Camera {c.tag} would be '
+                           f'shown through its lens in the synthetic parking scene. Figures: field of view '
+                           f'{fov[0]:.1f}° × {fov[1]:.1f}°' + (f', sees {d.get("seen_m2", 0):.2f} m² of the ROI, '
+                                                            f'{d.get("unique_m2", 0):.2f} m² only it sees' if d else '')
+                           + '.')
+            else:
+                pic = VI.render_camera(p, tc.engine, c, res, fov)
+        else:
+            centre = None
+            if view == 'closeup':
+                try:
+                    centre = (float(x), float(y))
+                except (TypeError, ValueError):
+                    return {'error': 'a close-up needs x and y (metres, the ground point to centre on)'}
+            if not tc.vision:
+                pic = None
+                info = {}
+                caption = None
+            else:
+                pic = VI.render_map(p, res, layer or 'density', centre, radius_m)
+    except ValueError as e:
+        return {'error': str(e)}
+    if pic is None:
+        if caption is None:                       # the map's caption and figures without drawing it
+            full = VI.render_map(p, res, layer or 'density', centre, radius_m)
+            caption = '(No picture: this model does not take images; Claude does.) ' + full.caption
+            info = {k: v for k, v in full.info.items()}
+        return {'picture': None, 'caption': caption, 'figures': info,
+                'note': 'Images need Claude (Preferences ▸ Assistant). Answer from the figures.'}
+    return {'picture': pic.summary(), 'caption': pic.caption, 'figures': pic.info,
+            'note': 'The picture follows. Quote numbers from these figures and the other tools, not from the pixels.',
+            '_pictures': [pic]}
+
+
+def get_design_log(tc, **_):
+    from . import memory as M
+    log = M.entries(tc.project)
+    return {'entries': [M.for_model(tc.project, e) for e in log], **M.summary(tc.project),
+            'note': 'Kept with the project. Constraints hold; rejected ideas are not proposed again unless asked.'}
+
+
+def add_design_log(tc, kind='note', text='', about=None, **_):
+    """Propose an entry: shown to the user, written only when they accept it."""
+    from . import memory as M
+    tags = M.tag_to_uid(tc.project)
+    unknown = [a for a in (about or []) if str(a).lower() not in tags]
+    if unknown:
+        return {'error': f'unknown camera or sensor tags: {", ".join(map(str, unknown))}'}
+    e = M.new_entry(kind, text, [tags[str(a).lower()] for a in (about or [])], source='assistant',
+                    changes=M.parse_changes(text, [c.tag for c in tc.project.variant.cameras]))
+    if e is None or kind not in M.KINDS:
+        return {'error': f'give a kind ({", ".join(M.KINDS)}) and a short text'}
+    if tc.on_log is not None:
+        tc.on_log(e)
+    return {'proposed': M.for_model(tc.project, e), 'status': 'shown to the user; written to the design log only if '
+                                                               'they accept it'}
 
 
 # =========================================================================== studies and search
@@ -1804,6 +1969,10 @@ _CHANGE_ITEM = {
         'visible': {'type': 'boolean', 'description': 'false switches the camera off in the analysis'},
         'mirror_partner': {'type': 'boolean',
                            'description': 'also mirror the change onto the linked left/right partner (default true)'},
+        'add': {'type': 'boolean', 'description': 'true: a new camera with this tag at x, y, z, yaw, pitch '
+                                                   '(add_camera_options gives one); mirror_partner adds a mirrored pair'},
+        'module': {'type': 'string', 'description': 'camera module id of an added camera'},
+        'name': {'type': 'string'}, 'location': {'type': 'string'},
     },
     'required': ['camera'],
 }
@@ -1826,8 +1995,9 @@ class Tool:
     description: str
     params: dict
     fn: object
-    kind: str = 'read'      # read | compute | simulate | propose | plan | ui | copilot
+    kind: str = 'read'      # read | compute | simulate | propose | plan | ui | copilot | look
     required: tuple = ()
+    vision: bool = False    # returns a picture: offered only to models that take images
 
 
 TOOLS = [
@@ -1957,6 +2127,14 @@ TOOLS = [
          'stays in view (a crest hides what lies beyond), when bumps and kerbs are first seen, body clearance driving '
          'over them; brake dive, squat and cornering roll per case with each forward camera\'s horizon shift and the '
          'stitched ground shift. A few seconds.', {}, get_road_and_body_motion, 'compute'),
+    Tool('get_thermal_and_vibration', 'Thermal and vibration drift',
+         'How the midday sun warps the rig and the road shakes it: each camera\'s and sensor\'s worst drift from its '
+         'calibration in full sun, camera-lidar and stereo pairs in pixels, each mount\'s first mode and the '
+         'resonance flags, and the findings. Under a second.', {}, get_thermal_and_vibration, 'compute'),
+    Tool('get_clock_tree', 'Clock tree and time sync',
+         'The rig\'s clock distribution (GNSS PPS, gPTP grandmaster, switch, deserializer FSYNC timers) over the fault '
+         'scenario: the grandmaster\'s holdover, every camera\'s timestamp error against the lidar and how far it '
+         'moves lidar points in the images, and the findings. About a second.', {}, get_clock_tree, 'compute'),
     Tool('get_critical_targets', 'Critical targets and mounting envelopes',
          'The critical targets placed in Analysis ▸ Critical targets: which cameras resolve each one, lidar points and '
          'radars on it, and every camera\'s mounting envelope (how far yaw/pitch/roll and x/y/z may be off before a '
@@ -2009,6 +2187,14 @@ TOOLS = [
          'The last comparison on Simulate ▸ Critical targets in CARLA: agreement of CARLA with the study per camera '
          'view (with its interval), the pixel error, each disagreement and why; else which CARLA actor stands in for '
          'each target and how many drives it takes. Cheap.', {}, get_critical_carla),
+    Tool('get_log_replay', 'Read the log replay',
+         'The last result on Simulate ▸ Log replay: how well the recorded drive was rebuilt (held-out PSNR, lidar '
+         'range error) and what the recorded and the proposed rig show and detect on the same moments, per class and '
+         'range. Cheap: it reads the page, never runs it.', {}, get_log_replay),
+    Tool('get_online_calib', 'Read the online self-calibration',
+         'The last result on Calibrate ▸ Online self-calibration: each camera\'s knocks, excursions and flex relative '
+         'to the lidar over a recorded drive, with times, sizes and σ. Cheap: it reads the page, never runs it.', {},
+         get_online_calib),
     Tool('get_carla_live', 'Read the CARLA live rig',
          'The CARLA live rig on Simulate ▸ CARLA: whether it streams, the real-time factor, per camera the served '
          'frame rate, latency, faults injected and rig health\'s verdict and drift. Read-only. Cheap.', {},
@@ -2117,10 +2303,12 @@ TOOLS = [
          'Show something to the user in the app (does not change the design): select_cameras (cameras), '
          'frame_point (x, y: frames the views on a ground point and marks it), frame_all, heatmap '
          '(none | coverage | density | redundancy | stitched), overlay (overlay key such as camlight, volume, '
-         'guidelines, frustums, sensors, critical, wipers, harness; on), open_page (viewports | camviews | volume | '
-         'perception | tolerance | compare | rig | coverage | timing | recording | power | gnss | exposure | fleet | '
-         'brackets | dataset | drivelog | asbuilt | requirements | lidar_calib | critical | materials | automation | '
-         'terrain | harness | observability | experiments | sim | detection | campaign | critical_carla).',
+         'guidelines, frustums, sensors, critical, wipers, harness, clocktree; on), open_page (viewports | camviews | volume | '
+         'perception | tolerance | compare | rig | coverage | timing | clock_tree | recording | power | gnss | '
+         'exposure | isp | fleet | brackets | dataset | drivelog | asbuilt | online_calib | requirements | '
+         'lidar_calib | critical | materials | automation | '
+         'terrain | thermo_vib | harness | observability | experiments | sim | detection | splat | campaign | '
+         'critical_carla).',
          {'action': {'type': 'string', 'enum': list(UI_ACTIONS)}, 'cameras': {'type': 'array', 'items': {'type': 'string'}},
           'x': {'type': 'number'}, 'y': {'type': 'number'}, 'heatmap': {'type': 'string'}, 'overlay': {'type': 'string'},
           'on': {'type': 'boolean'}, 'page': {'type': 'string'}}, show_in_app, 'ui', ('action',)),
@@ -2134,7 +2322,49 @@ TOOLS = [
              'prompt': {'type': 'string', 'description': 'the message sent when it is clicked'},
              'kind': {'type': 'string', 'enum': ['ask', 'goal', 'plan']}},
              'required': ['label', 'prompt', 'kind']}}}, suggest_next, 'ui', ('items',)),
+    Tool('look', 'Look at the design',
+         'See a picture of the design, drawn from Vantage\'s own analysis (never a photo): view top = the bird\'s-eye '
+         'coverage map of the ROI ground (blind cells red, below the minimum density amber, the rest shaded by pixel '
+         'density, or with layer redundancy by how many cameras see them; the vehicle outline, each camera\'s tag '
+         'and heading, the largest blind patches numbered, a scale bar and a legend; front at the top, the left on '
+         'the left); closeup = the same around one ground point (x, y; radius_m, default 1, at most 5) with the '
+         'analysis cells; camera = what one camera sees in a synthetic parking scene (same lens, pose and body '
+         'occlusion). Returns the picture with a caption and the figures it shows. Use it for spatial questions '
+         '(where, which side, the shape of a gap, what a camera sees); quote numbers from the figures and the other '
+         'tools, not from the pixels. About 1,300 image tokens per picture; one or two per answer. The picture is '
+         'project data: it goes only to this conversation\'s provider, inside the question the user sent.',
+         {'view': {'type': 'string', 'enum': ['top', 'closeup', 'camera']},
+          'layer': {'type': 'string', 'enum': ['density', 'redundancy'], 'description': 'top and closeup: the '
+                                                                                         'shading (default density)'},
+          'camera': {'type': 'string', 'description': 'camera: the camera tag'},
+          'x': {'type': 'number', 'description': 'closeup: ground point x (m)'},
+          'y': {'type': 'number', 'description': 'closeup: ground point y (m)'},
+          'radius_m': {'type': 'number', 'description': 'closeup: half the window width (m), default 1'}},
+         look, 'look', ('view',), vision=True),
+    Tool('get_design_log', 'Read the design log',
+         'The project\'s design log, kept with the project: decisions, rejected ideas (with the change and its effect '
+         'when a proposal was discarded), constraints and notes, each with the cameras or sensors it concerns, its '
+         'date and whether the user wrote it or accepted it from you.', {}, get_design_log),
+    Tool('add_design_log', 'Propose a design-log entry',
+         'Propose an entry for the design log (a decision the user made, an idea they rejected, a constraint they '
+         'stated, a note worth keeping). The user sees it and accepts it or not; nothing is written otherwise. Only '
+         'for what the user said or decided in this conversation; one short sentence, with the tags it concerns.',
+         {'kind': {'type': 'string', 'enum': ['decision', 'rejected', 'constraint', 'note']},
+          'text': {'type': 'string', 'description': 'one sentence, e.g. "keep F above 0.55 m for the tow bar"'},
+          'about': {'type': 'array', 'items': {'type': 'string'}, 'description': 'camera or sensor tags'}},
+         add_design_log, 'propose', ('kind', 'text', 'about')),
 ]
+# the whole-rig tools (assistant/rig_tools.py; rig_tools imports from this module lazily, so the import is safe here)
+try:
+    from .rig_tools import TOOLS_RIG as _RIG
+except Exception as _e:                     # noqa: BLE001 — a broken rig_tools never takes the assistant down
+    import logging as _logging
+    # imported the other way round (rig_tools first) it is only half loaded here and registers itself when done
+    _half = isinstance(_e, ImportError) and ('partially initialized' in str(_e) or 'cannot import name' in str(_e))
+    if not _half:
+        _logging.getLogger(__name__).warning('the whole-rig tools are not available: %s: %s', type(_e).__name__, _e)
+    _RIG = []
+TOOLS += [t for t in _RIG if t.name not in {x.name for x in TOOLS}]
 BY_NAME = {t.name: t for t in TOOLS}
 
 
@@ -2142,9 +2372,29 @@ def input_schema(t: Tool) -> dict:
     return {'type': 'object', 'properties': t.params, **({'required': list(t.required)} if t.required else {})}
 
 
-def schemas() -> list:
+def offered(vision=True) -> list:
+    """The tools a model is offered: without image input, not the ones that return pictures."""
+    return [t for t in TOOLS if vision or not t.vision]
+
+
+def _nullable(t: Tool) -> dict:
+    """The input schema with null allowed for each optional argument: some models write null for an argument they do
+    not set, and the server refuses a call that does not match its schema. The null is dropped before the call runs."""
+    s = input_schema(t)
+    props = {}
+    for k, p in t.params.items():
+        if k not in t.required and isinstance(p.get('type'), str):
+            p = {**p, 'type': [p['type'], 'null']}
+            if 'enum' in p:
+                p['enum'] = list(p['enum']) + [None]
+        props[k] = p
+    return {**s, 'properties': props}
+
+
+def schemas(vision=True, nullable=False) -> list:
     return [{'type': 'function', 'function': {'name': t.name, 'description': t.description,
-                                              'parameters': input_schema(t)}} for t in TOOLS]
+                                              'parameters': _nullable(t) if nullable else input_schema(t)}}
+            for t in offered(vision)]
 
 
 _JSON_TYPES = {'string': (str,), 'boolean': (bool,), 'object': (dict,), 'array': (list,)}
@@ -2194,13 +2444,24 @@ def validate_args(name: str, args) -> list:
     return out
 
 
-def run(tc, name: str, args: dict) -> tuple[str, bool]:
-    """(JSON text for the model, ok)."""
+def run_full(tc, name: str, args: dict) -> tuple[str, bool, list]:
+    """(JSON text for the model, ok, pictures): a tool that draws (look) hands its vision.Picture objects back
+    separately, so the provider can send them as images next to the text."""
     t = BY_NAME.get(name)
     if t is None:
-        return dump({'error': f'unknown tool {name!r}'}), False
+        return dump({'error': f'unknown tool {name!r}'}), False, []
     try:
         out = t.fn(tc, **(args if isinstance(args, dict) else {}))
     except Exception as e:                          # a tool must never take the conversation down
-        return dump({'error': f'{type(e).__name__}: {e}'}), False
-    return dump(out), not (isinstance(out, dict) and 'error' in out and len(out) <= 2)
+        return dump({'error': f'{type(e).__name__}: {e}'}), False, []
+    pics = []
+    if isinstance(out, dict) and '_pictures' in out:
+        out = dict(out)
+        pics = list(out.pop('_pictures') or [])
+    return dump(out), not (isinstance(out, dict) and 'error' in out and len(out) <= 2), pics
+
+
+def run(tc, name: str, args: dict) -> tuple[str, bool]:
+    """(JSON text for the model, ok)."""
+    text, ok, _ = run_full(tc, name, args)
+    return text, ok

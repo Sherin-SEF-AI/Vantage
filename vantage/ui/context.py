@@ -10,6 +10,7 @@ OVERLAYS = [('frustums', 'Frustums', 'frustum', True), ('footprints', 'Footprint
             ('occlusion', 'Occlusion rays', 'occlusion', False), ('seams', 'Seams', 'seam', True),
             ('roi', 'ROI', 'roi', True), ('targets', 'Calibration targets', 'checker', False),
             ('dimensions', 'Dimensions', 'measure', False), ('grid', 'Grid', 'snap-grid', True),
+            ('labels', 'Labels', 'pin', True),                   # camera tags and target names on plates in 3D
             ('volume', 'Blind volume', 'blind', False), ('guidelines', 'Parking guidelines', 'axle', False),
             ('sensors', 'Lidar rings and radar fields', 'sensor', True),
             ('lidarpts', 'Lidar points', 'density', False),      # one simulated sweep per lidar
@@ -17,7 +18,8 @@ OVERLAYS = [('frustums', 'Frustums', 'frustum', True), ('footprints', 'Footprint
             ('brackets', 'Mount brackets', 'bracket', True),     # generated brackets on the vehicle
             ('critical', 'Critical targets', 'target', False),   # Analysis ▸ Critical targets, in the plan and 3D
             ('harness', 'Cable harness', 'cable', False),        # the routed cables, in the plan and 3D
-            ('wipers', 'Wiper sweep', 'layers', False)]          # Analysis ▸ Materials: the wipers on the windscreen
+            ('wipers', 'Wiper sweep', 'layers', False),          # Analysis ▸ Materials: the wipers on the windscreen
+            ('clocktree', 'Timestamp error (lidar points × 50)', 'sync', False)]   # Analysis ▸ Clock tree and time sync
 HEATMAPS = [('none', 'None'), ('coverage', 'Coverage'), ('density', 'Density'), ('redundancy', 'Redundancy'),
             ('stitched', 'Objects')]       # objects standing in the stitched bird's-eye view
 TOOLS = [('select', 'Select', 'select', 'V'), ('move', 'Move', 'move', 'G'), ('rotate', 'Rotate', 'rotate', 'R'),

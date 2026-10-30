@@ -229,7 +229,7 @@ def test_a_turn_with_a_tool_call(srv, sample):
     assert [m['role'] for m in s.messages] == ['system', 'user', 'assistant', 'tool', 'assistant']
     first = srv.requests[0]
     assert first['reasoning_effort'] == 'high' and first['include_reasoning'] is True
-    assert first['tool_choice'] == 'auto' and len(first['tools']) == len(T.TOOLS)
+    assert first['tool_choice'] == 'auto' and len(first['tools']) == len(T.offered(vision=False))     # no look on Groq
     tool_msg = srv.requests[1]['messages'][-1]
     assert tool_msg['role'] == 'tool' and tool_msg['tool_call_id'] == 'call_get_coverage'
     assert json.loads(tool_msg['content'])['blind_m2'] is not None
@@ -581,3 +581,43 @@ def test_agent_run_in_the_panel_with_a_variant_and_a_measurement(app, win, srv):
     QTest.mouseClick(card.b_undo, Qt.MouseButton.LeftButton)
     pump(app, 0.2)
     assert len(st.project.variants) == nvar and st.project.variant.uid == v0.uid
+
+
+def test_groq_optional_arguments_may_be_null_and_the_null_is_dropped(srv, sample):
+    """GPT-OSS writes null for an optional argument it does not set; Groq refuses a call that does not match the
+    schema, so the Groq schemas allow null on optional arguments, and the null is dropped before the tool runs."""
+    s = A.Session('test-key', A.Settings('openai/gpt-oss-120b'))
+    srv.script += [srv.tool_call('get_gnss_imu', {'antenna': None}, 'c1'), srv.answer('Done.')]
+    ev = _run(s, _tc(sample))
+    assert ev[-1].data['ok']
+    done = next(e for e in ev if e.kind == 'tool_done')
+    assert done.data['ok'] and 'does not match' not in done.data['result']
+    tools = {t['function']['name']: t['function']['parameters'] for t in srv.requests[0]['tools']}
+    assert 'null' in tools['get_gnss_imu']['properties']['antenna']['type']
+    for name, sch in tools.items():                      # required arguments stay non-null; enums gain None
+        for k, p in sch['properties'].items():
+            if k in sch.get('required', ()):
+                assert p.get('type') != 'null' and not (isinstance(p.get('type'), list) and 'null' in p['type'])
+            elif isinstance(p.get('type'), list) and 'enum' in p:
+                assert None in p['enum']
+    assert T.validate_args('get_gnss_imu', {}) == []
+    assert all('null' not in json.dumps(T.input_schema(t)) for t in T.TOOLS)   # Claude's strict schemas unchanged
+
+
+def test_a_refused_tool_call_is_retried_with_the_reason(srv, sample):
+    s = A.Session('test-key', A.Settings('openai/gpt-oss-120b'))
+    srv.script += [srv.error(400, 'tool call validation failed: parameters for tool run_study did not match schema',
+                             'tool_use_failed', failed_generation='{"tolerance_deg": "x"}'),
+                   srv.answer('Fine.')]
+    ev = _run(s, _tc(sample))
+    assert ev[-1].data['ok']
+    retry = srv.requests[1]['messages'][-1]
+    assert retry['role'] == 'user' and 'refused your last tool call' in retry['content']
+    assert srv.requests[0]['messages'] != srv.requests[1]['messages']        # not the identical request again
+
+
+def test_br_in_a_table_cell_is_a_line_break():
+    from vantage.ui.assistant import md_to_html
+    out = md_to_html('| a | b |\n|---|---|\n| one<br>two | x<br/>y |')
+    assert '&lt;br' not in out and out.lower().count('<br') >= 2
+    assert '&lt;script&gt;' in md_to_html('<script>x</script>')              # everything else stays escaped

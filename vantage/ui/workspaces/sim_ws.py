@@ -30,6 +30,7 @@ from ...core import simrig as SR
 from ...core import weather as WX
 from ...sim import carla_bridge as CB
 from ...sim import server as SV
+from ...sim import sumo_cosim as SUMO
 from ..theme import THEME, mono
 from ..widgets import ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label
 from .recording_ws import Tile
@@ -97,6 +98,11 @@ SCENARIO_LABELS = {'speed_kmh': 'Speed', 'gap_m': 'Gap', 'brake_at_s': 'Brakes a
                    'walk_speed_mps': 'Walking', 'ride_speed_mps': 'Riding', 'start_at_s': 'Starts at',
                    'walker': 'Walker'}
 _NUM = re.compile(r'[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?')
+# what SUMO costs a run, measured on CARLA 0.9.16 with the sample's data rig (vantage.sim.sumo_cosim; the integration note)
+SUMO_COST = ('SUMO adds little time. Measured with 30 vehicles and the data rig on a 12 s drive: starting it took 0.6 s '
+             '(Town04, bundled net) to 2.4 s (Town10HD, its net generated in 1.0 s, cached after), and stepping it and '
+             'moving its vehicles both ways 3–7 ms per simulation step, against 25–65 ms for CARLA\'s own step and '
+             '0.15–0.3 s for the ground truth: 4 to 11 s of SUMO in the whole drive.')
 
 
 def fault_text(f: dict) -> str:
@@ -153,6 +159,7 @@ class _Sig(QObject):
     done = pyqtSignal(object)
     failed = pyqtSignal(str)
     stopped = pyqtSignal()
+    sumo = pyqtSignal(object)
 
 
 def short_path(path, n=60) -> str:
@@ -203,6 +210,8 @@ class SimPage(QWidget):
         self.sig.done.connect(self._done)
         self.sig.failed.connect(self._failed)
         self.sig.stopped.connect(self._refresh_server)
+        self.sig.sumo.connect(self._sumo_done)
+        self._sumo = None                 # SV.check_sumo's answer for the chosen Python
         self.server: SV.Server | None = None
         self.busy = False
         self.rig = None                   # the last planned rig (summary, no tables)
@@ -303,6 +312,8 @@ class SimPage(QWidget):
             nonlocal grid
             if grid is not None:
                 ll.addLayout(grid)
+            if g == 'Cameras':                         # after the scenario: who drives its traffic
+                self._traffic_ui(ll)
             ll.addSpacing(6)
             ll.addWidget(label(g, bold=True))
             if g == 'Scenario':
@@ -471,6 +482,75 @@ class SimPage(QWidget):
         sc.setWidget(w)
         sc.setMinimumWidth(320)
         return sc
+
+    def _traffic_ui(self, ll):
+        """Traffic: CARLA's traffic manager or SUMO co-simulated in lockstep; SUMO's status in CARLA's Python, its net,
+        demand and the traffic lights' owner."""
+        ll.addSpacing(6)
+        ll.addWidget(label('Traffic', bold=True))
+        self.t_source = SegmentedControl([('carla', 'CARLA traffic manager'), ('sumo', 'SUMO')], 'carla')
+        self.t_source.setToolTip('Who drives the other vehicles: CARLA\'s traffic manager (autopilot), or Eclipse SUMO '
+                                 'co-simulated in lockstep (its demand, routes and optionally its traffic lights; CARLA\'s '
+                                 'own co-simulation package)')
+        self.t_source.changed.connect(self.set_traffic_source)
+        ll.addWidget(self.t_source)
+        self.t_about = label('', muted=True, small=True, wrap=True)
+        ll.addWidget(self.t_about)
+        self.sumo_box = QWidget()
+        sl = QVBoxLayout(self.sumo_box)
+        sl.setContentsMargins(0, 0, 0, 0)
+        sl.setSpacing(4)
+        self.sumo_status = StatusLine(None, '')
+        sl.addWidget(self.sumo_status)
+        self.sumo_install = QLineEdit()
+        self.sumo_install.setReadOnly(True)
+        self.sumo_install.setToolTip('Run this yourself in a terminal: it installs SUMO into CARLA\'s own Python '
+                                     '(Vantage never runs it), then press Check')
+        self.sumo_install.setFont(mono(11))
+        self.sumo_install.hide()
+        sl.addWidget(self.sumo_install)
+        nrow = QHBoxLayout()
+        self.sumo_net = QComboBox()
+        self.sumo_net.setToolTip('The SUMO net: CARLA\'s bundled one where it has one (Town01, Town04, Town05: no traffic '
+                                 'lights in them), else generated from the map\'s OpenDRIVE on the first run and cached; '
+                                 'or your own .net.xml or .sumocfg')
+        self.sumo_net.currentIndexChanged.connect(
+            lambda i: self.set_sumo('net', self.sumo_net.itemData(i),
+                                    f'SUMO net {os.path.basename(str(self.sumo_net.itemData(i)))}'))
+        nrow.addWidget(self.sumo_net, 1)
+        b = button('Net…', 'ghost', 'file', 'Your own SUMO net (.net.xml) or configuration (.sumocfg, with its own demand)')
+        b.clicked.connect(self._choose_sumo_net)
+        nrow.addWidget(b)
+        sl.addLayout(nrow)
+        self.sumo_net_note = label('', muted=True, small=True, wrap=True)
+        sl.addWidget(self.sumo_net_note)
+        self.sumo_demand = SegmentedControl([('count', 'Vehicles at once'), ('period', 'Insertion period')], 'count')
+        self.sumo_demand.setToolTip('Vehicles at once: SUMO keeps Traffic vehicles in the network. Insertion period: one '
+                                    'trip every period, at most Traffic vehicles at once. Trips from SUMO\'s randomTrips '
+                                    'with the seed')
+        self.sumo_demand.changed.connect(lambda k: self.set_sumo('demand', k, 'demand ' + (
+            'vehicles at once' if k == 'count' else 'insertion period')))
+        sl.addWidget(self.sumo_demand)
+        g = QGridLayout()
+        g.setVerticalSpacing(2)
+        g.setHorizontalSpacing(6)
+        g.setColumnStretch(2, 1)
+        a = label('Period', ink2=True)
+        a.setFixedWidth(104)
+        self.sumo_period = ScrubSpinBox('', 'plain', 1, 's', step=0.5, width=118)
+        self.sumo_period.setToolTip('One trip inserted this often (Insertion period)')
+        self.sumo_period.committed.connect(lambda v: self.set_sumo('period_s', float(v), f'insertion period {v:g} s'))
+        g.addWidget(a, 0, 0)
+        g.addWidget(self.sumo_period, 0, 1)
+        sl.addLayout(g)
+        self.sumo_tls = SegmentedControl([('carla', 'CARLA runs the lights'), ('sumo', 'SUMO runs the lights')], 'carla')
+        self.sumo_tls.setToolTip('Who runs the traffic lights (run_synchronization.py --tls-manager): CARLA\'s lights '
+                                 'copied into SUMO, or CARLA\'s frozen and set from SUMO\'s every step')
+        self.sumo_tls.changed.connect(lambda k: self.set_sumo('tls', k, f'{k.upper()} runs the lights'))
+        sl.addWidget(self.sumo_tls)
+        sl.addWidget(label(SUMO_COST + ' ' + SUMO.WALKERS_NOTE, muted=True, small=True, wrap=True))
+        self.sumo_box.hide()
+        ll.addWidget(self.sumo_box)
 
     # ------------------------------------------------------------------ right: the plan, the run, the result
     def _right(self):
@@ -674,12 +754,103 @@ class SimPage(QWidget):
             free = st['scenario']['name'] == 'free_drive' and not st['actors']
             tf = self.fields['traffic'][0]
             tf.setEnabled(free)
-            tf.setToolTip('Other vehicles on the traffic manager\'s autopilot' if free else
+            sumo = st['traffic_source'] == 'sumo'
+            tf.setToolTip(('Vehicles SUMO keeps in the network at once' if sumo else
+                           'Other vehicles on the traffic manager\'s autopilot') if free else
                           'A free drive\'s traffic: a scenario has its own (Other traffic), an actors scene none')
+            self._sync_traffic(st)
         finally:
             self._syncing = False
 
     # ------------------------------------------------------------------ ground truth, the scenario, faults, actors
+    def set_traffic_source(self, src):
+        """carla or sumo (undoable); choosing SUMO looks for it in CARLA's Python."""
+        if src not in SUMO.SOURCES or src == self.settings.traffic_source:
+            return False
+        done = self._set('traffic by ' + ('SUMO' if src == 'sumo' else 'CARLA\'s traffic manager'), traffic_source=src)
+        if src == 'sumo' and self._sumo is None and self.python:
+            self.check_sumo()
+        return done
+
+    def set_sumo(self, key, value, text=''):
+        so = dict(self.settings.sumo)
+        if value is None or so.get(key) == value:
+            return False
+        so[key] = value
+        return self._set(text or f'SUMO {key} {value}', sumo=so)
+
+    def _choose_sumo_net(self):
+        cur = self.settings.sumo.get('net', 'auto')
+        f, _ = QFileDialog.getOpenFileName(self, 'SUMO net or configuration', os.path.dirname(cur) if
+                                           cur not in SUMO.NET_CHOICES else self.working(),
+                                           'SUMO nets and configurations (*.net.xml *.net.xml.gz *.sumocfg)')
+        if f:
+            self.set_sumo('net', f, f'SUMO net {os.path.basename(f)}')
+
+    def _sync_traffic(self, st):
+        so = st['sumo']
+        sumo = st['traffic_source'] == 'sumo'
+        self.t_source.set_value(st['traffic_source'])
+        self.sumo_box.setVisible(sumo)
+        bundled = SV.sumo_bundled_towns(self.carla_root) or list(SUMO.BUNDLED_TOWNS)
+        items = [('auto', f'Net: auto (bundled for {", ".join(bundled)}, else generated)'),
+                 ('generate', 'Net: generated from the map')]
+        if so['net'] not in SUMO.NET_CHOICES:
+            items.append((so['net'], f'Net: {os.path.basename(so["net"])}'))
+        self.sumo_net.blockSignals(True)
+        self.sumo_net.clear()
+        for k, t in items:
+            self.sumo_net.addItem(t, k)
+        self.sumo_net.setCurrentIndex(max(self.sumo_net.findData(so['net']), 0))
+        self.sumo_net.blockSignals(False)
+        kind = SUMO.net_kind(so, st['town'])
+        town = st['town']
+        self.sumo_net_note.setText({
+            'bundled': f'{town}: CARLA\'s bundled net (it has no traffic lights: SUMO\'s vehicles do not stop at '
+                       'CARLA\'s lights; "generated" has them).',
+            'generated': f'{town}: generated from its OpenDRIVE on the first run (CARLA\'s netconvert_carla.py), cached '
+                         f'in {short_path(os.path.join(self.working(), "sumo-nets"))}.',
+            'user': f'Your net {short_path(so["net"])}: it must be {town}\'s.',
+            'user_config': f'Your configuration {short_path(so["net"])} with its own demand: its net must be '
+                           f'{town}\'s.'}[kind] + ''.join(' ' + p for p in SUMO.problems(so)))
+        self.sumo_demand.set_value(so['demand'])
+        self.sumo_period.set_value(so['period_s'])
+        self.sumo_period.setEnabled(so['demand'] == 'period' and kind != 'user_config')
+        self.sumo_demand.setEnabled(kind != 'user_config')
+        self.sumo_tls.set_value(so['tls'])
+        n = st['traffic']
+        self.t_about.setText(
+            (f'Eclipse SUMO drives the traffic ({n} vehicles at once' if so['demand'] == 'count' else
+             f'Eclipse SUMO drives the traffic (one every {so["period_s"]:g} s, at most {n}')
+            + '), stepped with CARLA every simulation step; its vehicles are CARLA actors with ground truth like any '
+              'other, and the ego is mirrored into SUMO so its traffic reacts to it.' if sumo else
+            'CARLA\'s traffic manager drives the Traffic vehicles on its autopilot.')
+
+    def check_sumo(self, refresh=False):
+        """Look for SUMO in CARLA's Python (in the background; cached until that environment changes)."""
+        py = self.python
+        self.sumo_status.set(None, 'Looking for SUMO in CARLA\'s Python…')
+
+        def work():
+            try:
+                res = SV.check_sumo(py, refresh=refresh)
+            except Exception as e:                    # noqa: BLE001
+                res = {'ok': False, 'text': f'{type(e).__name__}: {e}', 'install': SV.sumo_install_command(py)}
+            try:
+                self.sig.sumo.emit(res)
+            except RuntimeError:
+                pass
+        threading.Thread(target=work, daemon=True).start()
+
+    def _sumo_done(self, res):
+        self._sumo = res
+        ok = bool(res.get('ok'))
+        self.sumo_status.set('good' if ok else 'serious', res.get('text', '') if ok else
+                             'SUMO is not in CARLA\'s Python. Install it there with this command (Vantage never runs '
+                             'it), then Check:')
+        self.sumo_install.setText(res.get('install', ''))
+        self.sumo_install.setVisible(not ok)
+
     def set_ground_truth(self, key, on, text=''):
         gt = dict(self.settings.ground_truth)
         gt[key] = bool(on)
@@ -917,6 +1088,8 @@ class SimPage(QWidget):
     def _check_done(self, res):
         self._check = res
         self.py_status.set('good' if res.get('ok') else 'serious', res.get('text', ''))
+        if self.settings.traffic_source == 'sumo':
+            self.check_sumo(refresh=True)
 
     # ------------------------------------------------------------------ the server
     def start_server(self) -> bool:
@@ -1122,6 +1295,8 @@ class SimPage(QWidget):
             self.timer.start()
         if self._check is None and self.python:
             self.check_client()
+        elif self._sumo is None and self.python and self.settings.traffic_source == 'sumo':
+            self.check_sumo()
         self._refresh_server()
 
     def refresh(self):
@@ -1217,6 +1392,11 @@ class SimPage(QWidget):
             args += ['--spawn-point', str(st.spawn_point)]
         if st.walkers:
             args += ['--walkers', str(st.walkers)]
+        if st.traffic_source == 'sumo':
+            args += ['--traffic-source', 'sumo', '--sumo-net', st.sumo['net'], '--sumo-cache',
+                     os.path.join(self.working(), 'sumo-nets')]
+            if self.carla_root:
+                args += ['--carla-root', self.carla_root]
         src = SV.vantage_source()
         return (f'PYTHONPATH={shlex.quote(src)} ' if src else '') + ' '.join(shlex.quote(a) for a in args)
 
@@ -1299,6 +1479,19 @@ class SimPage(QWidget):
             self.ctx.msg('Choose CARLA\'s client Python first.', 5000)
             return False
         st = self.settings
+        self._sumo_args = []
+        if st.traffic_source == 'sumo':               # refused before CARLA is touched when SUMO cannot run
+            res = SV.check_sumo(self.python)
+            bad = ([] if res.get('ok') else [f'SUMO is not in CARLA\'s Python: install it with '
+                                             f'{res.get("install") or SV.sumo_install_command(self.python)}']) \
+                + SUMO.problems(st.sumo)
+            if bad:
+                self._sumo_done(res)
+                self.g_status.setText(' '.join(bad))
+                self.ctx.msg(bad[0], 6000)
+                return False
+            self._sumo_args = ['--sumo-cache', os.path.join(self.working(), 'sumo-nets')] + \
+                (['--carla-root', self.carla_root] if self.carla_root else [])
         if not SV.port_open('127.0.0.1', st.port):
             self.g_status.setText(f'No CARLA server answers on port {st.port}: start one (Server ▸ Start).')
             self.ctx.msg(self.g_status.text(), 5000)
@@ -1364,6 +1557,7 @@ class SimPage(QWidget):
         args = ['--port', str(st.port), '--tm-port', str(st.tm_port), '--timeout', f'{st.timeout_s:g}']
         if no_cams:
             args.append('--no-cameras')
+        args += list(getattr(self, '_sumo_args', None) or [])
         mem = max(SV.BRIDGE_MEMORY_GB, float(rig.doc['simulation'].get('bridge_memory_gb') or 0.0) + 1.0)
         cmd, env = SV.bridge_command(python, os.path.join(rig_dir, 'sim_rig.json'), folder, args, memory_gb=mem)
         if extra:
@@ -1509,7 +1703,16 @@ class SimPage(QWidget):
              f'{c.get("samples", 0)} samples, {c.get("sample_data", 0)} sample_data, {c.get("annotations", 0)} '
              f'annotations of {c.get("instances", 0)} instances, {c.get("bag_messages", 0)} bag messages',
              f'{perf.get("steps", 0)} steps at {sc.get("tick_hz", 0):g} Hz in {perf.get("recording_wall_s", 0):.1f} s: '
-             f'{perf.get("steps_per_wall_s", 0):.1f} steps/s, {perf.get("realtime_factor", 0):.2f}× real time', '']
+             f'{perf.get("steps_per_wall_s", 0):.1f} steps/s, {perf.get("realtime_factor", 0):.2f}× real time']
+        tr = doc.get('traffic_source') or {}
+        if tr:
+            vc, net, tm = tr.get('vehicles_in_carla') or {}, tr.get('net') or {}, tr.get('timing') or {}
+            L.append(f'Traffic: SUMO {tr.get("sumo_version") or ""} on the {net.get("kind", "")} net {net.get("file", "")}'
+                     f' · {tr.get("vehicles_spawned", 0)} vehicles spawned, {vc.get("mean", 0):g} on average in CARLA '
+                     f'(peak {vc.get("peak", 0)}) · {tr.get("teleports", 0)} teleports, {tr.get("collisions", 0)} '
+                     f'collisions · lights by {(tr.get("tls") or {}).get("owner", "carla").upper()} · SUMO took '
+                     f'{sum(float(v or 0) for v in tm.values()):.1f} s')
+        L.append('')
         for ch in doc.get('channels', []):
             L.append(f'  {ch["channel"] or ch["topic"]:<14} {ch["kind"]:<7} {ch["frames"]:>5} of '
                      f'{ch.get("planned_frames", ch["frames"]):>5} frames'

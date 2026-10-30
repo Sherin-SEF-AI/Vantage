@@ -56,7 +56,8 @@ def build_plan(only, seg_root, fps):
         else:
             if e['kind'] == 'chapter-card' and not os.path.exists(os.path.join(seg_root, e['id'], 'video.mp4')):
                 continue
-            dur = cards.PART_DUR if e['kind'] == 'part' else cards.CHAPTER_DUR
+            ch_dur, part_dur = cards.durations()
+            dur = part_dur if e['kind'] == 'part' else ch_dur
             items.append({'kind': e['kind'], 'entry': e, 'frames': round(dur * fps)})
     # a part card whose chapters were all left out goes too
     items = [it for i, it in enumerate(items)
@@ -221,9 +222,11 @@ def music_levels(items, voices, total_s, rate=100):
 def render_audio(items, total_frames, fps, raw_path):
     """The mix as raw 48 kHz stereo float32, rendered 30 s at a time."""
     music_dir = os.path.join(common.BUILD, 'music')
+    import chapters as C
     import music
     music.build(music_dir)
-    bed = read_wav(os.path.join(music_dir, 'bed.wav'))
+    variant = C.episode().get('music')           # an episode with its own bed (as070); the others: bed.wav
+    bed = read_wav(music.build_variant(music_dir, variant) if variant else os.path.join(music_dir, 'bed.wav'))
     L = len(bed)
     sfx = {k: read_wav(os.path.join(music_dir, f'{k}.wav')) for k in SFX}
     total_s = total_frames / fps
@@ -538,6 +541,58 @@ Kokoro-82M (voice af_heart), rendered locally. Music: synthesised for this video
 {tags}
 """
 
+DESCRIPTIONS['as070'] = """# {title}
+
+## Description
+
+Vantage designs the sensor rigs of data-collection vehicles: the cars that record the camera, lidar and radar data
+self-driving models are trained on. Its assistant is a chat about the open design. It reads the design only through
+Vantage's own tools (coverage, blind ground, pixel density, the studies), so every figure it quotes is the app's own;
+it simulates a change on a copy before anyone touches the design, and it proposes changes on a card that nothing
+applies until you accept.
+
+Every reply in this video is the real model's, GPT-OSS 120B on Groq, unedited, on the app's built-in Tata Tigor EV
+sample (its data rig: six cameras, a roof lidar, five radars). Every figure on screen is read from the app while
+recording.
+
+In this video:
+- Ask the design: where the rig is blind and why, from find_blind_regions; every lookup listed and open to inspect;
+  consent before the first question, and what is (and is never) sent.
+- What-ifs and proposals: a camera move simulated on a copy, then proposed on a card with its predicted effect;
+  Apply as one undo step, the measured result beside the prediction, and Undo.
+- Recommendations as you work: the live strip follows the selection and your last edit, worked out locally and
+  instantly; nothing is sent until you click Ask.
+- Whole-rig design: optimise_rig searches the whole layout against your targets (camera count, minimum density, blind
+  ground) within a time budget; add_camera_options finds where one more camera would close a gap.
+- The design log: a discarded proposal is recorded as rejected, the model reads the log and does not offer it again.
+- The Copilot: a CARLA drive asked for in words becomes a plan card, every value with its source; it stays a draft
+  until you approve it (nothing is run in this video).
+- Automatic model choice and pictures: quick questions to a fast model, goals, plans and picture questions to Claude
+  Opus; without a Claude key the panel falls back to GPT-OSS 120B and says so. The coverage picture the look tool
+  draws is shown; with Groq nothing of it is sent.
+- The benchmark: python -m vantage.assistant.evals asks 51 design questions and grades the answers against the app's
+  own numbers, without a judge model. The full run on GPT-OSS 120B shown here scored 89 % over 50 scored questions.
+
+Website and documentation: https://sherin-sef-ai.github.io/Vantage/
+Download (Windows, macOS, Linux x86-64 and arm64 / Jetson): https://github.com/Sherin-SEF-AI/Vantage/releases
+Source code: https://github.com/Sherin-SEF-AI/Vantage
+Licence: GPL-3.0-or-later. Free and open source.
+
+Notes: recorded from the app itself on its sample project. The assistant's replies come from GPT-OSS 120B on Groq with
+the author's own key and are shown unedited; waits for the model and the whole-rig search are shown in real time or as
+marked time-lapses. For chapter 4 the quarter cameras were tilted 12 degrees up, as said on screen. The benchmark run
+was made before the recording and its output is replayed. The assistant needs your own Groq or Claude API key; it is
+off until you add one. Narration: Kokoro-82M (voice af_heart), rendered locally. Music: synthesised for this video.
+
+## Chapters
+
+{chapters}
+
+## Tags
+
+{tags}
+"""
+
 TAGS = ['autonomous driving', 'self-driving', 'sensor rig', 'data collection', 'camera placement', 'lidar', 'radar',
         'sensor calibration', 'camera calibration', 'surround view', 'fisheye camera', 'GMSL', 'Jetson AGX Orin',
         'e-con Systems', 'ROS 2', 'nuScenes', 'KITTI', 'Kalibr', 'OpenCV', 'open source', 'PyQt', 'Vantage']
@@ -548,7 +603,10 @@ TAGS_BY = {'v020': ['Vantage 0.2.0', 'what is new', 'autonomous driving', 'data 
            'gt040': ['Vantage 0.4.0', 'CARLA', 'CARLA simulator', 'ground truth', 'auto-labelling', 'synthetic data',
                      'semantic segmentation', 'instance segmentation', 'depth', 'lidar segmentation',
                      'nuScenes-lidarseg', 'panoptic segmentation', 'COCO', 'fisheye camera', 'sensor rig',
-                     'data collection', 'autonomous driving', 'scenarios', 'open source', 'Vantage']}
+                     'data collection', 'autonomous driving', 'scenarios', 'open source', 'Vantage'],
+           'as070': ['AI assistant', 'LLM agent', 'tool use', 'GPT-OSS 120B', 'Groq', 'Copilot', 'sensor rig',
+                     'camera placement', 'autonomous driving', 'data collection', 'design optimisation',
+                     'lidar', 'radar', 'CARLA', 'LLM benchmark', 'human in the loop', 'open source', 'Vantage']}
 
 
 def write_description(marks, path, title, ep=None):
@@ -571,6 +629,9 @@ def make_thumbnail(seg_root, path, ep=None):
     cards.app()
     th = (ep or C.episode())['thumb']
     src = os.path.join(seg_root, th['still'], 'stills', 'thumb.png')
+    if th.get('maker') == 'as070':               # the assistant episode draws its own (gfx_as.thumbnail)
+        import gfx_as
+        return gfx_as.thumbnail(QImage(src) if os.path.exists(src) else None, path)
     shot = QImage(src) if os.path.exists(src) else gfx.from_np(gfx.base_np())
     img = gfx.from_np(gfx.base_np())
     p = gfx.painter(img)

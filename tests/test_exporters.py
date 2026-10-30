@@ -99,11 +99,13 @@ def _cams(p):
 # ----------------------------------------------------------------------------- registry
 def test_formats_registry():
     ids = [f.id for f in ex.FORMATS]
-    assert len(ids) == len(set(ids)) == 47
+    assert len(ids) == len(set(ids)) == 53
     # written only when named (batch --export without --formats leaves them out): an experiment runs for minutes,
-    # the CARLA rig's remap tables are tens of MB, a campaign's analysis and the detector's evaluation take minutes
-    assert [f.id for f in ex.FORMATS if not f.default] == ['experiment', 'sim_campaign', 'detection_quality',
-                                                            'sim_rig']
+    # the CARLA rig's remap tables are tens of MB, a campaign's analysis and the detector's evaluation take minutes, the
+    # calibration coach simulates technicians for seconds per camera (a live tool), the gradient refinement runs 10–40 s
+    # and the log replay needs a recorded drive and minutes
+    assert [f.id for f in ex.FORMATS if not f.default] == ['calib_coach', 'diff_optim', 'experiment', 'sim_campaign',
+                                                            'detection_quality', 'log_replay', 'sim_rig']
     assert {f.group for f in ex.FORMATS} == set(ex.GROUPS)
     for f in ex.FORMATS:
         assert f.kind in ('text', 'binary')
@@ -117,10 +119,13 @@ def test_export_writes_every_file(sample, exported):
     out, paths, steps = exported
     n = len(_cams(p))
     # 11 single-file formats + N opencv + 2 ros + N views + (json, npz, txt, 2N bin, body mask) remap tables
-    # + 4 reference stitcher sources + 5 bowl files (obj, mtl, png, npz, json) + 2 blind volume files (json, obj)
-    # + N guideline tables and N previews + 2 stitched-objects files (json, png) + 2 perception range files (json, png)
+    # + 4 reference stitcher sources and their Apache licence + 5 bowl files (obj, mtl, png, npz, json)
+    # + 2 blind volume files (json, obj) + N guideline tables and N previews + 2 stitched-objects files (json, png) + 2 perception range files (json, png)
     # + datasets: 3 nuScenes, 3 KITTI, N camera_info, 1 Kalibr
     # + 2 each for the lidar and radar coverage (json, png), the sync plan (json, png) and the recording budget (json, csv)
+    # + the clock tree (json, 2 csv, png) + the exposure metering (3 json, csv, N masks) + the calibration coach (json, csv)
+    # + the gradient refinement (json, 2 csv) + the thermal and vibration drift (json, 4 csv, png), no log replay (no
+    # drive chosen)
     # + the power budget (json, 2 csv), GNSS and IMU (json, txt, png), sun glare and dirt (json, png), the requirements
     # (json, csv, pdf), the fleet (json, csv, png) and the mount brackets (an STL for QL and QR, the two cameras that
     # take one as planned, the json and the sheet), the housings in view (json, csv) and the suspension load cases
@@ -129,8 +134,8 @@ def test_export_writes_every_file(sample, exported):
     # targets (json, 2 csv, 2 png), the materials (json, 2 csv, png), the weather comparison (json, 2 csv, png),
     # the CI templates (2 yml, md), no experiment (none set up), no simulation campaign (no drive on disk), no
     # detection quality (no recording) and the CARLA rig (json, npz)
-    assert len(paths) == (11 + 2 * n + 2 + (2 * n + 4) + 4 + 5 + 2 + 2 * n + 2 + 2 + 3 + 3 + n + 1 + 2 + 2 + 2
-                          + 3 + 3 + 2 + 3 + 3 + 4 + 2 + 4 + 3 + 3 + 2 + 5 + 4 + 4 + 3 + 0 + 2)
+    assert len(paths) == (11 + 2 * n + 2 + (2 * n + 4) + 5 + 5 + 2 + 2 * n + 2 + 2 + 3 + 3 + n + 1 + 2 + 2 + 2
+                          + 3 + 3 + 2 + 3 + 3 + 4 + 2 + 4 + 3 + 3 + 2 + 5 + 4 + 4 + 3 + 0 + 2 + 4 + (4 + n) + 2 + 3 + 6 + 0)
     for path in paths:
         assert os.path.isabs(path) and os.path.isfile(path) and os.path.getsize(path) > 0
         assert os.path.commonpath([path, str(out)]) == str(out)
@@ -142,6 +147,7 @@ def test_export_writes_every_file(sample, exported):
                      'viewport.png', 'birds-eye.png', 'mount-points.dxf', 'mount-points.step', 'opencv/F.yaml',
                      'views/QR.png', 'bev_lut/bev_lut.json', 'bev_lut/F_map.bin', 'bev_lut/body_mask.bin',
                      'bev_lut/bev_lut.txt', 'bev_lut/stitcher/bev_stitch.cpp', 'bev_lut/stitcher/bev_stitch.py',
+                     'bev_lut/stitcher/LICENSE',
                      'bowl/bowl.obj', 'bowl/bowl_lut.npz', 'bowl/bowl.png', 'guidelines/R.json', 'guidelines/R.png',
                      'stitched_objects/stitched_objects.json', 'stitched_objects/stitched_objects.png',
                      'perception_range/perception_range.json', 'perception_range/perception_range.png'):
@@ -633,9 +639,11 @@ def test_exports_without_analysis_result(sample, tmp_path, qapp, monkeypatch):
     # the housings: two; the suspension load cases: four; the calibration observability and the cable harness:
     # three; the road and body motion on flat ground: two; the critical targets: five; the materials and the weather
     # comparison: four; the CI templates: three; the experiment: none (the sample has none set up); the simulation
-    # campaign and the detection quality: none (no drive, no recording); the CARLA rig: two
-    assert len(paths) == ((len(ids) - 29) + 2 * len(_cams(p)) + 2 + 2 + 2 + 2 + 2 + 2 + 3 + 3
-                          + 3 + 3 + 3 + 3 + 2 + 4 + 2 + 4 + 3 + 3 + 2 + 5 + 4 + 4 + 3 + 0 + 2)
+    # campaign and the detection quality: none (no drive, no recording); the CARLA rig: two; the clock tree: four;
+    # the exposure metering: four and a mask per camera; the calibration coach: two;
+    # the gradient refinement: three; the thermal and vibration drift: six; the log replay: none (no drive)
+    assert len(paths) == ((len(ids) - 35) + 2 * len(_cams(p)) + 2 + 2 + 2 + 2 + 2 + 2 + 3 + 3
+                          + 3 + 3 + 3 + 3 + 2 + 4 + 2 + 4 + 3 + 3 + 2 + 5 + 4 + 4 + 3 + 0 + 2 + 4 + (4 + len(_cams(p))) + 2 + 3 + 6 + 0)
     html_text = (tmp_path / 'report.html').read_text('utf-8')
     assert 'No analysis result' in html_text
     _, desc, _ = ex.preview('report_pdf', p, None, ex.ExportOptions(out_dir=str(tmp_path)))

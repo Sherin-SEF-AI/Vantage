@@ -1,0 +1,2 @@
+INVALID_ACTOR_ID = -1
+SPAWN_OFFSET_Z = 25.0  # meters

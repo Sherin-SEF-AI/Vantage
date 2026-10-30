@@ -54,7 +54,9 @@ PAGE_CLASSES = {
     'harness': ('harness_ws', 'HarnessPage'), 'observability': ('observability_ws', 'ObservabilityPage'),
     'experiments': ('experiments_ws', 'ExperimentsPage'), 'sim': ('sim_ws', 'SimPage'),
     'detection': ('detection_ws', 'DetectionPage'), 'campaign': ('campaign_ws', 'CampaignPage'),
-    'critical_carla': ('critical_carla_ws', 'CriticalCarlaPage'),
+    'critical_carla': ('critical_carla_ws', 'CriticalCarlaPage'), 'clock_tree': ('clock_tree_ws', 'ClockTreePage'),
+    'isp': ('isp_ws', 'IspPage'), 'thermo_vib': ('thermo_vib_ws', 'ThermoVibPage'),
+    'splat': ('splat_ws', 'SplatPage'), 'online_calib': ('online_calib_ws', 'OnlineCalibPage'),
 }
 
 
@@ -151,6 +153,7 @@ class MainWindow(QMainWindow):
         'materials': (),
         'automation': (),
         'terrain': (),
+        'thermo_vib': (),
         'harness': (),
         'observability': (),
         'experiments': (),
@@ -158,6 +161,10 @@ class MainWindow(QMainWindow):
         'detection': (),
         'campaign': (),
         'critical_carla': (),
+        'clock_tree': (),
+        'isp': (),
+        'splat': (),
+        'online_calib': (),
     }
 
     def set_page(self, name):
@@ -445,7 +452,9 @@ class MainWindow(QMainWindow):
             A(f'preset_{n}', f'{n} cameras', lambda n=n: self.apply_preset(n), None, 'camera-wide', category='Layout ▸ Presets')
         A('preset_6f', '6 front-heavy', lambda: self.apply_preset('6f'), None, 'camera-wide', category='Layout ▸ Presets')
         A('compare', 'Compare variants…', lambda: self.set_page('compare'), None, 'compare', category='Layout')
-        A('optimise', 'Optimise placement…', lambda: self.set_page('optimiser'), None, 'optimise', category='Layout')
+        A('optimise', 'Optimise placement…', lambda: self.set_page('optimiser'), None, 'optimise', category='Layout',
+          tip='Evolutionary search over mounts and aim (Pareto front), then refine the result with gradients and check '
+              'it with the exact engine')
         # analysis
         A('run', 'Run now', self.ctx.analysis.run_now, 'F5', 'refresh', category='Analysis')
         A('live', 'Live analysis', self.set_live, None, None, True, 'Analysis', checked=self.store.project.analysis.live)
@@ -480,6 +489,11 @@ class MainWindow(QMainWindow):
           tip='Put the car on a road (ramp, crest, garage ramp, speed bump, kerb, crowned road): what the cameras see on '
               'it against flat ground, how far ahead the road stays in view, when a bump or kerb is first seen and '
               'whether the body clears it; and brake dive, squat and cornering roll with each camera\'s horizon shift')
+        A('thermo_vib', 'Thermal and vibration drift…', lambda: self.set_page('thermo_vib'), None, 'sun',
+          category='Analysis',
+          tip='How the midday sun warps the rig and the road shakes it: every camera\'s and sensor\'s drift from its '
+              'calibration hour by hour, camera-lidar and stereo pairs in pixels, each mount\'s first mode against '
+              'the body and wheel-hop bands, the shaking and blur on an ISO 8608 road, and a speed bump')
         A('blind_volume', 'Blind volume…', lambda: self.set_page('volume'), None, 'blind', category='Analysis',
           tip='Where around the vehicle something can stand unseen by every camera, in 3D')
         A('perception_range', 'Perception range…', lambda: self.set_page('perception'), None, 'target',
@@ -489,6 +503,11 @@ class MainWindow(QMainWindow):
                                    'each object, and how much of each camera image they cover')
         A('sync_plan', 'Sync and timing…', lambda: self.set_page('timing'), None, 'sync', category='Analysis',
           tip='Camera trigger offsets against the lidar sweep, trigger groups, motion blur and rolling shutter at speed')
+        A('clock_tree', 'Clock tree and time sync…', lambda: self.set_page('clock_tree'), None, 'sync',
+          category='Analysis',
+          tip='The rig\'s clock distribution from GNSS through the grandmaster, the switch and the deserializers to every '
+              'sensor; PPS dropout, grandmaster loss, link asymmetry and missed FSYNC pulses as a Monte Carlo; each '
+              'sensor\'s timestamp error and how far it moves lidar points in the camera images')
         A('recording_budget', 'Recording budget…', lambda: self.set_page('recording'), None, 'ecu', category='Analysis',
           tip='Data rate of every sensor, the network and storage it needs, and hours of driving per disk set')
         A('power_budget', 'Power budget…', lambda: self.set_page('power'), None, 'bolt', category='Analysis',
@@ -503,6 +522,10 @@ class MainWindow(QMainWindow):
         A('sun_dirt', 'Sun glare and dirt…', lambda: self.set_page('exposure'), None, 'sun', category='Analysis',
           tip='When the sun shines into each camera over a campaign (by month, hour and heading), flare risk, and how '
               'exposed each lens, lidar window and radar is to dirt and spray')
+        A('isp', 'Exposure metering and HDR seams…', lambda: self.set_page('isp'), None, 'seam', category='Analysis',
+          tip='Auto-exposure metering masks per camera (no body, rig, housings or sky), the grid and AE rectangles for '
+              'the ISP, and the exposure step across each stitch seam over the campaign, at low sun, a tunnel exit '
+              'and night')
         A('mount_brackets', 'Mount brackets…', lambda: self.set_page('brackets'), None, 'bracket', category='Analysis',
           tip='A 3D-printable bracket per camera that holds it at its planned position and angles on the surface: '
               'STL, checks for the image, the walls and the lever arm')
@@ -545,6 +568,9 @@ class MainWindow(QMainWindow):
         A('install', 'Installation check…', lambda: self.set_page('install'), 'Ctrl+Shift+I', 'target', category='Calibrate')
         A('live_rig', 'Live rig…', lambda: self.set_page('rig'), None, 'camera-wide', category='Calibrate',
           tip='Every camera\'s stream at once: frame rate, drops, exposure, sharpness, sync and drift from the plan')
+        A('calib_coach', 'Calibration coach…', lambda: (self.set_page('rig'), self.page('rig').set_mode('coach')), None,
+          'target', category='Calibrate',
+          tip='Guide a hand-held board in front of a live camera until its lens (or its lidar) calibration is pinned')
         A('lidar_calib', 'Lidar–camera calibration…', lambda: self.set_page('lidar_calib'), None, 'sensor',
           category='Calibrate', tip='Where a lidar sits relative to a camera, measured from a checkerboard both see at '
                                     'several poses; against the plan')
@@ -554,6 +580,11 @@ class MainWindow(QMainWindow):
         A('asbuilt', 'As-built check…', lambda: self.set_page('asbuilt'), None, 'compare', category='Calibrate',
           tip='Check a recording of the real rig against the plan: each camera\'s view of the vehicle against the '
               'simulated one, the pose correction that lines them up, and whether the plan\'s coverage still holds')
+        A('online_calib', 'Online self-calibration…', lambda: self.set_page('online_calib'), None, 'history',
+          category='Calibrate',
+          tip='Follow every camera\'s rotation relative to the lidar through a whole recorded drive, window by window, '
+              'and tell a knock that stays from flex that comes and goes with speed, braking or turning; export the '
+              'calibration over time (JSON, nuScenes, ROS 2 /tf)')
         A('fleet', 'Fleet…', lambda: self.set_page('fleet'), None, 'fleet', category='Calibrate',
           tip='The same rig on every vehicle: measured poses against the plan, drift over months, and the vehicles '
               'that differ from the rest of the fleet')
@@ -570,6 +601,10 @@ class MainWindow(QMainWindow):
         A('detection', 'Detection quality…', lambda: self.set_page('detection'), None, 'eye', category='Simulate',
           tip='How well an off-the-shelf detector finds the objects in each camera\'s images of a CARLA drive with '
               'ground truth, per camera, class and range, and rig against rig')
+        A('splat', 'Log replay…', lambda: self.set_page('splat'), None, 'history', category='Simulate',
+          tip='Re-render a recorded drive through a proposed rig: the street scene rebuilt as 3D Gaussians from the '
+              'drive\'s lidar and images (or a 3DGS .ply), seen through each rig\'s lenses, body and lidars, and '
+              'detection compared on the same moments')
         A('campaign', 'Simulation campaigns…', lambda: self.set_page('campaign'), None, 'tolerance',
           category='Simulate',
           tip='Many CARLA drives with known faults, weathers or rigs, checked by Vantage\'s own checks: what each check '
@@ -710,10 +745,11 @@ class MainWindow(QMainWindow):
         sub(an, 'Obstacles', ['obs_ground', 'obs_pole05', 'obs_pole10', 'obs_child', '-', 'obs_add'])
         an.addSeparator()
         an.addActions([a['thresholds'], a['tolerance'], a['sensitivity'], a['load_cases'], a['terrain'],
-                       a['blind_volume'], a['perception_range'], a['weather'], a['critical_targets']])
+                       a['thermo_vib'], a['blind_volume'], a['perception_range'], a['weather'], a['critical_targets']])
         an.addSeparator()
-        an.addActions([a['sensor_coverage'], a['sync_plan'], a['recording_budget'], a['power_budget'],
-                       a['cable_harness'], a['gnss_imu'], a['sun_dirt'], a['materials'], a['mount_brackets']])
+        an.addActions([a['sensor_coverage'], a['sync_plan'], a['clock_tree'], a['recording_budget'],
+                       a['power_budget'], a['cable_harness'], a['gnss_imu'], a['sun_dirt'], a['isp'],
+                       a['materials'], a['mount_brackets']])
         an.addSeparator()
         an.addActions([a['requirements'], a['experiments']])
         an.addSeparator()
@@ -725,11 +761,12 @@ class MainWindow(QMainWindow):
         cb.addSeparator()
         cb.addActions([a['lens_calib'], a['calib_import'], a['calib_export'], a['calib_clear']])
         cb.addSeparator()
-        cb.addActions([a['install'], a['lidar_calib'], a['live_rig'], a['drive_log'], a['asbuilt'], a['fleet']])
+        cb.addActions([a['install'], a['lidar_calib'], a['live_rig'], a['calib_coach'], a['drive_log'], a['asbuilt'],
+                       a['online_calib'], a['fleet']])
         si = menu('Simulate')
         si.addActions([a['carla'], a['carla_live']])
         si.addSeparator()
-        si.addActions([a['detection'], a['campaign'], a['critical_carla']])
+        si.addActions([a['detection'], a['splat'], a['campaign'], a['critical_carla']])
         ex = menu('Export')
         ex.addAction(a['export'])
         ex.addSeparator()

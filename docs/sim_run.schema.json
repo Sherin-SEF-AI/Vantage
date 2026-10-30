@@ -1,0 +1,360 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Sherin-SEF-AI/Vantage/blob/main/docs/sim_run.schema.json",
+  "title": "Vantage simulator run report (run.json), schema vantage.sim_run/1",
+  "description": "The report a simulator bridge writes as OUT/run.json beside the drive (nuscenes/, rosbag/, ground_truth/, dataset.json). Vantage takes a folder holding a run.json of this schema for a simulated drive (core/simrig.py read_run). With status 'ok' the drive is complete; 'failed' and 'cancelled' leave no drive (the bridge removes what it wrote) and say why. Fields marked CARLA are what Vantage's CARLA bridge reports of itself; a bridge for another simulator may leave them out. docs/simulator-bridge.md explains every field. The schema is strict (an unknown key is an error) so that it documents every field Vantage's bridge writes; Vantage reads the report tolerantly.",
+  "type": "object",
+  "required": ["schema", "status"],
+  "additionalProperties": false,
+  "anyOf": [
+    {
+      "description": "A finished drive: what Vantage's checks read is there.",
+      "properties": {"status": {"const": "ok"}},
+      "required": ["project", "variant", "scene", "performance", "channels", "counts", "cameras", "faults_injected", "scenario", "ground_truth", "actors", "notes"]
+    },
+    {
+      "description": "No drive: the run failed or was cancelled (error says why when it failed).",
+      "properties": {"status": {"enum": ["failed", "cancelled"]}}
+    }
+  ],
+  "properties": {
+    "schema": {"const": "vantage.sim_run/1"},
+    "status": {"enum": ["ok", "failed", "cancelled"]},
+    "project": {"type": ["string", "null"], "description": "The rig file's project."},
+    "variant": {"type": ["string", "null"], "description": "The rig file's variant."},
+    "out_dir": {"type": "string", "description": "The output folder as the bridge saw it (absolute, on the computer that ran it)."},
+    "error": {"type": "string", "description": "Why the run failed: '<ExceptionType>: <message>'."},
+    "traceback": {"type": "string", "description": "The bridge's traceback of a failure."},
+    "exit_code": {"type": ["integer", "null"], "description": "Written by Vantage, not the bridge, when the bridge ended without a report (killed, or exited): its exit code, negative for a signal."},
+    "client_version": {"type": "string", "description": "CARLA: the client library's version."},
+    "server_version": {"type": "string", "description": "CARLA: the server's version."},
+    "town": {"type": "string", "description": "The map driven."},
+    "weather": {
+      "type": "object",
+      "description": "The weather applied: a preset by name, or a Vantage condition's label with the parameters set.",
+      "additionalProperties": false,
+      "properties": {
+        "preset": {"type": "string"},
+        "vantage": {"type": "string"},
+        "params": {"type": "object", "additionalProperties": {"type": "number"}}
+      }
+    },
+    "walkers": {"type": "integer", "minimum": 0, "description": "Pedestrians spawned on the walker AI."},
+    "traffic": {"type": "integer", "minimum": 0, "description": "Traffic vehicles spawned (with SUMO traffic: the vehicles SUMO spawned in the simulator over the run)."},
+    "traffic_source": {"$ref": "#/$defs/traffic_source"},
+    "vehicle": {
+      "type": "object",
+      "description": "The ego as spawned.",
+      "additionalProperties": false,
+      "properties": {
+        "blueprint": {"type": "string", "description": "The simulator's vehicle (CARLA: its blueprint id)."},
+        "bounding_box_lwh_m": {"$ref": "#/$defs/vec3", "description": "Its bounding box: length, width, height, m."},
+        "ego_origin_in_actor_m": {"$ref": "#/$defs/vec3", "description": "CARLA: where the vehicle frame's origin (rear-axle centre on the ground) lies in the actor's frame (CARLA's axes), as measured from its wheels and box."},
+        "rig_choice": {"type": ["string", "null"], "description": "The vehicle the rig file asked for."},
+        "project": {"type": ["object", "null"], "description": "The project body's dimensions (the rig file's vehicle.project).", "additionalProperties": {"type": "number"}}
+      }
+    },
+    "mounts": {"type": "array", "description": "CARLA: per sensor, whether its mount lies inside the simulator vehicle's box or body (that body is not the project's).", "items": {
+      "type": "object",
+      "required": ["tag", "kind", "inside_bounding_box", "inside_body_m"],
+      "additionalProperties": false,
+      "properties": {
+        "tag": {"type": "string"},
+        "kind": {"enum": ["camera", "lidar", "radar", "gnss", "imu"]},
+        "inside_bounding_box": {"type": "boolean"},
+        "inside_body_m": {"type": ["number", "null"], "description": "How deep inside the body, m (0: outside it; null: not inside the box, or not measured)."}
+      }
+    }},
+    "start": {"$ref": "#/$defs/start"},
+    "faults_injected": {"type": "array", "description": "Every fault as applied (empty for a clean drive): the known answers.", "items": {"$ref": "#/$defs/fault_row"}},
+    "scenario": {"$ref": "#/$defs/scenario"},
+    "ground_truth": {"$ref": "#/$defs/ground_truth"},
+    "actors": {"type": "array", "description": "An actors scene: each actor as asked for and as placed (empty otherwise).", "items": {"$ref": "#/$defs/actor_row"}},
+    "scene": {"$ref": "#/$defs/scene"},
+    "cameras": {"type": "object", "description": "Per camera tag, its frames: expected, got (written), unexpected (off the schedule), dropped (a drop fault).", "additionalProperties": {
+      "type": "object",
+      "required": ["expected", "got", "unexpected", "dropped"],
+      "additionalProperties": false,
+      "properties": {"expected": {"type": "integer", "minimum": 0}, "got": {"type": "integer", "minimum": 0}, "unexpected": {"type": "integer", "minimum": 0}, "dropped": {"type": "integer", "minimum": 0}}
+    }},
+    "lidars": {"type": "array", "description": "CARLA: per lidar, how its channels and azimuths were laid on CARLA's.", "items": {
+      "type": "object",
+      "required": ["tag", "carla_channels", "rings", "azimuth_step_deg", "oversample", "first_azimuth_of_rotation_deg", "note"],
+      "additionalProperties": false,
+      "properties": {
+        "tag": {"type": "string"}, "carla_channels": {"type": "integer"}, "rings": {"type": "integer"},
+        "azimuth_step_deg": {"type": "number"}, "oversample": {"type": "integer"},
+        "first_azimuth_of_rotation_deg": {"type": ["number", "null"], "description": "The first kept laser of the first rotation, from CARLA's start angle (0: on the grid)."},
+        "note": {"type": "string"}
+      }
+    }},
+    "performance": {"$ref": "#/$defs/performance"},
+    "notes": {"type": "array", "items": {"type": "string"}, "description": "The bridge's notes, then the rig file's."},
+    "counts": {"$ref": "#/$defs/counts"},
+    "bytes": {
+      "type": "object",
+      "description": "Bytes written.",
+      "additionalProperties": false,
+      "properties": {"nuscenes": {"type": "integer"}, "rosbag": {"type": "integer"}, "ground_truth": {"type": "integer"}, "total": {"type": "integer"}}
+    },
+    "channels": {"type": "array", "description": "Every recorded stream (dataset.json's channels).", "items": {"$ref": "#/$defs/channel"}},
+    "provenance": {"type": "object", "description": "Added by a batch run (--carla-run): core/provenance.py, schema vantage.provenance/1."}
+  },
+  "$defs": {
+    "vec3": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}},
+    "pose": {"type": "object", "description": "Vehicle frame: x, y, z m; yaw, pitch, roll degrees (intrinsic Z-Y-X, pitch positive down).", "required": ["x", "y", "z", "yaw", "pitch", "roll"], "additionalProperties": false, "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"}, "yaw": {"type": "number"}, "pitch": {"type": "number"}, "roll": {"type": "number"}}},
+    "start": {
+      "type": ["object", "null"],
+      "description": "Where the ego started, for a scenario or an actors scene (on a straight lane).",
+      "additionalProperties": false,
+      "properties": {
+        "spawn_point": {"type": "integer"},
+        "straight_ahead_m": {"type": ["number", "null"]}, "straight_behind_m": {"type": ["number", "null"]},
+        "road_id": {"type": ["integer", "null"]}, "lane_id": {"type": ["integer", "null"]},
+        "chosen": {"type": "string", "description": "'asked for' or 'by the seed on a straight lane'."}
+      }
+    },
+    "fault_row": {
+      "type": "object",
+      "description": "A fault as the rig file gives it (tag, kind and its values) and what it did. Mount faults (rotation, translation): the plan's and the actual pose and their difference. Delivery faults: the stream and its frames.",
+      "required": ["tag", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "tag": {"type": "string"},
+        "kind": {"enum": ["rotation", "translation", "clock_offset", "drop", "freeze", "range_bias"]},
+        "deg": {"$ref": "#/$defs/vec3"},
+        "m": {"type": ["array", "number"], "items": {"type": "number"}},
+        "ms": {"type": "number"},
+        "rate": {"type": "number"},
+        "frames": {"type": "array", "items": {"type": "integer"}},
+        "from_s": {"type": "number"}, "to_s": {"type": "number"},
+        "sensor_kind": {"enum": ["camera", "lidar", "radar", "imu", "gnss"]},
+        "plan_pose": {"$ref": "#/$defs/pose"},
+        "actual_pose": {"$ref": "#/$defs/pose"},
+        "pose_delta_deg": {"$ref": "#/$defs/vec3", "description": "actual − plan yaw, pitch, roll (degrees, wrapped)."},
+        "position_delta_m": {"$ref": "#/$defs/vec3", "description": "actual − plan x, y, z (m)."},
+        "angle_deg": {"type": "number", "description": "rotation: the angle between the planned and the actual mount."},
+        "calibration": {"type": "string"},
+        "frame": {"type": "string", "description": "The frame the fault's values are in."},
+        "channel": {"type": "string", "description": "The stream (nuScenes channel, else bag topic)."},
+        "planned_frames": {"type": "integer", "minimum": 0},
+        "dropped_frames": {"type": "array", "items": {"type": "integer"}, "description": "drop: planned frame indices never written."},
+        "dropped_stamps_s": {"type": "array", "items": {"type": "number"}},
+        "frozen_frames": {"type": "array", "items": {"type": "integer"}, "description": "freeze: planned frame indices that repeat."},
+        "held_frame": {"type": ["integer", "null"], "description": "freeze: the frame they repeat."},
+        "ground_truth": {"type": "string"},
+        "applies_to": {"type": "string"}
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "description": "The scenario as it played out ('actors' for an actors scene).",
+      "required": ["name", "params", "start", "actors", "events"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"enum": ["free_drive", "lead_vehicle_brake", "cut_in", "pedestrian_crossing", "cyclist_crossing", "parked", "actors"]},
+        "label": {"type": "string"}, "about": {"type": "string"},
+        "params": {"type": "object", "description": "Every parameter, defaults filled in.", "additionalProperties": {"type": ["number", "string"]}},
+        "start": {"$ref": "#/$defs/start"},
+        "actors": {"type": "array", "items": {"type": "object", "required": ["role", "actor_id", "blueprint", "gt_id"], "additionalProperties": false, "properties": {"role": {"type": "string"}, "actor_id": {"type": "integer"}, "blueprint": {"type": "string"}, "gt_id": {"type": "integer", "description": "Its object id in the ground truth (spawn order)."}}}},
+        "geometry": {"type": "object", "description": "Distances the scenario set up, m.", "additionalProperties": {"type": ["number", "array", "string", "null"]}},
+        "events": {"type": "array", "description": "What happened when: t_s from t = 0 and what, with the figures of the moment.", "items": {"type": "object", "required": ["t_s", "what"], "properties": {"t_s": {"type": "number"}, "what": {"type": "string"}}}},
+        "measures": {"type": "object", "description": "Figures measured over the drive (min_gap_m, min_distance_m …).", "additionalProperties": {"type": "number"}},
+        "notes": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "ground_truth": {
+      "type": "object",
+      "required": ["settings"],
+      "additionalProperties": false,
+      "properties": {
+        "settings": {"type": "object", "description": "What was recorded.", "required": ["semantic", "instance", "range", "lidar_labels"], "additionalProperties": false, "properties": {"semantic": {"type": "boolean"}, "instance": {"type": "boolean"}, "range": {"type": "boolean"}, "lidar_labels": {"type": "boolean"}}},
+        "camera_kinds": {"type": "array", "items": {"type": "string"}, "description": "CARLA: the label cameras rendered."},
+        "seconds": {"type": "number", "description": "Wall time spent on the labels."},
+        "lidar_labels": {"type": "object", "description": "Per lidar tag: how the labelling lidar matched the recorded one.", "additionalProperties": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "slices": {"type": "integer"}, "points": {"type": "integer"},
+            "matched_in_order_share": {"type": "number"}, "fallback_slices": {"type": "integer"},
+            "count_mismatch_points": {"type": "integer"}, "max_direction_error_deg": {"type": "number"},
+            "range_rms_diff_m": {"type": ["number", "null"]}, "note": {"type": "string"}
+          }
+        }},
+        "lights_and_signs": {"type": "object", "description": "CARLA: traffic_light and traffic_sign pixels claimed from their boxes.", "additionalProperties": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {"pixels": {"type": "integer"}, "carla_tags": {"type": "object", "additionalProperties": {"type": "number"}}, "labelled_before": {"type": "number"}, "labelled_after": {"type": "number"}, "note": {"type": "string"}}
+        }},
+        "index": {"type": ["string", "null"], "description": "ground_truth/index.json, null without ground truth."}
+      }
+    },
+    "traffic_source": {
+      "type": "object",
+      "description": "CARLA: present only when SUMO drove the traffic (the rig's traffic_source; vantage/sim/sumo_cosim.py): what SUMO did. Absent, CARLA's traffic manager drove it.",
+      "required": ["source", "sumo_version", "net", "demand", "seed", "step_s", "tls", "vehicles_spawned", "vehicles_in_carla", "teleports", "collisions", "actors"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {"const": "sumo"},
+        "sumo_version": {"type": ["string", "null"], "description": "SUMO's own version (TraCI getVersion)."},
+        "package_version": {"type": ["string", "null"], "description": "The eclipse-sumo package's version in CARLA's Python."},
+        "traci_api": {"type": ["integer", "null"], "description": "The TraCI API level."},
+        "binary": {"type": ["string", "null"], "description": "The SUMO binary run (its file name)."},
+        "net": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "file", "sha256"],
+          "properties": {
+            "kind": {"enum": ["bundled", "generated", "user", "user_config"], "description": "CARLA's bundled net, one generated from the map's OpenDRIVE, the user's net, or the net of the user's .sumocfg."},
+            "town": {"type": "string"},
+            "file": {"type": "string"},
+            "sha256": {"type": "string"},
+            "cached": {"type": ["boolean", "null"], "description": "A generated net: taken from the cache (true) or made by this run (false)."},
+            "opendrive_sha256": {"type": "string", "description": "A generated net: the OpenDRIVE's hash (its cache key)."},
+            "seconds": {"type": "number"}
+          }
+        },
+        "demand": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "vehicles"],
+          "properties": {
+            "mode": {"enum": ["count", "period", "user"]},
+            "vehicles": {"type": "integer", "minimum": 0},
+            "period_s": {"type": "number"},
+            "trips": {"type": "integer", "minimum": 0},
+            "classes": {"type": "array", "items": {"type": "string"}},
+            "vtypes": {"type": "array", "items": {"type": "string"}},
+            "routes_file": {"type": "string"},
+            "routes_sha256": {"type": "string"},
+            "generator": {"type": "string"},
+            "config": {"type": "string"},
+            "config_sha256": {"type": "string"},
+            "seconds": {"type": "number"}
+          }
+        },
+        "seed": {"type": "integer"},
+        "step_s": {"type": "number"},
+        "steps_per_sumo_step": {"type": "integer", "minimum": 1, "description": "Simulation steps per SUMO step (SUMO's clock is whole milliseconds)."},
+        "max_vehicles": {"type": ["integer", "null"], "description": "SUMO's --max-num-vehicles: the vehicles asked for plus the mirrored ones."},
+        "tls": {"type": "object", "additionalProperties": false, "properties": {"owner": {"enum": ["carla", "sumo"]}, "linked": {"type": "integer", "minimum": 0}, "frozen_in_carla": {"type": "boolean"}}},
+        "vehicles_spawned": {"type": "integer", "minimum": 0},
+        "vehicles_in_carla": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {"at_start": {"type": "integer", "minimum": 0}, "peak": {"type": "integer", "minimum": 0}, "mean": {"type": "number"}, "note": {"type": "string"}}
+        },
+        "arrived": {"type": "integer", "minimum": 0},
+        "not_spawned": {"type": "integer", "minimum": 0},
+        "teleports": {"type": "integer", "minimum": 0},
+        "collisions": {"type": "integer", "minimum": 0},
+        "mirrored": {
+          "type": "array",
+          "description": "The simulator's own vehicles (the ego, a scenario's) mirrored into SUMO.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {"actor_id": {"type": "integer"}, "sumo_id": {"type": "string"}, "blueprint": {"type": "string"}, "role": {"type": "string"}, "sumo_type": {"type": "string"}}
+          }
+        },
+        "actors": {
+          "type": "array",
+          "description": "Every vehicle SUMO inserted, in SUMO id order: its SUMO id and type and the simulator actor it became (actor_id = the ground truth's objects[].actor_id).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sumo_id", "sumo_type", "actor_id"],
+            "properties": {
+              "sumo_id": {"type": "string"},
+              "sumo_type": {"type": "string"},
+              "vclass": {"type": "string"},
+              "actor_id": {"type": ["integer", "null"]},
+              "blueprint": {"type": ["string", "null"]},
+              "spawned_t_s": {"type": "number"},
+              "arrived_t_s": {"type": ["number", "null"]}
+            }
+          }
+        },
+        "timing": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {"net_s": {"type": "number"}, "demand_s": {"type": "number"}, "launch_s": {"type": "number"}, "step_s": {"type": "number"}, "sync_s": {"type": "number"}}
+        },
+        "walkers": {"type": "string"},
+        "limits": {"type": "string"}
+      }
+    },
+    "actor_row": {
+      "type": "object",
+      "required": ["id", "kind", "requested", "actor_id", "blueprint"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string"}, "kind": {"type": "string"},
+        "requested": {"type": "object", "required": ["x", "y", "z", "yaw"], "additionalProperties": false, "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"}, "yaw": {"type": "number"}}},
+        "actor_id": {"type": ["integer", "null"], "description": "The simulator's id of the spawned actor (the ground truth's objects[].actor_id); null when not spawned."},
+        "blueprint": {"type": ["string", "null"]},
+        "error": {"type": "string", "description": "Why it was not spawned."},
+        "ground_gap_m": {"type": "number"},
+        "pose_vehicle": {"type": "object", "description": "As placed, measured after settling: box bottom centre and heading in the vehicle frame.", "required": ["x", "y", "z", "yaw"], "additionalProperties": false, "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"}, "yaw": {"type": "number"}}},
+        "bbox": {"type": "object", "required": ["size_lwh"], "additionalProperties": false, "properties": {"size_lwh": {"$ref": "#/$defs/vec3"}, "center_in_actor": {"$ref": "#/$defs/vec3"}}},
+        "error_m": {"type": "number"}, "error_z_m": {"type": "number"}, "error_yaw_deg": {"type": "number"}
+      }
+    },
+    "scene": {
+      "type": "object",
+      "description": "The drive (dataset.json's scene).",
+      "required": ["town", "weather", "duration_s", "seed", "tick_hz", "samples"],
+      "additionalProperties": false,
+      "properties": {
+        "town": {"type": ["string", "null"]},
+        "carla_version": {"type": ["string", "null"], "description": "CARLA: the server's version."},
+        "weather": {"type": ["string", "null"], "description": "The preset's name or the condition's label."},
+        "duration_s": {"type": "number"},
+        "traffic": {"type": ["integer", "null"]},
+        "seed": {"type": "integer"},
+        "vehicle": {"type": ["string", "null"]},
+        "tick_hz": {"type": "number"},
+        "warmup_ticks": {"type": "integer"},
+        "keyframe_hz": {"type": "number", "description": "nuScenes samples per second as written."},
+        "samples": {"type": "integer", "minimum": 0},
+        "global_offset_m": {"$ref": "#/$defs/vec3", "description": "The shift from the simulator's world (y mirrored for CARLA) to the global frame."},
+        "ego_origin_in_actor_m": {"type": ["array", "null"], "items": {"type": "number"}}
+      }
+    },
+    "performance": {
+      "type": "object",
+      "required": ["simulated_s"],
+      "additionalProperties": false,
+      "properties": {
+        "wall_s": {"type": "number"}, "recording_wall_s": {"type": "number"},
+        "simulated_s": {"type": "number", "description": "Seconds of drive recorded."},
+        "steps": {"type": "integer"}, "steps_per_wall_s": {"type": "number"}, "realtime_factor": {"type": "number"},
+        "tick_s": {"type": "number"}, "wait_s": {"type": "number"}, "camera_s": {"type": "number"}, "lidar_s": {"type": "number"}, "ground_truth_s": {"type": "number"}
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "samples": {"type": "integer"}, "sample_data": {"type": "integer"}, "ego_poses": {"type": "integer"},
+        "annotations": {"type": "integer"}, "instances": {"type": "integer"}, "bag_messages": {"type": "integer"},
+        "gt_frames": {"type": "integer"}, "gt_objects": {"type": "integer"}, "lidarseg": {"type": "integer"}
+      }
+    },
+    "channel": {
+      "type": "object",
+      "required": ["kind", "tag", "channel", "topic", "frames", "keyframes", "bytes", "planned_frames"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"enum": ["camera", "lidar", "radar", "imu", "gnss"]},
+        "tag": {"type": "string"},
+        "channel": {"type": "string", "description": "nuScenes channel ('' for IMU and GNSS)."},
+        "topic": {"type": "string"},
+        "frames": {"type": "integer", "minimum": 0, "description": "Frames delivered (a dropped frame is not one)."},
+        "keyframes": {"type": "integer", "minimum": 0},
+        "bytes": {"type": "integer", "minimum": 0},
+        "planned_frames": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Sherin Joseph Roy. Licensed under the Apache License 2.0 (LICENSE in this folder), unlike the
+# rest of Vantage (GPL-3.0-or-later): embed it in proprietary and production code freely.
 """Vantage bird's-eye stitcher for live cameras or image files. Needs only numpy and OpenCV.
 
 Loads the remap tables Vantage exports (bev_lut.json + bev_lut.npz, in the parent folder by default) and stitches the

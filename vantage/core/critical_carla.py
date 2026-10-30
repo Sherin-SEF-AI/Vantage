@@ -788,8 +788,26 @@ def rect_outline(rect: dict, cam_pos, n: int = 40) -> np.ndarray:
     return np.concatenate([A + s * (B - A), B + s * (C - B), C + s * (D - C), D + s * (A - D)])
 
 
+def with_actual_mounts(rig: dict, run: dict | None) -> dict:
+    """The rig with each faulted sensor's actual mount as 'pose_actual'. The bridge moves the mounts of an in-memory
+    copy and never writes it back, so sim_rig.json on disk states the plan; run.json faults_injected carries the
+    actual pose (cumulative: the last row of a sensor is where it ended up)."""
+    actual = {}
+    for f in (run or {}).get('faults_injected') or []:
+        if isinstance(f, dict) and f.get('kind') in ('rotation', 'translation') and f.get('actual_pose') and f.get('tag'):
+            actual[f['tag']] = f['actual_pose']
+    if not actual or not isinstance(rig, dict):
+        return rig
+    rig = json.loads(json.dumps(rig))
+    for key in ('cameras', 'lidars', 'radars', 'imus', 'gnss'):
+        for d in rig.get(key, []):
+            if d.get('tag') in actual:
+                d['pose_actual'] = dict(actual[d['tag']])
+    return rig
+
+
 def cam_pose(cam: dict) -> tuple[np.ndarray, np.ndarray]:
-    """(R body -> vehicle, position) of a rig camera's actual mount."""
+    """(R body -> vehicle, position) of a rig camera's actual mount (with_actual_mounts puts it there)."""
     pa = cam.get('pose_actual') or cam['pose_vehicle']
     return rot_zyx(pa['yaw'], pa['pitch'], pa['roll']), np.array([pa['x'], pa['y'], pa['z']], float)
 
@@ -910,6 +928,7 @@ def measure_drive(drive_dir: str, plan_rows: dict, frames: int = 3, focus=None) 
     gt = GT.read(drive_dir)
     if not isinstance(rig, dict) or run is None or gt is None:
         raise ValueError(f'{drive_dir} is not a CARLA drive with ground truth.')
+    rig = with_actual_mounts(rig, run)
     acts = {r['id']: r for r in run.get('actors') or [] if isinstance(r, dict) and 'id' in r}
     mounts = {m['tag']: m for m in run.get('mounts') or [] if m.get('kind') == 'camera'}
     looks = {}
@@ -1581,7 +1600,8 @@ def crop(res: CriticalCarlaResult, row: dict, height: int = 220):
         sem = cv2.imread(os.path.join(root, c['frame']['semantic']), cv2.IMREAD_UNCHANGED)
     except (TypeError, cv2.error):
         inst = sem = None
-    rig = _load_json(os.path.join(root, 'rig', 'sim_rig.json')) or {}
+    from . import simrig as SR
+    rig = with_actual_mounts(_load_json(os.path.join(root, 'rig', 'sim_rig.json')) or {}, SR.read_run(root))
     cam = next((x for x in rig.get('cameras', []) if x['tag'] == row['camera']), None)
     poly = None
     if cam is not None:

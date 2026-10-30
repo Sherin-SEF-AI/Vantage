@@ -406,6 +406,22 @@ def quality(out_dir):
     out['sky_progressive_frames'] = len(steps)
     out['sky_progressive_first_pending'] = bool(steps[0])
 
+    # 8b. the floor grid and axes drawn by the ground shader: lines on the 0.5 m / 1 m marks from the display
+    # origin, plain floor between them, the x axis red and the y axis green, nothing with the grid off
+    gcam = cam_at([2.0, 2.0, 0.0], 9.0, -90.0, 89.99, ortho=True, h=6.0)
+    gst = dict(shadows=False, ao=False, grid_minor=(0.9, 0.9, 0.9, 0.3), grid_major=(0.9, 0.9, 0.9, 0.6))
+    g_off = r.render_offscreen(frame(gcam, style=Style(**gst)))
+    g_on = r.render_offscreen(frame(gcam, style=Style(grid=True, axes=True, origin=(0.3, -0.2), **gst)))
+    lum = lambda img, X: float(px(img, gcam, X, rad=0).mean())            # noqa: E731
+    out['grid_major'] = lum(g_on, [2.3, 1.13, 0.0]) - lum(g_off, [2.3, 1.13, 0.0])      # x = origin + 2 m
+    out['grid_minor'] = lum(g_on, [1.8, 1.13, 0.0]) - lum(g_off, [1.8, 1.13, 0.0])      # x = origin + 1.5 m
+    out['grid_between'] = abs(lum(g_on, [2.05, 1.13, 0.0]) - lum(g_off, [2.05, 1.13, 0.0]))
+    out['grid_off_same'] = float(np.abs(g_off.astype(int) - r.render_offscreen(frame(gcam, style=Style(**gst))).astype(int)).max())
+    ax = px(g_on, gcam, [1.4, -0.2, 0.0], rad=0)
+    ay = px(g_on, gcam, [0.3, 0.9, 0.0], rad=0)
+    out['axis_x_red'] = bool(ax[0] > ax[1] + 60 and ax[0] > ax[2] + 60)
+    out['axis_y_green'] = bool(ay[1] > ay[0] + 60 and ay[1] > ay[2] + 40)
+
     # 9. frame time at 1600 x 900 (4x MSAA): the car with shadows, sky occlusion, contact shadow and camera light
     BW, BH = 1600, 900
     ms_fbo, res_fbo, fbos, rbs = r._offscreen_fbos(BW, BH, 4)

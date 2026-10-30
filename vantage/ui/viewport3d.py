@@ -15,7 +15,7 @@ from PyQt6.QtGui import (QPainter, QColor, QPen, QPolygonF, QTransform, QImage, 
                          QPainterPath, QBrush, QGuiApplication)
 from PyQt6.QtWidgets import QWidget, QToolTip
 
-from .navigation import NavControl, orbit_about, is_touchpad, AXIS_VIEWS, ORBIT_DEG_PER_PX
+from .navigation import NavControl, ViewBar, orbit_about, is_touchpad, AXIS_VIEWS, ORBIT_DEG_PER_PX
 from .theme import THEME, mono, sans
 
 # ---------------------------------------------------------------------------- GL availability
@@ -330,6 +330,7 @@ class ViewportBase:
         self._press_pos = None
         self.nav_style = 'blender'
         self.nav = NavControl(self)          # the on-screen navigation control (top right)
+        self.bar = ViewBar(self)             # the view, shading, overlays and heat-map buttons (top left)
         self._pivot = None                   # what an orbit turns about: the point under the cursor at its start
         self._nav_click = None
         self._home = None                    # (lo, hi, margin) the frame button shows, unless the provider has home_box
@@ -705,8 +706,11 @@ class ViewportBase:
             self._drag = None
 
     def nav_action(self, what):
-        """A click on the navigation control: look along an axis, frame everything, or switch the projection."""
-        if isinstance(what, tuple) and what[0] == 'axis':
+        """A click on the navigation control: look along an axis, frame everything, or switch the projection; or on
+        a view bar button: open its menu."""
+        if isinstance(what, tuple) and what[0] == 'bar':
+            self.bar.popup(what[1])
+        elif isinstance(what, tuple) and what[0] == 'axis':
             az, el = AXIS_VIEWS[(what[1], what[2])]
             self._leave_custom()
             self.animate_to(az=az, el=el)
@@ -856,7 +860,18 @@ class ViewportBase:
                     p.drawEllipse(c, 9.0, 9.0)
             self.nav.paint(p)
         label = self.provider.hud_label(self)
-        if label:
+        if ui and self.nav.visible and self.bar.layout():
+            hot = self.nav.hot[1] if isinstance(self.nav.hot, tuple) and self.nav.hot[0] == 'bar' else None
+            self.bar.paint(p, hot)
+            note = getattr(self.provider, 'view_bar_note', None)
+            note = note(self) if note is not None else ''
+            if note:
+                p.setFont(sans(11))
+                p.setPen(THEME.color('ink2'))
+                x = self.bar.right() + 8
+                p.drawText(QRectF(x, 6, max(0.0, self.width() - x - 2 * 30 - 40), 22),
+                           Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, note)
+        elif label:
             p.setFont(sans(11))
             if self.provider.background_image(self) is not None:
                 # over a photo: a backing plate keeps the label readable on bright backgrounds

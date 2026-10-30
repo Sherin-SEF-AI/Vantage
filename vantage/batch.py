@@ -13,23 +13,29 @@
     vantage project.vantage --sensor-coverage coverage.json
     vantage project.vantage --housings housings.json
     vantage project.vantage --sync-plan sync.json --units mm
+    vantage project.vantage --clock-tree clock.json
     vantage project.vantage --recording-budget budget.json
     vantage project.vantage --power-budget power.json
     vantage project.vantage --gnss gnss.json
     vantage project.vantage --exposure exposure.json
+    vantage project.vantage --isp metering/
     vantage project.vantage --brackets out/
     vantage project.vantage --dataset out/
     vantage project.vantage --drive-log drive.mcap report/
     vantage project.vantage --as-built-check drive/ report/
+    vantage project.vantage --online-calib drive.mcap online/
     vantage project.vantage --check review/
     vantage project.vantage --lidar-calib out/ --lidar-calib-pair F L1 --lidar-calib-folder boards/
     vantage project.vantage --fleet-import V3 install_report.json --fleet fleet/ --save project.vantage
     vantage project.vantage --terrain road.json
+    vantage project.vantage --thermo-vib drift/
     vantage project.vantage --harness harness.json
     vantage project.vantage --observability observability/ --verify 30
+    vantage project.vantage --calib-coach coach/
     vantage project.vantage --critical-targets envelopes/
     vantage project.vantage --materials materials.json
     vantage project.vantage --weather weather.json
+    vantage project.vantage --refine-rig refined.json --refine-from 2
     vantage project.vantage --perception-range night.json --condition night
     vantage --watch project.vantage --on-change "make perception-test"
     vantage project.vantage --ci-templates ci/
@@ -39,11 +45,13 @@
     vantage project.vantage --carla-rig carla/
     vantage project.vantage --carla-run drive/ --carla-python ~/carla/venv/bin/python
     vantage project.vantage --carla-run drive/ --carla-scenario cut_in --carla-faults faults.json --carla-ground-truth all
+    vantage project.vantage --carla-run drive/ --carla-traffic sumo --sumo-net generate
     vantage --ground-truth-summary drive/ gt.json
     vantage project.vantage --carla-live 20 live/ --live-cameras F,R --live-fault '5:{"tag": "F", "deg": [0, 1, 0]}'
     vantage project.vantage --detection-quality detection/ --detection-recording drive/ --detection-download
     vantage project.vantage --campaign campaign/ --campaign-template fault_detectability
     vantage project.vantage --critical-carla critical/
+    vantage project.vantage --log-replay drive/ replay/ --replay-variant 2
     vantage project.vantage --run-plan P3F9A21C plan-run/
 
 Every JSON object a batch run writes (and every JSON the exporters write) carries a "provenance" block
@@ -58,14 +66,21 @@ fuse over its rating, the GNSS study finds an antenna with no sky, a camera cann
 a suspension load case lifts a wheel or exceeds the gross vehicle mass, a camera sits inside a housing, no camera
 resolves a critical target, a radar looks into metal over half its field, on the road the body or a sensor would
 touch it or no camera resolves a speed bump or kerb, or a routed cable is longer than its link allows, no module cable
-reaches or a GNSS cable has no RF margin, or with calibration targets planned a camera sees no board whole),
+reaches or a GNSS cable has no RF margin, or with calibration targets planned a camera sees no board whole, or a stitch
+seam keeps an exposure step over twice the limit after gain balancing, or no hand-held board pose fits the calibration
+coach's camera, or --refine-rig has no vehicle body or visible camera to refine, or a camera's or sensor's mount
+resonates in the body or wheel-hop band or drifts in full sun beyond the calibration tolerance),
 3 when an installation check finds a camera that has to be re-mounted (or could not be solved), the rig health check
 finds a camera faulty (or without a stream), the fleet has a sensor to re-mount in its latest record or a drive log
 shows a fault or a lidar has to be re-mounted (or its pose is not determined by the board poses) or the as-built check
-finds the plan's coverage does not hold, and 4 when a lens calibration fails, an imported calibration matches no
-camera, a fleet record, a drive log, an as-built check's recording, a suspension data file or a lidar calibration's
-captures cannot be read or the
-sample dataset cannot be written, and 5 when, with --check, a must requirement fails or cannot be evaluated.
+finds the plan's coverage does not hold, or the online self-calibration finds a camera knocked beyond the tolerance,
+or the clock tree study finds lidar points landing further off than its limit
+in 95 % of frames or a grandmaster that cannot hold UTC within the time budget, and 4 when a lens calibration fails,
+an imported calibration matches no camera, a fleet record, a drive log, an as-built check's recording, a suspension
+data file or a lidar calibration's captures cannot be read or the sample dataset cannot be written (or the
+calibration coach has no visible camera or, in lidar mode, no camera–lidar pair, or --refine-from names no variant,
+or the online self-calibration's drive cannot be read or no camera has a topic in it),
+and 5 when, with --check, a must requirement fails or cannot be evaluated.
 With --watch the exit code is the last run's: the command's own when it ran, else 5 when the requirements check fails,
 4 when the project could not be read or a format not written, 130 when stopped during the command.
 With --reproduce: 0 when the result reproduces (exactly or within the tolerances), 6 when it does not, 4 when it
@@ -75,13 +90,14 @@ project. With --carla-rig or --carla-run: 2 when the variant has nothing to simu
 fit it (an unknown scenario parameter, a fault on a sensor the rig lacks, an actor without a pose) or, with --carla-run,
 its cameras would render more than the bridge's 200 Mpx a frame; with --carla-run,
 --carla-live, --campaign or --critical-carla, 7 when no CARLA server answers, CARLA's client Python is missing or the
-run fails. With --carla-live: 3 when rig health finds a camera faulty. With --ground-truth-summary: 2 when the drive has
-no ground truth. With --detection-quality: 2 when there is nothing to evaluate (no recording, or one without ground
+run fails, or SUMO traffic is asked for and SUMO is not in CARLA's Python. With --carla-live: 3 when rig health finds
+a camera faulty. With --ground-truth-summary: 2 when the drive has no ground truth. With --detection-quality: 2 when there is nothing to evaluate (no recording, or one without ground
 truth), 8 when the detector model is missing or does not verify (or its download failed). With --campaign: 2 when the
 design has nothing to drive or names a sensor the variant lacks, 8 when its detection check needs the detector model
 and it is missing, 9 when a drive failed or is still to do (run it again: what is done is reused). With
 --critical-carla: 3 when a camera view disagrees with the study (each printed with why), 2 when there is nothing to
-compare (no target can be stood in CARLA, no drive in --critical-carla-drives). With --run-plan: 10 when the project
+compare (no target can be stood in CARLA, no drive in --critical-carla-drives). With --log-replay: 3 when the
+reconstruction does not validate (held-out PSNR under analysis.splat.min_psnr_db), 4 when the drive cannot be read. With --run-plan: 10 when the project
 holds no approved, intact plan of that ID or a step no longer validates (approve it again in the app), else the first
 failing step's own code (a step reporting findings, 3, 5 or 6, lets the plan go on; any other stops it). Ctrl+C during
 a CARLA run returns 130 after CARLA was tidied up.
@@ -190,7 +206,7 @@ def analysis_doc(project, res, eng) -> dict:
             mounts[c.uid] = rules.mount_info(project, c, vg)
         except Exception:
             pass
-    issues = rules.collect_issues(project, res, vg, mounts)
+    issues = rules.collect_issues(project, res, vg, mounts, eng)
     doc = {'schema': 'vantage.analysis/1', 'project': project.name, 'variant': project.variant.name,
            'time': time.strftime('%Y-%m-%dT%H:%M:%S'), 'cameras': [], 'issues': [], 'seams': [], 'link_budget': []}
     if res is not None:
@@ -259,9 +275,38 @@ def perception_range_doc(project, eng, res) -> dict:
     return PR.to_doc(pr, project)
 
 
-def install_check(project, eng, res, folder, st, lut_out=None, balance=True, blend='linear'):
+def read_picks(project, path) -> dict:
+    """--install-picks FILE: {tag: [{board, corner, x, y}]}, or an installation check report whose cameras carry
+    picked_corners -> {camera uid: {target uid: {corner: (u, v)}}}. Pixels are those of the camera's image in the
+    folder; corners 0-3 go round the board from its -u, -v corner (the rear right one of a board at yaw 0)."""
+    from .core.install import picks_from_rows
+    try:
+        with open(path, encoding='utf-8') as fh:
+            doc = json.load(fh)
+    except (OSError, ValueError) as e:
+        raise SystemExit(f'--install-picks: cannot read {os.path.basename(path)}: {e}')
+    if isinstance(doc, dict) and isinstance(doc.get('cameras'), list):        # a report saved by the check
+        doc = {r.get('tag'): r.get('picked_corners') for r in doc['cameras'] if r.get('picked_corners')}
+    if not isinstance(doc, dict):
+        raise SystemExit('--install-picks: expected {"TAG": [{"board", "corner", "x", "y"}, ...]}')
+    cams = {c.tag.lower(): c for c in project.variant.cameras}
+    out = {}
+    for tag, rows in doc.items():
+        c = cams.get(str(tag).lower())
+        if c is None:
+            print(f'install picks: no camera {tag!r} in the variant', file=sys.stderr)
+            continue
+        got, bad = picks_from_rows(project, rows if isinstance(rows, list) else [])
+        for b in bad:
+            print(f'install picks: {c.tag}: {b}', file=sys.stderr)
+        if got:
+            out[c.uid] = got
+    return out
+
+
+def install_check(project, eng, res, folder, st, lut_out=None, balance=True, blend='linear', picks_file=None):
     from .core import capture as cap
-    from .core.install import check_all
+    from .core.install import check_all, picks_from_rows, picks_to_rows
     from .core.joint import pose_dict, report
     from .core.mathutil import rot_zyx
     cams = [c for c in project.variant.cameras if c.visible]
@@ -273,7 +318,10 @@ def install_check(project, eng, res, folder, st, lut_out=None, balance=True, ble
                 images[c.uid] = cap.load_image(found[c.tag])
             except Exception as e:      # one bad file must not stop the check of the others
                 unreadable[c.uid] = str(e)
-    results, jr = check_all(project, cams, images, st)
+    picks = {}
+    if picks_file:
+        picks = read_picks(project, picks_file)
+    results, jr = check_all(project, cams, images, st, picks=picks)
     rows = []
     for c in cams:
         row = {'tag': c.tag, 'planned': {'x': c.x, 'y': c.y, 'z': c.z, 'yaw': c.yaw, 'pitch': c.pitch, 'roll': c.roll}}
@@ -284,7 +332,11 @@ def install_check(project, eng, res, folder, st, lut_out=None, balance=True, ble
             rows.append(row)
             continue
         row.update(image=os.path.basename(found[c.tag]), status=r.status, message=r.message,
-                   boards=[b.name for b in r.boards], corners=r.n_corners)
+                   boards=[b.name for b in r.boards], corners=r.n_corners, method=r.method)
+        if picks.get(c.uid):
+            names = {t.uid: t.name for t in project.targets}
+            row['picked_corners'] = picks_to_rows(project, picks[c.uid])
+            row['pick_error_px'] = [{'board': names[u], 'corner': k, 'px': _r(e, 2)} for u, k, e in r.pick_err_px]
         if c.calib:
             row['lens'] = {'unit_calibration': c.calib.get('serial') or True, 'rms_px': c.calib.get('rms_px')}
         if r.pos is not None:
@@ -539,6 +591,21 @@ def _run(args) -> int:
         else:
             print(f'  worst misalignment {s["worst_misalignment_ms"]} ms ({s["worst_travel_cm"]} cm at '
                   f'{s["speed_kmh"]:g} km/h); suggested lines: {s["suggested_worst_misalignment_ms"]} ms', file=sys.stderr)
+    if args.clock_tree is not None:
+        from .core import clock_tree as CT
+        ct = CT.run(project)
+        dest = args.clock_tree
+        if dest not in ('', '-') and not dest.lower().endswith('.json'):
+            for pth in _stamped(CT.export(ct, project, dest), '--clock-tree', dest):
+                print(f'wrote {pth}', file=sys.stderr)
+        else:
+            _out(CT.to_doc(ct, project), dest)
+        for f in ct.findings:
+            if f['severity'] not in ('good', 'note'):
+                print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
+        if any(f['kind'] in ('projection', 'holdover') and f['severity'] in ('serious', 'critical')
+               for f in ct.findings):
+            code = max(code, 3)
     if args.recording_budget is not None:
         from .core import recording as RB
         rb = RB.budget(project)
@@ -568,6 +635,16 @@ def _run(args) -> int:
         for f in xres.findings:
             if f['severity'] != 'good':
                 print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
+    if args.isp is not None:
+        from .core import isp_photometrics as ISP
+        ires = ISP.run(project, eng)
+        for pth in _stamped(ISP.export(ires, project, args.isp), '--isp', args.isp):
+            print(f'wrote {pth}', file=sys.stderr)
+        for f in ires.findings:
+            if f['severity'] not in ('good', 'note'):
+                print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
+        if any(f['severity'] == 'critical' for f in ires.findings):
+            code = max(code, 2)
     if args.gnss is not None:
         from .core import gnss as GN
         gr = GN.run(project, eng)
@@ -577,6 +654,31 @@ def _run(args) -> int:
                 print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
         if any(f['severity'] == 'critical' for f in gr.findings):
             code = max(code, 2)
+    if args.calib_coach is not None:
+        from .core import calib_coach as CCH
+        try:
+            cres = CCH.run(project, eng)
+        except ValueError as e:                    # no visible camera, or (lidar mode) no camera–lidar pair
+            print(f'  calibration coach: {e}', file=sys.stderr)
+            code = max(code, 4)
+        else:
+            dest = args.calib_coach
+            if dest not in ('', '-') and not dest.lower().endswith('.json'):
+                os.makedirs(dest, exist_ok=True)
+                paths = []
+                for n, data in CCH.files(cres, project):
+                    paths.append(os.path.join(dest, n))
+                    with open(paths[-1], 'wb') as fh:
+                        fh.write(data)
+                for pth in _stamped(paths, '--calib-coach', dest):
+                    print(f'wrote {pth}', file=sys.stderr)
+            else:
+                _out(CCH.to_doc(cres, project), dest)
+            for f in cres.findings:
+                if f['severity'] not in ('good', 'note'):
+                    print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
+            if any(f['severity'] in ('serious', 'critical') for f in cres.findings):
+                code = max(code, 2)
     if args.observability is not None:
         from .core import observability as OB
         ores = OB.run(project, eng)
@@ -614,6 +716,21 @@ def _run(args) -> int:
                 print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
         if any(f['kind'] in ('touch', 'device', 'unseen') and f['severity'] in ('serious', 'critical')
                for f in tr.findings):
+            code = max(code, 2)
+    if args.thermo_vib is not None:
+        from .core import thermo_vib as TV
+        tv = TV.run(project)
+        dest = args.thermo_vib
+        if dest not in ('', '-') and not dest.lower().endswith('.json'):
+            for pth in _stamped(TV.export(tv, project, dest), '--thermo-vib', dest):
+                print(f'wrote {pth}', file=sys.stderr)
+        else:
+            _out(TV.to_doc(tv, project), dest)
+        for f in tv.findings:
+            if f['severity'] not in ('good', 'note'):
+                print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
+        if any(f['kind'] in ('resonance', 'thermal_drift', 'rack_buckling') and f['severity'] in ('serious', 'critical')
+               for f in tv.findings):
             code = max(code, 2)
     if args.critical_targets is not None:
         from .core import critical as CR
@@ -653,6 +770,23 @@ def _run(args) -> int:
         for f in wres.findings:
             if f['severity'] not in ('good', 'note'):
                 print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
+    if args.refine_rig is not None:
+        from .core import diff_optim as DO
+        rv = project.variant if not args.refine_from else next(
+            (v for v in project.variants if args.refine_from in (v.name, v.uid)), None)
+        if rv is not None and (getattr(project.vehicle.mesh, 'n_tris', 0) == 0
+                               or not any(c.visible for c in rv.cameras)):
+            doc, rc = {'error': f'nothing to refine in {rv.name}: it needs a vehicle body and a visible camera'}, 2
+        else:
+            doc, rc = DO.batch(project, eng, args.refine_from)
+        if rc:
+            print(f'error: {doc["error"]}', file=sys.stderr)
+            code = max(code, rc)
+        else:
+            _out(doc, args.refine_rig)
+            for f in doc['findings']:
+                if f['severity'] != 'good':
+                    print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
     if args.export:
         if args.formats:
             ids = [f.strip() for f in args.formats.split(',') if f.strip()]
@@ -674,7 +808,7 @@ def _run(args) -> int:
                              joint=not args.no_joint, board_sigma_mm=args.board_tol,
                              board_sigma_deg=max(0.2, args.board_tol / 20.0))
         idoc, results = install_check(project, eng, res, args.install_check, st, args.lut_out, balance=not args.no_balance,
-                                      blend=args.blend)
+                                      blend=args.blend, picks_file=args.install_picks)
         _out(idoc, args.report or '-')
         if any(r['status'] != 'good' and r['status'] != 'warning' for r in idoc['cameras']):
             code = max(code, 3)
@@ -754,6 +888,22 @@ def _run(args) -> int:
                 project.variants.append(ares.asbuilt)
             if ares.verdict == 'does_not_hold':
                 code = max(code, 3)
+    if args.online_calib is not None:
+        from .core import online_calib as OCB
+        drive, dest = args.online_calib
+        try:
+            ores = OCB.run(project, eng, OCB.settings_of(project), project.variant, path=drive)
+        except (OSError, ValueError) as e:
+            print(f'online self-calibration: {e}', file=sys.stderr)
+            code = max(code, 4)
+        else:
+            if ores is not None:
+                for pth in _stamped(OCB.export(ores, project, dest), '--online-calib', dest):
+                    print(f'wrote {pth}', file=sys.stderr)
+                for f in ores.findings:
+                    if f['severity'] != 'good':
+                        print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
+                code = max(code, OCB.exit_code(ores))
     if args.check is not None:
         from .core import requirements as RQ
         dest = None if args.check == '-' else args.check
@@ -834,6 +984,31 @@ def _run(args) -> int:
         code = max(code, _detection(project, args))
     if args.critical_carla:
         code = max(code, _critical_carla(project, args))
+    if args.log_replay is not None:
+        from .core import splat_reproject as SP
+        drive_dir, out_dir = args.log_replay
+        st = SP.settings_of(project)
+        st.drive = os.path.abspath(drive_dir)
+        vb = None
+        if args.replay_variant:                          # NAME, uid or 1-based index, as --variant reads it
+            vb = next((v for i, v in enumerate(project.variants)
+                       if args.replay_variant in (v.name, v.uid, str(i + 1))), None)
+            if vb is None:
+                raise SystemExit(f'No variant {args.replay_variant!r}. Variants: ' +
+                                 ', '.join(v.name for v in project.variants))
+        try:
+            sres = SP.run(project, eng, st, variant=vb)
+        except (ValueError, OSError) as e:
+            print(f'log replay: {e}', file=sys.stderr)
+            code = max(code, 4)
+        else:
+            for pth in _stamped(SP.export(sres, project, out_dir), '--log-replay', out_dir):
+                print(f'wrote {pth}', file=sys.stderr)
+            for f in sres.findings:
+                if f['severity'] not in ('good', 'note'):
+                    print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
+            if any(f['kind'] == 'validation' and f['severity'] == 'serious' for f in sres.findings):
+                code = max(code, 3)
     if args.campaign:
         code = max(code, _campaign(project, args))
     if args.run_plan:
@@ -920,7 +1095,8 @@ def _run_plan(project, eng, res, issues, args) -> int:
         ns = argparse.Namespace(**vars(args))
         for k in ('carla_run', 'carla_rig', 'campaign', 'detection_quality', 'critical_carla', 'carla_live',
                   'experiment', 'carla_scenario', 'carla_scenario_params', 'carla_faults', 'carla_actors',
-                  'carla_ground_truth', 'carla_walkers', 'carla_spawn_point', 'detection_recording',
+                  'carla_ground_truth', 'carla_walkers', 'carla_spawn_point', 'carla_traffic', 'sumo_net',
+                  'detection_recording',
                   'campaign_template', 'campaign_phase', 'critical_carla_drives', 'live_cameras', 'live_scale',
                   'live_fault'):
             setattr(ns, k, None)
@@ -1042,11 +1218,14 @@ def _experiment(project, eng, args) -> int:
 # modifiers -> the options they go with
 _GOES_WITH = {
     ('carla_scenario', 'carla_scenario_params', 'carla_faults', 'carla_actors', 'carla_ground_truth', 'carla_walkers',
-     'carla_spawn_point'): ('carla_run', 'carla_rig'),
+     'carla_spawn_point', 'carla_traffic', 'sumo_net'): ('carla_run', 'carla_rig'),
     ('detection_recording', 'detection_download'): ('detection_quality',),
     ('campaign_template', 'campaign_phase'): ('campaign',),
     ('critical_carla_drives',): ('critical_carla',),
+    ('replay_variant',): ('log_replay',),
     ('live_cameras', 'live_scale', 'live_fault'): ('carla_live',),
+    ('install_picks',): ('install_check',),
+    ('refine_from',): ('refine_rig',),
 }
 
 
@@ -1133,6 +1312,15 @@ def _carla_run(project, args) -> int:
         print('carla run: no Python for CARLA\'s client: give --carla-python (a Python with the carla package, numpy, '
               'OpenCV and PyYAML)', file=sys.stderr)
         return 7
+    sumo_args = []
+    if st.traffic_source == 'sumo':                 # before anything touches CARLA
+        chk = SV.check_sumo(py)
+        if not chk.get('ok'):
+            print(f'carla run: SUMO traffic, but SUMO is not in CARLA\'s Python ({py}): install it with '
+                  f'{chk["install"]}', file=sys.stderr)
+            return 7
+        from . import workdir
+        sumo_args = ['--sumo-cache', os.path.join(workdir.default(), 'sumo-nets')]
     if not SV.port_open('127.0.0.1', st.port):
         print(f'carla run: no CARLA server answers on port {st.port}: start one (Simulate ▸ CARLA ▸ Start, or '
               f'CarlaUE4.sh -RenderOffScreen -carla-rpc-port={st.port})', file=sys.stderr)
@@ -1145,7 +1333,7 @@ def _carla_run(project, args) -> int:
     try:
         cmd, env = SV.bridge_command(py, os.path.join(rig_dir, 'sim_rig.json'), out,
                                      ['--port', str(st.port), '--tm-port', str(st.tm_port),
-                                      '--timeout', f'{st.timeout_s:g}'])
+                                      '--timeout', f'{st.timeout_s:g}'] + sumo_args)
     except RuntimeError as e:
         print(f'carla run: {e}', file=sys.stderr)
         return 7
@@ -1192,6 +1380,14 @@ def _carla_run(project, args) -> int:
     for f in doc.get('faults_injected') or []:
         print(f'  fault {f.get("tag")} {f.get("kind")}' + (f': pose change {f["pose_delta_deg"]} °'
                                                           if f.get('pose_delta_deg') else ''), file=sys.stderr)
+    tr = doc.get('traffic_source')
+    if tr:
+        try:
+            print(f'carla run: SUMO {tr["sumo_version"]}: {tr["vehicles_spawned"]} vehicles, mean '
+                  f'{tr["vehicles_in_carla"]["mean"]} in CARLA, {tr["teleports"]} teleports, {tr["collisions"]} '
+                  f'collisions', file=sys.stderr)
+        except (KeyError, TypeError):
+            pass
     for n in doc.get('notes') or []:
         print(f'  note: {n}', file=sys.stderr)
     return 0
@@ -1262,6 +1458,18 @@ def carla_settings(project, args):
         d['walkers'] = int(args.carla_walkers)
     if args.carla_spawn_point is not None:
         d['spawn_point'] = int(args.carla_spawn_point)
+    if args.carla_traffic is not None:
+        d['traffic_source'] = args.carla_traffic
+    if args.sumo_net is not None:
+        from .sim import sumo_cosim as SUMO
+        net = str(args.sumo_net)
+        net = net if net in SUMO.NET_CHOICES else os.path.abspath(os.path.expanduser(net))
+        so, why = SUMO.clean_sumo(dict(d.get('sumo') or {}, net=net))
+        bad += [f'--sumo-net: {w}' for w in why]
+        bad += [f'--sumo-net: {w}' for w in SUMO.problems(so)]
+        d['sumo'] = so
+        if args.carla_traffic is None:
+            d['traffic_source'] = 'sumo'
     st = SR.SimSettings.from_dict(d)
     if not bad:                     # what the run uses is what its outputs' provenance states (as --condition does)
         project.analysis.sim = st.to_dict()
@@ -1652,17 +1860,18 @@ def rig_health_doc(project, eng, spec) -> dict:
 
 # ---------------------------------------------------------------------------------------------------- --reproduce
 # options that write a result: a re-run keeps only the one that wrote the result being checked
-_PRODUCERS = ('analyse', 'load_cases', 'blind_volume', 'perception_range', 'sensor_coverage', 'sync_plan',
-              'recording_budget', 'power_budget', 'gnss', 'exposure', 'fleet', 'brackets', 'dataset', 'drive_log',
-              'housings', 'suspension', 'as_built_check', 'check', 'lidar_calib', 'observability', 'harness', 'terrain',
-              'critical_targets', 'materials', 'weather', 'export', 'install_check', 'rig_health', 'ci_templates',
-              'experiment', 'validate', 'carla_rig', 'ground_truth_summary', 'detection_quality', 'critical_carla',
+_PRODUCERS = ('analyse', 'load_cases', 'blind_volume', 'perception_range', 'sensor_coverage', 'sync_plan', 'clock_tree',
+              'recording_budget', 'power_budget', 'gnss', 'exposure', 'isp', 'fleet', 'brackets', 'dataset',
+              'drive_log', 'housings', 'suspension', 'as_built_check', 'online_calib', 'check', 'lidar_calib',
+              'observability', 'calib_coach', 'harness', 'terrain', 'thermo_vib', 'critical_targets', 'materials',
+              'weather', 'refine_rig', 'export', 'install_check', 'rig_health', 'ci_templates', 'experiment',
+              'validate', 'carla_rig', 'ground_truth_summary', 'detection_quality', 'log_replay', 'critical_carla',
               'campaign', 'carla_live')
 # what a re-run never does: save a project, write files beside the result, watch a project, run a command
 _NEVER = ('report', 'lut_out', 'as_built', 'calib_out', 'save', 'watch', 'on_change', 'reproduce', 'tolerance',
           'carla_run', 'carla_python', 'detection_download', 'run_plan')
 # producers whose input comes first and their output second
-_IN_OUT = ('drive_log', 'as_built_check', 'experiment', 'ground_truth_summary')
+_IN_OUT = ('drive_log', 'as_built_check', 'experiment', 'ground_truth_summary', 'log_replay', 'online_calib')
 
 
 class _CannotReproduce(Exception):
@@ -1903,6 +2112,12 @@ def add_arguments(ap):
                         'against the cameras\', camera-lidar overlap')
     g.add_argument('--sync-plan', nargs='?', const='-', metavar='OUT.json',
                    help='camera trigger offsets against the lidar sweep, trigger lines, motion blur and rolling shutter')
+    g.add_argument('--clock-tree', nargs='?', const='-', metavar='OUT.json|DIR',
+                   help='the clock tree and time sync study (Analysis ▸ Clock tree and time sync): every sensor\'s '
+                        'timestamp error against true time and the lidar over the fault scenario (a seeded Monte Carlo), '
+                        'and how far it moves lidar points in each camera image; a folder gets the JSON, CSV and PNG; '
+                        'exit 3 when lidar points land further off than the limit in 95 %% of frames or the grandmaster '
+                        'cannot hold UTC within the time budget')
     g.add_argument('--recording-budget', nargs='?', const='-', metavar='OUT.json',
                    help='data rate of every camera, lidar and radar, links, write speed and hours per disk set')
     g.add_argument('--power-budget', nargs='?', const='-', metavar='OUT.json',
@@ -1912,6 +2127,13 @@ def add_arguments(ap):
                    help='GNSS antennas\' sky view, the heading baseline, the INS lever arms and the pose error budget')
     g.add_argument('--exposure', nargs='?', const='-', metavar='OUT.json',
                    help='sun glare and dirt exposure of the active variant (JSON; with a file, OUT.png next to it)')
+    g.add_argument('--isp', metavar='OUT_DIR',
+                   help='auto-exposure metering masks and the HDR seam study (Analysis ▸ Exposure metering and HDR '
+                        'seams): per camera a metering mask through the real lens (no body, rig, housings, sky or the '
+                        'dark beyond the image circle) as PNG, a metering grid and weighted AE rectangles as JSON, and the '
+                        'exposure step across each stitch seam over the Sun glare study\'s campaign and at low sun, a '
+                        'tunnel exit and night, before and after the bird\'s-eye gain balancing; exit 2 when a seam '
+                        'keeps a critical step (over twice the limit) after balancing')
     g.add_argument('--fleet', nargs='?', const='-', metavar='OUT.json|DIR',
                    help='the fleet against the plan: latest offsets, drift and vehicles that differ from the rest '
                         '(a folder gets fleet.json, fleet.csv and fleet.png)')
@@ -1942,6 +2164,13 @@ def add_arguments(ap):
                         'corrections and the coverage as built; OUT.json, or a folder for the JSON, the CSV and the '
                         'PNGs (default: stdout); with --save the as-built variant is kept; exit 3 when the plan\'s '
                         'coverage does not hold')
+    g.add_argument('--online-calib', nargs=2, metavar=('DRIVE', 'OUT_DIR'),
+                   help='follow every camera\'s extrinsics relative to the lidar through a recorded drive (ROS 2 bag '
+                        'folder/.mcap/.db3 or nuScenes folder) and find knocks and flex; writes into OUT_DIR the JSON '
+                        '(segments and interpolated extrinsics with σ), the timeline CSV and PNG, a nuScenes folder '
+                        'with one calibrated_sensor row per segment (nuScenes input) and a ROS 2 sidecar bag with /tf '
+                        'over time; exit 3 when a camera was knocked beyond the tolerance, 4 when the drive cannot be '
+                        'read')
     g.add_argument('--check', nargs='?', const='-', metavar='OUT',
                    help='evaluate the project\'s requirements (Analysis ▸ Requirements scorecard); OUT.json gets the '
                         'scorecard, a folder the JSON, CSV and the design-review pack (PDF); exit 5 when a must '
@@ -1959,6 +2188,13 @@ def add_arguments(ap):
                         'folder gets the JSON, CSV and PNGs; exit 2 when a camera sees no board whole')
     g.add_argument('--verify', type=int, default=0, metavar='N',
                    help='with --observability: check the predictions with N Monte Carlo trials (about 4 s each)')
+    g.add_argument('--calib-coach', nargs='?', const='-', metavar='OUT.json|DIR',
+                   help='live calibration coach (Calibrate ▸ Live rig ▸ Calibration coach): how many hand-held board '
+                        'views the camera\'s lens calibration (analysis.calib_coach mode lens) or the lidar–camera '
+                        'calibration (mode lidar) needs to reach its requirement following the coach\'s next-best '
+                        'views, against random hand-held views (seeded, counted from the poses); a folder gets '
+                        'calib_coach.json and calib_coach_views.csv; exit 2 when no hand-held pose fits the camera, '
+                        '4 without a visible camera (or, mode lidar, a camera–lidar pair)')
     g.add_argument('--harness', nargs='?', const='-', metavar='OUT.json',
                    help='every cable routed along the body: lengths against each link\'s limit, GNSS cable loss, '
                         'power-pair drop and the paths; exit 2 when a cable is longer than its link allows, no module '
@@ -1969,6 +2205,12 @@ def add_arguments(ap):
                         'seen, clearance driving over them, and brake dive, squat and cornering roll with each '
                         'camera\'s horizon shift; exit 2 when the body or a sensor would touch the road or a bump or '
                         'kerb is never resolved')
+    g.add_argument('--thermo-vib', nargs='?', const='-', metavar='OUT.json|DIR',
+                   help='thermal and vibration drift (Analysis ▸ Thermal and vibration drift): every camera\'s and '
+                        'sensor\'s drift from its calibration hour by hour in full sun, camera-lidar and stereo pairs '
+                        'in pixels, each mount\'s first mode, its shaking and blur on an ISO 8608 road, a speed bump '
+                        'and an expansion joint; a folder gets the JSON, CSVs and a PNG; exit 2 when a mount '
+                        'resonates in the body or wheel-hop band or a device drifts beyond the calibration tolerance')
     g.add_argument('--critical-targets', nargs='?', const='-', metavar='OUT.json|DIR',
                    help='critical targets (Analysis ▸ Critical targets): which cameras resolve each and every camera\'s '
                         'mounting envelope (OUT.json or -: the JSON; a folder: the JSON, CSVs and PNGs); exit 2 when '
@@ -1982,6 +2224,15 @@ def add_arguments(ap):
     from .core.weather import IDS as WEATHER_IDS
     g.add_argument('--condition', choices=WEATHER_IDS,
                    help='the weather for --perception-range, --dataset and --weather (default: the project\'s)')
+    g.add_argument('--refine-rig', nargs='?', const='-', metavar='OUT.json',
+                   help='refine the cameras\' poses with gradients (Analysis ▸ Optimise placement ▸ Refine with '
+                        'gradients): L-BFGS-B on a smooth surrogate of the blind area, the ground below the minimum '
+                        'density, unresolved critical targets and objects on a stitch seam, every result checked with '
+                        'the exact engine; writes the poses before and after, the exact and surrogate figures and the '
+                        'iteration history; exit 4 when --refine-from names no variant, 2 when the variant has no '
+                        'vehicle body or visible camera to refine')
+    g.add_argument('--refine-from', metavar='VARIANT',
+                   help='with --refine-rig: the variant (name or uid) to refine; default the active one')
     g.add_argument('--export', metavar='DIR', help='export into DIR')
     g.add_argument('--formats', help='comma-separated export format ids (default: every non-image format but the '
                                      'experiment and the CARLA rig)')
@@ -1999,6 +2250,10 @@ def add_arguments(ap):
     g.add_argument('--min-boards', type=int, default=1, help='boards a camera must see (default 1)')
     g.add_argument('--no-joint', action='store_true', help='solve each camera on its own (no joint solve with the boards)')
     g.add_argument('--board-tol', type=float, default=20.0, help='how far a board may lie off its planned place, mm (default 20)')
+    g.add_argument('--install-picks', metavar='FILE.json', help='board corners picked by hand for cameras the detection '
+                   'fails on (glare, a hidden board): {"TAG": [{"board": "T1", "corner": 0, "x": u, "y": v}]} in the '
+                   'image\'s pixels, or a saved report with picked_corners; four or more corners give the whole pose, '
+                   'two or three the rotation')
     g.add_argument('--no-balance', action='store_true', help='stitch without exposure balancing')
     g.add_argument('--blend', default='linear', choices=['linear', 'multiband'], help='seam blend of the stitched PNG')
     g.add_argument('--calibrate-lens', metavar='DIR', help='calibrate one camera\'s lens from the board views in DIR')
@@ -2059,6 +2314,13 @@ def add_arguments(ap):
                    help='with --carla-run or --carla-rig: pedestrians on CARLA\'s walker AI')
     g.add_argument('--carla-spawn-point', type=int, metavar='N',
                    help='with --carla-run or --carla-rig: the ego\'s spawn point (-1: a straight road, by the seed)')
+    g.add_argument('--carla-traffic', choices=('carla', 'sumo'),
+                   help='with --carla-run or --carla-rig: who drives the other vehicles, CARLA\'s traffic manager or '
+                        'Eclipse SUMO co-simulated in lockstep (SUMO must be in CARLA\'s Python: exit 7 when it is not)')
+    g.add_argument('--sumo-net', metavar='FILE',
+                   help='with --carla-run or --carla-rig: SUMO traffic on this net: auto (CARLA\'s bundled net for '
+                        'Town01, 04, 05, else one generated from the map), generate, or a .net.xml or .sumocfg; implies '
+                        '--carla-traffic sumo')
     g.add_argument('--ground-truth-summary', nargs='+', metavar=('RUN_DIR', 'OUT.json'),
                    help='a CARLA drive\'s ground truth in brief: frames, sweeps and objects per camera, lidar and '
                         'class, the lidar labels\' match, the scenario\'s events and the faults injected (OUT.json, '
@@ -2104,6 +2366,15 @@ def add_arguments(ap):
                         'when no server answers or a drive fails')
     g.add_argument('--critical-carla-drives', metavar='DIR',
                    help='with --critical-carla: compare the drives in DIR (recorded before) without CARLA')
+    g.add_argument('--log-replay', nargs=2, metavar=('DRIVE_DIR', 'OUT_DIR'),
+                   help='log replay (Simulate ▸ Log replay): rebuild the recorded drive in DRIVE_DIR (a nuScenes '
+                        'folder, a CARLA run folder or a ROS 2 bag) as 3D Gaussians, validate it against held-out '
+                        'frames and sweeps, render it through the recorded rig and a variant (--replay-variant, else '
+                        'the active one) and compare detection per class and range; writes log_replay.json, CSVs, PNG '
+                        'previews and the scene as a 3DGS .ply into OUT_DIR; exit 3 when the reconstruction does not '
+                        'validate (held-out PSNR under analysis.splat.min_psnr_db), 4 when the drive cannot be read')
+    g.add_argument('--replay-variant', metavar='NAME|N',
+                   help='with --log-replay: the proposed rig (rig B), a variant name or 1-based index')
     g.add_argument('--run-plan', nargs='+', metavar=('ID', 'OUT_DIR'),
                    help='run a Copilot plan approved in the app (its approval record in the project; ID or '
                         'ID:VERSION) from its stored settings, each step through the option that runs it, into OUT_DIR '
@@ -2126,15 +2397,19 @@ def wanted(args) -> bool:
     return any(getattr(args, k) not in (None, False) for k in ('analyse', 'load_cases', 'export', 'install_check',
                                                                'calibrate_lens', 'import_calib', 'blind_volume',
                                                                'perception_range', 'rig_health',
-                                                               'recording_budget', 'sync_plan', 'sensor_coverage',
-                                                               'power_budget', 'gnss', 'exposure', 'fleet',
+                                                               'recording_budget', 'sync_plan', 'clock_tree',
+                                                               'sensor_coverage',
+                                                               'power_budget', 'gnss', 'exposure', 'isp', 'fleet',
                                                                'fleet_import', 'brackets', 'dataset',
-                                                               'drive_log', 'as_built_check', 'check',
+                                                               'drive_log', 'as_built_check', 'online_calib',
+                                                               'check',
                                                                'suspension', 'suspension_data', 'housings',
-                                                               'lidar_calib', 'observability', 'harness', 'terrain',
-                                                               'critical_targets', 'materials',
+                                                               'lidar_calib', 'observability', 'calib_coach',
+                                                               'harness', 'terrain', 'thermo_vib',
+                                                               'critical_targets', 'materials', 'refine_rig',
                                                                'weather', 'watch', 'on_change', 'ci_templates',
                                                                'reproduce', 'experiment', 'validate', 'carla_rig',
                                                                'carla_run', 'carla_live', 'ground_truth_summary',
                                                                'detection_quality', 'campaign', 'critical_carla',
+                                                               'log_replay',
                                                                'run_plan'))

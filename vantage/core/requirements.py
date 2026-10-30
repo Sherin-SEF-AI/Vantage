@@ -134,6 +134,7 @@ P_LIDAR_ALL = Param('lidar', 'Lidar', _tags('lidar', 'all lidars together'))
 P_CAMERA = Param('camera', 'Camera', _tags('camera', 'worst camera'))
 P_SEVERITY = Param('severity', 'Severity', _fixed(('critical', 'critical'), ('serious', 'critical or serious'),
                                                   ('warning', 'any (warnings too)')), 'critical')
+P_STAT_PM = Param('stat', 'Statistic', _fixed(('p95', '95 % of frames'), ('max', 'worst frame')), 'p95')
 P_LINES = Param('lines', 'Trigger lines', _fixed(('planned', 'as planned'), ('suggested', 'as suggested')),
                 'planned')
 P_VOL_OBJECT = Param('object', 'Object', _vol_objects, 'Child 0.9 m')
@@ -732,6 +733,106 @@ def _m_tm_blur(ev, prm):
     return float(m['worst_blur_px']), _ev(_timing_figures(res, ev)[-2:],
                                           f'{m["worst_blur_tag"]} at {st.speed_kmh:g} km/h, {st.exposure_ms:g} ms '
                                           f'exposure, an object {st.object_m:g} m away.')
+
+
+# =========================================================================== clock tree and time sync
+def _run_clock_tree(ev):
+    ct = _mod('clock_tree')
+    res = ct.run(ev.p, variant=ev.v, progress=ev.sub_progress('clock_tree'), cancel=ev.cancel)
+    if res is None:
+        raise _Cancelled()
+    return res
+
+
+def _clock_tree_figures(res, ev):
+    m = res.metrics
+    return [_fig('Grandmaster', m['gm'] or 'none'),
+            _fig(f'Holdover within {res.settings.time_budget_us:g} µs', m['holdover_s'], 's', 0),
+            _fig('Worst camera–lidar Δt (95 % of frames)', m['worst_dt_p95_ms'], 'ms', 4),
+            _fig('Worst lidar-to-image error (95 % of frames)'
+                 + (f', {m["worst_p95_tag"]}' if m['worst_p95_tag'] else ''), m['worst_p95_px'], 'px', 2),
+            _fig('Worst lidar-to-image error (worst frame)'
+                 + (f', {m["worst_max_tag"]}' if m['worst_max_tag'] else ''), m['worst_max_px'], 'px', 2)]
+
+
+_study(id='clock_tree', label='Clock tree and time sync', page='clock_tree',
+       menu='Analysis ▸ Clock tree and time sync…', cost='study', run=_run_clock_tree, figures=_clock_tree_figures,
+       module='clock_tree', weight=0.3, png=lambda res, ev=None: _mod('clock_tree').png(res),
+       assumptions=lambda r: _mod('clock_tree').ASSUMPTIONS)
+
+
+@_metric('clock_tree.projection_px', 'Worst lidar-to-image error from timestamps', 'px', 'clock_tree', '<=', 2,
+         (P_STAT_PM,), 'The most a lidar point lands off in a camera image because of the camera–lidar timestamp '
+                       'error, worst over the image and the cameras, at the study\'s speed and yaw rate')
+def _m_ct_px(ev, prm):
+    res = ev.study('clock_tree')
+    if not res.projection:
+        raise NotEvaluated('No visible camera in the variant.')
+    worst = prm.get('stat') == 'max'
+    v = res.metrics['worst_max_px' if worst else 'worst_p95_px']
+    if v is None:
+        raise NotEvaluated('No camera sees the lidar points at the study\'s range.')
+    tag = res.metrics['worst_max_tag' if worst else 'worst_p95_tag']
+    st = res.settings
+    return float(v), _ev(_clock_tree_figures(res, ev),
+                         f'{tag} at {st.speed_kmh:g} km/h turning {st.yaw_rate_dps:g}°/s, '
+                         f'{"in the worst frame" if worst else "in 95 % of frames"}.')
+
+
+@_metric('clock_tree.holdover_s', 'Grandmaster holdover within the time budget', 's', 'clock_tree', '>=', 0, (),
+         'How long the grandmaster keeps UTC within the time budget without PPS (95 %)')
+def _m_ct_hold(ev, prm):
+    res = ev.study('clock_tree')
+    if not res.metrics.get('gm'):
+        raise NotEvaluated('The rig has no grandmaster clock.')
+    return float(res.metrics['holdover_s']), _ev(_clock_tree_figures(res, ev)[:2],
+                                                 f'{res.metrics["gm"]}, a time budget of '
+                                                 f'{res.settings.time_budget_us:g} µs.')
+
+
+# =========================================================================== thermal and vibration drift
+def _run_thermo_vib(ev):
+    tv = _mod('thermo_vib')
+    if not any(c.visible for c in ev.v.cameras) and not any(s.visible for s in ev.v.sensors):
+        raise NotEvaluated('No visible camera or sensor in the variant.')
+    res = tv.run(ev.p, variant=ev.v, progress=ev.sub_progress('thermo_vib'), cancel=ev.cancel)
+    if res is None:
+        raise _Cancelled()
+    return res
+
+
+def _thermo_vib_figures(res, ev):
+    return [(d['tag'], f'{d["thermal_worst"]["deg"]:.3f}° / {d["thermal_worst"]["mm"]:.2f} mm drift, first mode '
+                       f'{d["f1_hz"]:.0f} Hz') for d in res.devices]
+
+
+_study(id='thermo_vib', label='Thermal and vibration drift', page='thermo_vib',
+       menu='Analysis ▸ Thermal and vibration drift…', cost='study', run=_run_thermo_vib, figures=_thermo_vib_figures,
+       module='thermo_vib', weight=0.2, assumptions=lambda r: _mod('thermo_vib').ASSUMPTIONS)
+
+
+def _pair_name(p):
+    return p.get('label') or ' – '.join(p.get('tags') or ())
+
+
+@_metric('thermo_vib.worst_pair_px', 'Worst calibration-pair drift in full sun', 'px', 'thermo_vib', '<=', 2, (),
+         'The largest relative drift of a camera-lidar or stereo pair over the day, in the camera\'s image')
+def _m_tv_pair(ev, prm):
+    prs = [p for p in ev.study('thermo_vib').pairs if p['thermal_worst'] and p['thermal_worst']['px'] is not None]
+    if not prs:
+        raise NotEvaluated('No camera-lidar or stereo pair in the variant.')
+    p = max(prs, key=lambda q: q['thermal_worst']['px'])
+    return float(p['thermal_worst']['px']), _ev([], _pair_name(p))
+
+
+@_metric('thermo_vib.lowest_mode_hz', 'Lowest first mode of a camera or sensor mount', 'Hz', 'thermo_vib', '>=', 1,
+         (), 'The softest mount\'s first bending mode; keep it well above the wheel-hop band (typical target 30 Hz)')
+def _m_tv_mode(ev, prm):
+    devs = ev.study('thermo_vib').devices
+    if not devs:
+        raise NotEvaluated('No visible camera or sensor in the variant.')
+    d = min(devs, key=lambda x: x['f1_hz'])
+    return float(d['f1_hz']), _ev([], d['tag'])
 
 
 # =========================================================================== recording budget
@@ -1774,6 +1875,43 @@ def _m_lc_ddeg(ev, prm):
 def _m_lc_smm(ev, prm):
     res = _solved(ev)
     return float(res.sigma['position_mm']), _ev(_lidar_calib_figures(res, ev), '')
+
+
+# =========================================================================== calibration coach
+def _run_calib_coach(ev):
+    cc = _mod('calib_coach')
+    try:
+        res = cc.run(ev.p, ev.engine, variant=ev.v, progress=ev.sub_progress('calib_coach'), cancel=ev.cancel)
+    except ValueError as e:
+        raise NotEvaluated(str(e)) from None
+    if res is None:
+        raise _Cancelled()
+    return res
+
+
+def _calib_coach_figures(res, ev):
+    m = res.metrics
+    return [('Coached', res.camera + (f' – {res.lidar}' if res.lidar else '') + f', {res.mode} calibration'),
+            _fig('Views following the coach', m['coached_views'], '', 0),
+            _fig(f'Random hand-held views (median of {m["random_runs"]})', m['random_views_median'], '', 0),
+            _fig('Reachable image', 100 * res.coverage, '%', 0)]
+
+
+_study(id='calib_coach', label='Calibration coach', page='rig', menu='Calibrate ▸ Live rig… ▸ Calibration coach',
+       cost='study', run=_run_calib_coach, figures=_calib_coach_figures, module='calib_coach', weight=0.5)
+
+
+@_metric('calib_coach.coached_views', 'Hand-held views the calibration coach needs', '', 'calib_coach', '<=', 0, (),
+         'Board views a technician following the coach needs before the lens (or lidar–camera) calibration reaches '
+         'its requirement (analysis.calib_coach); more than the coach\'s view limit when it is not reached')
+def _m_cc_views(ev, prm):
+    res = ev.study('calib_coach')
+    v = res.metrics['coached_views']
+    lim = res.settings.max_views
+    if math.isfinite(v):
+        return float(v), _ev(_calib_coach_figures(res, ev), f'{res.camera}: {v:.0f} views to the requirement.')
+    return float(lim + 1), _ev(_calib_coach_figures(res, ev),
+                               f'{res.camera}: not reached within {lim} views (counted as {lim + 1}).')
 
 
 # =========================================================================== critical targets, calibration observability

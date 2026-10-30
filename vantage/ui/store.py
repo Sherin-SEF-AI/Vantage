@@ -282,7 +282,7 @@ class AnalysisController(QObject):
                 except Exception:
                     pass
             self.secondary.emit('mounts', mounts)
-            self.secondary.emit('issues', rules.collect_issues(project, res, vg, mounts))
+            self.secondary.emit('issues', rules.collect_issues(project, res, vg, mounts, self.engine))
             if project.targets:
                 from ..core.targets import evaluate_targets
                 with self._lock:

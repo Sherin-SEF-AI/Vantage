@@ -288,6 +288,27 @@ def targets_redundancy(result, k=4):
     return redundancy(result, k)
 
 
+def _aa_up(mask, k):
+    """Upsampled cell mask with an anti-aliased edge (alpha 0..1) along the half-way line between cell centres: no
+    staircase of whole cells at the rim."""
+    if k == 1:
+        return mask.astype(np.float32)
+    s = _smooth_up(mask.astype(np.float32), k)
+    return np.clip((s - 0.5) * k + 0.5, 0.0, 1.0)
+
+
+def soften_rim(img, result, k):
+    """Cut the map's outer rim (the analysis domain's edge, holes such as the body kept) along a smooth anti-aliased
+    line instead of whole cells, in place."""
+    g = result.grid
+    from scipy import ndimage
+    dom = ndimage.binary_fill_holes(_flip(g.roi | g.body))
+    if dom.all() or not dom.any():
+        return img
+    img[..., 3] *= np.minimum(_aa_up(dom, k), 1.0)
+    return img
+
+
 def make(result, mode, k=4, isolate=None, shadow=True, blind=True, thresholds=None, smooth=True):
     """RGBA uint8 image (row 0 = max y) of a heatmap mode on the result's grid, k texels per cell.
     thresholds: (minimum, target) density in px/cm; with them the density map starts at the minimum and marks ground
@@ -313,6 +334,8 @@ def make(result, mode, k=4, isolate=None, shadow=True, blind=True, thresholds=No
         add_blind(img, result, k, smooth=sm)
     if shadow:
         add_shadow(img, result, k)
+    if mode in ('footprints', 'blank', 'coverage', 'redundancy', 'density'):
+        soften_rim(img, result, k)
     out = np.clip(img, 0, 255)
     out[..., 3] = np.clip(img[..., 3] * 255, 0, 255)
     return out.astype(np.uint8)

@@ -253,7 +253,7 @@ def test_spec_data_files():
     assert not [f for f in src if '__pycache__' in f or f.endswith('.pyc')]
     for need in ('vantage/resources/icons/vantage.png', 'vantage/resources/fonts/IBMPlexSans-Regular.ttf',
                  'vantage/resources/fonts/OFL.txt', 'vantage/runtime/bev_stitch.cpp', 'vantage/runtime/bev_stitch.py',
-                 'vantage/runtime/CMakeLists.txt'):
+                 'vantage/runtime/CMakeLists.txt', 'vantage/runtime/LICENSE'):
         assert need in src, need
     # the CARLA bridge runs in CARLA's own Python from the bundle's folder: every source it imports is a plain file,
     # including each file vantage.sim.server.vantage_source() looks for
@@ -581,3 +581,23 @@ def test_license_notice(tmp_path):
         if not any(dest.split('/')[1:2] == [d] for _, dest in files):
             assert f'{d} {md.version(d)} — ' in text and 'no licence file' in text
     assert "release.license_files(_top" in _text('packaging', 'vantage.spec')
+
+
+def test_runtime_stitchers_are_apache_licensed():
+    """The reference stitchers the remap-table export copies are Apache-2.0 (each source says so, the licence text
+    sits beside them, and the export carries it); the rest of Vantage stays GPL-3.0-or-later."""
+    from vantage.core.stitch import RUNTIME_FILES, runtime_files
+    from vantage.core.exporters import FORMATS
+    files = dict(runtime_files())
+    assert set(files) == set(RUNTIME_FILES) and 'LICENSE' in files
+    lic = files['LICENSE'].decode('utf-8')
+    assert 'Apache License' in lic and 'Version 2.0, January 2004' in lic and 'END OF TERMS AND CONDITIONS' in lic
+    for n in ('bev_stitch.cpp', 'bev_stitch.py', 'CMakeLists.txt'):
+        head = files[n].decode('utf-8').splitlines()[:2]           # line 2 under the Python stitcher's shebang
+        assert any(ln.endswith('SPDX-License-Identifier: Apache-2.0') for ln in head), n
+    assert 'Apache License 2.0' in files['README.md'].decode('utf-8')
+    fmt = next(f for f in FORMATS if f.id == 'bev_stitcher')
+    assert 'bev_lut/stitcher/LICENSE' in fmt.filename(None, None)
+    assert '"runtime/LICENSE"' in _text('pyproject.toml')
+    assert 'GNU GENERAL PUBLIC LICENSE' in _text('LICENSE')
+    assert 'vantage/runtime/LICENSE' in _text('README.md')

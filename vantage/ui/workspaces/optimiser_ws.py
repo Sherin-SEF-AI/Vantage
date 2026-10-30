@@ -5,17 +5,19 @@ import copy
 import time
 
 import numpy as np
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QObject, QPointF, QRectF, pyqtSignal
+from PyQt6.QtGui import QPainter, QPen, QPolygonF, QColor
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QSplitter, QRadioButton, QButtonGroup,
                              QCheckBox, QComboBox, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-                             QProgressBar)
+                             QProgressBar, QTabWidget, QScrollArea, QFileDialog, QFrame)
 
+from ...core import diff_optim as DO
 from ...core.optimiser import OptSettings, default_vars, FreeVar
-from ..charts import Scatter
+from ..charts import Scatter, ChartBase
 from ..planview import PlanView
-from ..theme import THEME, mono, STATUS
+from ..theme import THEME, mono, sans, STATUS
 from .. import icons
-from ..widgets import label, button, ScrubSpinBox, Chip, ROW_H, hline, StatusLine
+from ..widgets import label, button, ScrubSpinBox, Chip, ROW_H, hline, StatusLine, SegmentedControl
 
 
 class OptimiserPage(QWidget):
@@ -204,7 +206,12 @@ class OptimiserPage(QWidget):
         self.table.setColumnHidden(6, True)
         self.table.cellClicked.connect(lambda r, c: self.select(r))
         cl.addWidget(self.table, 2)
-        split.addWidget(centre)
+        self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
+        self.tabs.addTab(centre, 'Evolutionary search')
+        self.refiner = RefinePanel(ctx, self)
+        self.tabs.addTab(self.refiner, 'Refine with gradients')
+        split.addWidget(self.tabs)
         # ------------------------------------------------ right
         right = QWidget()
         right.setObjectName('base')
@@ -271,6 +278,7 @@ class OptimiserPage(QWidget):
         for pv in (self.plan, self.delta):
             pv._img_key = None
             pv.update()
+        self.refiner.project_replaced()
         self.activate()
 
     def activate(self):
@@ -289,6 +297,7 @@ class OptimiserPage(QWidget):
             self.delta.label = ''
         self.cable.set_value(max(max((c.cable_m for c in v.cameras), default=3.0), 3.0))
         self._crit_mode()
+        self.refiner.load()
 
     def _crit_mode(self, *_):
         from ...core.critical import settings_of
@@ -545,3 +554,595 @@ def _chip_icon(slot):
     pm = QPixmap(8, 8)
     pm.fill(THEME.cam(slot))
     return QIcon(pm)
+
+
+# ============================================================================ refine with gradients
+class _RefineSig(QObject):
+    live = pyqtSignal(object)           # (label, history, checks) copies from the worker
+    prog = pyqtSignal(float)
+
+
+def _lim(vals, pad=0.08):
+    lo, hi = min(vals), max(vals)
+    if hi - lo < 1e-12:
+        lo, hi = lo - (abs(lo) * 0.1 or 0.5), hi + (abs(hi) * 0.1 or 0.5)
+    d = (hi - lo) * pad
+    return lo - d, hi + d
+
+
+def _ticks(lo, hi, n=4):
+    span = hi - lo
+    step = 10 ** np.floor(np.log10(span / n))
+    for m in (1, 2, 2.5, 5, 10):
+        if span / (step * m) <= n + 1:
+            step *= m
+            break
+    t0 = np.ceil(lo / step) * step
+    return [float(v) for v in np.arange(t0, hi + step * 1e-9, step)]
+
+
+class IterChart(ChartBase):
+    """The surrogate objective at every L-BFGS-B iteration (a line; hairlines where a stage starts and τ sharpens)
+    and the exact engine's objective at every stage boundary (dots), for one start."""
+    MARGIN = (54, 26, 12, 30)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.hist, self.checks = [], []
+        self.setMinimumHeight(150)
+        self.title = 'Objective per iteration'
+
+    def set_data(self, hist, checks):
+        self.hist, self.checks = list(hist or []), list(checks or [])
+        self.tip = None
+        self.update()
+
+    def _rect(self):
+        l_, t_, r_, b_ = self.MARGIN
+        return QRectF(l_, t_, max(self.width() - l_ - r_, 10), max(self.height() - t_ - b_, 10))
+
+    def _xy(self):
+        r = self._rect()
+        ys = [h['objective'] for h in self.hist] + [c['objective'] for c in self.checks]
+        xs = [h['iteration'] for h in self.hist] + [c['iteration'] for c in self.checks]
+        xlim = (0.0, float(max(max(xs), 1)))
+        ylim = _lim(ys)
+        X = lambda v: r.left() + (v - xlim[0]) / ((xlim[1] - xlim[0]) or 1.0) * r.width()        # noqa: E731
+        Y = lambda v: r.bottom() - (v - ylim[0]) / ((ylim[1] - ylim[0]) or 1.0) * r.height()     # noqa: E731
+        return r, X, Y, xlim, ylim
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        self.paint_title(p, 'line: surrogate · dots: exact engine')
+        if not self.hist and not self.checks:
+            p.setFont(sans(12))
+            p.setPen(THEME.color('muted'))
+            p.drawText(QRectF(0, 0, self.width(), self.height()), Qt.AlignmentFlag.AlignCenter,
+                       'Refine a layout to see the objective fall')
+            p.end()
+            return
+        r, X, Y, xlim, ylim = self._xy()
+        p.setFont(mono(10))
+        for t in _ticks(*ylim):
+            y = Y(t)
+            p.setPen(QPen(THEME.color('hair'), 1))
+            p.drawLine(QPointF(r.left(), y), QPointF(r.right(), y))
+            p.setPen(THEME.color('muted'))
+            p.drawText(QRectF(0, y - 7, r.left() - 6, 14), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                       f'{t:.4g}')
+        for t in _ticks(*xlim):
+            p.setPen(THEME.color('muted'))
+            p.drawText(QRectF(X(t) - 30, r.bottom() + 3, 60, 13), Qt.AlignmentFlag.AlignCenter, f'{t:.0f}')
+        p.setPen(QPen(THEME.color('strong'), 1))
+        p.drawLine(QPointF(r.left(), r.bottom()), QPointF(r.right(), r.bottom()))
+        p.setFont(sans(10))
+        p.setPen(THEME.color('muted'))
+        p.drawText(QRectF(r.left(), r.bottom() + 15, r.width(), 13), Qt.AlignmentFlag.AlignRight, 'iteration')
+        starts = [h for h in self.hist if h.get('start')]
+        for h in starts[1:]:
+            x = X(h['iteration'])
+            p.setPen(QPen(THEME.color('hair'), 1, Qt.PenStyle.DashLine))
+            p.drawLine(QPointF(x, r.top()), QPointF(x, r.bottom()))
+        for h in starts:
+            p.setPen(THEME.color('muted'))
+            p.drawText(QRectF(X(h['iteration']) + 3, r.top(), 60, 12), Qt.AlignmentFlag.AlignLeft,
+                       f'τ ×{h["sharpness"]:.2g}')
+        stages = {}
+        for h in self.hist:
+            stages.setdefault(h['stage'], []).append(h)
+        p.setPen(QPen(THEME.cam(0), 1.6))
+        for hs in stages.values():
+            if len(hs) > 1:
+                p.drawPolyline(QPolygonF([QPointF(X(h['iteration']), Y(h['objective'])) for h in hs]))
+        p.setPen(QPen(THEME.color('panel'), 1.5))
+        p.setBrush(THEME.color('ink'))
+        for c in self.checks:
+            p.drawEllipse(QPointF(X(c['iteration']), Y(c['objective'])), 4, 4)
+        self.paint_tip(p)
+        p.end()
+
+    def mouseMoveEvent(self, e):
+        self.tip = None
+        if self.hist or self.checks:
+            r, X, Y, _, _ = self._xy()
+            pos = e.position()
+            pts = [(X(h['iteration']), Y(h['objective']), 'surrogate', h) for h in self.hist] + \
+                  [(X(c['iteration']), Y(c['objective']), 'exact', c) for c in self.checks]
+            best = min(pts, key=lambda t: (t[0] - pos.x()) ** 2 + (t[1] - pos.y()) ** 2)
+            if (best[0] - pos.x()) ** 2 + (best[1] - pos.y()) ** 2 < 400:
+                d = best[3]
+                if best[2] == 'exact':
+                    self.set_tip(QPointF(best[0], best[1]), f'{d["objective"]:.4f}',
+                                 f'exact engine after stage {d["stage"]}',
+                                 f'blind {d["blind_m2"]:.3f} m² · below minimum {d["low_m2"]:.3f} m²')
+                else:
+                    self.set_tip(QPointF(best[0], best[1]), f'{d["objective"]:.4f}',
+                                 f'surrogate, iteration {d["iteration"]}', f'τ ×{d["sharpness"]:.2g}')
+        self.update()
+
+
+def _num_cell(t, r, c, text, align_right=True):
+    it = QTableWidgetItem(text)
+    it.setFont(mono(11))
+    if align_right:
+        it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    t.setItem(r, c, it)
+    return it
+
+
+def _small_table(cols):
+    t = QTableWidget(0, len(cols))
+    t.setHorizontalHeaderLabels(cols)
+    t.verticalHeader().setVisible(False)
+    t.verticalHeader().setDefaultSectionSize(ROW_H)
+    t.horizontalHeader().setFixedHeight(ROW_H)
+    t.setShowGrid(False)
+    t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+    t.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+    hh = t.horizontalHeader()
+    for c in range(len(cols)):
+        hh.setSectionResizeMode(c, QHeaderView.ResizeMode.ResizeToContents)
+    hh.setStretchLastSection(True)
+    return t
+
+
+class RefinePanel(QWidget):
+    """Refine with gradients: L-BFGS-B on a smooth surrogate of the coverage objective (core.diff_optim), started
+    from the current variant or the selected Pareto candidates, every result checked with the exact engine."""
+
+    METRICS = (('blind_m2', 'Blind ground', 'm²', 3), ('low_m2', 'Below minimum density', 'm²', 3),
+               ('unresolved', 'Unresolved critical targets', '', 2), ('seam_near', 'Objects on a seam', '', 2),
+               ('min_density', 'Minimum density', 'px/cm', 2), ('objective', 'Objective', '', 4))
+
+    def __init__(self, ctx, page):
+        super().__init__()
+        self.ctx = ctx
+        self.page = page
+        self.result = None
+        self.base_variant_uid = ''
+        self._loading = False
+        self._committing = False
+        self._live = {}
+        self._last_emit = 0.0
+        self.sig = _RefineSig()
+        self.sig.live.connect(self._on_live)
+        self.sig.prog.connect(lambda f: self.bar.setValue(int(f * 1000)))
+        self.setObjectName('panel')
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        # ------------------------------------------------ settings
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
+        sc.setFrameShape(QFrame.Shape.NoFrame)
+        sc.setMinimumWidth(236)
+        sc.setMaximumWidth(300)
+        left = QWidget()
+        left.setObjectName('panel')
+        ll = QVBoxLayout(left)
+        ll.setContentsMargins(8, 6, 8, 8)
+        ll.setSpacing(4)
+        ll.addWidget(label('Start from', bold=True))
+        self.start = SegmentedControl([('variant', 'Current variant'), ('pareto', 'Pareto candidates')], 'variant')
+        self.start.changed.connect(lambda _: (self._start_note(), self._commit()))
+        ll.addWidget(self.start)
+        self.start_note = label('', muted=True, small=True, wrap=True)
+        ll.addWidget(self.start_note)
+        ll.addSpacing(4)
+        ll.addWidget(label('Objective weights', bold=True))
+        g = QGridLayout()
+        g.setVerticalSpacing(2)
+        self.w = {}
+        for i, (k, t, tip) in enumerate((
+                ('w_blind', 'Blind ground', 'Per m² of ground no camera sees'),
+                ('w_density', 'Below minimum', 'Per m² of seen ground below the minimum density'),
+                ('w_critical', 'Critical target', 'Per critical target no camera resolves'),
+                ('w_seam', 'Object on a seam', 'Per standing critical target or obstacle that a stitch seam passes '
+                                               'near'))):
+            a = label(t, ink2=True)
+            a.setToolTip(tip)
+            w = ScrubSpinBox('', 'plain', 2, '', step=0.05)
+            w.setToolTip(tip)
+            w.committed.connect(lambda _v: self._commit())
+            self.w[k] = w
+            g.addWidget(a, i, 0)
+            g.addWidget(w, i, 1)
+        ll.addLayout(g)
+        ll.addSpacing(4)
+        ll.addWidget(label('Limits and search', bold=True))
+        g2 = QGridLayout()
+        g2.setVerticalSpacing(2)
+        self.lim = {}
+        for i, (k, t, unit, dec, step, tip) in enumerate((
+                ('max_move_mm', 'Move ±', 'mm', 0, 5, 'Per axis (x, y, z), inside the camera\'s mount zone'),
+                ('max_turn_deg', 'Yaw, pitch ±', '°', 1, 0.5, 'Yaw and pitch'),
+                ('max_roll_deg', 'Roll ±', '°', 1, 0.5, 'Roll'),
+                ('seam_span_deg', 'Seams ±', '°', 1, 1, 'How far a seam angle may move (seam angles as variables)'),
+                ('stages', 'Stages', '', 0, 1, 'τ annealed from soft to sharp over this many stages'),
+                ('iterations', 'Iterations', '', 0, 5, 'L-BFGS-B iterations per stage at most'),
+                ('candidates', 'Candidates', '', 0, 1, 'Pareto candidates refined when no row of the candidate '
+                                                     'table is selected'))):
+            a = label(t, ink2=True)
+            a.setToolTip(tip)
+            w = ScrubSpinBox('', 'plain', dec, unit, step=step)
+            w.setToolTip(tip)
+            w.committed.connect(lambda _v: self._commit())
+            self.lim[k] = w
+            g2.addWidget(a, i, 0)
+            g2.addWidget(w, i, 1)
+        ll.addLayout(g2)
+        self.move = QCheckBox('Move positions (off: aim only)')
+        self.move.toggled.connect(lambda _: self._commit())
+        self.seams = QCheckBox('Seam angles as variables')
+        self.seams.setToolTip('Each stitch seam may turn within its limit, away from critical targets and obstacles; '
+                              'the result is saved as manual seams')
+        self.seams.toggled.connect(lambda _: self._commit())
+        ll.addWidget(self.move)
+        ll.addWidget(self.seams)
+        ll.addStretch(1)
+        ll.addWidget(label(f'A stage stops when no variable moves more than {DO.STEP_DEG}° / {DO.STEP_MM} mm in an '
+                           f'iteration: the solver\'s step tolerance, not how accurate the pose is in the world.',
+                           muted=True, small=True, wrap=True))
+        bl = QHBoxLayout()
+        bl.addStretch(1)
+        self.b_run = button('Refine', 'primary', None, 'Refine in the background (Cancel stops it)')
+        self.b_run.clicked.connect(self.toggle)
+        bl.addWidget(self.b_run)
+        ll.addLayout(bl)
+        sc.setWidget(left)
+        lay.addWidget(sc)
+        # ------------------------------------------------ results
+        right = QWidget()
+        right.setObjectName('panel')
+        rl = QVBoxLayout(right)
+        rl.setContentsMargins(8, 6, 8, 6)
+        rl.setSpacing(6)
+        top = QHBoxLayout()
+        top.addWidget(label('Start', ink2=True))
+        self.which = QComboBox()
+        self.which.setMinimumWidth(110)
+        self.which.currentIndexChanged.connect(lambda _: self.show_selected())
+        top.addWidget(self.which)
+        self.status = label('', muted=True, small=True)
+        top.addWidget(self.status, 1)
+        self.bar = QProgressBar()
+        self.bar.setTextVisible(False)
+        self.bar.setRange(0, 1000)
+        self.bar.setFixedWidth(160)
+        top.addWidget(self.bar)
+        rl.addLayout(top)
+        self.chart = IterChart()
+        rl.addWidget(self.chart, 3)
+        self.metrics = _small_table(['', 'Exact before', 'Exact after', 'Surrogate before', 'Surrogate after'])
+        self.metrics.setRowCount(len(self.METRICS))
+        self.metrics.setFixedHeight(ROW_H * (len(self.METRICS) + 1) + 4)
+        rl.addWidget(self.metrics)
+        self.cams = _small_table(['Cam', 'Moves', 'Δx mm', 'Δy mm', 'Δz mm', 'Δψ °', 'Δθ °', 'Δφ °'])
+        self.cams.horizontalHeaderItem(5).setToolTip('Yaw change')
+        self.cams.horizontalHeaderItem(6).setToolTip('Pitch change (positive = down)')
+        self.cams.horizontalHeaderItem(7).setToolTip('Roll change')
+        rl.addWidget(self.cams, 2)
+        self.find_box = QVBoxLayout()
+        self.find_box.setSpacing(2)
+        rl.addLayout(self.find_box)
+        self._find_rows = []
+        foot = QHBoxLayout()
+        foot.addStretch(1)
+        self.b_export = button('Export…', None, None, 'The refinement as JSON (settings, poses, history, exact checks) '
+                                                     'and two CSV files')
+        self.b_export.clicked.connect(lambda: self.export())
+        self.b_add = button('Add as variant', 'primary', None, 'Add the refined layout of this start as a new variant, '
+                                                               'in one undo step (the active variant stays)')
+        self.b_add.clicked.connect(lambda: self.add_variant())
+        self.b_export.setEnabled(False)
+        self.b_add.setEnabled(False)
+        foot.addWidget(self.b_export)
+        foot.addWidget(self.b_add)
+        rl.addLayout(foot)
+        lay.addWidget(right, 1)
+        ctx.store.changed.connect(self._store_changed)
+        self.load()
+
+    # ------------------------------------------------------------------ settings
+    def load(self):
+        """The widgets from the project's analysis.diff_optim."""
+        st = DO.settings_of(self.ctx.store.project)
+        self._loading = True
+        self.start.set_value(st.start)
+        for k, w in self.w.items():
+            w.set_value(getattr(st, k))
+        for k, w in self.lim.items():
+            w.set_value(getattr(st, k))
+        self.move.setChecked(st.move)
+        self.seams.setChecked(st.seams)
+        self._loading = False
+        self._start_note()
+
+    def settings(self) -> DO.DiffSettings:
+        d = DO.settings_of(self.ctx.store.project).to_dict()
+        d['start'] = self.start.value() or 'variant'
+        for k, w in list(self.w.items()) + list(self.lim.items()):
+            d[k] = float(w.value())
+        d['move'] = self.move.isChecked()
+        d['seams'] = self.seams.isChecked()
+        return DO.DiffSettings.from_dict(d)
+
+    def _commit(self):
+        if self._loading:
+            return
+        d = self.settings().to_dict()
+        if d == DO.settings_of(self.ctx.store.project).to_dict():
+            return
+
+        def fn(p):
+            p.analysis.diff_optim = d
+        self._committing = True
+        try:
+            self.ctx.store.edit('analysis', fn, 'Gradient refinement settings')
+        finally:
+            self._committing = False
+
+    def _store_changed(self, sections):
+        if 'analysis' in sections and not self._committing:
+            self.load()
+
+    def _start_note(self):
+        if self.start.value() == 'pareto':
+            n = len(self.chosen())
+            k = self.settings().candidates
+            self.start_note.setText(f'{n} candidate{"s" * (n != 1)}: the rows selected in the candidate table, else '
+                                    f'the first {k}.' if n else 'Run the evolutionary search first: its Pareto '
+                                                                'candidates are refined.')
+        else:
+            v = self.ctx.store.project.variant
+            self.start_note.setText(f'{v.name}: every visible camera; locked ones stay, mirrored pairs move '
+                                    f'together.')
+
+    def chosen(self) -> list:
+        """The Pareto candidates to refine: the selected rows of the candidate table, else the first
+        `candidates` (settings)."""
+        pg = self.page
+        if pg.opt is None or not pg.cands:
+            return []
+        rows = sorted({i.row() for i in pg.table.selectionModel().selectedRows()})
+        n = self.settings().candidates
+        rows = [r for r in rows if 0 <= r < len(pg.cands)] or list(range(min(n, len(pg.cands))))
+        return [pg.cands[r] for r in rows]
+
+    # ------------------------------------------------------------------ run
+    def toggle(self):
+        w = self.ctx.window
+        if w is not None and 'diff_optim' in w._jobs:
+            w._jobs['diff_optim']['cancel'].set()
+            self.b_run.setText('Stopping…')
+            return
+        self.start_run()
+
+    def start_run(self) -> bool:
+        st = self.settings()
+        snap = self.ctx.store.project.snapshot()
+        variant = snap.variant
+        starts = None
+        if st.start == 'pareto':
+            cands = self.chosen()
+            opt = self.page.opt
+            if not cands or opt is None:
+                self.ctx.msg('Run the evolutionary search first: its Pareto candidates are refined.', 5000)
+                return False
+            variant = next((v for v in snap.variants if v.uid == opt.variant.uid), None)
+            if variant is None:
+                self.ctx.msg('The candidates belong to a variant that is gone. Run the search again.', 5000)
+                return False
+            starts = DO.starts_from_optimiser(opt, cands)
+        eng = self.ctx.analysis.engine.share()
+        eng.vehicle_geom(snap, variant)
+        self.base_variant_uid = variant.uid
+        self._live = {}
+        self.result = None
+        self.which.clear()
+        self.b_add.setEnabled(False)
+        sig = self.sig
+
+        def live(label_, hist, checks):
+            now = time.perf_counter()
+            if now - self._last_emit < 0.15:
+                return
+            self._last_emit = now
+            sig.live.emit((label_, [dict(h) for h in hist], [dict(c) for c in checks]))
+
+        def fn(progress, cancel):
+            def prog(f):
+                progress(f, f'{f * 100:.0f} %')
+                sig.prog.emit(f)
+            return DO.run(snap, eng, st, variant, prog, cancel, starts, live)
+        ok = self.ctx.window.run_job('diff_optim', 'Gradient refinement', fn, self.finished, self.failed)
+        if ok:
+            self.b_run.setText('Cancel')
+            self.b_run.setIcon(icons.icon('stop', 12))
+            self.bar.setValue(0)
+            self.status.setText('Refining…')
+        return ok
+
+    def _on_live(self, payload):
+        label_, hist, checks = payload
+        self._live[label_] = (hist, checks)
+        if self.which.findText(label_) < 0:
+            self.which.blockSignals(True)
+            self.which.addItem(label_)
+            self.which.blockSignals(False)
+        if self.result is None:                 # a run going on: follow the start being refined
+            self.chart.set_data(hist, checks)
+
+    def _reset_button(self):
+        self.b_run.setText('Refine')
+        self.b_run.setIcon(icons.icon('play', 12))
+
+    def failed(self, msg):
+        self._reset_button()
+        self.status.setText('Stopped.')
+
+    def finished(self, res):
+        self._reset_button()
+        if res is None or res.variant_uid != self.base_variant_uid:
+            return
+        self.result = res
+        self.bar.setValue(1000)
+        self.which.blockSignals(True)
+        self.which.clear()
+        for r in res.refinements:
+            self.which.addItem(r.label)
+        self.which.blockSignals(False)
+        better = sum(r.improved for r in res.refinements)
+        self.status.setText(f'{"Cancelled · " if res.cancelled else ""}{len(res.refinements)} start'
+                            f'{"s" * (len(res.refinements) != 1)} refined, {better} better in the exact check · '
+                            f'{res.seconds:.1f} s')
+        self.b_export.setEnabled(True)
+        self._fill_findings(res.findings)
+        best = next((i for i, r in enumerate(res.refinements) if r.improved), 0)
+        self.which.setCurrentIndex(best)
+        self.show_selected()
+
+    def current(self):
+        if self.result is None:
+            return None
+        i = self.which.currentIndex()
+        return self.result.refinements[i] if 0 <= i < len(self.result.refinements) else None
+
+    def show_selected(self):
+        r = self.current()
+        if r is None:
+            return
+        self.chart.set_data(r.history, r.checks)
+        for i, (k, name, unit, dec) in enumerate(self.METRICS):
+            it = QTableWidgetItem(name + (f' ({unit})' if unit else ''))
+            self.metrics.setItem(i, 0, it)
+            vals = [r.exact_before.get(k), r.exact_after.get(k), r.surrogate_before.get(k), r.surrogate_after.get(k)]
+            for j, v in enumerate(vals):
+                txt = '—' if v is None else (f'{v:.0f}' if k in ('unresolved', 'seam_near') and j < 2 else
+                                             f'{v:.{dec}f}')
+                c = _num_cell(self.metrics, i, j + 1, txt)
+                if j == 1 and v is not None and r.exact_before.get(k) is not None:
+                    up_good = k == 'min_density'
+                    d = v - r.exact_before[k]
+                    if abs(d) > 1e-9:
+                        good = (d > 0) == up_good
+                        c.setForeground(THEME.color('ink') if good else QColor(STATUS.get('warning', '#d08a2e')))
+                        c.setIcon(icons.status_icon('good' if good else 'warning', 10))
+        deltas = r.deltas()
+        self.cams.setRowCount(len(deltas))
+        st = self.result.settings
+        for i, d in enumerate(deltas):
+            tag = QTableWidgetItem(d['tag'])
+            tag.setFont(mono(12))
+            cam = next((c for c in r.cams_before if c.uid == d['uid']), None)
+            if cam is not None:
+                tag.setIcon(_chip_icon(cam.slot))
+            self.cams.setItem(i, 0, tag)
+            role = {'moves': 'moves', 'mirrors': 'mirrors its pair', 'locked': 'locked', 'hidden': 'hidden'}
+            self.cams.setItem(i, 1, QTableWidgetItem(role.get(d['role'], d['role'])))
+            lims = [st.max_move_mm] * 3 + [st.max_turn_deg] * 2 + [st.max_roll_deg]
+            for j, (v, m) in enumerate(zip(d['delta'], lims)):
+                c = _num_cell(self.cams, i, j + 2, f'{v:+.1f}' if j < 3 else f'{v:+.2f}')
+                if d['role'] == 'moves' and m > 0 and abs(v) >= m - (0.5 if j < 3 else 0.05):
+                    c.setToolTip('At its limit')
+                    c.setForeground(QColor(STATUS.get('warning', '#d08a2e')))
+        self.b_add.setEnabled(r.improved)
+        self.b_add.setToolTip('Add the refined layout of this start as a new variant, in one undo step (the active '
+                              'variant stays)' if r.improved else 'The exact check kept the start: nothing to add')
+
+    def _fill_findings(self, findings):
+        for w in self._find_rows:
+            w.hide()
+            w.deleteLater()
+        self._find_rows = []
+        for f in findings[:8]:
+            row = StatusLine(f['severity'] if f['severity'] != 'note' else '', f['message'])
+            row.text.setProperty('ink2', True)
+            self.find_box.addWidget(row)
+            self._find_rows.append(row)
+
+    # ------------------------------------------------------------------ results out
+    def add_variant(self):
+        """The selected start's refined layout as a new variant (one undo step); returns it (None: nothing to add)."""
+        r = self.current()
+        if r is None or not r.improved:
+            return None
+        p = self.ctx.store.project
+        base = next((v for v in p.variants if v.uid == self.result.variant_uid), None)
+        if base is None:
+            self.ctx.msg('The variant this refinement started from is gone.', 5000)
+            return None
+        taken = {v.name for v in p.variants}
+        stem = f'{base.name} · refined' if r.label == 'current' else f'{base.name} · {r.label} refined'
+        name, k = stem, 2
+        while name in taken:
+            name, k = f'{stem} ({k})', k + 1
+        nv = DO.to_variant(r, base, name)
+
+        def fn(pj):
+            pj.variants.append(nv)
+        self.ctx.store.edit('variants', fn, f'Added the gradient refinement as {name}')
+        if self.ctx.window is not None:
+            self.ctx.window._fill_variant_combo()
+        self.ctx.msg(f'Added variant {name}', 5000)
+        return nv
+
+    def export(self, folder=None):
+        if self.result is None:
+            return []
+        if folder is None:
+            folder = QFileDialog.getExistingDirectory(self, 'Export the gradient refinement into')
+            if not folder:
+                return []
+        import os
+        p = self.ctx.store.project
+        paths = []
+        for name, data in DO.files(self.result, p):
+            path = os.path.join(folder, name)
+            with open(path, 'wb') as fh:
+                fh.write(data)
+            paths.append(path)
+        from ...core import provenance as PV
+        paths = PV.stamp_paths(paths, p, folder)
+        self.ctx.msg(f'Exported the gradient refinement to {folder}', 5000)
+        return paths
+
+    def project_replaced(self):
+        w = self.ctx.window
+        job = w._jobs.get('diff_optim') if w is not None else None
+        if job:
+            job['cancel'].set()
+        self.result = None
+        self.base_variant_uid = ''
+        self._live = {}
+        self.which.clear()
+        self.chart.set_data([], [])
+        self.metrics.clearContents()
+        self.cams.setRowCount(0)
+        self._fill_findings([])
+        self.status.setText('')
+        self.bar.setValue(0)
+        self.b_add.setEnabled(False)
+        self.b_export.setEnabled(False)
+        self.load()

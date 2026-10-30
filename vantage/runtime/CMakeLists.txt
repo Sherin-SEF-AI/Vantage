@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Sherin Joseph Roy. Licensed under the Apache License 2.0 (LICENSE in this folder).
 cmake_minimum_required(VERSION 3.10)
 project(vantage_bev_stitch CXX)
 

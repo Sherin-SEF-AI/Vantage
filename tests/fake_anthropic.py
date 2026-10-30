@@ -3,7 +3,10 @@ SDK reads it (server-sent events message_start, content_block_start / content_bl
 message_delta, message_stop) with thinking blocks (thinking_delta, signature_delta), text, tool_use blocks
 (input_json_delta), a refusal with stop_details, max_tokens, and errors with Anthropic's error body (a 429 with
 retry-after, 401, 400, 529); GET /v1/models. Every request is recorded, raw bytes and headers included, so a test can
-scan what left the app.
+scan what left the app. Image blocks (in a user message or inside a tool_result's content) are checked as the API
+documents them (type base64, media type PNG/JPEG/GIF/WebP, data that decodes to that format, at most 5 MB, at most
+8000 px a side) and recorded in srv.images; a bad one is a 400. A mid-conversation system message (role system in
+messages) must follow a user message.
 
     srv = FakeAnthropic(key='sk-ant-test').start()     # srv.url -> http://127.0.0.1:PORT
     srv.script.append(srv.reply(tools=[('get_coverage', {})], thinking='Coverage first.'))
@@ -11,8 +14,10 @@ scan what left the app.
 """
 from __future__ import annotations
 
+import base64
 import itertools
 import json
+import struct
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -30,7 +35,70 @@ class FakeAnthropic:
         self.raw = []               # (headers dict, raw body bytes) of every request, GET included
         self.sent = []              # the content blocks each streamed response carried (as the SDK received them)
         self.delay = 0.0            # seconds between streamed events
+        self.images = []            # every image block received: {'media_type', 'bytes', 'width', 'height', 'where'}
         self._srv = None
+
+    # ---------------------------------------------------------------- what the API checks of images
+    SIGNATURES = {'image/png': b'\x89PNG\r\n\x1a\n', 'image/jpeg': b'\xff\xd8\xff', 'image/gif': b'GIF8',
+                  'image/webp': b'RIFF'}
+    MAX_IMAGE_BYTES = 5 * 1024 * 1024
+    MAX_SIDE = 8000
+
+    @staticmethod
+    def _size(mt, raw):
+        """(width, height) read from a PNG or JPEG header (None when not parsed)."""
+        if mt == 'image/png' and len(raw) >= 24:
+            return struct.unpack('>II', raw[16:24])
+        if mt == 'image/jpeg':
+            i = 2
+            while i + 9 < len(raw):
+                if raw[i] != 0xFF:
+                    return None
+                m = raw[i + 1]
+                n = struct.unpack('>H', raw[i + 2:i + 4])[0]
+                if m in (0xC0, 0xC1, 0xC2):
+                    h, w = struct.unpack('>HH', raw[i + 5:i + 9])
+                    return w, h
+                i += 2 + n
+        return None
+
+    def check_images(self, body):
+        """'' when every image block is valid, else the API's message; valid ones are recorded."""
+        found = []
+
+        def walk(blocks, where):
+            for b in blocks if isinstance(blocks, list) else []:
+                if not isinstance(b, dict):
+                    continue
+                if b.get('type') == 'image':
+                    found.append((b, where))
+                elif b.get('type') == 'tool_result':
+                    walk(b.get('content'), 'tool_result')
+        prev = None
+        for m in body.get('messages', []):
+            if m.get('role') == 'system' and prev != 'user':
+                return 'messages: a system message must follow a user message'
+            prev = m.get('role')
+            walk(m.get('content'), m.get('role'))
+        for b, where in found:
+            src = b.get('source') or {}
+            mt = src.get('media_type')
+            if src.get('type') != 'base64' or mt not in self.SIGNATURES:
+                return f'image source: unsupported ({src.get("type")}, {mt})'
+            try:
+                raw = base64.b64decode(src.get('data') or '', validate=True)
+            except (ValueError, TypeError):
+                return 'image data: not valid base64'
+            if not raw.startswith(self.SIGNATURES[mt]):
+                return f'image data: not a {mt}'
+            if len(raw) > self.MAX_IMAGE_BYTES:
+                return 'image exceeds 5 MB maximum'
+            wh = self._size(mt, raw)
+            if wh is not None and max(wh) > self.MAX_SIDE:
+                return 'image dimensions exceed max allowed size: 8000 pixels'
+            self.images.append({'media_type': mt, 'bytes': len(raw), 'width': wh[0] if wh else None,
+                                'height': wh[1] if wh else None, 'where': where})
+        return ''
 
     # ---------------------------------------------------------------- scripted responses
     @staticmethod
@@ -66,7 +134,8 @@ class FakeAnthropic:
         return {'status': status, 'message': message or etype, 'etype': etype, 'retry_after': retry_after}
 
     def _auto(self, body):
-        last = body['messages'][-1]
+        msgs = [m for m in body['messages'] if m.get('role') != 'system']
+        last = msgs[-1]
         content = last.get('content')
         if last['role'] == 'user' and not (isinstance(content, list) and any(
                 isinstance(b, dict) and b.get('type') == 'tool_result' for b in content)):
@@ -133,6 +202,11 @@ class FakeAnthropic:
                                                                  'message': 'not JSON'}})
                     return
                 fake.requests.append(body)
+                bad = fake.check_images(body)
+                if bad:
+                    self._json(400, {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': bad},
+                                     'request_id': 'req_fake'})
+                    return
                 if body.get('model') not in fake.models:
                     self._json(404, {'type': 'error', 'error': {'type': 'not_found_error',
                                                                  'message': f'model: {body.get("model")}'}})

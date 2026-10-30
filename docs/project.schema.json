@@ -260,6 +260,13 @@
         "experiments": {"type": "object", "description": "A designed experiment (core/experiments.py ExperimentSettings): name, variant, factors, responses, design, samples, sobol_n, morris_r, levels, morris_levels, seed, bootstrap, confidence, workers."},
         "detection": {"type": "object", "description": "Detection quality per rig (core/detection_eval.py DetectionSettings): recordings, model, input_px, max_input_px, keep_score, nms_iou, max_dets, fuse_riders, backend, threads, score, iou, iou_small, small_px, min_px, min_pixels, max_occluded, max_truncated, range_edges, height_edges, classes, cameras, frame_step, views, view_fov_deg, view_pitch_deg, view_yaws, view_width, view_aspect, bootstrap, block_s, confidence, seed, min_gt, cache."},
         "campaign": {"type": "object", "description": "A simulation campaign (core/simcampaign.py CampaignSettings): name, template, variants, seeds, weathers, scenarios, fault_sets [{kind, tags, axes, magnitudes, signs}], clean, multiplex, base, evaluators, asbuilt_on, drivelog, health, detection, target, confidence, server, out_dir, max_drives."},
+        "splat": {"type": "object", "description": "Log replay through a proposed rig: Gaussian-splat scenes from recorded drives (core/splat_reproject.py)."},
+        "thermo_vib": {"type": "object", "description": "Thermal warping of the rig and road-induced vibration (core/thermo_vib.py)."},
+        "clock_tree": {"type": "object", "description": "The hardware clock tree (PPS, gPTP, FSYNC) and its timing faults (core/clock_tree.py)."},
+        "diff_optim": {"type": "object", "description": "Gradient refinement of the camera poses and seams (core/diff_optim.py)."},
+        "online_calib": {"type": "object", "description": "Targetless self-calibration over a recorded drive (core/online_calib.py)."},
+        "isp": {"type": "object", "description": "Auto-exposure metering masks and HDR / photometric seams (core/isp_photometrics.py)."},
+        "calib_coach": {"type": "object", "description": "The live calibration coach on the Live rig page (core/calib_coach.py)."},
         "critical_carla": {"type": "object", "description": "Critical targets as CARLA scenes (core/critical_carla.py CriticalCarlaSettings): town, weather, spawn_points, seed, duration_s, image_scale, frames, group, vehicle, actors {target uid: auto | standin | none | blueprint:<id>}."},
         "copilot": {
           "type": "object",
@@ -302,6 +309,23 @@
                   "runs": {"type": "array", "items": {"type": "object", "description": "One run: started_utc, finished_utc, via (app | rerun | batch), status, steps [{status, message, output, summary}]."}}
                 }
               }
+            }
+          }
+        },
+        "assistant_log": {
+          "type": "array",
+          "description": "The design log (vantage/assistant/memory.py): decisions, rejected ideas, constraints and notes the assistant remembers between sessions. Notes about the design, not the design: the content hash leaves it out.",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "text"],
+            "properties": {
+              "id": {"type": "string"},
+              "kind": {"enum": ["decision", "rejected", "constraint", "note"]},
+              "text": {"type": "string", "maxLength": 400},
+              "about": {"type": "array", "items": {"type": "string"}, "description": "Camera or sensor uids."},
+              "date": {"type": "string", "description": "YYYY-MM-DD."},
+              "source": {"enum": ["user", "assistant"]},
+              "changes": {"type": "array", "items": {"type": "object", "description": "camera, prop, delta or after: the concrete change the entry is about."}}
             }
           }
         }

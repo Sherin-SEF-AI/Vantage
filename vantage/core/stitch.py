@@ -390,7 +390,7 @@ def lut_files(lut: StitchLUT, project: Project | None = None, variant=None) -> l
     return files
 
 
-RUNTIME_FILES = ('bev_stitch.cpp', 'CMakeLists.txt', 'bev_stitch.py', 'README.md')
+RUNTIME_FILES = ('bev_stitch.cpp', 'CMakeLists.txt', 'bev_stitch.py', 'README.md', 'LICENSE')   # Apache-2.0
 
 
 def runtime_files() -> list[tuple[str, bytes]]:

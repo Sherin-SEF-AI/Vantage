@@ -1,8 +1,9 @@
 """The Assistant dock: a chat about the open design with a cloud model (Groq or Claude, chosen in Preferences ▸
 Assistant), and the Copilot: plans for runs that the user approves before anything runs.
 
-The model reads the design only through vantage.assistant.tools (text summaries; never the vehicle model, images,
-recordings, point clouds or files) and can only *propose*: camera changes (each shows its predicted effect, and the
+The model reads the design only through vantage.assistant.tools (text summaries, and with Claude the pictures the look
+tool draws from the analysis; never the vehicle model file, photos, recordings, point clouds or files) and can only
+*propose*: camera changes (each shows its predicted effect, and the
 user applies it as one undo step or discards it) and plans (the plan card shows every value with where it came from,
 the warnings and the estimate; Approve and run writes an approval record into the project and runs each step through
 the page's own Run, which refuses a plan without its record). The API keys are set in Preferences ▸ Assistant."""
@@ -29,8 +30,10 @@ from .. import workdir
 from ..assistant import agent as A
 from ..assistant import client as C
 from ..assistant import copilot as CP
+from ..assistant import memory as M
 from ..assistant import providers as PR
 from ..assistant import recommend as RC
+from ..assistant import routing as RT
 from ..assistant import secrets as K
 from ..assistant import tools as T
 from . import icons
@@ -110,20 +113,25 @@ def expand_slash(text: str):
     return t, None, None
 
 
+KIND_WORD = {'decision': 'decision:', 'rejected': '', 'constraint': 'constraint:', 'note': 'note:'}
+
 PAGES = {'viewports': '3D and top views', 'camviews': 'Camera views', 'tolerance': 'Tolerance study',
          'optimiser': 'Optimiser', 'compare': 'Compare variants', 'photo': 'Photo matching', 'targets': 'Targets',
          'install': 'Installation check', 'volume': 'Blind volume', 'perception': 'Perception range',
          'rig': 'Live rig', 'coverage': 'Lidar and radar coverage', 'timing': 'Sync and timing',
+         'clock_tree': 'Clock tree and time sync', 'isp': 'Exposure metering and HDR seams',
          'recording': 'Recording budget', 'power': 'Power budget',
          'gnss': 'GNSS and IMU', 'exposure': 'Sun glare and dirt',
          'fleet': 'Fleet', 'brackets': 'Mount brackets',
          'dataset': 'Sample dataset', 'drivelog': 'Drive-log check',
          'requirements': 'Requirements scorecard', 'lidar_calib': 'Lidar–camera calibration',
-         'asbuilt': 'As-built check', 'critical': 'Critical targets', 'materials': 'Materials, glass and wipers',
-         'automation': 'Automation', 'terrain': 'Road and body motion', 'harness': 'Cable harness',
+         'asbuilt': 'As-built check', 'online_calib': 'Online self-calibration', 'critical': 'Critical targets',
+         'materials': 'Materials, glass and wipers',
+         'automation': 'Automation', 'terrain': 'Road and body motion', 'thermo_vib': 'Thermal and vibration drift',
+         'harness': 'Cable harness',
          'observability': 'Calibration observability', 'experiments': 'Experiments', 'sim': 'CARLA simulator',
          'detection': 'Detection quality', 'campaign': 'Simulation campaigns',
-         'critical_carla': 'Critical targets in CARLA'}
+         'critical_carla': 'Critical targets in CARLA', 'splat': 'Log replay'}
 
 
 # ============================================================================================ controller
@@ -136,6 +144,7 @@ class AssistantController(QObject):
     proposal_state = pyqtSignal(int)    # a proposal was applied, discarded, undone or measured
     plan_state = pyqtSignal(str)        # a plan was edited, approved, rejected, or one of its steps moved on
     agent_changed = pyqtSignal(bool)
+    log_changed = pyqtSignal()          # the design log or a proposed entry changed
     cta = pyqtSignal(object)            # a recommendation was clicked (a card's or a turn's chip): the panel acts on it
     _raw = pyqtSignal(object)           # (thread id, Event) from the worker
     _ui_req = pyqtSignal(object)        # (thread id, request) from a show_in_app call
@@ -149,6 +158,7 @@ class AssistantController(QObject):
         self.busy = False
         self.status = ''
         self.proposals: dict = {}       # id -> {'p': Proposal, 'state': str, 'undo_index': int}
+        self.log_proposals: dict = {}   # entry id -> {'entry': dict, 'state': 'pending' | 'accepted' | 'discarded'}
         self.plans: dict = {}           # plan id -> {'plan': the latest copilot.Plan, 'versions': {n: Plan}}
         self.current_plan: CP.Plan | None = None    # the plan on screen a follow-up revises
         self.runner: PlanRunner | None = None
@@ -159,6 +169,12 @@ class AssistantController(QObject):
         self._started = 0.0
         self.agent_mode = False
         self.agent_running = False
+        self.last_route: RT.Route | None = None
+        self._pending_handover = ''
+        self._retired = []              # Usage of conversations handed over to the other provider (still counted)
+        self._retired_md = []           # ... and their transcripts (Save conversation keeps the whole of it)
+        self._said = set()              # fallback notes already shown once
+        self.recommender = None
         self._raw.connect(self._on_raw)
         self._ui_req.connect(self._do_ui)
         ctx.store.project_replaced.connect(self.new_chat)
@@ -188,7 +204,41 @@ class AssistantController(QObject):
 
     @property
     def ready(self) -> bool:
+        if self.auto:
+            return self.enabled and any(RT.usable(self._keys(), PR.claude_available()).values())
         return self.enabled and bool(self.key) and self.available
+
+    # ---------------------------------------------------------------- automatic model choice
+    def _keys(self) -> dict:
+        return {p: self.keys.get(p, (None, None))[0] for p in PR.PROVIDERS}
+
+    @property
+    def auto(self) -> bool:
+        """Automatic model choice (Preferences ▸ Assistant): off for existing users unless they turn it on; a new
+        installation starts with it on when both keys exist."""
+        if self.s.contains('assistant/auto'):
+            return self.s.value('assistant/auto', False, type=bool)
+        fresh = not self.s.contains('assistant/provider')
+        return RT.default_auto(fresh, self._keys())
+
+    def route_for(self, text: str, agent: bool | None = None, force: RT.Route | None = None) -> RT.Route | None:
+        """Who answers this request: the forced route (a "re-ask with …" chip), the automatic choice, or the provider
+        and model chosen in Preferences."""
+        if force is not None:
+            return force
+        agent = self.agent_mode if agent is None else agent
+        planning = CP.is_plan_request(text) or (self.current_plan is not None and self.current_plan.status == 'draft')
+        if self.auto:
+            return RT.route(text, agent, planning, self._keys(), PR.claude_available())
+        tier, reason = RT.classify(text, agent, planning)
+        note = 'Pictures need Claude: on Groq the assistant answers from the figures alone.' \
+            if reason == 'image' and self.provider == PR.GROQ else ''
+        return RT.Route(self.provider, self.model, tier, 'manual', note=note)
+
+    def alternative(self, r: RT.Route | None) -> RT.Route | None:
+        if r is None or not self.auto and r.reason != 'reask':
+            return None
+        return RT.alternative(r, self._keys(), PR.claude_available())
 
     @property
     def model(self) -> str:
@@ -244,7 +294,7 @@ class AssistantController(QObject):
             if k == 'model' and self.provider == PR.CLAUDE:
                 k = 'claude_model'
             self.s.setValue(f'assistant/{k}', v)
-        if self.session is not None:
+        if self.session is not None and not self.auto:
             if self.session.provider != self.provider:
                 self.new_chat()
             else:
@@ -255,17 +305,19 @@ class AssistantController(QObject):
         """After Preferences: re-read the keys, the provider and the model (another provider: a new conversation)."""
         self.keys = {p: K.load(p) for p in PR.PROVIDERS}
         if self.session is not None:
-            if self.session.provider != self.provider:
+            prov = self.session.provider
+            if self.session.provider != self.provider and not self.auto:
                 self.new_chat()
-            elif self.provider == PR.GROQ:
-                self.session.client = C.Client(self.key or '')
-                self.session.settings = self._settings()
+            elif prov == PR.GROQ:
+                self.session.client = C.Client(self.keys.get(prov, (None, None))[0] or '')
+                if not self.auto:
+                    self.session.settings = self._settings()
             else:
                 self.session = None          # a new client with the new key; the history stays with the old one
         self.changed.emit()
 
-    def _settings(self, agent=False, planning=False) -> A.Settings:
-        return A.Settings(self.model, self.effort, self.show_reasoning, agent=agent, planning=planning,
+    def _settings(self, agent=False, planning=False, model=None) -> A.Settings:
+        return A.Settings(model or self.model, self.effort, self.show_reasoning, agent=agent, planning=planning,
                           fallbacks=self.fallbacks)
 
     def set_agent(self, on: bool):
@@ -300,9 +352,10 @@ class AssistantController(QObject):
                 self.s.setValue(f'assistant/day_tokens_{p}', 0)
         self.s.setValue(f'assistant/day_tokens_{provider}', self.tokens_today(provider) + int(n))
 
-    def blocked(self) -> str:
-        """Why a question cannot be sent now ('' when it can): consent not given, the daily cap reached."""
-        if not self.consented():
+    def blocked(self, provider=None) -> str:
+        """Why a question cannot be sent now ('' when it can): consent not given (to the provider that would answer
+        it), the daily cap reached."""
+        if not self.consented(provider):
             return 'consent'
         cap = self.daily_cap
         if cap and self.tokens_today() >= cap:
@@ -324,21 +377,43 @@ class AssistantController(QObject):
         self.changed.emit()
 
     # ---------------------------------------------------------------- conversation
-    def ask(self, text: str, agent: bool | None = None) -> bool:
+    def ask(self, text: str, agent: bool | None = None, force: RT.Route | None = None) -> bool:
+        """Send one request. The route (automatic, forced or the Preferences choice) picks the provider and model;
+        consent and the daily cap are checked for that provider. A request for the other provider than the
+        conversation's starts a new conversation with a hand-over summary (the two history formats never mix)."""
         text = text.strip()
-        if not text or self.busy or not self.ready or self.blocked():
+        if not text or self.busy or not self.ready:
             return False
         agent = self.agent_mode if agent is None else agent
+        r = self.route_for(text, agent, force)
+        if r is None or self.blocked(r.provider):
+            return False
         planning = CP.is_plan_request(text) or self.current_plan is not None and self.current_plan.status == 'draft'
-        if self.session is None or self.session.provider != self.provider:
+        key = self.keys.get(r.provider, (None, None))[0]
+        old = self.session
+        if old is None or old.provider != r.provider:
             try:
-                self.session = A.new_session(self.provider, self.key, self._settings(agent, planning))
+                new = A.new_session(r.provider, key, self._settings(agent, planning, r.model))
             except C.ApiError as e:
                 self._fail_now(e)
                 return False
-        self.session.settings = self._settings(agent, planning)
+            if old is not None:
+                md = old.transcript_markdown()
+                if md.strip():
+                    new.handover = RT.handover_text(md, old.provider)
+                    self._retired_md.append(md)
+                self._retired.append(old.usage)
+            self.session = new
+        self.session.settings = self._settings(agent, planning, r.model)
+        announce = bool(r.fallback) and r.fallback not in self._said
+        self._said.add(r.fallback)
+        self.last_route = r
+        self._pending_handover = self.session.handover
+        self.event.emit(A.Event('route', {**r.to_dict(), 'announce': announce, 'auto': self.auto,
+                                          'handover': bool(self.session.handover)}))
         self.agent_running = agent
         tc = self._context()
+        tc.provider, tc.model = r.provider, r.model
         tc.agent = agent
         tc.request = text
         tid_next = self._tid + 1
@@ -416,6 +491,8 @@ class AssistantController(QObject):
             self.proposals[p.id] = {'p': p, 'state': 'pending', 'undo_index': -1}
         elif ev.kind == 'copilot':
             self._add_plan(ev.data['plan'])
+        elif ev.kind == 'log_proposal':
+            self.log_proposals[ev.data['entry']['id']] = {'entry': ev.data['entry'], 'state': 'pending'}
         elif ev.kind == 'status':
             self.status = ev.data['text']
         elif ev.kind == 'done':
@@ -435,12 +512,14 @@ class AssistantController(QObject):
         self._cancel.set()
         old = self.session
         try:
-            fresh = A.new_session(old.provider, self.key, self._settings())
+            fresh = A.new_session(old.provider, self.keys.get(old.provider, (None, None))[0],
+                                  self._settings(model=old.settings.model))
         except C.ApiError:
             fresh = None
         if fresh is not None:
             fresh.messages = list(old.messages[:self._mark])
             fresh.usage = old.usage
+            fresh.handover = self._pending_handover or old.handover     # the stopped question carried it
         self.session = fresh
         self._tid += 1
         self.busy, self.status = False, ''
@@ -454,7 +533,11 @@ class AssistantController(QObject):
             self._tid += 1
             self.busy = False
         self.session = None
+        self._retired = []
+        self._retired_md = []
+        self.last_route = None
         self.proposals.clear()
+        self.log_proposals.clear()
         self.plans.clear()
         self.current_plan = None
         self.last_question = ''
@@ -462,14 +545,37 @@ class AssistantController(QObject):
         self.changed.emit()
 
     def transcript(self) -> str:
-        return self.session.transcript_markdown() if self.session is not None else ''
+        cur = self.session.transcript_markdown() if self.session is not None else ''
+        return '\n'.join([t for t in self._retired_md if t.strip()] + ([cur] if cur.strip() else []))
 
     def usage(self):
         return self.session.usage if self.session is not None else None
 
+    def usages(self) -> dict:
+        """provider -> Usage of this conversation, the parts handed over to the other provider included."""
+        out = {}
+        for u in self._retired + ([self.session.usage] if self.session is not None else []):
+            if u is None or not u.requests:
+                continue
+            m = out.get(u.provider)
+            if m is None:
+                m = out[u.provider] = PR.Usage(provider=u.provider, model=u.model)
+            for f in ('prompt', 'completion', 'reasoning', 'cache_read', 'cache_write', 'requests'):
+                setattr(m, f, getattr(m, f) + getattr(u, f))
+            m.seconds += u.seconds
+            for k, row in u.by_model.items():
+                cur = m.by_model.setdefault(k, [0, 0, 0, 0])
+                for i in range(4):
+                    cur[i] += row[i]
+        return out
+
     def usage_line(self) -> str:
-        u = self.usage()
-        return u.line(self.groq_prices()) if u is not None else ''
+        us = self.usages()
+        if not us:
+            return ''
+        if len(us) == 1:
+            return next(iter(us.values())).line(self.groq_prices())
+        return ' · '.join(f'{PR.LABEL[p]}: {u.line(self.groq_prices())}' for p, u in us.items())
 
     def last_sent(self) -> str:
         """The last request's payload as it was sent, masked (keys are never in it; machine paths shown as ~)."""
@@ -491,6 +597,7 @@ class AssistantController(QObject):
                              drive_log=self._drive_log(), asbuilt=self._asbuilt(), experiment=self._experiment(),
                              detection=self._page_summary('detection'), campaign=self._page_summary('campaign'),
                              critical_carla=self._page_summary('critical_carla'), carla_live=self._carla_live(),
+                             splat=self._page_summary('splat'), online_calib=self._page_summary('online_calib'),
                              working_dir=workdir.get(self.ctx.settings), plan=self.current_plan,
                              provider=self.provider, model=self.model)
 
@@ -556,6 +663,10 @@ class AssistantController(QObject):
         for k, v in prop.settings_before.items():
             if abs(float(T.SETTINGS[k][2](p)) - float(v)) > 1e-9:
                 return 'stale'
+        from ..core.project import MAX_CAMERAS
+        adds = [u for u, props in prop.targets.items() if '__add__' in props and p.variant.cam(u) is None]
+        if adds and len(p.variant.cameras) + len(adds) > MAX_CAMERAS:
+            return 'full'
         for uid, props in e['p'].before.items():
             c = p.variant.cam(uid)
             if c is None:
@@ -570,7 +681,7 @@ class AssistantController(QObject):
 
     def apply(self, pid, force=False, as_variant=False) -> str:
         why = self.check(pid)
-        if why in ('missing', 'locked') or (why == 'stale' and not force):
+        if why in ('missing', 'locked', 'full') or (why == 'stale' and not force):
             return why
         e = self.proposals[pid]
         prop = e['p']
@@ -581,7 +692,12 @@ class AssistantController(QObject):
             self._apply_as_variant(prop)
         else:
             def fn(p):
+                from ..core.project import Camera
                 for uid, props in prop.targets.items():
+                    if '__add__' in props:          # a new camera (add_camera_options)
+                        if p.variant.cam(uid) is None:
+                            p.variant.cameras.append(Camera.from_dict(props['__add__']))
+                        continue
                     c = p.variant.cam(uid)
                     if c is not None:
                         for k, v in props.items():
@@ -606,9 +722,13 @@ class AssistantController(QObject):
         cur = st.project.variant
 
         def fn(p):
+            from ..core.project import Camera
             v = Variant.from_dict(cur.to_dict())
             v.uid = new_uid()
             v.name = f'{cur.name} · {prop.title}'[:64]
+            for uid, props in prop.targets.items():     # new cameras go in with their own (remapped) uids
+                if '__add__' in props and v.cam(uid) is None:
+                    v.cameras.append(Camera.from_dict(props['__add__']))
             remap = {}
             for c in v.cameras:
                 remap[c.uid] = new_uid()
@@ -619,7 +739,7 @@ class AssistantController(QObject):
             v.seams = {rk(k): a for k, a in cur.seams.items()}
             for uid, props in prop.targets.items():
                 c = v.cam(remap.get(uid, ''))
-                if c is not None:
+                if c is not None and '__add__' not in props:
                     for k, val in props.items():
                         setattr(c, k, val)
             for k, ang in prop.seams.items():
@@ -650,9 +770,67 @@ class AssistantController(QObject):
         an.request(force=True)
 
     def discard(self, pid):
+        """Discard a proposal; the design log records it as rejected (one undo step), so the assistant does not offer
+        the same change again."""
         if pid in self.proposals:
-            self.proposals[pid]['state'] = 'discarded'
+            e = self.proposals[pid]
+            e['state'] = 'discarded'
+            entry = M.rejected_entry(e['p'])
+            if entry is not None:
+                known = set(M.tag_to_uid(self.ctx.store.project).values())
+                entry['about'] = [u for u in entry['about'] if u in known]     # a camera it would have added: none
+                self.ctx.store.edit('analysis', lambda p: M.add(p, entry), f'Design log · {entry["text"][:60]}')
+                e['log_id'] = entry['id']
             self.proposal_state.emit(pid)
+
+    # ---------------------------------------------------------------- the design log (kept in the project)
+    def log(self) -> list:
+        return M.entries(self.ctx.store.project)
+
+    def add_log(self, kind, text, about=(), source='user', changes=None) -> dict | None:
+        """Write an entry (one undo step); None when it is empty."""
+        e = M.new_entry(kind, text, about, source, changes)
+        if e is None:
+            return None
+        self.ctx.store.edit('analysis', lambda p: M.add(p, e), f'Design log · {KIND_WORD.get(e["kind"], "")} '
+                                                               f'{e["text"][:50]}')
+        self.log_changed.emit()
+        return e
+
+    def edit_log(self, eid, **fields) -> bool:
+        if not any(e['id'] == eid for e in self.log()):
+            return False
+        ok = [False]
+
+        def fn(p):
+            ok[0] = M.update(p, eid, **fields)
+        self.ctx.store.edit('analysis', fn, 'Design log · edit entry')
+        self.log_changed.emit()
+        return ok[0]
+
+    def delete_log(self, eid) -> bool:
+        if not any(e['id'] == eid for e in self.log()):
+            return False
+        self.ctx.store.edit('analysis', lambda p: M.remove(p, eid), 'Design log · delete entry')
+        self.log_changed.emit()
+        return True
+
+    def accept_log(self, eid) -> bool:
+        """The user accepts an entry the model proposed: written with source 'assistant' (proposed and accepted)."""
+        lp = self.log_proposals.get(eid)
+        if lp is None or lp['state'] != 'pending':
+            return False
+        e = dict(lp['entry'], source='assistant')
+        self.ctx.store.edit('analysis', lambda p: M.add(p, e), f'Design log · {e["text"][:60]}')
+        lp['state'] = 'accepted'
+        self.log_changed.emit()
+        return True
+
+    def discard_log(self, eid):
+        lp = self.log_proposals.get(eid)
+        if lp is not None and lp['state'] == 'pending':
+            lp['state'] = 'discarded'
+            self.log_changed.emit()
 
     def can_undo(self, pid) -> bool:
         e = self.proposals.get(pid)
@@ -1154,7 +1332,7 @@ def _inline(s: str) -> str:
         codes.append(m.group(1))
         return f'\x00{len(codes) - 1}\x00'
     s = re.sub(r'`([^`]+)`', keep, s)
-    s = html.escape(s, quote=False)
+    s = re.sub(r'&lt;br\s*/?&gt;', '<br>', html.escape(s, quote=False), flags=re.I)   # models put <br> in table cells
     for rx, rep in _INLINE:
         s = rx.sub(rep, s)
     return re.sub('\x00(\\d+)\x00', lambda m: f'<code>{html.escape(codes[int(m.group(1))], quote=False)}</code>', s)
@@ -1493,9 +1671,9 @@ def _arg_summary(name, args):
 
 
 class ToolRow(QFrame):
-    """One tool call: what it did, and on click exactly what the model asked and what was sent back to Groq."""
+    """One tool call: what it did, and on click exactly what the model asked and what was sent back to the model."""
     KIND_ICON = {'read': 'search', 'simulate': 'play', 'propose': 'sparkle', 'compute': 'tolerance', 'ui': 'frame',
-                 'plan': 'check', 'copilot': 'sparkle'}
+                 'plan': 'check', 'copilot': 'sparkle', 'look': 'eye'}
     NAME_ICON = {'optimise_camera': 'optimise', 'compare_variants': 'compare', 'run_study': 'report'}
 
     def __init__(self, data, parent=None):
@@ -1582,7 +1760,7 @@ class ToolRow(QFrame):
             a = json.dumps(self.args, ensure_ascii=False) if self.args else '(no arguments)'
             mut = THEME.tok['muted']
             self.detail.setText(f'<span style="color:{mut}">The model asked</span><br/>{html.escape(a)}<br/><br/>'
-                                f'<span style="color:{mut}">Sent back to Groq</span><br/>'
+                                f'<span style="color:{mut}">Sent back to the model</span><br/>'
                                 f'<pre style="white-space: pre-wrap">{html.escape(res)}</pre>')
         self.detail.setVisible(open_)
         self.chev.setPixmap(icons.pixmap('chev-d' if open_ else 'chev-r', THEME.tok['muted'], 10))
@@ -1673,7 +1851,7 @@ class ProposalCard(QFrame):
             g.addWidget(h, 0, c, Qt.AlignmentFlag.AlignRight if c >= 2 else Qt.AlignmentFlag.AlignLeft)
         for i, r in enumerate(prop.rows, 1):
             kind = r.get('kind', 'camera')
-            cam = QLabel(_cam_dot(r['slot'], r['camera']) if kind == 'camera' else
+            cam = QLabel(_cam_dot(r['slot'], r['camera']) if kind in ('camera', 'add') else
                          f'<b>{html.escape(r["label"] if kind == "seam" else "Project")}</b>')
             cam.setFont(sans(11))
             g.addWidget(cam, i, 0)
@@ -1816,6 +1994,9 @@ class ProposalCard(QFrame):
             self.note.show()
         elif why == 'missing':
             self.note.setText('A camera in this proposal is not in the current variant.')
+            self.note.show()
+        elif why == 'full':
+            self.note.setText('The rig already has as many cameras as the recorder takes; remove one to add this.')
             self.note.show()
 
     def _sync(self, pid):
@@ -2304,22 +2485,25 @@ class CopilotCard(QFrame):
 class ConsentCard(QFrame):
     """The first question to a provider asks once, naming it and what is sent."""
 
-    def __init__(self, ctl: AssistantController, on_ok, parent=None):
+    def __init__(self, ctl: AssistantController, on_ok, parent=None, provider=None):
         super().__init__(parent)
         self.ctl = ctl
+        self.provider = provider or ctl.provider
         self.setObjectName('consent')
         v = QVBoxLayout(self)
         v.setContentsMargins(12, 10, 12, 10)
         v.setSpacing(6)
-        who = PR.LABEL[ctl.provider]
+        who = PR.LABEL[self.provider]
         t = QLabel(f'Send this question to {who}?')
         t.setFont(sans(12, QFont.Weight.DemiBold))
         v.addWidget(t)
-        v.addWidget(label(f'Your question, the plan settings and small tool results (camera poses, lens and module '
-                          f'names, analysis figures, run summaries) go to {who} under its terms, with your own API '
-                          f'key. Never sent: images, recordings, point clouds, keys, stream passwords, the automation '
-                          f'command or this computer\'s folders (shown as ~). Asked once for {who}.', ink2=True,
-                          small=True, wrap=True))
+        pics = (' With Claude, the pictures the assistant draws from the analysis (the coverage map, a camera\'s '
+                'synthetic view) go too, inside the question.') if self.provider == PR.CLAUDE else ''
+        v.addWidget(label(f'Your question, the plan settings, the design log and small tool results (camera poses, '
+                          f'lens and module names, analysis figures, run summaries) go to {who} under its terms, with '
+                          f'your own API key.{pics} Never sent: photos, recordings, point clouds, the vehicle model '
+                          f'file, keys, stream passwords, the automation command or this computer\'s folders (shown '
+                          f'as ~). Asked once for {who}.', ink2=True, small=True, wrap=True))
         r = QHBoxLayout()
         r.addStretch(1)
         self.b_no = button('Not now', 'ghost')
@@ -2327,7 +2511,7 @@ class ConsentCard(QFrame):
         r.addWidget(self.b_no)
         r.addWidget(self.b_ok)
         v.addLayout(r)
-        self.b_ok.clicked.connect(lambda: (ctl.give_consent(), self.hide(), on_ok()))
+        self.b_ok.clicked.connect(lambda: (ctl.give_consent(self.provider), self.hide(), on_ok()))
         self.b_no.clicked.connect(self.hide)
         tk = THEME.tok
         self.setStyleSheet(_qss_frame('consent', tk['raised'], tk['strong'], 6, THEME.color('warning').name()))
@@ -2422,6 +2606,312 @@ class PlansDialog(QDialog):
         return why
 
 
+# ============================================================================================ pictures the model saw
+def _pixmap(data: bytes):
+    from PyQt6.QtGui import QPixmap
+    pm = QPixmap()
+    pm.loadFromData(data)
+    return pm
+
+
+class PictureThumb(QFrame):
+    """A picture the model looked at (the look tool), as a thumbnail under its tool row; a click enlarges it."""
+    THUMB = 220
+
+    def __init__(self, pic, parent=None):
+        super().__init__(parent)
+        self.pic = pic
+        self.setObjectName('thumb')
+        v = QVBoxLayout(self)
+        v.setContentsMargins(6, 6, 6, 6)
+        v.setSpacing(4)
+        self.img = QLabel()
+        pm = _pixmap(pic.data)
+        self.ok = not pm.isNull()
+        if self.ok:
+            self.img.setPixmap(pm.scaled(self.THUMB, self.THUMB, Qt.AspectRatioMode.KeepAspectRatio,
+                                         Qt.TransformationMode.SmoothTransformation))
+        self.img.setCursor(Qt.CursorShape.PointingHandCursor)
+        v.addWidget(self.img, 0, Qt.AlignmentFlag.AlignLeft)
+        kb = len(pic.data) / 1024
+        self.meta = label(f'What the model saw · {pic.width}×{pic.height} px, {kb:.0f} kB, ≈ {pic.tokens:,} image '
+                          f'tokens · click to enlarge', muted=True, small=True, wrap=True)
+        v.addWidget(self.meta)
+        self.setToolTip(pic.caption)
+        self.dialog = None
+        t = THEME.tok
+        self.setStyleSheet(_qss_frame('thumb', t['panel'], t['hair'], 5))
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.enlarge()
+        else:
+            super().mousePressEvent(e)
+
+    def enlarge(self):
+        self.dialog = PictureDialog(self.pic, self.window())
+        self.dialog.show()
+        return self.dialog
+
+
+class PictureDialog(QDialog):
+    """The picture at full size with its caption: exactly what was sent to the model."""
+
+    def __init__(self, pic, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('What the model saw')
+        self.resize(min(pic.width + 60, 1100), min(pic.height + 160, 900))
+        v = QVBoxLayout(self)
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
+        self.img = QLabel()
+        self.img.setPixmap(_pixmap(pic.data))
+        self.img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sc.setWidget(self.img)
+        v.addWidget(sc, 1)
+        self.caption = label(pic.caption, ink2=True, small=True, wrap=True)
+        self.caption.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        v.addWidget(self.caption)
+        v.addWidget(label(f'{pic.media_type}, {pic.width}×{pic.height} px, {len(pic.data) / 1024:.0f} kB, ≈ '
+                          f'{pic.tokens:,} image tokens. Drawn from the analysis on this machine and sent to the model '
+                          f'inside your question, like any tool result.', muted=True, small=True, wrap=True))
+        b = QHBoxLayout()
+        b.addStretch(1)
+        ok = button('Close', 'primary')
+        ok.clicked.connect(self.accept)
+        b.addWidget(ok)
+        v.addLayout(b)
+
+
+# ============================================================================================ the design log
+class LogProposalCard(QFrame):
+    """A design-log entry the model proposes: Accept writes it into the project (one undo step), Discard drops it."""
+
+    def __init__(self, ctl: AssistantController, entry: dict, parent=None):
+        super().__init__(parent)
+        self.ctl, self.entry = ctl, entry
+        self.setObjectName('logprop')
+        v = QVBoxLayout(self)
+        v.setContentsMargins(12, 8, 12, 8)
+        v.setSpacing(5)
+        head = QHBoxLayout()
+        head.setSpacing(6)
+        ico = QLabel()
+        ico.setPixmap(icons.pixmap('history', THEME.tok['ink'], 14))
+        head.addWidget(ico)
+        t = label(f'Add to the design log: {M.KIND_LABEL[entry["kind"]].lower()}', bold=True)
+        head.addWidget(t, 1)
+        v.addLayout(head)
+        tags = M.about_tags(ctl.ctx.store.project, entry)
+        self.text = label(html.escape(entry['text']) + (f'<span style="color:{THEME.tok["muted"]}"> · about '
+                                                        f'{html.escape(", ".join(tags))}</span>' if tags else ''),
+                          wrap=True)
+        self.text.setTextFormat(Qt.TextFormat.RichText)
+        v.addWidget(self.text)
+        b = QHBoxLayout()
+        self.state = label('Kept with the project when you accept it.', muted=True, small=True)
+        b.addWidget(self.state, 1)
+        self.b_no = button('Discard', 'ghost')
+        self.b_ok = button('Accept', 'primary')
+        self.b_no.clicked.connect(lambda: ctl.discard_log(entry['id']))
+        self.b_ok.clicked.connect(lambda: ctl.accept_log(entry['id']))
+        b.addWidget(self.b_no)
+        b.addWidget(self.b_ok)
+        v.addLayout(b)
+        ctl.log_changed.connect(self._sync)
+        t_ = THEME.tok
+        self.setStyleSheet(_qss_frame('logprop', t_['raised'], t_['strong'], 6))
+        self._sync()
+
+    def _sync(self):
+        try:
+            st = self.ctl.log_proposals.get(self.entry['id'], {}).get('state', 'discarded')
+            self.b_ok.setVisible(st == 'pending')
+            self.b_no.setVisible(st == 'pending')
+            self.state.setText({'pending': 'Kept with the project when you accept it.',
+                                'accepted': 'Added to the design log (Edit ▸ Undo removes it).',
+                                'discarded': 'Discarded.'}.get(st, ''))
+        except RuntimeError:            # the window is closing
+            pass
+
+
+class DesignLogDialog(QDialog):
+    """The project's design log: list, add, edit and delete entries (each one undo step). Kept in the project file;
+    the assistant reads it with every question and never proposes a rejected change again unasked."""
+
+    def __init__(self, ctl: AssistantController, parent=None):
+        super().__init__(parent)
+        from PyQt6.QtWidgets import QAbstractItemView, QHeaderView, QTableWidget
+        self.ctl = ctl
+        self.setWindowTitle('Design log')
+        self.resize(820, 480)
+        v = QVBoxLayout(self)
+        v.addWidget(label('Decisions, rejected ideas, constraints and notes, kept with the project. The assistant '
+                          'reads them with every question: it respects the constraints and does not propose a '
+                          'rejected change again unless you ask. Discarding a proposal adds a rejected entry by '
+                          'itself.', ink2=True, wrap=True))
+        self.t = QTableWidget(0, 5)
+        self.t.setHorizontalHeaderLabels(['Kind', 'Entry', 'About', 'Date', 'By'])
+        self.t.verticalHeader().hide()
+        self.t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.t.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.t.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.t.itemSelectionChanged.connect(self._selected)
+        self.t.itemDoubleClicked.connect(lambda *_: self.edit_selected())
+        v.addWidget(self.t, 1)
+        self.empty = label('The design log is empty. Add a decision or a constraint, or discard a proposal.',
+                           muted=True, small=True, wrap=True)
+        v.addWidget(self.empty)
+        # the form: add a new entry, or edit the selected one
+        form = QFrame()
+        form.setObjectName('logform')
+        f = QGridLayout(form)
+        f.setContentsMargins(8, 8, 8, 8)
+        f.setHorizontalSpacing(8)
+        f.setVerticalSpacing(5)
+        self.kind = QComboBox()
+        for k in M.KINDS:
+            self.kind.addItem(M.KIND_LABEL[k], k)
+        self.kind.setCurrentIndex(M.KINDS.index('decision'))
+        self.text = QLineEdit()
+        self.text.setPlaceholderText('e.g. keep F above 0.55 m: the tow bar is in the way')
+        self.text.setMaxLength(M.TEXT_MAX)
+        self.text.textChanged.connect(lambda *_: self._buttons())
+        self.about = QLineEdit()
+        self.about.setPlaceholderText('camera or sensor tags, e.g. F, ML')
+        f.addWidget(label('Kind', ink2=True, small=True), 0, 0)
+        f.addWidget(self.kind, 0, 1)
+        f.addWidget(label('About', ink2=True, small=True), 0, 2)
+        f.addWidget(self.about, 0, 3)
+        f.addWidget(label('Entry', ink2=True, small=True), 1, 0)
+        f.addWidget(self.text, 1, 1, 1, 3)
+        f.setColumnStretch(3, 1)
+        self.note = label('', small=True, wrap=True)
+        f.addWidget(self.note, 2, 0, 1, 4)
+        v.addWidget(form)
+        b = QHBoxLayout()
+        self.b_new = button('New', 'ghost', 'plus', 'Clear the form for a new entry')
+        self.b_new.clicked.connect(self.new)
+        self.b_delete = button('Delete', 'ghost', 'trash', 'Delete the selected entry (Edit ▸ Undo brings it back)')
+        self.b_delete.clicked.connect(self.delete_selected)
+        b.addWidget(self.b_new)
+        b.addWidget(self.b_delete)
+        b.addStretch(1)
+        self.b_save = button('Add', 'primary', None, 'Add the entry to the design log (one undo step)')
+        self.b_save.clicked.connect(self.save)
+        close = button('Close', 'ghost')
+        close.clicked.connect(self.accept)
+        b.addWidget(self.b_save)
+        b.addWidget(close)
+        v.addLayout(b)
+        self.editing = None
+        self.rows = []
+        t = THEME.tok
+        form.setStyleSheet(_qss_frame('logform', t['panel'], t['hair'], 5))
+        ctl.log_changed.connect(self.refresh)
+        ctl.ctx.store.changed.connect(self._store_changed)
+        ctl.ctx.store.project_replaced.connect(self._store_changed)
+        self.refresh()
+
+    def _store_changed(self, *_):
+        try:
+            if self.isVisible():
+                self.refresh()
+        except RuntimeError:
+            pass
+
+    def refresh(self):
+        from PyQt6.QtWidgets import QTableWidgetItem
+        p = self.ctl.ctx.store.project
+        self.rows = list(reversed(self.ctl.log()))           # newest first
+        sel = self.editing
+        self.t.blockSignals(True)
+        self.t.setRowCount(0)
+        for e in self.rows:
+            i = self.t.rowCount()
+            self.t.insertRow(i)
+            for c, text in enumerate((M.KIND_LABEL[e['kind']], e['text'], ', '.join(M.about_tags(p, e)), e['date'],
+                                      'You' if e['source'] == 'user' else 'Assistant, accepted')):
+                it = QTableWidgetItem(text)
+                if c == 1:
+                    it.setToolTip(e['text'])
+                self.t.setItem(i, c, it)
+        self.t.blockSignals(False)
+        self.empty.setVisible(not self.rows)
+        ids = [e['id'] for e in self.rows]
+        if sel in ids:
+            self.t.selectRow(ids.index(sel))
+        else:
+            self.editing = None
+        self._buttons()
+
+    def _selected(self):
+        i = self.t.currentRow()
+        if not 0 <= i < len(self.rows):
+            return
+        e = self.rows[i]
+        self.editing = e['id']
+        self.kind.setCurrentIndex(M.KINDS.index(e['kind']))
+        self.text.setText(e['text'])
+        self.about.setText(', '.join(M.about_tags(self.ctl.ctx.store.project, e)))
+        self.note.setText('')
+        self._buttons()
+
+    def edit_selected(self):
+        self._selected()
+        self.text.setFocus()
+
+    def _buttons(self):
+        self.b_save.setText('Save' if self.editing else 'Add')
+        self.b_save.setEnabled(bool(self.text.text().strip()))
+        self.b_delete.setEnabled(self.editing is not None)
+
+    def new(self):
+        self.editing = None
+        self.t.clearSelection()
+        self.text.clear()
+        self.about.clear()
+        self.note.setText('')
+        self._buttons()
+        self.text.setFocus()
+
+    def _about(self):
+        tags = M.tag_to_uid(self.ctl.ctx.store.project)
+        names = [a.strip() for a in re.split(r'[,\s]+', self.about.text()) if a.strip()]
+        bad = [a for a in names if a.lower() not in tags]
+        return [tags[a.lower()] for a in names if a.lower() in tags], bad
+
+    def save(self) -> bool:
+        text = self.text.text().strip()
+        if not text:
+            return False
+        about, bad = self._about()
+        if bad:
+            self.note.setText(f'Not a camera or sensor of this variant: {", ".join(bad)}')
+            return False
+        kind = self.kind.currentData()
+        changes = M.parse_changes(text, [c.tag for c in self.ctl.ctx.store.project.variant.cameras])
+        if self.editing:
+            ok = self.ctl.edit_log(self.editing, kind=kind, text=text, about=about, changes=changes)
+        else:
+            e = self.ctl.add_log(kind, text, about, 'user', changes)
+            ok = e is not None
+            if ok:
+                self.editing = e['id']
+        self.refresh()
+        self.note.setText('Saved. Edit ▸ Undo reverts it.' if ok else 'Nothing was saved.')
+        return ok
+
+    def delete_selected(self) -> bool:
+        if not self.editing:
+            return False
+        ok = self.ctl.delete_log(self.editing)
+        self.new()
+        self.refresh()
+        return ok
+
+
 class Notice(QFrame):
     """An error or a note inside a turn, with what to do about it."""
     settings = pyqtSignal()
@@ -2476,9 +2966,12 @@ class UserTurn(QWidget):
 
 
 class AssistantTurn(QWidget):
-    """One answer: reasoning, tool calls and text in the order they came, then a footer with copy and figures."""
+    """One answer: reasoning, tool calls and text in the order they came, then a footer with copy and figures. The
+    header names the model that answered and why it was chosen; the footer can re-ask the question with the other
+    model."""
     retry = pyqtSignal()
     settings = pyqtSignal()
+    reask = pyqtSignal(object)          # routing.Route: ask the same question again with that model
 
     def __init__(self, ctl: AssistantController, parent=None):
         super().__init__(parent)
@@ -2511,6 +3004,10 @@ class AssistantTurn(QWidget):
         self.copilot_cards = []
         self.next_items = []            # the model's suggest_next items (recommend.Recommendation)
         self.next_steps: NextSteps | None = None
+        self.route: dict | None = None
+        self.pictures = []              # PictureThumb widgets: what the model looked at
+        self.log_cards = []
+        self.b_reask = None
         self._pending = False
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
@@ -2525,6 +3022,12 @@ class AssistantTurn(QWidget):
         f.setSpacing(4)
         self.stats = label('', muted=True, small=True)
         f.addWidget(self.stats, 1)
+        self.b_reask = QPushButton('')
+        self.b_reask.setFont(sans(10))
+        self.b_reask.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.b_reask.hide()
+        self.b_reask.clicked.connect(self._reask)
+        f.addWidget(self.b_reask)
         self.b_copy = tool_button('copy', 'Copy the answer as Markdown', size=22, icon_size=12)
         self.b_copy.clicked.connect(self._copy)
         f.addWidget(self.b_copy)
@@ -2536,6 +3039,23 @@ class AssistantTurn(QWidget):
 
     def on(self, ev: A.Event):
         k, d = ev.kind, ev.data
+        if k == 'route':
+            self.route = dict(d)
+            self.model_lbl.setText(d['label'] if d.get('auto') or d.get('reason') == 'reask' else
+                                   f'{PR.model_info(d["provider"], d["model"]).label} · {PR.LABEL[d["provider"]]}')
+            self.model_lbl.setToolTip(('Chosen automatically on this machine from the request: ' if d.get('auto') else
+                                       '') + f'{PR.LABEL[d["provider"]]} · {d["model"]}')
+            notes = []
+            if d.get('fallback') and d.get('announce'):
+                notes.append(d['fallback'])
+            if d.get('note'):
+                notes.append(d['note'])
+            if d.get('handover'):
+                notes.append(f'A new conversation with {PR.LABEL[d["provider"]]}: a short summary of this one so far '
+                             f'goes with the question.')
+            if notes:
+                self._insert(label(' '.join(notes), muted=True, small=True, wrap=True))
+            return
         if k == 'reasoning':
             if self.thinking is None or (self.text_w is not None and self.v.indexOf(self.text_w) > self.v.indexOf(self.thinking)):
                 self.thinking = Thinking()
@@ -2567,6 +3087,14 @@ class AssistantTurn(QWidget):
             if row is not None:
                 row.finish(d)
             self._running = None
+            for pic in d.get('pictures') or []:
+                th = PictureThumb(pic)
+                self.pictures.append(th)
+                self._insert(th)
+        elif k == 'log_proposal':
+            card = LogProposalCard(self.ctl, d['entry'])
+            self.log_cards.append(card)
+            self._insert(card)
         elif k == 'tool_status':
             if self._running is not None:
                 self._running.set_progress(d['text'])
@@ -2630,6 +3158,18 @@ class AssistantTurn(QWidget):
             bits.append(f'{d["seconds"]:.1f} s')
         self.stats.setText(' · '.join(bits))
         self.b_copy.setVisible(any(t.strip() for t in self.texts))
+        alt = self._alternative()
+        if alt is not None and d.get('ok') is not None:
+            self._alt = alt
+            self.b_reask.setText(f'Re-ask with {PR.model_info(alt.provider, alt.model).label}')
+            self.b_reask.setToolTip(f'Ask the same question again with {PR.model_info(alt.provider, alt.model).label} '
+                                    f'on {PR.LABEL[alt.provider]} (a new answer below; consent and the daily cap '
+                                    f'apply)')
+            t = THEME.tok
+            self.b_reask.setStyleSheet(f'QPushButton {{ border: 1px solid {t["hair"]}; border-radius: 9px; '
+                                       f'padding: 0 8px; min-height: 18px; color: {t["ink2"]}; background: '
+                                       f'transparent; }} QPushButton:hover {{ border-color: {t["ink"]}; }}')
+            self.b_reask.show()
         if d.get('ok') and not d.get('stopped'):
             self._add_next_steps()
         self.v.addWidget(self.footer)
@@ -2657,6 +3197,17 @@ class AssistantTurn(QWidget):
         self.next_steps = NextSteps(items)
         self.next_steps.act.connect(self.ctl.cta.emit)
         self.v.addWidget(self.next_steps)
+
+    def _alternative(self):
+        if not self.route:
+            return None
+        r = RT.Route(self.route['provider'], self.route['model'], self.route['tier'], self.route['reason'])
+        return self.ctl.alternative(r) if self.route.get('auto') or self.route.get('reason') == 'reask' else None
+
+    def _reask(self):
+        alt = getattr(self, '_alt', None)
+        if alt is not None:
+            self.reask.emit(alt)
 
     def _copy(self):
         QApplication.clipboard().setText('\n\n'.join(t.strip() for t in self.texts if t.strip()))
@@ -2785,12 +3336,18 @@ class Composer(QFrame):
         m = self.model_btn.menu()
         m.clear()
         cur = self.ctl.model
+        auto = self.ctl.auto
+        a = m.addAction('Automatic    quick questions to a fast model, goals, plans and pictures to Claude Opus')
+        a.setCheckable(True)
+        a.setChecked(auto)
+        a.triggered.connect(lambda on: self.ctl.set_option(auto=bool(on)))
+        m.addSeparator()
         for mid in self.ctl.models():
             info = self.ctl.info(mid)
             a = m.addAction(f'{info.label}    {info.note}' if info.note else info.label)
             a.setCheckable(True)
-            a.setChecked(mid == cur)
-            a.triggered.connect(lambda _=False, x=mid: self.ctl.set_option(model=x))
+            a.setChecked(mid == cur and not auto)
+            a.triggered.connect(lambda _=False, x=mid: self.ctl.set_option(model=x, auto=False))
         info = self.ctl.info(cur)
         if info.efforts and self.ctl.provider == PR.CLAUDE:
             m.addSeparator()
@@ -2827,7 +3384,12 @@ class Composer(QFrame):
         info = self.ctl.info()
         eff = self.ctl.effort if self.ctl.effort in info.efforts else info.default_effort
         claude = self.ctl.provider == PR.CLAUDE
-        self.model_btn.setText(info.label + (f' · {eff}' if info.efforts and not claude else '') + '  ▾')
+        if self.ctl.auto:
+            self.model_btn.setText('Automatic  ▾')
+            self.model_btn.setToolTip('Automatic model choice: each answer names the model that wrote it and why')
+        else:
+            self.model_btn.setText(info.label + (f' · {eff}' if info.efforts and not claude else '') + '  ▾')
+            self.model_btn.setToolTip('Model and reasoning effort')
         self.model_btn.setStyleSheet(f'QToolButton {{ color: {t["ink2"]}; border: none; padding: 2px 4px; '
                                      f'border-radius: 3px; }} QToolButton:hover {{ background: {t["sel"]}; }}'
                                      f'QToolButton::menu-indicator {{ image: none; width: 0; }}')
@@ -3119,6 +3681,7 @@ class Recommender(QObject):
         self._hint_done.connect(self._on_hint)
         self.tracker = ContextTracker(ctx, ctl, self)
         self.recs: list = []
+        self.suppressed: list = []      # left out: they would suggest a change the design log records as rejected
         self.context: RC.Context | None = None
         self.ms = {'gather': 0.0, 'recommend': 0.0}
         self.refreshes = 0
@@ -3344,6 +3907,7 @@ class Recommender(QObject):
                     self._start_hint(name, key)
             t1 = time.perf_counter()
             every = RC.recommend(state, cx, None, [r.id for r in self.recs])
+            every, self.suppressed = M.suppress(state.project, every)     # what the design log rejected
             self.dismissed.prune(every)
             recs = [r for r in every if not self.dismissed.hides(r)]
             t2 = time.perf_counter()
@@ -3688,11 +4252,18 @@ class AssistantPanel(QWidget):
         self.b_brief.setFont(sans(10))
         self.b_brief.clicked.connect(lambda: edit_brief(self.ctl, self))
         h.addWidget(self.b_brief)
+        self.b_log = QPushButton('Log')
+        self.b_log.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.b_log.setFont(sans(10))
+        self.b_log.clicked.connect(self.show_log)
+        h.addWidget(self.b_log)
+        self.log_dialog = None
         self.b_new = tool_button('plus', 'New conversation', size=24, icon_size=14)
         self.b_new.clicked.connect(self.ctl.new_chat)
         self.b_more = tool_button('more', 'More', size=24, icon_size=14)
         m = QMenu(self.b_more)
         m.addAction(icons.icon('report', 16), 'Project brief…', lambda: edit_brief(self.ctl, self))
+        m.addAction(icons.icon('history', 16), 'Design log…', self.show_log)
         self.a_export = m.addAction(icons.icon('export', 16), 'Save conversation…', self._export)
         self.a_plans = m.addAction(icons.icon('report', 16), 'Copilot plans…', self.show_plans)
         self.a_sent = m.addAction(icons.icon('eye', 16), 'What was sent…', self.show_sent)
@@ -3759,6 +4330,7 @@ class AssistantPanel(QWidget):
         self.ctl.agent_changed.connect(lambda *_: self._show_empty() if self.empty is not None else None)
         self.ctx.store.changed.connect(lambda *_: self._brief_btn())
         self.ctx.store.project_replaced.connect(self._brief_btn)
+        self.ctl.log_changed.connect(self._brief_btn)
         THEME.changed.connect(self._theme_changed)      # a bound slot: disconnected when the widget goes
         self._restyle()
         self._clear()
@@ -3780,12 +4352,20 @@ class AssistantPanel(QWidget):
         c = self.ctl
         info = c.info()
         who = PR.LABEL[c.provider]
-        if not c.enabled or not c.key or not c.available:
+        if c.auto:
+            ok = RT.usable(c._keys(), PR.claude_available())
+            who = ' + '.join(PR.LABEL[p] for p in PR.PROVIDERS if ok[p]) or who
+            name = 'Automatic'
+        else:
+            name = info.label
+        if not c.ready:
             col, text = THEME.tok['muted'], 'Not set up' if c.available else f'{who}: the SDK is not installed'
         elif c.busy:
-            col, text = THEME.color('warning').name(), f'{info.label} · working…'
+            r = c.last_route
+            col, text = THEME.color('warning').name(), (f'{PR.model_info(r.provider, r.model).label}' if r is not None
+                                                        else name) + ' · working…'
         else:
-            col, text = THEME.color('good').name(), f'{info.label} · {who}'
+            col, text = THEME.color('good').name(), f'{name} · {who}'
         self.dot.setText(f'<span style="color:{col}">●</span>')
         self.title.setText(text)
         self.a_export.setEnabled(bool(c.transcript()))
@@ -3818,6 +4398,14 @@ class AssistantPanel(QWidget):
                                    f'color: {t["ink"] if has else t["muted"]}; background: transparent; }}'
                                    f'QPushButton:hover {{ border-color: {t["ink"]}; }}')
         self.b_brief.setText('Brief ✓' if has else 'Brief')
+        n = len(self.ctl.log())
+        self.b_log.setText(f'Log ({n})' if n else 'Log')
+        self.b_log.setToolTip('Design log: decisions, rejected ideas, constraints and notes kept with the project; '
+                              'the assistant reads it with every question')
+        self.b_log.setStyleSheet(f'QPushButton {{ border: 1px solid {t["strong"] if n else t["hair"]}; '
+                                 f'border-radius: 10px; padding: 1px 9px; min-height: 18px; '
+                                 f'color: {t["ink"] if n else t["muted"]}; background: transparent; }}'
+                                 f'QPushButton:hover {{ border-color: {t["ink"]}; }}')
 
     def _clear(self):
         while self.col.count() > 1:
@@ -3891,8 +4479,9 @@ class AssistantPanel(QWidget):
                               ink2=True, wrap=True))
             v.addWidget(label(f'When you ask a question, sensor poses, lens, module and sensor model names, analysis '
                               f'figures, plan settings, the fleet\'s vehicle names and offsets (no VINs) and your '
-                              f'requirements are sent to {who}. The vehicle model, images, recordings, point clouds, '
-                              f'keys, stream passwords and files are never sent.', muted=True, small=True, wrap=True))
+                              f'requirements and the design log are sent to {who}; with Claude also the pictures the '
+                              f'assistant draws from the analysis. The vehicle model file, photos, recordings, point '
+                              f'clouds, keys, stream passwords and files are never sent.', muted=True, small=True, wrap=True))
             if not self.ctl.available:
                 v.addWidget(label(PR.INSTALL, small=True, wrap=True))
             b = button('Set up…', 'primary', 'key')
@@ -3913,7 +4502,7 @@ class AssistantPanel(QWidget):
         """Ask from outside (the Issues list, the command palette)."""
         self._send(text)
 
-    def _send(self, text, agent=None):
+    def _send(self, text, agent=None, force=None):
         text = text.strip()
         if not text:
             return
@@ -3922,10 +4511,16 @@ class AssistantPanel(QWidget):
             return
         if self.ctl.busy:
             return
-        why = self.ctl.blocked()
+        prompt, slash_agent, local = expand_slash(text)
+        agent = slash_agent if agent is None else agent
+        route = self.ctl.route_for(prompt or text, agent, force) if local is None else None
+        why = self.ctl.blocked(route.provider if route is not None else None) if local is None else ''
         if why == 'consent':
-            if self.consent is None or not self.consent.isVisible():
-                self.consent = ConsentCard(self.ctl, lambda t=text, a=agent: self._send(t, a))
+            if self.consent is None or not self.consent.isVisible() or self.consent.provider != route.provider:
+                if self.consent is not None and self.consent.isVisible():
+                    self.consent.hide()
+                self.consent = ConsentCard(self.ctl, lambda t=text, a=agent, f=force: self._send(t, a, f),
+                                           provider=route.provider)
                 self._add(self.consent)
             return
         if why == 'cap':
@@ -3934,8 +4529,6 @@ class AssistantPanel(QWidget):
             n.settings.connect(lambda: open_settings(self.ctx))
             self._add(n)
             return
-        prompt, slash_agent, local = expand_slash(text)
-        agent = slash_agent if agent is None else agent
         if local is not None:
             self.composer.take()
             if self.composer.popup is not None:
@@ -3960,12 +4553,13 @@ class AssistantPanel(QWidget):
         turn = AssistantTurn(self.ctl)
         turn.retry.connect(lambda: self._send(self.ctl.last_question))
         turn.settings.connect(lambda: open_settings(self.ctx))
+        turn.reask.connect(lambda r, t=text, a=agent: self._send(t, a, r))
         self._add(turn)
         self.cur = turn
         self._stick = True
         if self.composer.popup is not None:
             self.composer.popup.hide()
-        if not self.ctl.ask(prompt, agent=agent):
+        if not self.ctl.ask(prompt, agent=agent, force=force):
             turn.on(A.Event('error', {'kind': 'internal', 'message': 'The assistant is busy or not set up.'}))
             turn.on(A.Event('done', {'ok': False}))
             self.cur = None
@@ -4094,14 +4688,24 @@ class AssistantPanel(QWidget):
         d.show()
         return d
 
+    def show_log(self):
+        """The design log view (list, add, edit, delete)."""
+        if self.log_dialog is None:
+            self.log_dialog = DesignLogDialog(self.ctl, self)
+        self.log_dialog.refresh()
+        self.log_dialog.show()
+        self.log_dialog.raise_()
+        return self.log_dialog
+
     def _export(self):
         text = self.ctl.transcript()
         if not text:
             return
         path, _ = QFileDialog.getSaveFileName(self, 'Save conversation', 'assistant.md', 'Markdown (*.md)')
         if path:
+            log = M.to_markdown(self.ctx.store.project)
             with open(path, 'w', encoding='utf-8') as f:
-                f.write(f'# Vantage assistant · {self.ctx.store.project.name}\n\n{text}')
+                f.write(f'# Vantage assistant · {self.ctx.store.project.name}\n\n{text}' + (f'\n{log}' if log else ''))
 
 
 def open_settings(ctx):
@@ -4147,6 +4751,22 @@ class AssistantPrefs(QWidget):
         row('Provider', self.provider)
         self.sdk = label('', small=True, wrap=True)
         g.addWidget(self.sdk, r, 1, 1, 2)
+        r += 1
+        self.fresh = not self.s.contains('assistant/provider') and not self.s.contains('assistant/auto')
+        self.auto = QCheckBox('Automatic: choose the model for each request')
+        self.auto.setChecked(self.s.value('assistant/auto', False, type=bool) if self.s.contains('assistant/auto')
+                             else RT.default_auto(self.fresh, {p: k[0] for p, k in self.keys.items()}))
+        self._auto_touched = False
+        self.auto.toggled.connect(self._auto_toggled)
+        row('Model choice', self.auto)
+        self.auto_note = label('Quick questions go to a fast model (GPT-OSS 120B on Groq, or Claude Sonnet 5.5 without '
+                               'a Groq key); goals, Copilot plans, whole-rig optimisation and questions that need a '
+                               'picture go to Claude Opus 5.5 (or the best model you have a key for, said once). '
+                               'Decided on this machine from the request; each answer names its model and why, and '
+                               'can be re-asked with the other. Each provider\'s key, consent and the daily cap apply '
+                               'to each request; switching provider mid-conversation sends a short summary of it, '
+                               'never the other provider\'s history.', muted=True, small=True, wrap=True)
+        g.addWidget(self.auto_note, r, 1, 1, 2)
         r += 1
         kw = QWidget()
         kh = QHBoxLayout(kw)
@@ -4238,6 +4858,9 @@ class AssistantPrefs(QWidget):
         self._tested.connect(self._on_tested)
         self._provider_changed(self.prov)
 
+    def _auto_toggled(self, on):
+        self._auto_touched = True
+
     # ---------------------------------------------------------------- the provider shown
     @property
     def key(self):
@@ -4267,12 +4890,17 @@ class AssistantPrefs(QWidget):
         self.fallbacks.setVisible(claude)
         self.test.setEnabled(not claude or ok)
         who = PR.LABEL[self.prov]
-        self.sent_note.setText(f'With each question: your words, camera poses, lens and module names, plan settings '
-                               f'and the analysis figures the assistant looks up (each lookup is shown in the '
-                               f'conversation; the panel\'s More ▸ What was sent shows the last request). Never the '
-                               f'vehicle model, images, recordings, point clouds, keys, stream passwords, the '
-                               f'automation command or this computer\'s folders. {who} processes them under its own '
-                               f'terms; the first question asks once.')
+        pics = ('With Claude also the pictures the assistant draws from the analysis with its look tool (the coverage '
+                'map, a camera\'s synthetic view; shown in the conversation as what the model saw), inside a '
+                'question you send, like any other tool result. ') if claude else \
+            ('Pictures need Claude: Groq\'s models here do not take images, so on Groq the assistant works from '
+             'the figures. ')
+        self.sent_note.setText(f'With each question: your words, camera poses, lens and module names, plan settings, '
+                               f'the design log and the analysis figures the assistant looks up (each lookup is shown '
+                               f'in the conversation; the panel\'s More ▸ What was sent shows the last request). '
+                               f'{pics}Never the vehicle model file, photos, recordings, point clouds, keys, stream '
+                               f'passwords, the automation command or this computer\'s folders. {who} processes them '
+                               f'under its own terms; the first question to each provider asks once.')
         self._fill_models()
         self._key_ui()
 
@@ -4416,6 +5044,13 @@ class AssistantPrefs(QWidget):
     def apply(self):
         self.chosen_models[self.prov] = self.model.currentData() or self.chosen_models[self.prov]
         self.s.setValue('assistant/enabled', self.on.isChecked())
+        if self._auto_touched or self.s.contains('assistant/auto'):
+            auto = self.auto.isChecked()
+        else:                              # untouched on a new installation: on when both keys exist after this
+            after = {p: (None if self.new_keys[p] == '' else self.new_keys[p] or self.keys[p][0])
+                     for p in PR.PROVIDERS}
+            auto = RT.default_auto(self.fresh, after)
+        self.s.setValue('assistant/auto', bool(auto))
         self.s.setValue('assistant/provider', self.prov)
         self.s.setValue('assistant/model', self.chosen_models[PR.GROQ] or C.DEFAULT_MODEL)
         self.s.setValue('assistant/claude_model', self.chosen_models[PR.CLAUDE] or PR.CLAUDE_DEFAULT)

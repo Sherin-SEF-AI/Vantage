@@ -24,6 +24,11 @@ How the requests are made, as Anthropic's documentation for these models says:
   by default): a declined request is re-run on Anthropic's recommended model for that refusal category; a response
   that fell back mid-output is echoed back without the thinking and tool_use blocks before its last fallback block,
   as documented.
+- Pictures: a tool that draws (look) answers with its text and the picture as an image block (base64 PNG or JPEG,
+  at most 1280 px on the long edge and about 1.2 megapixels) inside the same tool_result. The inspector shows the
+  request with the image data shortened.
+- The design log (assistant/memory.py) goes in as a mid-conversation system message after the user's message, only
+  when it changed since the last one sent: the frozen system prompt and the cached history stay as they were.
 - Errors: the SDK's typed exceptions, most specific first: rate limit (with retry-after), authentication, permission,
   not found, bad request, overloaded (529), other status errors, connection. The SDK's own retries (max_retries 2)
   stay at their default.
@@ -36,7 +41,7 @@ import os
 
 from . import providers as PR
 from . import tools as T
-from .agent import WRAP_UP, BaseSession, Call, Reply, context_note
+from .agent import WRAP_UP, BaseSession, Call, Reply, context_note, strip_handover
 from .client import ApiError
 
 try:
@@ -50,6 +55,7 @@ COMPACT_EDIT = {'type': 'compact_20260112'}
 MAX_TOKENS = 32000                      # thinking counts towards it, so it is sized for thinking and the reply
 EFFORT_PLANNING, EFFORT_QUESTION = 'high', 'medium'
 JSON_RETRIES = 2
+EMPTY_LOG = 'DESIGN LOG\nThe design log is now empty: earlier entries no longer apply.'
 
 
 def base_url() -> str | None:
@@ -118,6 +124,22 @@ def _plain(o):
     if isinstance(o, (list, tuple)):
         return [_plain(v) for v in o]
     return o
+
+
+def elide_images(o):
+    """A copy of a request with every image's base64 data replaced by its size (for the inspector)."""
+    if isinstance(o, dict):
+        if o.get('type') == 'base64' and isinstance(o.get('data'), str) and len(o['data']) > 200:
+            return dict(o, data=f'<{o.get("media_type", "image")}, {len(o["data"]) * 3 // 4 / 1024:.0f} kB, '
+                                f'base64, shortened here>')
+        return {k: elide_images(v) for k, v in o.items()}
+    if isinstance(o, list):
+        return [elide_images(v) for v in o]
+    return o
+
+
+def image_block(pic) -> dict:
+    return {'type': 'image', 'source': {'type': 'base64', 'media_type': pic.media_type, 'data': pic.b64()}}
 
 
 def echo_content(content) -> list:
@@ -197,8 +219,17 @@ class ClaudeSession(BaseSession):
         del self.messages[mark:]            # the tail only: every earlier message stays byte for byte
 
     def _begin(self, text, tc):
+        from . import memory as M
         self.messages.append({'role': 'user', 'content': [{'type': 'text',
                                                            'text': f'{text}\n\n{context_note(tc, agent_text=True)}'}]})
+        log = M.prompt_block(tc.project)
+        last = self.design_log_sent()
+        if (log or last) and (log or EMPTY_LOG) != last:
+            self.messages.append({'role': 'system', 'content': log or EMPTY_LOG})
+
+    def design_log_sent(self) -> str:
+        """The design log as the model last received it ('' when never sent)."""
+        return next((m['content'] for m in reversed(self.messages) if m.get('role') == 'system'), '')
 
     def request_kwargs(self, wrap=False) -> dict:
         st = self.settings
@@ -219,7 +250,7 @@ class ClaudeSession(BaseSession):
             # appended once, after the tool results of a message not sent yet: nothing sent before changes
             self.messages[-1]['content'].append({'type': 'text', 'text': WRAP_UP})
         kw = self.request_kwargs(wrap)
-        self.last_payload = _plain({k: v for k, v in kw.items()})
+        self.last_payload = elide_images(_plain({k: v for k, v in kw.items()}))
         try:
             with self.client.beta.messages.stream(**kw) as stream:
                 for ev in stream:
@@ -267,8 +298,10 @@ class ClaudeSession(BaseSession):
 
     def _append_results(self, results, wrap):
         blocks = []
-        for call, result, ok in results:
-            b = {'type': 'tool_result', 'tool_use_id': call.id, 'content': result}
+        for call, result, ok, *rest in results:
+            pics = rest[0] if rest else []
+            b = {'type': 'tool_result', 'tool_use_id': call.id,
+                 'content': [{'type': 'text', 'text': result}] + [image_block(p) for p in pics] if pics else result}
             if not ok:
                 b['is_error'] = True
             blocks.append(b)
@@ -293,7 +326,7 @@ class ClaudeSession(BaseSession):
                 texts = [b['text'] for b in blocks if isinstance(b, dict) and b.get('type') == 'text'
                          and b.get('text') != WRAP_UP]
                 if texts:
-                    lines += ['### You', '', texts[0].rsplit('\n\n[Vantage context:', 1)[0], '']
+                    lines += ['### You', '', strip_handover(texts[0].rsplit('\n\n[Vantage context:', 1)[0]), '']
             else:
                 texts = [b.text for b in blocks if getattr(b, 'type', None) == 'text']
                 if texts:
