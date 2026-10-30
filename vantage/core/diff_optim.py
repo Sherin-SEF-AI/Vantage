@@ -1141,6 +1141,8 @@ def run(project, engine=None, settings: DiffSettings | None = None, variant=None
     st = settings or settings_of(project)
     engine = engine or Engine()
     variant = variant or project.variant
+    if getattr(project.vehicle.mesh, 'n_tris', 0) == 0 or not any(c.visible for c in variant.cameras):
+        raise ValueError(f'Nothing to refine in {variant.name}: it needs a vehicle body and a visible camera.')
     starts = list(starts) if starts else [('current', list(variant.cameras))]
     starts = starts[:MAX_STARTS]
     refs, cancelled = [], False

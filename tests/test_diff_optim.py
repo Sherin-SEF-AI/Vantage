@@ -385,3 +385,13 @@ def test_refining_selected_pareto_candidates_from_the_page(app, win):
     pump(app, 0.3)
     assert [r.label for r in rp.result.refinements] == [pg.cands[0].label]
     win.set_page('viewports')
+
+
+def test_nothing_to_refine_is_a_clear_error():
+    """A variant with no visible camera (or no body) is refused with a plain reason, not a crash deep in the solver."""
+    from vantage.core import samples, diff_optim as DO
+    p = samples.tigor_sample_project()
+    for c in p.variant.cameras:
+        c.visible = False
+    with pytest.raises(ValueError, match='needs a vehicle body and a visible camera'):
+        DO.run(p)
