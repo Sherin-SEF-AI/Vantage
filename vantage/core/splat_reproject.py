@@ -2632,12 +2632,21 @@ def resolve_rigs(project, drive: Drive, st: SplatSettings, engine=None, variant=
     return ra, rb
 
 
+def torch_missing() -> str | None:
+    """Why the log replay cannot run here (the downloads leave torch out), or None."""
+    from .splat_raster import TORCH_MISSING, torch_ok
+    return None if torch_ok() else TORCH_MISSING.format(
+        what='Log replay', build='an NVIDIA GPU with CUDA makes it practical; the CPU build is slow')
+
+
 def run(project, engine=None, settings: SplatSettings | None = None, variant=None, progress=None, cancel=None,
         detector=None, cache_root=None, drive: Drive | None = None, scene: Scene | None = None) -> SplatResult | None:
     """The log replay study (None when cancelled). detector: a callable BGR image -> detections (tests, or one
     already loaded); by default the detection settings' model when it is downloaded and detect is on, else none.
     cache_root: where scenes and a bag's messages are cached (None: the working folder's <project>/splat)."""
     t_start = time.perf_counter()
+    if torch_missing():
+        raise ValueError(torch_missing())
     st = settings or settings_of(project)
     stop = cancel or (lambda: False)
     if engine is None and project is not None:

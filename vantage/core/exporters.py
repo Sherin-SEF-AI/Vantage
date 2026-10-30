@@ -217,17 +217,19 @@ def _sim_campaign_names(p, v):
 
 
 def _diff_optim_names(p, v):
-    """The refinement needs a vehicle body and a visible camera to move."""
-    if getattr(p.vehicle.mesh, 'n_tris', 0) == 0 or not _view_cams(v):
+    """The refinement needs a vehicle body, a visible camera to move and PyTorch (the downloads leave it out)."""
+    from .splat_raster import torch_ok
+    if getattr(p.vehicle.mesh, 'n_tris', 0) == 0 or not _view_cams(v) or not torch_ok():
         return []
     return ['diff_optim/diff_optim.json', 'diff_optim/diff_optim_cameras.csv', 'diff_optim/diff_optim_history.csv']
 
 
 def _log_replay_names(p, v):
-    """With a recorded drive chosen on Simulate ▸ Log replay: the JSON, two CSVs, two PNGs and (export_ply) the .ply."""
+    """With a recorded drive chosen on Simulate ▸ Log replay and PyTorch (the downloads leave it out): the JSON, two
+    CSVs, two PNGs and (export_ply) the .ply."""
     from . import splat_reproject as SP
     st = SP.settings_of(p)
-    if not st.drive or not SP.is_drive(st.drive):
+    if not st.drive or not SP.is_drive(st.drive) or SP.torch_missing():
         return []
     return ['log_replay/log_replay.json', 'log_replay/log_replay_recall.csv', 'log_replay/log_replay_validation.csv',
             'log_replay/log_replay_cameras.png', 'log_replay/log_replay_lidar.png'] + (

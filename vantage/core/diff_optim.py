@@ -226,6 +226,12 @@ def _torch():
     return torch
 
 
+def torch_missing() -> str | None:
+    """Why the refinement cannot run here (the downloads leave torch out), or None."""
+    from .splat_raster import TORCH_MISSING, torch_ok
+    return None if torch_ok() else TORCH_MISSING.format(what='Gradient refinement', build='the CPU build is enough')
+
+
 class _one_thread:
     """torch on one intra-op thread while refining (restored after): the surrogate's tensors are a few thousand
     elements, where a thread pool only adds overhead, and its spin-waiting threads starve a loaded machine."""
@@ -1143,6 +1149,8 @@ def run(project, engine=None, settings: DiffSettings | None = None, variant=None
     variant = variant or project.variant
     if getattr(project.vehicle.mesh, 'n_tris', 0) == 0 or not any(c.visible for c in variant.cameras):
         raise ValueError(f'Nothing to refine in {variant.name}: it needs a vehicle body and a visible camera.')
+    if torch_missing():
+        raise ValueError(torch_missing())
     starts = list(starts) if starts else [('current', list(variant.cameras))]
     starts = starts[:MAX_STARTS]
     refs, cancelled = [], False
@@ -1371,6 +1379,8 @@ def batch(project, engine=None, from_variant: str | None = None, settings: DiffS
         variant = next((v for v in project.variants if v.name == from_variant or v.uid == from_variant), None)
         if variant is None:
             return {'schema': SCHEMA, 'error': f'no variant named {from_variant!r}'}, 4
+    if torch_missing():
+        return {'schema': SCHEMA, 'error': torch_missing()}, 4
     res = run(project, engine, settings, variant)
     return to_doc(res, project), 0
 

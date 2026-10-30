@@ -44,8 +44,12 @@ def torch_ok() -> bool:
     try:
         import torch  # noqa: F401
         return True
-    except ImportError:                                   # pragma: no cover — torch ships with the app's environment
+    except ImportError:                                   # the downloads leave torch out (packaging/vantage.spec)
         return False
+
+
+TORCH_MISSING = ('{what} needs PyTorch, which the downloads do not include: run Vantage from source with '
+                 '"pip install torch" ({build}).')
 
 
 def device_for(pref: str = 'auto', mem_gb: float = 3.0):

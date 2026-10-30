@@ -9,12 +9,12 @@ This document describes what the application is, who it is for, and everything i
 
 | | |
 |---|---|
-| Current release | **0.6.0** (2026-10-29). Items marked *(next release)* are in the working tree for 0.7.0 and not yet released. |
+| Current release | **0.7.0** (2026-10-31). |
 | Platforms | Windows 10/11 x64 · macOS 14+ (Apple silicon) · Linux x86_64 · Linux arm64 (NVIDIA Jetson Orin, JetPack 6) |
 | Built with | Python 3.10+, PyQt6, NumPy, SciPy, OpenCV, PyOpenGL (GLSL shader renderer) |
-| Size | about 165,000 lines of Python; 77 test files, about 1,400 tests; a validation suite of 71 model checks |
+| Size | about 188,000 lines of Python; 84 test files, about 2,050 tests; a validation suite of 71 model checks |
 | Website and docs | <https://sherin-sef-ai.github.io/Vantage/> |
-| Licence | GNU GPL v3 or later. The reference stitchers that ship with the remap tables are Apache-2.0 *(next release)*, and everything Vantage exports from your project is yours. |
+| Licence | GNU GPL v3 or later. The reference stitchers that ship with the remap tables are Apache-2.0, and everything Vantage exports from your project is yours. |
 
 ---
 
@@ -498,19 +498,19 @@ The renderer is a GLSL shader renderer. It falls back to fixed-function GL, then
   the body.
 - **A studio backdrop** sits on the real horizon.
 
-**Floor grid** *(next release)*:
+**Floor grid**:
 
 - drawn in the ground shader;
 - anti-aliased lines every 0.5 m and 1 m, from the display frame's origin;
 - the lines fade where they crowd;
 - the x axis is red and the y axis green.
 
-**Ground maps** have anti-aliased edges *(next release)*.
+**Ground maps** have anti-aliased edges.
 
-**Lighting off** *(next release)*: with Shadows and lighting off, the floor and backdrop stay; only the shadows and sky
+**Lighting off**: with Shadows and lighting off, the floor and backdrop stay; only the shadows and sky
 occlusion go.
 
-**Labels overlay** *(next release)*: camera tags and target names on small plates. Where plates would overlap, the
+**Labels overlay**: camera tags and target names on small plates. Where plates would overlap, the
 selected or nearer one wins.
 
 **Sensors at their real size and pose:**
@@ -568,7 +568,7 @@ The overlays that need more explanation:
 - You orbit about the point under the cursor (a dot marks it), so what you grab stays put.
 - The wheel zooms towards the surface under the cursor.
 
-**View bar** *(next release)*: four buttons at the top-left of each 3D view, each opening the same choices as the View
+**View bar**: four buttons at the top-left of each 3D view, each opening the same choices as the View
 menu:
 
 - **View:** perspective, top, front, side, rear, through a camera; frame; render.
@@ -703,20 +703,20 @@ Each study is a page under **Analysis**. Every study has these in common:
 |---|---|---|---|
 | **Load cases and suspension** | How far do the cameras move when the car is loaded? | Masses at points on a body on four corner springs: wheel rate in series with the tyre, bump stops, measured wheel-load curves, anti-roll bars. Per case: corner drops, pitch, roll and every sensor's move in mm and degrees, plus the blind area, stitched-ground shift and seam ghost. Reads suspension files in JSON, YAML or CSV with unit conversion. | `--load-cases`, `--suspension` |
 | **Road and body motion** | What does the rig see on a real road, and while braking or cornering? | Ramps, crests, garage ramps, speed bumps, kerbs and crowned roads as one height field; ray-marched visibility; the distance each bump or kerb is first seen; body and sensor clearance; brake dive, squat and roll as horizon shifts in pixels. Sample: 0.8 g braking pitches the body 2.25° and moves F's horizon 36 px. | `--terrain` |
-| **Thermal and vibration drift** *(next release)* | How far do the midday sun and the road move each camera and sensor from where it was calibrated? | Hour by hour on the hottest campaign day: each rig part's temperatures from an energy balance, expansion, bowing and the rack against the steel roof; every device's turn and move, camera-lidar and stereo pairs in pixels. On an ISO 8608 road through a half-car: each mount's first mode against the body and wheel-hop bands, flex and blur; cobblestones, an expansion joint, a speed bump. Sample: worst drift 1.1 mm (RD1), pairs under 0.04 px, softest mount 109 Hz; with a roof rack and a 0.5 m mast the lidar's mast mode is 62.5 Hz. | `--thermo-vib` |
+| **Thermal and vibration drift** | How far do the midday sun and the road move each camera and sensor from where it was calibrated? | Hour by hour on the hottest campaign day: each rig part's temperatures from an energy balance, expansion, bowing and the rack against the steel roof; every device's turn and move, camera-lidar and stereo pairs in pixels. On an ISO 8608 road through a half-car: each mount's first mode against the body and wheel-hop bands, flex and blur; cobblestones, an expansion joint, a speed bump. Sample: worst drift 1.1 mm (RD1), pairs under 0.04 px, softest mount 109 Hz; with a roof rack and a 0.5 m mast the lidar's mast mode is 62.5 Hz. | `--thermo-vib` |
 | **3D blind volume** | Where can something *stand* unseen, not just lie on the ground? | ROI columns sampled at every height (5 cm steps to 2 m): blind volume, the area where a 0.5 m pole, a child or an adult is unseen, a reach rose, the smallest object seen per cell, a 3D cut-away. Export: OBJ + JSON. | `--blind-volume` |
 | **Perception range** | How far out does the rig resolve cars, pedestrians, cyclists and signs, in every direction? | 360 directions × 120 ranges to 250 m, the minimum pixel height through the real lens model, required range per sector with pass/fail, stereo pairs with depth resolution at 10, 20 and 50 m. | `--perception-range` |
 | **Weather and night** | What do rain, fog, snow and night cost each sensor? | Eight conditions. Cameras: Koschmieder contrast, ITU-R P.1814, headlamp beam (UN R112 class B) against a photon budget, lens drops. Lidar: two-way extinction. Radar: ITU-R P.838-3 and P.840. Sample: an unlit night leaves pedestrians resolved to 19 m ahead (66 m by day); heavy rain takes the long-range radar from 250 to 195 m. | `--weather`, `--condition` |
 | **Critical targets** | Does the rig resolve *this* child 2 m in front of the bumper, and how much mounting error can each camera take? | Per target and camera: share seen, pixels across, focus, lidar points, radars. The inverse: the allowed yaw, pitch, roll, x, y and z error before a target is lost (to 0.01° and 0.1 mm), all six together on a 729-pose grid, and `mounting_envelopes.csv` for mechanical design. | `--critical-targets` |
 | **Lidar and radar coverage** | What do the lidars and radars add, and where is perception redundant, single or a gap? | Points on the vehicle per channel and direction, the ground blind zone, ground density, points on objects from the real beam elevations, a redundant / single / gap verdict per sector and class, camera–lidar overlap for labelling. Sample: 35 % of the roof lidar's points land on the roof; raising it 0.6 m loses none. | `--sensor-coverage` |
 | **Sync and timing** | When should each camera fire against the spinning lidar? | The sweep crossing per camera (parallax included), triggers centring a rolling-shutter exposure, misalignment per hardware trigger line, Suggest groups / Apply, motion blur and rolling-shutter skew. Sample: six cameras on one line are up to 12.4 ms off; four lines bring that under 1 ms. | `--sync-plan` |
-| **Clock tree and time sync** *(next release)* | How far off are the sensors' timestamps when PPS drops out, the grandmaster is lost or an FSYNC pulse is missed, and what does that do to lidar points in the images? | The PPS / gPTP / FSYNC tree with editable oscillators, servos, links and timer ticks (typical values with sources), a fault timeline as a seeded Monte Carlo, every sensor's error against true time and the lidar, and the pixel error through the real lens model. Sample: a 60 s PPS dropout leaves the time server 81 µs off UTC at worst; cameras stay within 25 µs of the lidar (0.04 px at 50 km/h turning 25°/s); one missed FSYNC pulse mislabels one frame by 33 ms (58 px). | `--clock-tree` |
+| **Clock tree and time sync** | How far off are the sensors' timestamps when PPS drops out, the grandmaster is lost or an FSYNC pulse is missed, and what does that do to lidar points in the images? | The PPS / gPTP / FSYNC tree with editable oscillators, servos, links and timer ticks (typical values with sources), a fault timeline as a seeded Monte Carlo, every sensor's error against true time and the lidar, and the pixel error through the real lens model. Sample: a 60 s PPS dropout leaves the time server 81 µs off UTC at worst; cameras stay within 25 µs of the lidar (0.04 px at 50 km/h turning 25°/s); one missed FSYNC pulse mislabels one frame by 33 ms (58 px). | `--clock-tree` |
 | **Recording budget** | How much data, and can the recorder keep up? | Rates per sensor (raw, JPEG, H.265, lidar packets or clouds), link loads, uplink, write speed with 30 % headroom, GB/h, TB per shift, hours per disk set. Sample: an 8 TB set holds 2 h of six raw cameras. | `--recording-budget` |
 | **Power budget** | Does the vehicle's supply carry the rig? | Steady and inrush power per device, DC-DC load on a 12, 24 or 48 V bus, alternator margin, engine-off runtime, enclosure heat, fused circuits, cable drop at constant power with the gauge that fixes it. | `--power-budget` |
 | **Cable harness** | How long is every cable, and does it fit its link? | Routes on the body's surface graph (avoiding glass, doors and shut lines) to entry grommets, then inside to the compute box; GMSL2, FPD-Link, automotive Ethernet, CAN FD and RS-422 limits; a GNSS coax RF budget; power-pair drop. Sample: 18 cables, 56.2 m. | `--harness` |
 | **GNSS and IMU** | Do the antennas see the sky, and what lever arms does the INS need? | Sky-view ray tracing with each blocker named, multipath near field, heading baseline and error, lever arms (FLU and FRD), a pose error budget per sensor. Sample: 100 % sky, a 1.15 m baseline giving 0.17° heading, sensor positions known to 32 mm horizontally. | `--gnss` |
 | **Sun glare and dirt** | When does the sun shine into each camera over a campaign, and which lens gets dirtiest? | The NOAA solar algorithm (checked to 0.003°), location, dates, driving window, time zone, headings from a GPX or CSV track; the share of time with the sun in or near the image, a month × hour matrix, the sun's path in the image; a dirt and spray heuristic per lens. Sample: the front camera has the sun in its image 7.2 % of the driving time in Munich. | `--exposure` |
-| **Exposure metering and HDR seams** *(next release)* | What should each camera's auto-exposure meter, and how far do neighbouring cameras' exposures drift apart across the bird's-eye seams? | A metering mask per camera through the real lens (no body, rig, housings, sky or the dark beyond the image circle) as PNG, a 0–15 metering grid and weighted AE rectangles (libargus `setAeRegions`); a clear-sky photometric model over the Sun glare campaign and at low sun, a tunnel exit and night: each camera's exposure and the step across each seam before and after the stitcher's gain balancing. Sample: the masks remove 20–35 % of each image; over a year in Munich the seams step by up to 1.5 EV and balancing leaves under 0.1 EV; a tunnel exit spreads the cameras over 3.7 EV. | `--isp` |
+| **Exposure metering and HDR seams** | What should each camera's auto-exposure meter, and how far do neighbouring cameras' exposures drift apart across the bird's-eye seams? | A metering mask per camera through the real lens (no body, rig, housings, sky or the dark beyond the image circle) as PNG, a 0–15 metering grid and weighted AE rectangles (libargus `setAeRegions`); a clear-sky photometric model over the Sun glare campaign and at low sun, a tunnel exit and night: each camera's exposure and the step across each seam before and after the stitcher's gain balancing. Sample: the masks remove 20–35 % of each image; over a year in Munich the seams step by up to 1.5 EV and balancing leaves under 0.1 EV; a tunnel exit spreads the cameras over 3.7 EV. | `--isp` |
 | **Materials, glass and wipers** | What do the bumper paint, the windscreen and the wipers do to the sensors? | 77 GHz multilayer transmission through the fascia and paint (solid, metallic, pearl, repaired), the derated radar range, the fascia's thickness tuning; cameras behind glass (light lost, ray shift, dashboard reflection); a wiper sweep per windscreen camera. Sample: the corner radars lose 2.7 dB (102 → 88 m), and a repaired metallic bumper costs 8.3 dB. | `--materials` |
 | **Mount brackets** | Can I print a bracket that holds each camera at exactly its planned pose? | A 3D-printable bracket per camera: hole patterns, a surface-fitted base, VHB or screws, tube clamps for rig bars; checks for image blockage, pose accuracy, wall thickness and stiffness; watertight STL. | `--brackets` |
 | **Calibration observability** | How precisely will the planned calibration pin each sensor? | Fisher information per camera (checkerboard, ChArUco, AprilGrid), 1σ per axis, the weakest direction explained in plain words, suggested board moves with their gain, a Monte Carlo *Verify*, lidar–camera fusion density. | `--observability` |
@@ -749,7 +749,7 @@ variants.
 - locked cameras;
 - common tolerance draws.
 
-**Refine with gradients** *(next release)*: the Optimise page's second tab tunes every camera's x, y, z, yaw, pitch
+**Refine with gradients**: the Optimise page's second tab tunes every camera's x, y, z, yaw, pitch
 and roll (and optionally the stitch seams' angles) continuously with L-BFGS-B on a smooth surrogate of the coverage
 objective (blind ground, ground below the minimum density, unresolved critical targets, objects on a seam), annealed
 from soft to sharp. Cameras stay on their mount zone, locked cameras stay, mirrored pairs move together; every layout
@@ -911,7 +911,7 @@ The end-of-line check, from **one image per camera**.
 - Δx, Δy, Δz, Δψ, Δθ, Δφ;
 - a verdict: **OK / adjust / re-mount**.
 
-**Pick corners** *(next release)* is the fallback when glare, a half-hidden board or a dirty lens defeats the
+**Pick corners** is the fallback when glare, a half-hidden board or a dirty lens defeats the
 detection:
 
 - the camera's image is enlarged, with a ring on every board corner where the plan puts it;
@@ -1020,7 +1020,7 @@ How firmly the planned calibration will pin every sensor, before anything is cap
 **Passwords** in stream URLs are never stored in projects. They go to a private `stream-credentials.json` and are shown
 as `***`.
 
-**Calibration coach** *(next release)*: a second mode of the Live rig page (also **Calibrate ▸ Calibration coach…**).
+**Calibration coach**: a second mode of the Live rig page (also **Calibrate ▸ Calibration coach…**).
 While a technician holds a checkerboard in front of one live camera, the coach keeps each sharp, new view and adds up
 the Fisher information its corners give on the lens (or, with a lidar, on where the lidar sits); lock bars turn green
 as each part reaches the requirement, and a ghost board drawn through the exact lens model shows the next most useful
@@ -1065,7 +1065,7 @@ built?*
 
 **Verdict:** holds / holds with corrections / does not hold.
 
-**Online self-calibration** *(next release)* (Calibrate ▸ Online self-calibration…): follows every camera's rotation
+**Online self-calibration** (Calibrate ▸ Online self-calibration…): follows every camera's rotation
 relative to the lidar through a whole recorded drive, window by window, from the drive's own depth edges against image
 edges (the vehicle's outline and the shared ground are optional factors, off by default: on CARLA drives they gave
 false knocks). A smoother joins the windows and a model search (BIC) tells a **knock** that stays from an excursion
@@ -1160,7 +1160,7 @@ nuScenes plus a ROS 2 bag, in the sample dataset's layout.
 - the results open in the drive-log check;
 - **Open run…** reopens earlier drives.
 
-**SUMO traffic** *(next release)*: Eclipse SUMO can drive the other vehicles instead of CARLA's traffic manager,
+**SUMO traffic**: Eclipse SUMO can drive the other vehicles instead of CARLA's traffic manager,
 co-simulated in lockstep through CARLA's own co-simulation package. SUMO's vehicles are CARLA actors, so they are in
 the ground truth and the annotations; the net is CARLA's bundled one (Town01, 04, 05; no traffic lights), one
 generated from the map and cached, or your own. SUMO must be installed in CARLA's Python (the page shows the command;
@@ -1247,7 +1247,7 @@ ground truth. Detections are matched as COCO's evaluation does; the AP matches p
 **Example:** cameras pitched 20° up change vehicle recall at 20–40 m by +12.4 points [+4, +21], and beyond 40 m by
 −6.8 [−12, −2].
 
-**Log replay** (Simulate ▸ Log replay) *(next release)*: a recorded drive (a nuScenes folder such as a CARLA run, or a ROS 2 bag) is rebuilt as 3D Gaussians from its lidar
+**Log replay** (Simulate ▸ Log replay): a recorded drive (a nuScenes folder such as a CARLA run, or a ROS 2 bag) is rebuilt as 3D Gaussians from its lidar
 sweeps, coloured and refined against its camera images (or a 3DGS `.ply` is imported); objects with 3D boxes are
 rebuilt in their boxes. The scene is rendered through the recorded rig, to check it on frames and sweeps it never saw,
 and through a proposed rig with its own lenses, body, housings, rolling shutter and lidars; the same detector then
@@ -1483,7 +1483,7 @@ using a wrong port, or with a missing model.
 
 **What the buttons do:** they only ask, plan, or open a page. None runs or changes anything by itself.
 
-### 17.5 New in the next release
+### 17.5 New in 0.7.0
 
 **Vision (Claude):** the assistant can look at:
 
@@ -1896,6 +1896,11 @@ Vantage states its limits wherever they apply. The main ones:
 - Sun studies assume a clear sky and a flat horizon.
 - The cable harness does not model the interior beyond its trim routes.
 
+**PyTorch**
+
+- Gradient refinement and log replay need PyTorch, which the downloads leave out for its size; they say so when
+  started. Install from source with the `[torch]` extra for them. Log replay is practical only on an NVIDIA GPU.
+
 **Unsigned builds**
 
 - The installers are not signed.
@@ -1929,5 +1934,5 @@ Vantage states its limits wherever they apply. The main ones:
 
 ---
 
-*This overview was written for Vantage 0.6.0 plus the unreleased 0.7.0 work. The full, always-current reference is in
+*This overview was written for Vantage 0.7.0. The full, always-current reference is in
 the README and on the website: <https://sherin-sef-ai.github.io/Vantage/>.*

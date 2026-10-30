@@ -96,14 +96,15 @@ platform plugins, draws with OpenGL and with the software renderer, and builds e
 ```bash
 python3 -m pip install .            # from this folder; add [step] for STEP import through gmsh,
                                     # [bags] for compressed ROS 2 bags (zstd, lz4), [keyring] for the assistant's key,
-                                    # [claude] for the Claude provider (Anthropic's SDK: or pip install --user anthropic)
+                                    # [claude] for the Claude provider (Anthropic's SDK: or pip install --user anthropic),
+                                    # [torch] for gradient refinement and log replay (PyTorch; the downloads leave it out)
 vantage                             # the window (vantage-gui on Windows starts it without a console)
 vantage --install-desktop           # Linux: Vantage in the app menu and dock with its icon, and .vantage files
 vantage --desktop-shortcut          # Linux: the same, plus a Vantage launcher on the desktop
 vantage project.vantage --analyse report.json
 ```
 
-**Building the downloads.** Tag a version (`git tag v0.6.0 && git push origin v0.6.0`). The *Build installers*
+**Building the downloads.** Tag a version (`git tag v0.7.0 && git push origin v0.7.0`). The *Build installers*
 workflow builds and smoke-tests all four bundles (Linux x86_64 and arm64, Windows, macOS). When all pass, it publishes
 the GitHub release with `SHA256SUMS.txt` and the CHANGELOG entry as notes. Starting the workflow by hand from the Actions tab builds the
 bundles as artifacts only, without a release. To build for the machine you are on, in a fresh virtual environment

@@ -191,11 +191,11 @@ def test_desktop_shortcut(tmp_path, monkeypatch):
 
 # ---------------------------------------------------------------------------------------------------- the release
 def test_version_tops_the_changelog():
-    """The version (0.6.0: live recommended actions in the assistant) is the CHANGELOG's top entry, which the release job
+    """The version (0.7.0: eight new studies, SUMO traffic, picked corners) is the CHANGELOG's top entry, which the release job
     publishes as the notes, with the sections a user needs before downloading."""
     from vantage import __version__
     release = _packaging_module('release')
-    assert __version__ == '0.6.0' == release.version()
+    assert __version__ == '0.7.0' == release.version()
     entries = release.changelog()
     assert entries and entries[0][0] == __version__
     assert len({v for v, _, _ in entries}) == len(entries)                  # one entry per version

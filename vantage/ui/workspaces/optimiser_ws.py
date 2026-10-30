@@ -940,6 +940,10 @@ class RefinePanel(QWidget):
         self.start_run()
 
     def start_run(self) -> bool:
+        why = DO.torch_missing()
+        if why:
+            self.ctx.msg(why, 10000)
+            return False
         st = self.settings()
         snap = self.ctx.store.project.snapshot()
         variant = snap.variant

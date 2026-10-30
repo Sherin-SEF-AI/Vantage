@@ -561,6 +561,11 @@ class SplatPage(QWidget):
 
     # ------------------------------------------------------------------ jobs
     def _start(self, kind, title, work):
+        why = SP.torch_missing()
+        if why:
+            self.status_text = why
+            self.ctx.msg(why, 10000)
+            return False
         win = self.ctx.window
         gen = self._gen
         if win is not None and hasattr(win, 'run_job'):
