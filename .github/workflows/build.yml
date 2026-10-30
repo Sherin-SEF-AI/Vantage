@@ -20,8 +20,9 @@ jobs:
       matrix:
         # the oldest supported Ubuntu, so the Linux bundle runs on as many distributions as possible (glibc 2.35+);
         # ubuntu-22.04-arm builds the Linux arm64 bundle on the Ubuntu NVIDIA's JetPack 6 is based on (Jetson Orin);
-        # macos-14 runs on Apple silicon, so the macOS app is arm64
-        os: [ubuntu-22.04, ubuntu-22.04-arm, windows-latest, macos-14]
+        # macos-15 runs on Apple silicon, so the macOS app is arm64 (GitHub retires macos-14 on 2026-11-02; no wheel
+        # the bundle carries needs more than macOS 14, so the app still runs on 14)
+        os: [ubuntu-22.04, ubuntu-22.04-arm, windows-latest, macos-15]
     runs-on: ${{ matrix.os }}
     env:
       QT_QPA_PLATFORM: offscreen

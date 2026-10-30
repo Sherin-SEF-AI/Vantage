@@ -338,7 +338,7 @@ def test_workflow_releases_only_after_every_bundle():
     assert 'workflow_dispatch' in on and on['push']['tags'] == ['v*']
     jobs = doc['jobs']
     b, rel = jobs['bundle'], jobs['release']
-    assert set(b['strategy']['matrix']['os']) == {'ubuntu-22.04', 'ubuntu-22.04-arm', 'windows-latest', 'macos-14'}
+    assert set(b['strategy']['matrix']['os']) == {'ubuntu-22.04', 'ubuntu-22.04-arm', 'windows-latest', 'macos-15'}
     assert b['strategy']['fail-fast'] is False
     assert doc['permissions'] == {'contents': 'read'} and rel['permissions'] == {'contents': 'write'}
     # the release waits for the whole matrix and runs only for a version tag (never by hand)

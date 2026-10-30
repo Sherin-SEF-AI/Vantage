@@ -152,7 +152,7 @@ if sys.platform == 'darwin':
             # the app background-only: no Dock icon, no menu bar
             'LSBackgroundOnly': False,
             'NSHighResolutionCapable': True,
-            # NumPy's and SciPy's wheels for macOS 14 on Apple silicon (what the macos-14 runner installs) need 14
+            # NumPy's and SciPy's newest wheels for Apple silicon (what the macos-15 runner installs) need macOS 14
             'LSMinimumSystemVersion': '14.0',
             'UTExportedTypeDeclarations': [{
                 'UTTypeIdentifier': UTI, 'UTTypeDescription': 'Vantage project',
