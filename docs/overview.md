@@ -9,7 +9,7 @@ This document describes what the application is, who it is for, and everything i
 
 | | |
 |---|---|
-| Current release | **0.7.0** (2026-10-31). |
+| Current release | **0.7.1** (2026-10-31). |
 | Platforms | Windows 10/11 x64 · macOS 14+ (Apple silicon) · Linux x86_64 · Linux arm64 (NVIDIA Jetson Orin, JetPack 6) |
 | Built with | Python 3.10+, PyQt6, NumPy, SciPy, OpenCV, PyOpenGL (GLSL shader renderer) |
 | Size | about 188,000 lines of Python; 84 test files, about 2,050 tests; a validation suite of 71 model checks |
