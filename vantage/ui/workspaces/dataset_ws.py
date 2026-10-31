@@ -22,7 +22,7 @@ from ...core.timing import plan_outline
 from ..datasetview import CameraGrid, TopView
 from ..theme import THEME, mono
 from .. import icons
-from ..widgets import ScrubSpinBox, SegmentedControl, ToggleSwitch, button, hline, label
+from ..widgets import fit_width, ScrubSpinBox, SegmentedControl, ToggleSwitch, button, hline, label
 from .recording_ws import Tile
 
 JOB = 'dataset'
@@ -232,8 +232,8 @@ class DatasetPage(QWidget):
         ll.addLayout(bl)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sc.setWidget(w)
+        fit_width(sc)
         sc.setMinimumWidth(300)
         return sc
 

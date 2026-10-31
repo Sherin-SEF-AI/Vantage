@@ -15,7 +15,7 @@ from ...core.mathutil import parse_number
 from .. import icons
 from ..charts import ChartBase
 from ..theme import THEME, STATUS, mono, sans
-from ..widgets import ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label
+from ..widgets import fit_width, ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label
 from .recording_ws import SENSOR_COLORS, SEV_WORD, ShareBar, Tile, _table
 
 # hue families apart from the eight camera colours: lidar and radar as on the recording page, GNSS and IMU from their
@@ -325,8 +325,8 @@ class PowerPage(QWidget):
         ll.addStretch(1)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sc.setWidget(w)
+        fit_width(sc)
         # the status and the buttons stay in view under the scrolling settings
         out = QWidget()
         out.setObjectName('panel')

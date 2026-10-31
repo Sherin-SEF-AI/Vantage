@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QComboBox, QFileDialog, QGridLay
 from ...core import asbuilt as AB
 from ..asbuiltview import AsBuiltView
 from ..theme import STATUS, THEME, mono
-from ..widgets import ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label
+from ..widgets import fit_width, ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label
 from .recording_ws import Tile
 
 JOB = 'asbuilt'
@@ -313,8 +313,8 @@ class AsBuiltPage(QWidget):
         ll.addLayout(bl)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sc.setWidget(w)
+        fit_width(sc)
         sc.setMinimumWidth(340)
         return sc
 

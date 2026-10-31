@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QComboBox, QFileDialog, QGridLay
 from ...core import drivelog as DL
 from ...core import online_calib as OC
 from ..theme import THEME, mono, sans
-from ..widgets import ROW_H, ScrubSpinBox, StatusLine, ToggleSwitch, button, hline, label
+from ..widgets import fit_width, ROW_H, ScrubSpinBox, StatusLine, ToggleSwitch, button, hline, label
 
 JOB = 'online_calib'
 EMPTY = 'Open a recorded drive (a ROS 2 bag or a nuScenes folder), then Run.'
@@ -344,8 +344,8 @@ class OnlineCalibPage(QWidget):
         ll.addStretch(1)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sc.setWidget(w)
+        fit_width(sc)
         sc.setMinimumWidth(340)
         return sc
 

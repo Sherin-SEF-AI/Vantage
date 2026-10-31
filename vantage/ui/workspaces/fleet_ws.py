@@ -20,7 +20,7 @@ from ...core.mathutil import fmt_num, parse_number
 from ...core.project import Variant
 from ..fleetview import DriftChart, FleetMatrix, sensor_color
 from ..theme import STATUS, THEME, mono, sans
-from ..widgets import ROW_H, ScrubSpinBox, StatusLine, button, hline, label, tool_button
+from ..widgets import fit_width, ROW_H, ScrubSpinBox, StatusLine, button, hline, label, tool_button
 from .recording_ws import Tile
 
 # (key, label, unit, decimals, step, tooltip)
@@ -278,8 +278,8 @@ class FleetPage(QWidget):
         ll.addLayout(bl)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sc.setWidget(w)
+        fit_width(sc)
         sc.setMinimumWidth(380)
         return sc
 

@@ -22,7 +22,7 @@ from ...core import observability as OB
 from ...core import sensor_coverage as SC
 from ...core.mathutil import parse_number
 from ..theme import SEQ, STATUS, THEME, mono, sans
-from ..widgets import ROW_H, ScrubSpinBox, StatusLine, ToggleSwitch, button, hline, label
+from ..widgets import fit_width, ROW_H, ScrubSpinBox, StatusLine, ToggleSwitch, button, hline, label
 from .recording_ws import Tile
 
 JOB = 'observability'
@@ -669,8 +669,8 @@ class ObservabilityPage(QWidget):
         ll.addLayout(bl2)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sc.setWidget(w)
+        fit_width(sc)
         sc.setMinimumWidth(310)
         return sc
 

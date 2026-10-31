@@ -32,7 +32,7 @@ from ...sim import carla_bridge as CB
 from ...sim import server as SV
 from ...sim import sumo_cosim as SUMO
 from ..theme import THEME, mono
-from ..widgets import ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label
+from ..widgets import fit_width, ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label
 from .recording_ws import Tile
 
 JOB = 'carla'
@@ -190,9 +190,9 @@ def _pane(w, min_h):
     sc.setObjectName('panel')
     sc.setFrameShape(QFrame.Shape.NoFrame)
     sc.setWidgetResizable(True)
-    sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     w.setMinimumWidth(1)                    # an explicit minimum: the scroll area sizes it to the column's width
     sc.setWidget(w)
+    fit_width(sc)
     sc.setMinimumHeight(min_h)
     return sc
 
@@ -478,8 +478,8 @@ class SimPage(QWidget):
         ll.addLayout(bl)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sc.setWidget(w)
+        fit_width(sc)
         sc.setMinimumWidth(320)
         return sc
 

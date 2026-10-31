@@ -21,7 +21,7 @@ from ...core import brackets as BR
 from ...core.project import mirror_props
 from ..bracketview import BracketView
 from ..theme import THEME, STATUS, mono
-from ..widgets import ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label
+from ..widgets import fit_width, ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label
 
 JOB = 'brackets'
 STATUS_WORD = {'ok': 'Generated', 'warning': 'Warning', 'standoff': 'Needs standoff', 'floating': 'Too far out',
@@ -532,8 +532,8 @@ class BracketsPage(QWidget):
         ll.addStretch(1)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sc.setWidget(w)
+        fit_width(sc)
         # status, progress and the buttons stay in view under the scrolling settings
         outer = QWidget()
         outer.setObjectName('panel')

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QRectF, QPointF, QEvent, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QRectF, QPointF, QEvent, QTimer, QObject
 from PyQt6.QtGui import QPainter, QColor, QPen, QFont, QFontMetrics, QCursor, QBrush, QPainterPath
 from PyQt6.QtWidgets import (QWidget, QLabel, QDoubleSpinBox, QAbstractSpinBox, QAbstractButton, QHBoxLayout,
                              QVBoxLayout, QPushButton, QButtonGroup, QToolButton, QSizePolicy, QFrame, QGridLayout,
@@ -23,6 +23,51 @@ def fix_height(w, h):
     cls = type(w).__name__ if type(w).__module__.startswith('PyQt6') else type(w).__mro__[1].__name__
     w.setStyleSheet((w.styleSheet() or '') + f' {cls} {{ min-height: {h}px; max-height: {h}px; }}')
     return w
+
+
+class _FitWidth(QObject):
+    """Keeps a side panel's scroll area as wide as its content needs (see fit_width)."""
+
+    def __init__(self, sc, cap):
+        super().__init__(sc)
+        self.sc, self.cap, self.base = sc, cap, sc.minimumWidth()
+        self._busy = False
+
+    def eventFilter(self, obj, e):
+        if e.type() in (QEvent.Type.LayoutRequest, QEvent.Type.Show, QEvent.Type.FontChange) and not self._busy:
+            self._busy = True
+            try:
+                self.fit()
+            finally:
+                self._busy = False
+        return False
+
+    def fit(self):
+        sc, w = self.sc, self.sc.widget()
+        if w is None:
+            return
+        bar = sc.style().pixelMetric(sc.style().PixelMetric.PM_ScrollBarExtent)
+        need = w.minimumSizeHint().width() + bar + 2 * sc.frameWidth()
+        sc.setMinimumWidth(max(self.base, min(need, self.cap)))
+
+
+def fit_width(sc, cap=560):
+    """A side panel's scroll area that never hides content to the left or right: it is at least as wide as its
+    content's minimum (up to cap pixels, so a splitter cannot squeeze it narrower), its combo boxes shrink to their
+    text instead of their longest item, and past the cap a horizontal scroll bar shows rather than the content being
+    cut off. Call it after setWidget."""
+    sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    w = sc.widget()
+    if w is not None:
+        for cb in w.findChildren(QComboBox):
+            if cb.sizeAdjustPolicy() == QComboBox.SizeAdjustPolicy.AdjustToContentsOnFirstShow:
+                cb.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+                cb.setMinimumContentsLength(14)
+    f = _FitWidth(sc, cap)
+    if w is not None:
+        w.installEventFilter(f)
+    f.fit()
+    return sc
 
 
 def hline():

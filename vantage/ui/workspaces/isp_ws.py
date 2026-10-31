@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QFileDialog, QGridLayout, QHBoxL
 from ...core import isp_photometrics as I
 from ..charts import ChartBase
 from ..theme import SEQ, STATUS, THEME, mono, sans
-from ..widgets import ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, button, hline, label
+from ..widgets import ROW_H, fit_width, ScrubSpinBox, SegmentedControl, StatusLine, button, hline, label
 
 # (group, key, label, unit, decimals, scrub step, scale shown / stored, tooltip)
 FIELDS = (
@@ -589,6 +589,7 @@ class IspPage(QWidget):
             ll.addLayout(g2)
         ll.addStretch(1)
         sc.setWidget(host)
+        fit_width(sc)
         outer.addWidget(sc, 1)
         bot = QVBoxLayout()
         bot.setContentsMargins(8, 4, 8, 8)

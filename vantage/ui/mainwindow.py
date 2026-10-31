@@ -37,6 +37,8 @@ class JobSignals(QObject):
     failed = pyqtSignal(str, str)
 
 
+JOB_LABEL_W = 420           # px: the status bar's job label, cut in the middle past this
+
 # page name -> (module in ui/workspaces, class): built on first use
 PAGE_CLASSES = {
     'camviews': ('camviews', 'CamViewsPage'), 'tolerance': ('tolerance_ws', 'TolerancePage'),
@@ -948,6 +950,7 @@ class MainWindow(QMainWindow):
             sep.setStyleSheet(f'background: {THEME.tok["hair"]};')
             sb.addWidget(sep)
         self.job_label = QLabel('')
+        self.job_label.setMaximumWidth(JOB_LABEL_W + 8)
         self.job_bar = QProgressBar()
         self.job_bar.setProperty('inline', True)
         self.job_bar.setFixedWidth(120)
@@ -2457,7 +2460,10 @@ class MainWindow(QMainWindow):
         return e
 
     def _show_job(self, name, frac, text=''):
-        self.job_label.setText(f'{name}' + (f' · {text}' if text else ''))
+        full = f'{name}' + (f' · {text}' if text else '')
+        self.job_label.setText(self.job_label.fontMetrics().elidedText(full, Qt.TextElideMode.ElideMiddle,
+                                                                       JOB_LABEL_W))
+        self.job_label.setToolTip(full)                 # the whole job, its label cut to fit the status bar
         self.job_bar.setValue(int(frac * 1000))
         self.job_pct.setText(f'{frac * 100:.0f} %')
         for w in (self.job_label, self.job_bar, self.job_pct, self.job_cancel):

@@ -20,7 +20,7 @@ from ...core.mathutil import parse_number
 from .. import colormaps
 from ..charts import ChartBase
 from ..theme import STATUS, THEME, mono, sans
-from ..widgets import ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label
+from ..widgets import fit_width, ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label
 
 # key, label, kind, decimals, unit, scrub step, tooltip
 RUN_FIELDS = (('runs', 'Runs', 'plain', 0, '', 10.0, 'Monte Carlo runs over the timeline'),
@@ -758,8 +758,8 @@ class ClockTreePage(QWidget):
         ll.addLayout(bl)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sc.setWidget(w)
+        fit_width(sc)
         sc.setMinimumWidth(300)
         return sc
 

@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QComboBox, QFileDialog, QGridLay
 from ...core import requirements as RQ
 from .. import icons
 from ..theme import THEME, STATUS, mono, sans
-from ..widgets import ROW_H, ScrubSpinBox, SegmentedControl, button, hline, label
+from ..widgets import fit_width, ROW_H, ScrubSpinBox, SegmentedControl, button, hline, label
 from .recording_ws import Tile
 
 JOB = 'requirements'
@@ -171,8 +171,8 @@ class RequirementsPage(QWidget):
         ll.addLayout(bl)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sc.setWidget(w)
+        fit_width(sc)
         sc.setMinimumWidth(260)
         return sc
 
@@ -329,8 +329,8 @@ class RequirementsPage(QWidget):
         rl.addWidget(self.ev_detail)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sc.setWidget(w)
+        fit_width(sc)
         sc.setMinimumWidth(320)
         self._fill_metrics()
         return sc

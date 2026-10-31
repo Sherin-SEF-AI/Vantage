@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFileDialo
 from ...core import automation as AU
 from ..dialogs.base import VDialog
 from ..theme import STATUS, THEME, mono
-from ..widgets import (ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label)
+from ..widgets import (fit_width, ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label)
 from .recording_ws import Tile
 
 VERDICT_SEV = {'pass': 'good', 'fail': 'serious', 'incomplete': 'warning', 'empty': None}
@@ -505,8 +505,8 @@ class AutomationPage(QWidget):
         host.setLayout(fl)
         self.formats = QScrollArea()
         self.formats.setWidgetResizable(True)
-        self.formats.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.formats.setWidget(host)
+        fit_width(self.formats)
         self.formats.setFixedHeight(250)
         self.formats.setToolTip('The export formats to regenerate (images of the window cannot be made in the '
                                 'background)')
@@ -577,8 +577,8 @@ class AutomationPage(QWidget):
         ll.addLayout(bl)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sc.setWidget(w)
+        fit_width(sc)
         sc.setMinimumWidth(320)
         return sc
 

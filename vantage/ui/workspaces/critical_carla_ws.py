@@ -23,7 +23,7 @@ from ...core import critical as CR
 from ...core import critical_carla as CC
 from ..charts import ChartBase
 from ..theme import STATUS, THEME, mono, sans
-from ..widgets import ROW_H, ScrubSpinBox, StatusLine, button, hline, label
+from ..widgets import fit_width, ROW_H, ScrubSpinBox, StatusLine, button, hline, label
 from .recording_ws import Tile
 
 JOB = 'critical_carla'
@@ -437,8 +437,8 @@ class CriticalCarlaPage(QWidget):
         ll.addLayout(bl)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sc.setWidget(w)
+        fit_width(sc)
         sc.setMinimumWidth(380)
         return sc
 

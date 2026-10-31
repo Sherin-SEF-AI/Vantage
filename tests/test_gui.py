@@ -518,3 +518,29 @@ def test_photo_matched_shading_main_view(app, win):
         assert ps.current != k0 and pane.scene.photo_frame == ps.current
     win.set_view('persp')
     assert win.ctx.shading == 'solid' and pane.vp3d.cam.custom is None and pane.scene.photo_frame is None
+
+
+def test_no_page_hides_part_of_a_panel_without_a_scroll_bar(app, win):
+    """A side panel's content wider than its scroll area used to be cut off at the left or right with no way to see
+    it (horizontal scroll bar off); fit_width widens the area to the content, or shows the bar past its cap."""
+    from PyQt6.QtWidgets import QScrollArea
+    from vantage.ui.mainwindow import PAGE_CLASSES
+    win.resize(1500, 950)
+    win.docks['assistant'].show()
+    bad = []
+    try:
+        for name in PAGE_CLASSES:
+            win.set_page(name)
+            pump(app, 0.15)
+            for sc in win.page(name).findChildren(QScrollArea):
+                w = sc.widget()
+                if w is None or not sc.isVisible():
+                    continue
+                if w.width() > sc.viewport().width() + 1 and not sc.horizontalScrollBar().isVisible():
+                    bad.append(f'{name}: {type(w).__name__} {w.width()} px in {sc.viewport().width()} px')
+                elif not sc.horizontalScrollBar().isVisible() and sc.horizontalScrollBar().value():
+                    bad.append(f'{name}: scrolled {sc.horizontalScrollBar().value()} px with no bar')
+    finally:
+        win.set_page('viewports')
+        win.resize(1600, 1000)
+    assert not bad, bad

@@ -12,7 +12,7 @@ from ...core import recording as RB
 from .. import icons
 from ..charts import ChartBase
 from ..theme import THEME, STATUS, mono, sans
-from ..widgets import (ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label)
+from ..widgets import (fit_width, ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label)
 
 # one hue family per kind, apart from the eight camera colours; the first is the kind's colour in the 3D and plan views
 # (ui.sensorview.COLORS), the others step darker and lighter so neighbouring segments stay apart
@@ -394,8 +394,8 @@ class RecordingPage(QWidget):
         ll.addLayout(bl)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sc.setWidget(w)
+        fit_width(sc)
         sc.setMinimumWidth(300)
         return sc
 

@@ -27,7 +27,8 @@ from ...core.project import new_uid
 from ..charts import ProjectionPlot
 from .. import icons
 from ..theme import THEME, mono, STATUS
-from ..widgets import label, button, SegmentedControl, ScrubSpinBox, hline, vline, ImageCircleDiagram, ROW_H, StatusLine
+from ..widgets import (fit_width, label, button, SegmentedControl, ScrubSpinBox, hline, vline, ImageCircleDiagram,
+                       ROW_H, StatusLine)
 from .base import VDialog
 
 # figures that describe a product: an import of another camera starts them blank instead of inheriting the old ones
@@ -222,8 +223,8 @@ class ModuleEditor(VDialog):
         sc = QScrollArea()
         sc.setWidgetResizable(True)
         sc.setFrameShape(QFrame.Shape.NoFrame)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sc.setWidget(ds)
+        fit_width(sc)
         sc.setFixedWidth(356)
         cols.addWidget(sc)
         cols.addWidget(vline())

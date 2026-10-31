@@ -25,7 +25,7 @@ from ...core import terrain as TR
 from ..charts import ChartBase
 from ..planview import PlanView
 from ..theme import THEME, STATUS, mono, sans
-from ..widgets import (ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label,
+from ..widgets import (fit_width, ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label,
                        tool_button)
 from .recording_ws import Tile
 
@@ -797,8 +797,8 @@ class TerrainPage(QWidget):
         ll.addLayout(bl)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sc.setWidget(w)
+        fit_width(sc)
         sc.setMinimumWidth(340)
         return sc
 

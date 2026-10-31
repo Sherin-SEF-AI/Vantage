@@ -138,8 +138,14 @@ def _cam(project, tag):
 
 
 def _short(text, n=72):
+    """At most n characters, cut at a word boundary with an ellipsis."""
     text = ' '.join(str(text).split())
-    return text if len(text) <= n else text[:n - 1].rstrip(' ,;:') + '…'
+    if len(text) <= n:
+        return text
+    cut = text[:n - 1]
+    if ' ' in cut[n // 2:]:
+        cut = cut[:cut.rindex(' ')]
+    return cut.rstrip(' ,;:-–') + '…'
 
 
 _URL = re.compile(r'[a-z][a-z0-9+.-]*://\S+', re.IGNORECASE)
@@ -177,13 +183,16 @@ def issue_rules(st: State, cx: Context):
         if 'of ground in the ROI is blind' in msg:
             continue                                    # the ground rule says it with the patch and the camera
         first = re.split(r'(?<=[.;])\s', msg, maxsplit=1)[0].rstrip('.')
+        head, _, rest = first.partition(': ')         # 'X falls short: the detail' -> title X, the detail below
+        rest = (rest + msg[len(first):]).strip(' .') if rest else msg[len(first):].strip(' .')
         key = re.sub(r'[\d.,]+', '#', f'{iss.objects}|{first}')[:90]
         cams = [tags.get(u, u) for u in getattr(iss, 'uids', [])]
         low = f'{iss.objects} {msg}'.lower()
         pages = tuple(('page', pg) for word, pg in ISSUE_PAGES if word in low)[:1]
         topic = f'requirement:{iss.objects.split("·")[-1].strip()}' if iss.action == 'requirement' else \
             'vanish' if 'vanish' in msg else ''
-        out.append(_rec(f'issue:{key}', f'Fix: {_short(first, 64)}', f'{iss.severity.capitalize()} issue: {msg}',
+        out.append(_rec(f'issue:{key}', f'Fix: {_short(head, 80)}',
+                        f'{iss.severity.capitalize()} on the Issues list' + (f': {rest}.' if rest else '.'),
                         'ask', iss.severity, 1.0 - 0.05 * i, source='Issues list',
                         prompt=f'Explain this issue and suggest the smallest fix, checked with simulate_changes '
                                f'where it is a camera change: "{msg}"',

@@ -25,7 +25,7 @@ from ..charts import ChartBase
 from ..planview import PlanView
 from ..scene import MainScene
 from ..theme import STATUS, THEME, mono, sans
-from ..widgets import ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, button, hline, label
+from ..widgets import fit_width, ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, button, hline, label
 
 JOB = 'critical'
 OVERLAY = 'critical'                 # View ▸ Overlays key the main views draw the targets under
@@ -1048,8 +1048,8 @@ class CriticalPage(QWidget):
         ll.addLayout(bl)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sc.setWidget(w)
+        fit_width(sc)
         sc.setMinimumWidth(372)
         return sc
 

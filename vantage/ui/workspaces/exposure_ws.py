@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QComboBox, QFileDialog, QGridLay
 from ...core import exposure as X
 from ..exposureview import DirtMap, HeadingRose, ImageTracks, SkyChart, SunHeatmap, item_color
 from ..theme import STATUS, THEME, mono
-from ..widgets import ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, button, hline, label
+from ..widgets import fit_width, ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, button, hline, label
 
 JOB = 'exposure'
 AUTO_MAX_S = 3.0
@@ -449,8 +449,8 @@ class ExposurePage(QWidget):
         ll.addLayout(bl)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sc.setWidget(w)
+        fit_width(sc)
         sc.setMinimumWidth(320)
         return sc
 

@@ -23,7 +23,7 @@ from ...core import materials as M
 from ...core import wipers as W
 from ..charts import ChartBase
 from ..theme import STATUS, THEME, mono, sans
-from ..widgets import ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label
+from ..widgets import fit_width, ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label
 
 RISK_TONE = {'low': 'good', 'moderate': 'warning', 'high': 'serious'}
 SEV_WORD = {'good': 'OK', 'warning': 'Warning', 'serious': 'Serious', 'critical': 'Critical'}
@@ -589,8 +589,8 @@ class MaterialsPage(QWidget):
         ll.addLayout(bl)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sc.setWidget(w)
+        fit_width(sc)
         sc.setMinimumWidth(300)
         return sc
 

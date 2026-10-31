@@ -103,7 +103,7 @@ QTabBar::tab { height: 22px; padding: 0 12px; background: @base; color: @ink2; b
 QTabBar::tab:selected { background: @panel; color: @ink; border-top-color: @ink; }
 QTabBar::tab:hover:!selected { color: @ink; }
 QTabWidget::pane { border: none; }
-QHeaderView { background: @panel; }
+QHeaderView { background: @panel; qproperty-defaultAlignment: 'AlignLeft|AlignVCenter'; }
 QHeaderView::section { height: 22px; padding: 0 8px; background: @raised; color: @ink2; border: none; border-bottom: 1px solid @strong; }
 QTreeView, QTableView, QListView { background: @panel; border: none; gridline-color: @hair; outline: none;
     selection-background-color: @sel; selection-color: @ink; alternate-background-color: @panel; }

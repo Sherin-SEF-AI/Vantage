@@ -25,7 +25,7 @@ from ...core import detection as DT
 from ...core import detection_eval as DE
 from ..charts import ChartBase
 from ..theme import STATUS, THEME, mono, sans
-from ..widgets import ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, button, hline, label
+from ..widgets import fit_width, ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, button, hline, label
 from .recording_ws import Tile
 
 JOB = 'detection'
@@ -57,6 +57,7 @@ VIEW_FIELDS = (
     ('view_pitch_deg', 'View pitch', '°', 1, 1.0, 'The views look this far below the horizon (level, no roll)'),
     ('view_width', 'View width', 'px', 0, 32.0, 'Each view\'s width in pixels (its height: × 0.75)'),
 )
+VIEW_YAWS_TIP = 'The pinhole views\' headings from the camera\'s own, degrees, left positive, comma separated'
 CAM_COLS = (('Camera', ''), ('Range', 'Range bin: camera to the object\'s box centre'),
             ('Objects', 'Labelled objects that are not ignored'), ('Found', 'Objects detected at the operating point'),
             ('Recall', 'Found / objects, with its bootstrap interval'),
@@ -444,8 +445,7 @@ class DetectionPage(QWidget):
                 ('range_edges', 'Range bins', 'Range bin edges in metres, comma separated (bins from 0 and beyond '
                                               'the last)'),
                 ('height_edges', 'Height bins', 'Object height bin edges in pixels, comma separated'),
-                ('view_yaws', 'View headings', 'The pinhole views\' headings from the camera\'s own, degrees, left '
-                                               'positive, comma separated')), n):
+                ('view_yaws', 'View headings', VIEW_YAWS_TIP)), n):
             e = QLineEdit()
             e.setToolTip(tip)
             e.setFont(mono(12))
@@ -507,8 +507,8 @@ class DetectionPage(QWidget):
         ll.addStretch(1)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sc.setWidget(w)
+        fit_width(sc)
         sc.setMinimumWidth(360)
         return sc
 
@@ -522,16 +522,20 @@ class DetectionPage(QWidget):
         pick = QHBoxLayout()
         self.rec_pick = QComboBox()
         self.rec_pick.setToolTip('The recording shown')
+        self.rec_pick.setPlaceholderText('Recording: after a run')
         self.rec_pick.currentIndexChanged.connect(lambda *_: self._show())
         pick.addWidget(self.rec_pick, 2)
         self.cls_pick = QComboBox()
         self.cls_pick.setToolTip('The class shown')
+        self.cls_pick.setPlaceholderText('Class')
         self.cls_pick.currentIndexChanged.connect(lambda *_: self._show())
         pick.addWidget(self.cls_pick, 1)
         self.mode_pick = SegmentedControl([('fisheye', 'Fisheye'), ('pinhole', 'Views')], 'fisheye')
         self.mode_pick.setToolTip('Results on the fisheye images or on the pinhole views')
         self.mode_pick.changed.connect(lambda *_: self._show())
         pick.addWidget(self.mode_pick)
+        for c in (self.rec_pick, self.cls_pick, self.mode_pick):
+            c.setEnabled(False)                     # nothing to pick before a run
         rl.addLayout(pick)
         tiles = QHBoxLayout()
         tiles.setSpacing(8)
@@ -853,9 +857,12 @@ class DetectionPage(QWidget):
             self.views.set_value(st.views)
             for c, cb in self.class_box.items():
                 cb.setChecked(c in st.classes)
-            for k, _t, _u, _d, _s, _tip in VIEW_FIELDS:
+            why = '' if st.views != 'fisheye' else '\n\nOff while Images is Fisheye: pick Pinhole views or Both.'
+            for k, _t, _u, _d, _s, tip in VIEW_FIELDS:
                 self.fields[k].setEnabled(st.views != 'fisheye')
+                self.fields[k].setToolTip(tip + why)
             self.texts['view_yaws'].setEnabled(st.views != 'fisheye')
+            self.texts['view_yaws'].setToolTip(VIEW_YAWS_TIP + why)
             self.recs.clear()
             for i, p in enumerate(st.recordings):
                 info = self._rec_info(p)
@@ -900,6 +907,16 @@ class DetectionPage(QWidget):
             self.bar.setValue(int(f * 1000))
             if text:
                 self.status.setText(text)
+            if gen == self._gen and self.busy:
+                self._chart_empty(f'Running: {text or "detecting"} ({f * 100:.0f} %)')
+
+    def _chart_empty(self, busy_text=None):
+        """The charts' empty text: what to do before a run, or the run's progress while it runs."""
+        for ch in (self.cam_chart, self.height_chart, self.rig_chart):
+            if not hasattr(ch, '_idle_empty'):
+                ch._idle_empty = ch.empty
+            ch.empty = busy_text or ch._idle_empty
+            ch.update()
 
     def _thread_done(self, gen, payload):
         kind, out = payload
@@ -965,11 +982,20 @@ class DetectionPage(QWidget):
         det = self.detector
         self._gen += 1
         self.busy = True
+        self._chart_empty('Running: starting')
         self.status_text = 'Running…'
         self.bar.setValue(0)
 
+        gen, sig = self._gen, self.sig
+
         def work(progress, cancel):
-            return key, DE.run(None, settings=st, progress=progress, cancel=cancel, detector=det)
+            def both(f, text=''):              # the status bar's job and this page's own bar and charts
+                progress(f, text)
+                try:
+                    sig.progress.emit(gen, f, text)
+                except RuntimeError:            # the page closed
+                    pass
+            return key, DE.run(None, settings=st, progress=both, cancel=cancel, detector=det)
         ok = self._start(JOB, 'Detection quality', work, '_gen')
         if not ok:
             self.busy = False
@@ -1025,6 +1051,8 @@ class DetectionPage(QWidget):
         if not st.recordings and self.result is None and not txt:
             txt = EMPTY
         self.status.setText(txt)
+        if not self.busy:
+            self._chart_empty()
         self._show()
 
     def _fill_pickers(self):
@@ -1045,6 +1073,10 @@ class DetectionPage(QWidget):
             self.mode_pick.setEnabled(len(res.modes()) > 1)
         for cb in (self.rec_pick, self.cls_pick, self.cam_pick):
             cb.blockSignals(False)
+        self.rec_pick.setEnabled(self.rec_pick.count() > 1)
+        self.cls_pick.setEnabled(self.cls_pick.count() > 0)
+        if res is None:
+            self.mode_pick.setEnabled(False)
         self._fill_cams()
 
     def _fill_cams(self):

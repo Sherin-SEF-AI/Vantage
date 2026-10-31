@@ -193,11 +193,16 @@ def test_issues_most_severe_first_by_name_and_the_blind_one_left_to_the_ground_r
     assert [r.title for r in recs] == ['Fix: Routed cable 6.20 m is longer than the 5.00 m module cable',
                                        'Fix: QL has no GMSL port assigned']
     assert recs[0].base > recs[1].base and recs[0].kind == 'ask' and iss[2].message in recs[0].prompt
+    assert [r.why for r in recs] == ['Serious on the Issues list: Use the 8 m cable.', 'Warning on the Issues list.']
     assert ('camera', 'QL') in recs[1].about
     # the sample's own list: every issue but the blind ground, by its message
     recs = RC.issue_rules(_state(sample), RC.Context())
     want = [i.message for i in sample.issues if 'is blind' not in i.message][:4]
-    assert [r.why.split(': ', 1)[1] for r in recs] == want[:len(recs)] and recs
+    assert [r.evidence['message'] for r in recs] == want[:len(recs)] and recs
+    for r in recs:                              # the title and the detail say it once between them, no word cut
+        assert r.why.startswith(('Warning on the Issues list', 'Serious on the Issues list',
+                                 'Critical on the Issues list'))
+        assert r.title[5:].rstrip('…') in r.evidence['message']
     assert not RC.issue_rules(RC.State(sample.p, sample.res, []), RC.Context())
 
 

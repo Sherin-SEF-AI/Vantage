@@ -23,7 +23,7 @@ from ... import workdir
 from ...core import detection as DT
 from ...core import splat_reproject as SP
 from ..theme import STATUS, THEME, sans
-from ..widgets import ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label
+from ..widgets import fit_width, ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label
 
 JOB = 'splat'
 EMPTY = ('Open a recorded drive (a nuScenes folder or a ROS 2 bag, e.g. a CARLA run), build its scene, choose the rig '
@@ -337,8 +337,8 @@ class SplatPage(QWidget):
         ll.addStretch(1)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sc.setWidget(w)
+        fit_width(sc)
         sc.setMinimumWidth(360)
         return sc
 

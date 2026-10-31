@@ -14,7 +14,7 @@ from ...core.project import FRAME_PRESETS
 from ...core.rules import blocks_export
 from .. import icons
 from ..theme import THEME, mono, sans, STATUS
-from ..widgets import label, button, SegmentedControl, hline, vline, StatusLine, ROW_H
+from ..widgets import fit_width, label, button, SegmentedControl, hline, vline, StatusLine, ROW_H
 from .base import VDialog
 
 MENU_TO_FMT = {'bev_lut': 'bev_lut', 'mount_sheet_pdf': 'mount_sheet_pdf', 'report_html': 'report_html', 'report_pdf': 'report_pdf',
@@ -111,8 +111,8 @@ class ExportDialog(VDialog):
         sc = QScrollArea()
         sc.setWidgetResizable(True)
         sc.setFrameShape(QFrame.Shape.NoFrame)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sc.setWidget(left)
+        fit_width(sc)
         sc.setFixedWidth(left.width() + sc.verticalScrollBar().sizeHint().width())
         self.format_scroll = sc
         main.addWidget(sc)

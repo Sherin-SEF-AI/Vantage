@@ -19,7 +19,7 @@ from ...core import gnss as G
 from .. import icons
 from ..gnssview import SkyPlot, blocker_color
 from ..theme import THEME, STATUS, mono, sans
-from ..widgets import ROW_H, ScrubSpinBox, StatusLine, ToggleSwitch, button, hline, label
+from ..widgets import fit_width, ROW_H, ScrubSpinBox, StatusLine, ToggleSwitch, button, hline, label
 from .recording_ws import Tile
 
 QUICK_S = 0.15                       # a study expected to take longer runs on a worker thread
@@ -245,8 +245,8 @@ class GnssPage(QWidget):
         ll.addLayout(bl)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sc.setWidget(w)
+        fit_width(sc)
         sc.setMinimumWidth(290)
         return sc
 

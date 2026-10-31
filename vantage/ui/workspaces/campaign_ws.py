@@ -22,7 +22,7 @@ from ... import workdir
 from ...core import simcampaign as SC
 from ..charts import ChartBase
 from ..theme import STATUS, THEME, mono, sans
-from ..widgets import ROW_H, ScrubSpinBox, SegmentedControl, button, hline, label
+from ..widgets import ROW_H, fit_width, ScrubSpinBox, SegmentedControl, button, hline, label
 from .recording_ws import Tile
 
 JOB = 'campaign'
@@ -318,6 +318,7 @@ class CampaignPage(QWidget):
         sc.setWidgetResizable(True)
         sc.setWidget(self._left())
         sc.setMinimumWidth(380)
+        fit_width(sc)
         split.addWidget(sc)
         split.addWidget(self._right())
         split.setSizes([420, 1000])
@@ -542,6 +543,8 @@ class CampaignPage(QWidget):
         pick = QHBoxLayout()
         pick.addWidget(label('Check', ink2=True))
         self.check_pick = QComboBox()
+        self.check_pick.setPlaceholderText('Check: after a run')
+        self.check_pick.setEnabled(False)
         self.check_pick.currentIndexChanged.connect(lambda _i: self._show_curves())
         pick.addWidget(self.check_pick, 1)
         self.axis_pick = SegmentedControl([('any', 'Axes pooled'), ('each', 'Per axis')], 'any')
@@ -563,6 +566,8 @@ class CampaignPage(QWidget):
         wp = QHBoxLayout()
         wp.addWidget(label('Class', ink2=True))
         self.wx_class = QComboBox()
+        self.wx_class.setPlaceholderText('Class: after a run with weathers')
+        self.wx_class.setEnabled(False)
         self.wx_class.currentIndexChanged.connect(lambda _i: self._show_weather_chart())
         wp.addWidget(self.wx_class, 1)
         wl.addLayout(wp)
@@ -967,6 +972,7 @@ class CampaignPage(QWidget):
             self.notes.setPlainText('\n'.join(SC.ASSUMPTIONS))
             self.check_pick.blockSignals(True)
             self.check_pick.clear()
+            self.check_pick.setEnabled(False)
             self.check_pick.blockSignals(False)
             return
         det = res.detectability
@@ -1007,6 +1013,7 @@ class CampaignPage(QWidget):
                                             Qt.ItemDataRole.ToolTipRole)
         i = self.check_pick.findData(cur)
         self.check_pick.setCurrentIndex(max(i, 0))
+        self.check_pick.setEnabled(self.check_pick.count() > 0)
         self.check_pick.blockSignals(False)
         self._show_curves()
         t = self.table_thresholds
@@ -1066,6 +1073,7 @@ class CampaignPage(QWidget):
         self.wx_class.blockSignals(True)
         cur = self.wx_class.currentData()
         self.wx_class.clear()
+        self.wx_class.setEnabled(bool(wx))
         if wx:
             classes = sorted({c for r in wx['rows'] for c, v in r['classes'].items() if v['n']})
             for c in classes:

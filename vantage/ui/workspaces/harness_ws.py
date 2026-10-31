@@ -16,7 +16,7 @@ from ...core.mathutil import parse_number
 from .. import icons
 from ..harnessview import HarnessView, controller, run_qcolor
 from ..theme import THEME, STATUS, mono, sans
-from ..widgets import ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label
+from ..widgets import fit_width, ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label
 from .recording_ws import SEV_WORD, Tile, _table
 
 # (group, key, label, unit, decimals, step, scale, tip); scale: stored value × scale = shown value
@@ -287,8 +287,8 @@ class HarnessPage(QWidget):
         ll.addStretch(1)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
-        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         sc.setWidget(w)
+        fit_width(sc)
         out = QWidget()
         out.setObjectName('panel')
         ol = QVBoxLayout(out)
