@@ -131,6 +131,11 @@ kbd {
 }
 .frame:hover .expand, .frame .expand:focus-visible { opacity: 1; }
 .caption { color: var(--muted); font-size: 13.5px; margin-top: 12px; }
+.frame.yt a { display: block; position: relative; }
+.frame.yt .play { opacity: 1; left: 40%; }   /* over the car, clear of the title card's text */
+.frame.yt a:hover .play span, .frame.yt a:focus-visible .play span { background: rgba(15,15,14,.9); transform: scale(1.06); }
+.frame.yt .play span { transition: transform .2s, background .2s; }
+.frame.yt iframe { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; border: 0; }
 @media (max-width: 560px) { .frame .chip { display: none; } }
 
 .facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin-top: 46px; background: var(--hair);

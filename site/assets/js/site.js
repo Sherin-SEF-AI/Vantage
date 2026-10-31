@@ -53,6 +53,23 @@
     frames.forEach(function (f) { if (f.querySelector('video')) { io.observe(f); } });
   }
 
+  // ---------------------------------------------------------------- YouTube: the player loads only when asked for
+  Array.prototype.forEach.call(document.querySelectorAll('.frame.yt a[data-yt]'), function (a) {
+    a.addEventListener('click', function (e) {
+      if (e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) { return; }
+      e.preventDefault();
+      var f = document.createElement('iframe');
+      f.src = 'https://www.youtube-nocookie.com/embed/' + a.dataset.yt + '?autoplay=1&rel=0';
+      f.title = a.getAttribute('aria-label');
+      f.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+      f.allowFullscreen = true;
+      f.referrerPolicy = 'strict-origin-when-cross-origin';
+      var chip = a.parentNode.querySelector('.chip');
+      if (chip) { chip.remove(); }
+      a.replaceWith(f);
+    });
+  });
+
   // ---------------------------------------------------------------- lightbox
   var box = document.createElement('div');
   box.className = 'lightbox';
@@ -96,7 +113,7 @@
     var b = frame.querySelector('.expand');
     if (b) { b.addEventListener('click', function () { open(frame, b); }); }
     var img = frame.querySelector('img');
-    if (img && !frame.querySelector('video')) {
+    if (img && !frame.querySelector('video') && !frame.classList.contains('yt')) {
       img.style.cursor = 'zoom-in';
       img.addEventListener('click', function () { open(frame, img); });
     }

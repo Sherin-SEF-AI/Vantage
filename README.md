@@ -21,7 +21,7 @@ into a plan with every value and its reason, and nothing runs until you approve 
 The same engine also serves production surround-view systems: stitched bird's-eye remap tables, a 3D bowl view, parking
 guidelines and where standing people vanish at stitch seams.
 
-**Website and documentation:** <https://sherin-sef-ai.github.io/Vantage/> (feature videos recorded from the app, the full documentation, batch-mode reference). The site's source is `site/`; it is published by `.github/workflows/pages.yml`.
+**Website and documentation:** <https://sherin-sef-ai.github.io/Vantage/> (feature videos recorded from the app, the full documentation, batch-mode reference). A 70-minute full tour of the app is on YouTube: <https://youtu.be/s0TM2iDErBI>. The site's source is `site/`; it is published by `.github/workflows/pages.yml`.
 
 It opens with the **Tata Tigor EV** sample: the body is lofted from the profile measured on the 19-frame studio spin
 (wheel-centre calibration, 1.6 px RMS), the cameras are e-con Systems STURDeCAM31 (Sony ISX031, 1920 × 1536, 3.0 µm) with
