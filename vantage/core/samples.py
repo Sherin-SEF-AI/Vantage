@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import os
+import uuid
 
 import numpy as np
 
@@ -26,6 +27,10 @@ TIGOR_PHOTO = {'D': 9.0102, 'hc': 1.3648, 'beta': 0.08373, 'f': 1131.23, 'u0': 4
                'axle_mid_x': 1.225, 'hub_y': 0.82337, 'hub_r': 0.29806,
                'az': [-0.02709, -0.39176, -0.74999, -1.11277, -1.32926, -1.49386, -2.02515, -2.47465, -2.82375, -3.14272,
                       -3.44159, -3.83641, -4.21345, -4.57082, -4.76665, -4.95603, -5.28625, -5.6455, -5.9808]}
+
+# uids of the sample and template projects: uuid5 of a stable name in this namespace, so every call builds the same
+# project (tests, the batch tool and the selftest can rebuild it and match its objects)
+SAMPLE_NS = uuid.UUID('6f1c2a4e-8d3b-5e7a-9c10-5a4d7e2b9f63')
 
 
 def vehicle_from_spec(spec: BodySpec) -> Vehicle:
@@ -179,6 +184,35 @@ def tigor_targets() -> list[Target]:
     return [Target(name=f'T{i + 1}', x=x, y=y) for i, (x, y) in enumerate(pos)]
 
 
+def _stable_uid(*parts) -> str:
+    return uuid.uuid5(SAMPLE_NS, '/'.join(str(x) for x in parts)).hex[:10]
+
+
+def stable_uids(p: Project) -> Project:
+    """Give the project's variants, cameras, sensors, targets, obstacles and rig parts uids derived from the project
+    name and their place in it (the same on every call), keeping camera links, seams and the active variant."""
+    old = {}
+    for i, v in enumerate(p.variants):
+        vu = _stable_uid(p.name, 'variant', i)
+        old[v.uid] = vu
+        remap = {}
+        for j, c in enumerate(v.cameras):
+            remap[c.uid] = _stable_uid(p.name, 'variant', i, 'camera', j, c.tag)
+        for j, s in enumerate(v.sensors):
+            remap[s.uid] = _stable_uid(p.name, 'variant', i, 'sensor', j, s.tag)
+        for o in list(v.cameras) + list(v.sensors):
+            o.uid = remap[o.uid]
+        for c in v.cameras:
+            c.link_uid = remap.get(c.link_uid, '')
+        v.seams = {'|'.join(remap.get(u, u) for u in k.split('|')): a for k, a in v.seams.items()}
+        v.uid = vu
+    p.active_uid = old.get(p.active_uid, p.variants[0].uid if p.variants else '')
+    for kind, objs in (('target', p.targets), ('obstacle', p.obstacles), ('rig', p.rig)):
+        for j, o in enumerate(objs):
+            o.uid = _stable_uid(p.name, kind, j, o.name)
+    return p
+
+
 def tigor_sample_project() -> Project:
     p = Project()
     p.name = 'tigor-ev-svm'
@@ -190,7 +224,7 @@ def tigor_sample_project() -> Project:
     p.photos = tigor_photos(p.vehicle.mesh)
     p.add_log('import', 'Tata Tigor EV body from the 19-frame photo fit · '
               f'{p.vehicle.mesh.n_tris} tris · units m · up +Z · forward +X')
-    return p
+    return stable_uids(p)
 
 
 def template_layout(mesh, spec: BodySpec, n: int) -> list[Camera]:
@@ -234,7 +268,7 @@ def template_project(key: str) -> Project:
     p.variants = [v]
     p.active_uid = v.uid
     p.add_log('import', f'{spec.name} template body · {p.vehicle.mesh.n_tris} tris')
-    return p
+    return stable_uids(p)
 
 
 def blank_project() -> Project:
@@ -242,4 +276,4 @@ def blank_project() -> Project:
     p.name = 'untitled'
     p.variants = [Variant(name='Variant 1')]
     p.active_uid = p.variants[0].uid
-    return p
+    return stable_uids(p)

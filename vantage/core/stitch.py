@@ -195,9 +195,34 @@ def overlap_means(lut: StitchLUT, warped: dict, valid: dict, step=2) -> list:
     return out
 
 
-def estimate_gains(lut: StitchLUT, images: dict = None, warped=None, sigma_n=10.0, sigma_g=0.5) -> dict:
+GAIN_MIN, GAIN_MAX = 0.4, 2.5           # estimate_gains clips the solved gains to this range
+
+
+class Gains(dict):
+    """{uid: (3,) gains} as estimate_gains returns them, clipped to GAIN_MIN..GAIN_MAX. `clipped` holds the solved
+    gains, before clipping, of every camera with a channel outside that range: {uid: (3,) float32}."""
+
+    def __init__(self, *args, clipped=None, **kw):
+        super().__init__(*args, **kw)
+        self.clipped = dict(clipped or {})
+
+
+def clipped_note(gains, tags=None) -> str:
+    """'F 2.91 → 2.50, QR 0.31 → 0.40': the cameras whose gains estimate_gains clipped, with the channel clipped
+    most (solved → applied), or '' when none were. tags: {uid: tag} for the names, else the uids."""
+    out = []
+    for u, raw in (getattr(gains, 'clipped', None) or {}).items():
+        raw = np.asarray(raw, float)
+        ap = np.clip(raw, GAIN_MIN, GAIN_MAX)
+        k = int(np.argmax(np.abs(np.log(np.maximum(raw, 1e-9) / ap))))
+        out.append(f'{(tags or {}).get(u, u)} {raw[k]:.2f} → {ap[k]:.2f}')
+    return ', '.join(out)
+
+
+def estimate_gains(lut: StitchLUT, images: dict = None, warped=None, sigma_n=10.0, sigma_g=0.5) -> Gains:
     """Per-camera, per-channel gains that make overlapping cameras agree (Brown & Lowe gain compensation):
-    minimise sum N_ab ((g_a I_ab - g_b I_ba)^2 / sigma_n^2 + (1 - g)^2 / sigma_g^2). Returns {uid: (3,) gains}."""
+    minimise sum N_ab ((g_a I_ab - g_b I_ba)^2 / sigma_n^2 + (1 - g)^2 / sigma_g^2). Returns {uid: (3,) gains}
+    (a Gains: its .clipped names the cameras whose solved gains were clipped to GAIN_MIN..GAIN_MAX)."""
     if warped is None:
         warped, valid = warp(lut, images)
     else:
@@ -223,8 +248,9 @@ def estimate_gains(lut: StitchLUT, images: dict = None, warped=None, sigma_n=10.
             if A[i, i] == 0:
                 A[i, i], bvec[i] = 1.0, 1.0
         g[:, ch] = np.linalg.solve(A, bvec)
-    g = np.clip(g, 0.4, 2.5)
-    return {u: g[idx[u]].astype(np.float32) for u in uids}
+    gc = np.clip(g, GAIN_MIN, GAIN_MAX)
+    clipped = {u: g[idx[u]].astype(np.float32) for u in uids if np.any(gc[idx[u]] != g[idx[u]])}
+    return Gains({u: gc[idx[u]].astype(np.float32) for u in uids}, clipped=clipped)
 
 
 def overlap_mismatch(lut: StitchLUT, warped, gains=None) -> float:

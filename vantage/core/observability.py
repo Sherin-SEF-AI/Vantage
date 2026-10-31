@@ -209,7 +209,8 @@ def _log(R) -> np.ndarray:
     return v * (th / (2 * math.sin(th)))
 
 
-def _finite_pose(o) -> bool:
+def finite_pose(o) -> bool:
+    """True when a camera's or sensor's mounting pose (x y z yaw pitch roll) is all finite numbers."""
     return all(math.isfinite(float(getattr(o, k))) for k in ('x', 'y', 'z', 'yaw', 'pitch', 'roll'))
 
 
@@ -536,7 +537,7 @@ class _Model:
         self.vg = engine.vehicle_geom(project, v) if engine is not None else None
         self.cams: list[_Cam] = []
         for c in v.cameras:
-            if not c.visible or not _finite_pose(c):
+            if not c.visible or not finite_pose(c):
                 continue
             intr = resolve(project.module_for(c), project.lens_for(c))
             R = rot_zyx(c.yaw, c.pitch, c.roll)
@@ -570,8 +571,9 @@ class _Model:
         return out
 
 
-def _project_for(project, variant):
-    """The project with variant active (a shallow copy when it is not the active one)."""
+def project_for(project, variant):
+    """The project with variant active (a shallow copy when it is not the active one; the project itself when variant
+    is None or already active). The copy shares everything but its variant list and active uid."""
     if variant is None or variant is project.variant:
         return project
     q = copy.copy(project)
@@ -958,13 +960,20 @@ def apply_suggestion(project, s: dict) -> bool:
 
 
 # =========================================================================== lidar–camera pairs
-def _lidar_model(project, engine, vg, cam, lidar, lst, poses, pixel_sigma):
+def lidar_model(project, engine, vg, cam, lidar, lst, poses, pixel_sigma):
     """The calibration's least squares at the plan: per pose the corners (model order) and the lidar's points on the
-    board, and the information over T_camera_lidar and the boards' poses: (H, M, data)."""
+    board, and the information over T_camera_lidar and the boards' poses: (H, M, data).
+
+    vg: the vehicle's geometry (the lidar's occlusion); lst: core.lidar_calib.LidarCalibSettings; poses:
+    lidar_calib.BoardPose list (world); pixel_sigma: corner noise (px). H (n×n, n = 6 + 6 per pose: T_camera_lidar's
+    rotation vector and translation, then each board's): the information under the calibration's weights; M: the
+    middle of the sandwich covariance H⁻¹ M H⁻¹ (the weights where the range noise is not the fit's); data: {'poses'
+    (per pose Rb, cb optical, uv corners, beams, s ranges, rms, points, rings), 'T0' (the planned T_camera_lidar),
+    'model', 'W', 'H' (board size m), 'Ds' (the lidar's beam directions), 'intr', 'Hcam' (the corners' part of H)}."""
     from . import lidar_calib as LC
     m = project.sensor_model_for(lidar)
     intr = resolve(project.module_for(cam), project.lens_for(cam))
-    W2O = LC._w2o(cam)
+    W2O = LC.world_to_optical(cam)
     C = cam.pos().astype(float)
     T0 = LC.plan_T(cam, lidar)
     R0, t0 = T0[:3, :3], T0[:3, 3]
@@ -1051,11 +1060,11 @@ def _lidar_pair(project, engine, vg, cam, lidar, share, st: ObservabilitySetting
         return entry, None
     entry['notes'] = list(notes)
     entry['poses'] = [b.to_dict() for b in poses]
-    H, M, data = _lidar_model(project, engine, vg, cam, lidar, lst, poses, st.pixel_sigma)
+    H, M, data = lidar_model(project, engine, vg, cam, lidar, lst, poses, st.pixel_sigma)
     Hi, ok = _inv(H)
     Cv = Hi @ M @ Hi
     cov = (Cv[:6, :6] + Cv[:6, :6].T) / 2
-    sg = LC._sigmas(cam, data['T0'], cov)
+    sg = LC.pose_sigmas(cam, data['T0'], cov)
     veh = sg['vehicle']
     sig = {'yaw_deg': veh['yaw_deg'], 'pitch_deg': veh['pitch_deg'], 'roll_deg': veh['roll_deg'],
            'x_mm': veh['x_mm'], 'y_mm': veh['y_mm'], 'z_mm': veh['z_mm']}
@@ -1071,7 +1080,7 @@ def _lidar_pair(project, engine, vg, cam, lidar, share, st: ObservabilitySetting
         Mx = Hc * f_c + (M - Hc) * f_l                  # noise / 10: weights and variances scale alike
         Hxi, _ = _inv(Hx)
         cx = Hxi @ Mx @ Hxi
-        sx = LC._sigmas(cam, data['T0'], (cx[:6, :6] + cx[:6, :6].T) / 2)['vehicle']
+        sx = LC.pose_sigmas(cam, data['T0'], (cx[:6, :6] + cx[:6, :6].T) / 2)['vehicle']
         lim[who] = _ratio({'yaw_deg': sx['yaw_deg'], 'pitch_deg': sx['pitch_deg'], 'roll_deg': sx['roll_deg'],
                            'x_mm': sx['x_mm'], 'y_mm': sx['y_mm'], 'z_mm': sx['z_mm']},
                           lst.ang_tol_deg, lst.pos_tol_mm)[0]
@@ -1153,7 +1162,7 @@ def _radars(project, engine, vg, v, st: ObservabilitySettings) -> list:
     out = []
     refl = st.reflectors
     for s in v.sensors:
-        if not s.visible or s.kind != 'radar' or not _finite_pose(s):
+        if not s.visible or s.kind != 'radar' or not finite_pose(s):
             continue
         m = project.sensor_model_for(s)
         entry = {'uid': s.uid, 'tag': s.tag, 'model': m.name, 'reflectors': [], 'sigma': None, 'ratio': math.inf,
@@ -1253,7 +1262,7 @@ def run(project, engine=None, settings: ObservabilitySettings | None = None, var
     from .analysis import Engine
     t0 = time.perf_counter()
     st = settings or settings_of(project)
-    p = _project_for(project, variant)
+    p = project_for(project, variant)
     v = p.variant
     eng = engine or Engine()
 
@@ -1308,7 +1317,7 @@ def run(project, engine=None, settings: ObservabilitySettings | None = None, var
             if stop():
                 return None
             cam, lid = v.cam(r['camera_uid']), v.sensor(r['lidar_uid'])
-            if cam is None or lid is None or not _finite_pose(cam) or not _finite_pose(lid):
+            if cam is None or lid is None or not finite_pose(cam) or not finite_pose(lid):
                 continue
             entry, data = _lidar_pair(p, eng, vg, cam, lid, r['share'], st)
             lidar_pairs.append(entry)
@@ -1599,7 +1608,7 @@ def _mc_lidar(res: ObservabilityResult, trials, rng, progress, cancel) -> dict |
             errs.append([wrap180(e[0] - e0[0]), e[1] - e0[1], wrap180(e[2] - e0[2]), *((pl - pl0) * 1000.0)])
             if progress is not None:
                 progress((pi * trials + trial + 1) / (trials * len(models)))
-        # the predicted covariance of the lidar's vehicle pose (as _sigmas propagates it)
+        # the predicted covariance of the lidar's vehicle pose (as pose_sigmas propagates it)
         Jf = np.zeros((6, 6))
         for i in range(6):
             dd = np.zeros(6)

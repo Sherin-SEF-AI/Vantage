@@ -99,6 +99,8 @@ MIN_SQUARE_PX = 8.0            # a square's width in the image at the farthest p
 MIN_BOARD_POINTS = 20
 VIEWS_CLASSIC = False          # the search's views also fall back on the classic detector (seconds on clutter;
                                # only the whole image ever needed it on the rendered boards)
+WHOLE_CLASSIC_LATE = True      # the classic detector on the whole image runs only once a view has found a board (it
+                               # costs 1–2 s on clutter); False: before the views, whenever SB finds nothing there
 FIND_BOTH_WAYS = False         # the search also tries the transposed pattern (it finds the same boards: rotations)
 # A board found by the search (no plan to say where it stands) is checked before it is taken: the detectors also
 # assemble grids from clutter and from periodic textures. Heuristics set from rendered boards and board-free scenes
@@ -238,20 +240,24 @@ def _unit(v):
     return v / max(float(np.linalg.norm(v)), 1e-12)
 
 
-def _w2o(cam) -> np.ndarray:
-    """World -> optical rotation of a camera."""
+def world_to_optical(cam) -> np.ndarray:
+    """World (vehicle) -> optical rotation (3×3) of a camera from its yaw, pitch and roll: optical x right, y down,
+    z along the view. A world direction d is d @ W2O.T in the optical frame."""
     return BODY_TO_OPTICAL @ rot_zyx(cam.yaw, cam.pitch, cam.roll).T
+
+
+_w2o = world_to_optical          # the old name, still used by demo/youtube/calib_measure.py
 
 
 def plan_T(cam, lidar) -> np.ndarray:
     """T_camera_lidar (4×4, optical frame) from the variant's poses of the camera and the lidar."""
-    W2O = _w2o(cam)
+    W2O = world_to_optical(cam)
     return _T(W2O @ S.rotation(lidar), W2O @ (lidar.pos() - cam.pos()))
 
 
 def lidar_pose(cam, T) -> tuple[np.ndarray, np.ndarray]:
     """(R lidar -> vehicle, position) of the lidar from the camera's pose and T_camera_lidar."""
-    W2O = _w2o(cam)
+    W2O = world_to_optical(cam)
     return W2O.T @ T[:3, :3], cam.pos() + W2O.T @ T[:3, 3]
 
 
@@ -348,7 +354,7 @@ def pairs(project, variant=None, engine=None) -> list[dict]:
         intr = resolve(project.module_for(c), project.lens_for(c))
         U, V = np.meshgrid((np.arange(nu) + 0.5) * intr.width / nu, (np.arange(nv) + 0.5) * intr.height / nv)
         d_opt, th = intr.unproject(U.ravel(), V.ravel())
-        dw = d_opt @ _w2o(c)
+        dw = d_opt @ world_to_optical(c)
         ok = th <= intr.max_theta
         C = c.pos()
         with np.errstate(divide='ignore', invalid='ignore'):
@@ -564,7 +570,7 @@ def predicted_sigma(project, cam, lidar, poses, st: LidarCalibSettings) -> dict:
     W, H = st.board_size()
     cc = np.array([b.centre for b in poses], float)
     cR = np.array([b.R for b in poses], float)
-    cov_c = camera_plane_cov(intr, _w2o(cam), cam.pos().astype(float), cc, cR, model_corners(st))
+    cov_c = camera_plane_cov(intr, world_to_optical(cam), cam.pos().astype(float), cc, cR, model_corners(st))
     I = plane_information(cc, cR, lidar.pos().astype(float), W, H, m, st.range_sigma_mm / 1000.0, cov_c).sum(0)
     cov = np.linalg.pinv(I + np.eye(6) * 1e-12)
     sd = np.sqrt(np.maximum(np.diag(cov), 0))
@@ -580,7 +586,7 @@ def plan_poses(project, cam, lidar, st: LidarCalibSettings | None = None, engine
     st = st or LidarCalibSettings()
     m = project.sensor_model_for(lidar)
     intr = resolve(project.module_for(cam), project.lens_for(cam))
-    W2O = _w2o(cam)
+    W2O = world_to_optical(cam)
     C, L, RL = cam.pos().astype(float), lidar.pos().astype(float), S.rotation(lidar)
     W, H = st.board_size()
     notes = []
@@ -745,9 +751,14 @@ def _checker_value(a, b, st, fw):
     return np.where(inside, val * border + (1 - border), 1.0)
 
 
-def _paint_board(img, intr, W2O, C, bp: BoardPose, st, depth_fn):
+def paint_board(img, intr, W2O, C, bp: BoardPose, st, depth_fn):
     """Composite one board into img (h, w, 3) float, in place: ray–plane intersection per pixel, antialiased checker
-    and outer edge, hidden where the scene or the vehicle is nearer."""
+    and outer edge, hidden where the scene or the vehicle is nearer.
+
+    intr: the camera's lens (img may be any size; pixels scale with it); W2O, C: the camera's world -> optical
+    rotation (world_to_optical) and position (m); bp: the board's pose in the world; st: settings with the board
+    (rows, cols, square_mm, board_size()); depth_fn(dirs world (n, 3)) -> the scene's range along each pixel ray (m),
+    np.inf where nothing hides the board."""
     from .synth import pixel_rays
     h, w = img.shape[:2]
     sx, sy = w / intr.width, h / intr.height
@@ -823,7 +834,7 @@ def simulate(project, engine, cam, lidar, poses, st: LidarCalibSettings, progres
         from .analysis import Engine
         engine = Engine()
     intr = resolve(project.module_for(cam), project.lens_for(cam))
-    W2O = _w2o(cam)
+    W2O = world_to_optical(cam)
     C = cam.pos().astype(float)
     m = project.sensor_model_for(lidar)
     reach = max([b.distance for b in poses] + [st.far_m])
@@ -854,7 +865,7 @@ def simulate(project, engine, cam, lidar, poses, st: LidarCalibSettings, progres
             return None
         rng = np.random.default_rng(int(st.seed) * 1009 + k)
         img = bg.copy()
-        _paint_board(img, intr, W2O, C, bp, st, cam_depth)
+        paint_board(img, intr, W2O, C, bp, st, cam_depth)
         if st.image_noise > 0:
             img += rng.standard_normal(img.shape, dtype=np.float32) * np.float32(st.image_noise)
         img = np.clip(img, 0, 255).astype(np.uint8)
@@ -1286,6 +1297,24 @@ def _view(gray, intr, sx, sy, Rv, f, n):
     return cv2.remap(gray, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
 
 
+def _patterns(pattern):
+    return (pattern, (pattern[1], pattern[0])) if FIND_BOTH_WAYS else (pattern,)
+
+
+def _find_classic(gray, pattern):
+    """The classic detector (findChessboardCorners with OpenCV's fast check, corners refined by cornerSubPix) in the
+    pattern's orientation(s) (FIND_BOTH_WAYS): corners (rows, cols, 2) or None."""
+    import cv2
+    for pat in _patterns(pattern):
+        ok, corners = cv2.findChessboardCorners(gray, pat, flags=cv2.CALIB_CB_ADAPTIVE_THRESH |
+                                                cv2.CALIB_CB_NORMALIZE_IMAGE | cv2.CALIB_CB_FAST_CHECK)
+        if ok:
+            corners = cv2.cornerSubPix(gray, corners, (5, 5), (-1, -1),
+                                       (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 40, 0.01))
+            return corners.reshape(pat[1], pat[0], 2)
+    return None
+
+
 def _find_quick(gray, pattern, precheck=True, classic=True):
     """install._find made cheaper for the search: the exhaustive SB detector, then (classic) the classic one with
     OpenCV's fast check (CALIB_CB_FAST_CHECK), in the pattern's orientation only (FIND_BOTH_WAYS; each detector finds
@@ -1297,38 +1326,44 @@ def _find_quick(gray, pattern, precheck=True, classic=True):
     if precheck and not calib.board_possible(gray, pattern):
         return None
     flags = cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY | cv2.CALIB_CB_NORMALIZE_IMAGE
-    for pat in ((pattern, (pattern[1], pattern[0])) if FIND_BOTH_WAYS else (pattern,)):
+    for pat in _patterns(pattern):
         ok, corners = find_sb(gray, pat, flags)
         if ok:
             return corners.reshape(pat[1], pat[0], 2)
-        if not classic:
-            continue
-        ok, corners = cv2.findChessboardCorners(gray, pat, flags=cv2.CALIB_CB_ADAPTIVE_THRESH |
-                                                cv2.CALIB_CB_NORMALIZE_IMAGE | cv2.CALIB_CB_FAST_CHECK)
-        if ok:
-            corners = cv2.cornerSubPix(gray, corners, (5, 5), (-1, -1),
-                                       (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 40, 0.01))
-            return corners.reshape(pat[1], pat[0], 2)
+        if classic and (det := _find_classic(gray, pat)) is not None:
+            return det
     return None
 
 
 def _candidates(gray, intr, sx, sy, st):
     """Corner rays (rows, cols, 3) of boards found anywhere, lazily: the whole image first, then those virtual pinhole
     views tiling the lens circle that hold one of the image's groups of chessboard-like corners (calib.board_groups),
-    each pre-checked. Yields (rays, how)."""
+    each pre-checked. Yields (rays, how, whole): whole, for a view's board when SB found nothing on the whole image
+    and WHOLE_CLASSIC_LATE, is a function giving the classic detector's corner rays on the whole image (or None),
+    the candidate the search used to try before the views; else None."""
     import cv2
     from .install import _virtual_basis
     pattern = (st.cols, st.rows)
     h, w = gray.shape[:2]
     small = 1.0 if max(h, w) <= 2200 else 2200.0 / max(h, w)
     g = gray if small == 1.0 else cv2.resize(gray, (int(w * small), int(h * small)), interpolation=cv2.INTER_AREA)
-    det = _find_quick(g, pattern, precheck=False)            # the caller has pre-checked the whole image
-    if det is not None:
+
+    def grid(det):
+        if det is None:
+            return None
         uv = (det.reshape(-1, 2) + 0.5) / small
         d, _ = intr.unproject(uv[:, 0] / sx, uv[:, 1] / sy)
-        G = _to_model_grid(d.reshape(det.shape[0], det.shape[1], 3), st)
+        return _to_model_grid(d.reshape(det.shape[0], det.shape[1], 3), st)
+    # the caller has pre-checked the whole image
+    det = _find_quick(g, pattern, precheck=False, classic=not WHOLE_CLASSIC_LATE)
+    whole = None
+    if det is not None:
+        G = grid(det)
         if G is not None:
-            yield G, 'whole image'
+            yield G, 'whole image', None
+    elif WHOLE_CLASSIC_LATE:
+        def whole():
+            return grid(_find_classic(g, pattern))
     from . import calib
     n, half = 640, math.radians(32)
     f = n / 2 / math.tan(half)
@@ -1347,7 +1382,7 @@ def _candidates(gray, intr, sx, sy, st):
             continue
         G = _to_model_grid(_rays_from_patch(det, Rv, f, n).reshape(det.shape[0], det.shape[1], 3), st)
         if G is not None:
-            yield G, 'view search'
+            yield G, 'view search', whole
 
 
 def _refine_in_view(gray, intr, sx, sy, st, rays_grid, outline_rays=None, fills=(0.72, 0.45)):
@@ -1371,8 +1406,14 @@ def _refine_in_view(gray, intr, sx, sy, st, rays_grid, outline_rays=None, fills=
     return out
 
 
-def _board_pnp(intr, sx, sy, model, rays, uv):
-    """Board pose (R board -> optical, centre, rms px, cov 6×6) from corner rays and image points."""
+def board_pnp(intr, sx, sy, model, rays, uv):
+    """Board pose from its detected corners: PnP (IPPE, both solutions) on the corners' bearing rays, then a
+    Levenberg–Marquardt fit of the reprojection through the lens model, keeping the better solution.
+
+    intr: the lens; sx, sy: image px per lens px (frame width / intr.width, height / intr.height); model: the board's
+    corners in its own frame (model_corners, m, n×3); rays: the corners' unit rays in the optical frame (n×3); uv: the
+    corners in the image (px, n×2). Returns (R board -> optical, centre optical m, rms px, cov 6×6 of the rotation
+    vector and centre, residual variance floored at 0.03 px²), or None when PnP fails."""
     import cv2
     from scipy.optimize import least_squares
     from .install import _virtual_basis
@@ -1418,6 +1459,9 @@ def _board_pnp(intr, sx, sy, model, rays, uv):
     return R, c, rms, cov
 
 
+_board_pnp = board_pnp           # the old name, still used by demo/youtube/calib_measure.py
+
+
 def square_centres(st: LidarCalibSettings):
     """Board-frame centres (n, 3) of the checker squares and their parity ((i + j) % 2, 0 at the (−x, −y) corner)."""
     sq = st.square_mm / 1000.0
@@ -1453,7 +1497,7 @@ def _best_fit(intr, sx, sy, model, cands):
         if not ok.all():
             continue
         uv = np.c_[u * sx, v * sy]
-        sol = _board_pnp(intr, sx, sy, model, rays, uv)
+        sol = board_pnp(intr, sx, sy, model, rays, uv)
         if sol is not None and (best is None or sol[2] < best[0][2]):
             best = (sol, rays, uv)
     return best
@@ -1489,13 +1533,16 @@ def detect_board(project, cam, img, st: LidarCalibSettings, hint: BoardPose | No
     plan); without one (real data) the whole image is searched, after a cheap pre-check (calib.board_possible) has
     found chessboard-like corners in it (a frame with none is turned away in tens of milliseconds), and the first
     board found that is checker-like (_checker_like) and whose pose fits its corners within MAX_BOARD_RMS_PX is
-    taken (the detectors also assemble grids from clutter and periodic textures)."""
+    taken (the detectors also assemble grids from clutter and periodic textures). When that board comes from a view
+    and SB found nothing on the whole image, the classic detector's corners on the whole image are taken instead if
+    they pass the same checks (WHOLE_CLASSIC_LATE: the board the search found when it ran that detector first, at a
+    cost of 1–2 s on every cluttered frame without a board)."""
     from .install import _scale
     gray = _gray(img)
     intr = resolve(project.module_for(cam), project.lens_for(cam))
     sx, sy = _scale(intr, gray.shape)
     model = model_corners(st)
-    W2O = _w2o(cam)
+    W2O = world_to_optical(cam)
     C = cam.pos()
     cands, how = [], ''
     W, H = st.board_size()
@@ -1514,19 +1561,26 @@ def detect_board(project, cam, img, st: LidarCalibSettings, hint: BoardPose | No
             return None
         # the first candidate that is a board: checker-like at its first pose, then (refined round that pose, as round
         # an expected board) fitted within MAX_BOARD_RMS_PX
-        for coarse, how in _candidates(gray, intr, sx, sy, st):
+        def board(coarse):
             flat = coarse.reshape(-1, 3)
             u0, v0, _, ok0 = intr.project_dirs(flat)
-            first = _board_pnp(intr, sx, sy, model, flat, np.c_[u0 * sx, v0 * sy]) if ok0.all() else None
+            first = board_pnp(intr, sx, sy, model, flat, np.c_[u0 * sx, v0 * sy]) if ok0.all() else None
             if first is None or not _checker_like(gray, intr, sx, sy, first[0], first[1], st):
-                continue
+                return None
             Rb, cb_ = first[0], first[1]
             r = np.vstack([model @ Rb.T + cb_, outline_local(W, H, 1) @ Rb.T + cb_])
             r /= np.linalg.norm(r, axis=1, keepdims=True)
-            best = _best_fit(intr, sx, sy, model, [coarse] + _refine_in_view(
+            fit = _best_fit(intr, sx, sy, model, [coarse] + _refine_in_view(
                 gray, intr, sx, sy, st, r[:len(model)].reshape(st.rows, st.cols, 3), r[len(model):]))
-            if best is not None and best[0][2] <= MAX_BOARD_RMS_PX:
-                break
+            return fit if fit is not None and fit[0][2] <= MAX_BOARD_RMS_PX else None
+        for coarse, how, whole in _candidates(gray, intr, sx, sy, st):
+            best = board(coarse)
+            if best is None:
+                continue
+            G = whole() if whole is not None else None     # the whole image's classic corners come first, as before
+            if G is not None and (b := board(G)) is not None:
+                best, how = b, 'whole image'
+            break
         else:
             return None
     else:
@@ -2172,9 +2226,13 @@ class LidarCalibResult:
         return VERDICT_SEVERITY.get(self.verdict, 'critical')
 
 
-def _sigmas(cam, T, cov):
+def pose_sigmas(cam, T, cov):
     """1σ of the solve: translation (mm) and rotation (deg) about the optical axes, and the lidar's pose in the vehicle
-    (x y z mm, yaw pitch roll deg), propagated numerically."""
+    (x y z mm, yaw pitch roll deg), propagated numerically.
+
+    T: T_camera_lidar (4×4); cov: 6×6 covariance of the solve's (rotation vector, translation) left perturbation of T.
+    Returns {'camera': {x_mm, y_mm, z_mm, rx_deg, ry_deg, rz_deg}, 'vehicle': {x_mm, y_mm, z_mm, yaw_deg, pitch_deg,
+    roll_deg}, 'position_mm', 'angle_deg'} (the last two the largest camera-frame position and angle 1σ)."""
     sc = np.sqrt(np.maximum(np.diag(cov), 0))
     out = {'camera': {'x_mm': sc[3] * 1e3, 'y_mm': sc[4] * 1e3, 'z_mm': sc[5] * 1e3,
                       'rx_deg': math.degrees(sc[0]), 'ry_deg': math.degrees(sc[1]), 'rz_deg': math.degrees(sc[2])}}
@@ -2323,13 +2381,13 @@ def calibrate(project, cam, lidar, captures, st: LidarCalibSettings, plan=None, 
         cov = s2 * np.linalg.pinv(info_all)
     info_planes = _marginal(J, kinds <= 1)
     Lm = float(np.mean([np.linalg.norm(o.lid.points.mean(0)) for o in good]))
-    W2O = _w2o(cam)
+    W2O = world_to_optical(cam)
     normals = [W2O.T @ o.cam.R[:, 2] for o in good]
     res.obs = observability(info_planes, W2O, Lm, st.pos_tol_mm / 1000.0, math.radians(st.ang_tol_deg), normals,
                             len(good))
     res.obs['edges'] = bool(st.edges and any(len(o.lid.edge_in) for o in good))
     res.T, res.cov = T, cov
-    res.sigma = _sigmas(cam, T, cov)
+    res.sigma = pose_sigmas(cam, T, cov)
     res.delta = _delta(cam, T, T_plan)
     Rm, pm = lidar_pose(cam, T)
     res.measured = pose_dict(Rm, pm)

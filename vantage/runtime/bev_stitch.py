@@ -25,6 +25,7 @@ import numpy as np
 BODY_RGB = (38, 38, 36)
 EMPTY_RGB = (20, 20, 20)
 EXTS = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff', '.pgm', '.ppm')
+GAIN_MIN, GAIN_MAX = 0.4, 2.5           # the exposure gains are clipped to this range
 
 
 class Stitcher:
@@ -47,6 +48,7 @@ class Stitcher:
         self.cuda = cuda and hasattr(cv2, 'cuda') and cv2.cuda.getCudaEnabledDeviceCount() > 0
         self._maps = {}
         self.gains = {t: np.ones(3, np.float32) for t in self.tags}
+        self.clipped = {}       # tag -> (3,) solved gains, before clipping, of the cameras the last estimate clipped
 
     def _maps_for(self, tag, w, h):
         k = (tag, w, h)
@@ -83,7 +85,8 @@ class Stitcher:
         return out
 
     def estimate_gains(self, warped, sigma_n=10.0, sigma_g=0.5, step=2):
-        """Brown & Lowe gain compensation over the ground two cameras share (well exposed pixels only)."""
+        """Brown & Lowe gain compensation over the ground two cameras share (well exposed pixels only). Returns
+        {tag: (3,) gains} clipped to GAIN_MIN..GAIN_MAX; self.clipped keeps the solved gains of the cameras clipped."""
         tags = [t for t in self.tags if t in warped]
         idx = {t: i for i, t in enumerate(tags)}
         n = len(tags)
@@ -116,8 +119,20 @@ class Stitcher:
                 if M[i, i] == 0:
                     M[i, i], r[i] = 1.0, 1.0
             g[:, ch] = np.linalg.solve(M, r)
-        g = np.clip(g, 0.4, 2.5)
-        return {t: g[idx[t]].astype(np.float32) for t in tags}
+        gc = np.clip(g, GAIN_MIN, GAIN_MAX)
+        self.clipped = {t: g[idx[t]].astype(np.float32) for t in tags if np.any(gc[idx[t]] != g[idx[t]])}
+        return {t: gc[idx[t]].astype(np.float32) for t in tags}
+
+    def clipped_note(self):
+        """'F 2.91 -> 2.50, QR 0.31 -> 0.40': the cameras the last estimate clipped, with the channel clipped most
+        (solved -> applied), or '' when none were."""
+        out = []
+        for t, raw in self.clipped.items():
+            raw = np.asarray(raw, float)
+            ap = np.clip(raw, GAIN_MIN, GAIN_MAX)
+            k = int(np.argmax(np.abs(np.log(np.maximum(raw, 1e-9) / ap))))
+            out.append(f'{t} {raw[k]:.2f} -> {ap[k]:.2f}')
+        return ', '.join(out)
 
     def stitch(self, frames, balance=False, estimate=True, smooth=1.0):
         """{tag: frame} -> RGB uint8 bird's-eye view. balance applies the exposure gains, estimate re-measures them
@@ -196,6 +211,8 @@ def main(argv=None):
         if a.balance:
             for t, g in st.gains.items():
                 print(f'gain {t:6s} {g[0]:.4f} {g[1]:.4f} {g[2]:.4f}')
+            if st.clipped:
+                print(f'warning: gains clipped to {GAIN_MIN}-{GAIN_MAX}: {st.clipped_note()}', file=sys.stderr)
         if a.out:
             ok, buf = cv2.imencode(os.path.splitext(a.out)[1] or '.png', cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
             buf.tofile(a.out)
@@ -215,6 +232,7 @@ def main(argv=None):
             raise SystemExit(f'cannot open {spec}')
     writer = None
     n = 0
+    warned = set()
     t0 = time.perf_counter()
     try:
         while True:
@@ -226,6 +244,11 @@ def main(argv=None):
             if not frames:
                 break
             img = st.stitch(frames, balance=a.balance, estimate=n % max(1, a.every) == 0, smooth=1.0 if n == 0 else 0.3)
+            if set(st.clipped) != warned:         # once per change, not on every estimate
+                warned = set(st.clipped)
+                if warned:
+                    print(f'warning: frame {n}: gains clipped to {GAIN_MIN}-{GAIN_MAX}: {st.clipped_note()}',
+                          file=sys.stderr)
             bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
             if a.out:
                 if writer is None:

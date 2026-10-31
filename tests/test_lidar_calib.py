@@ -84,7 +84,7 @@ def test_frames_round_trip(rig):
     cam, lid = _pair(rig)
     T = LC.plan_T(cam, lid)
     # T maps the lidar's origin to where the vehicle frame puts it, seen from the camera's optical frame
-    W2O = LC._w2o(cam)
+    W2O = LC.world_to_optical(cam)
     assert T[:3, 3] == pytest.approx(W2O @ (lid.pos() - cam.pos()))
     P = np.array([[5.0, 1.0, -0.3], [12.0, -3.0, 2.0]])                      # lidar-frame points
     world = P @ S.rotation(lid).T + lid.pos()
@@ -174,7 +174,7 @@ def _check_plan(p, cam, lid, poses, st):
     lo, hi = m.v_fov()
     for b in poses:
         out = b.centre + LC.outline_local(W, H, 4) @ b.R.T
-        _, _, _, ok = intr.project_dirs((out - cam.pos()) @ LC._w2o(cam).T)
+        _, _, _, ok = intr.project_dirs((out - cam.pos()) @ LC.world_to_optical(cam).T)
         assert ok.all()
         r, az, el = S.angles(lid, out)
         assert ((el > lo) & (el < hi)).all() and (r < m.range_m).all()
@@ -240,7 +240,7 @@ def test_injected_mounting_error_is_recovered(main, rig):
     assert (d['yaw_deg'], d['pitch_deg'], d['roll_deg']) == pytest.approx((0.6, -0.4, 0.3), abs=ANG_DEG)
     # ... and in the camera frame it is the same move seen from the camera
     cam, lid = _pair(rig)
-    W2O = LC._w2o(cam)
+    W2O = LC.world_to_optical(cam)
     assert np.array([res.delta['camera'][k] for k in ('x_mm', 'y_mm', 'z_mm')]) == pytest.approx(
         W2O @ np.array([d['x_mm'], d['y_mm'], d['z_mm']]), abs=0.5)
     # the 1σ is a sensible size and on the safe side of the actual error

@@ -63,8 +63,12 @@ Checks, each with findings ok / warning / fault:
    −0.08°, the frames' own optima split between +0.8° and −0.3°. The fine map's optimum replaces the coarse map's
    only when significantly more frames score higher there, a one-sided sign test at SIGN_P: 16 or 17 of 20 frames
    did on those drives, 2 of 3 did at a wrong rotation on a sample dataset.) The standard error is the larger of a
-   cluster-robust sandwich estimate (image regions as clusters) and the spread of each frame's own optimum (from the
-   joint optimum and from the frame's own best grid point); an axis whose score peak is too flat (its width from
+   cluster-robust sandwich estimate (image regions as clusters: the pixels' noise) and the scene's error (_stderr):
+   the scatter of each frame's own optimum, pooled with a prior of SCENE_DEG per frame, plus the share of
+   the scene's error frames close together along the drive have in common (a parked vehicle's frames are one view),
+   plus SCENE_BIAS_DEG for what the drive's scenes shift it by as a whole. The relative standard error leaves that
+   last part out: it is the one to compare two estimates of one drive by (online calibration's windows);
+   an axis whose score peak is too flat (its width from
    central differences of at least a pixel), or whose error is over twice the tolerance, is not pinned down and stays
    as planned. A rotation of the camera moves every frame alike, so a consistency gate: the frames' own optima
    splitting into a second group (SPLIT_SHARE of them together, more than twice the tolerance from the joint
@@ -100,7 +104,8 @@ from .mathutil import BODY_TO_OPTICAL, euler_zyx, rot_zyx
 from .pngtext import put_text
 
 SCHEMA = 'vantage.drive_log_check/1'
-METHOD_REVISION = 2       # bumped when a check's method changes (2: round 8): results cached on it are made again
+METHOD_REVISION = 3       # bumped when a check's method changes (2: round 8, 3: honest rotation errors): results
+                          # cached on it are made again
 SEVERITIES = ('fault', 'warning', 'ok')
 STAMPS = ('mid_exposure', 'trigger', 'readout_end')
 STAMP_LABEL = {'mid_exposure': 'Exposure middle', 'trigger': 'Trigger', 'readout_end': 'End of readout'}
@@ -128,6 +133,13 @@ SPLIT_SHARE = 0.2           # frames whose own optimum lies together elsewhere, 
 SPLIT_EVEN = 0.4            # … this share: the frames are split too evenly for a verdict
 GROUND_EDGE_M = 0.4         # lidar depth edges lower than this in the vehicle frame (kerbs) are left out
 SIGN_P = 0.05               # the fine map's optimum over the coarse map's: a one-sided sign test over the frames
+SCENE_DEG = 0.1             # deg: one frame's own rotation error from the scene in view (edges that move with the
+                            # viewpoint, moving objects, repeated structure): the prior of _stderr (fitted on CARLA)
+SCENE_NU = 3.0              # … its weight against the frames' own scatter, in frames' worth
+SCENE_M = 2.5               # m: two frames this far apart along the drive share their scene error by 1/e …
+SCENE_S = 0.5               # s: … this far apart in time when the drive gives no speed (about 5 m/s)
+SCENE_BIAS_DEG = 0.04       # deg: what the drive's scenes shift the rotation by as a whole, however many frames (from
+                            # CARLA's truth on yaw and roll): in the standard error, not in the relative one
 LIMITS = {'frames_per_camera': (2, 200), 'tolerance_deg': (0.01, 10.0), 'search_deg': (0.2, 5.0),
           'drop_factor': (1.05, 10.0), 'sync_tol_ms': (0.05, 100.0), 'sync_sweeps': (5, 5000),
           'freeze_frames': (1, 10000)}
@@ -140,7 +152,10 @@ ASSUMPTIONS = (
     'rotation relative to the lidar from depth edges against image edges: translation is not observable this way at '
     'road distances, the edges of round objects move with the viewpoint (kerbs and other edges within 0.4 m of the '
     'ground plane are left out for that reason: on a sloping road they may not be), moving objects are taken as '
-    'static, and a view without depth edges (open road) gives no answer. Rolling-shutter skew is not modelled. '
+    'static, and a view without depth edges (open road) gives no answer. A rotation\'s standard error holds the '
+    'scene\'s error as measured on CARLA drives, not a bias the drive cannot show: on those every camera read '
+    'pitched up by 0.03–0.19° (0.12° on average, pitch correction −0.12°), more than its standard error. '
+    'Rolling-shutter skew is not modelled. '
     'Odometry poses are taken as the vehicle frame\'s; with only an IMU the vehicle\'s turning is compensated, not its '
     'travel. A frozen camera is found by identical image content only (a noise-free source showing a still scene '
     'repeats itself too).')
@@ -2054,6 +2069,57 @@ def _sandwich(fn, x, clusters, h=0.05):
     return np.sqrt(np.maximum(np.diag(Hi @ Mt @ Hi), 0.0))
 
 
+def _travel(motion, t_s):
+    """Distance (m) the vehicle has travelled at times t_s (s after the log start) for the scene correlation of
+    _stderr, or None when the motion gives neither poses nor a speed."""
+    t_s = np.asarray(t_s, float)
+    if motion.kind == 'odometry' and motion.pos is not None and len(motion.t) > 1:
+        s = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(motion.pos, axis=0), axis=1))]
+        return np.interp(t_s, motion.t, s)
+    if motion.speed is not None and len(motion.speed[0]) > 1:
+        t, v = (np.asarray(a, float) for a in motion.speed)
+        v = np.where(np.isfinite(v), v, 0.0)
+        s = np.r_[0.0, np.cumsum(0.5 * (v[1:] + v[:-1]) * np.diff(t))]
+        return np.interp(t_s, t, s)
+    return None
+
+
+def _stderr(per, travel, t_s):
+    """Standard error (deg, per axis) of the joint optimum from the frames' own optima per (n, 3) and where the frames
+    were along the drive (travel, m; None: their times t_s, at SCENE_S instead of SCENE_M).
+
+    Most of the error is the scene's, not the pixels': edges that move with the viewpoint, moving objects and repeated
+    structure shift each frame's optimum (on CARLA drives the frames' own optima scatter by 0.1–0.2° and the estimates
+    of successive 1.25 s windows by 0.07°, where a sandwich over image regions said 0.02°), and frames a few metres
+    apart see much the same scene and share that shift. So: the frames' scatter (each axis winsorised at three robust
+    standard deviations, so that one frame caught at another optimum widens it without swamping it), pooled with a
+    prior of SCENE_DEG per frame weighted SCENE_NU frames, σ_f² = (ν₀ SCENE_DEG² + (n−1) s²) / (ν₀ + n − 1) (four
+    frames' own scatter has three degrees of freedom: alone it held 59 % / 84 % of the CARLA window-to-window
+    differences within ±1σ / ±2σ); over n frames σ_f² / n; plus the share of the scene's error the frames have in
+    common, SCENE_DEG² (deff − 1) / n, deff = Σᵢⱼ ρᵢⱼ / n the design effect of their correlation
+    ρ = exp(−distance / SCENE_M). Frames far apart add nothing to that; a parked vehicle's frames are one view of one
+    scene and keep about SCENE_DEG however many there are. (A leave-one-frame-out jackknife was tried: its
+    re-optimisations land 0.01–0.08° apart on the piecewise-bilinear score, which the jackknife multiplies by √(n−1);
+    a linearised one from the score's gradients reads far too small, the score being no quadratic.) Returns
+    (stderr (3,), n / deff: the frames' worth of independent views)."""
+    per = np.asarray(per, float).reshape(-1, 3)
+    n = len(per)
+    t2 = SCENE_DEG * SCENE_DEG
+    if n == 0:
+        return np.full(3, SCENE_DEG), 0.0
+    x = np.asarray(travel, float) if travel is not None else np.asarray(t_s, float)
+    deff = float(np.exp(-np.abs(np.subtract.outer(x, x)) / (SCENE_M if travel is not None else SCENE_S)).sum() / n)
+    s2 = np.zeros(3)
+    if n >= 2:
+        if n >= 3:
+            m = np.median(per, axis=0)
+            k = 3.0 * 1.4826 * np.median(np.abs(per - m), axis=0) + 1e-9
+            per = m + np.clip(per - m, -k, k)
+        s2 = per.var(axis=0, ddof=1)
+    var = (SCENE_NU * t2 + (n - 1) * s2) / (SCENE_NU + n - 1) / n + t2 * (deff - 1.0) / n
+    return np.sqrt(var), n / deff
+
+
 def _peak_width(fn, x, px_deg=0.0):
     """Per axis, the marginal width (deg, one sigma of a Gaussian fitted to the log score) of the score's peak at x and
     whether the axis is pinned down (width under OBSERVABLE_DEG): the Hessian of log score by central differences of
@@ -2427,7 +2493,7 @@ def _extrinsic(project, var, cam, topic, lid, lid_topic, scan, motion, st, conv_
     xs, ys, _ = fine.project(best, Q)
     clusters = fi * 64 + np.clip((xs / wa * 8).astype(int), 0, 7) * 8 + np.clip((ys / ha * 8).astype(int), 0, 7)
     se_sw = _sandwich(fine, best, clusters)
-    per = []
+    per, t_per = [], []
     for f in range(F):                                  # each frame's own optimum: from the joint one and from the
         m_ = fi == f                                    # frame's best grid point, whichever scores higher
         if m_.sum() >= 20:
@@ -2439,14 +2505,15 @@ def _extrinsic(project, var, cam, topic, lid, lid_topic, scan, motion, st, conv_
                 if v2 > v:
                     x = x2
             per.append(x)
+            t_per.append(frames[f]['t_s'])
     per = np.array(per) if per else np.zeros((0, 3))
     tol = st.tolerance_deg
     obs = np.array(observable)
-    stderr = se_sw.copy()
+    se_sc, n_eff = _stderr(per, _travel(motion, t_per) if t_per else None, t_per)
+    se_rel = np.maximum(se_sw, se_sc)                   # the sandwich (the pixels' noise alone) as a floor
+    stderr = np.maximum(se_sw, np.hypot(se_sc, SCENE_BIAS_DEG))
     agree = None
     if len(per) >= 2:
-        sig = 1.4826 * np.median(np.abs(per - best), axis=0)
-        stderr = np.maximum(stderr, sig / math.sqrt(len(per)))
         agree = float(np.mean(np.all((np.abs(per - best) <= tol) | ~obs, axis=1)))
     obs &= stderr <= 2 * tol
     observable = [bool(o) for o in obs]
@@ -2454,7 +2521,9 @@ def _extrinsic(project, var, cam, topic, lid, lid_topic, scan, motion, st, conv_
     res.update({'delta_deg': [float(v) for v in best], 'stderr_deg': [float(v) if np.isfinite(v) else None
                                                                        for v in stderr], 'agree': agree,
                 'width_deg': [float(v) for v in width], 'observable': [bool(o) for o in observable],
-                'per_frame_deg': per.tolist(), 'split': split, 'ground_edges_dropped': n_low})
+                'per_frame_deg': per.tolist(), 'split': split, 'ground_edges_dropped': n_low,
+                'stderr_relative_deg': [float(v) if np.isfinite(v) else None for v in se_rel],
+                'frames_independent': float(n_eff)})
     se = float(np.max(stderr[obs])) if obs.any() else math.inf
     if not obs.any() or px_deg > tol:            # images coarser than the tolerance cannot judge it
         conf = 'low'
@@ -2986,6 +3055,8 @@ def to_doc(res: DriveLogResult, project=None) -> dict:
                                     'edge_points': r.get('points', 0),
                                     'correction_ypr_deg': _rl(r.get('delta_deg'), 4),
                                     'standard_error_deg': _rl(r.get('stderr_deg'), 4),
+                                    'relative_standard_error_deg': _rl(r.get('stderr_relative_deg'), 4),
+                                    'independent_frames': _r(r.get('frames_independent'), 2),
                                     'frames_agreeing_pct': _r(r['agree'] * 100, 1) if r.get('agree') is not None
                                     else None,
                                     'peak_drop_pct_at_0_1_deg': _rl(r.get('sharpness_pct'), 3),

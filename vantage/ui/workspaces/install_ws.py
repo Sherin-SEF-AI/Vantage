@@ -1415,6 +1415,9 @@ class InstallPage(QWidget):
             if self.gains:
                 g = [float(np.mean(v)) for v in self.gains.values()]
                 cap_ += f' · gains {min(g):.2f}–{max(g):.2f}'
+                if getattr(self.gains, 'clipped', None):
+                    from ...core.stitch import clipped_note
+                    cap_ += f' · clipped: {clipped_note(self.gains, {c.uid: c.tag for c in self._cams()})}'
             if (self.blend.value() or 'linear') == 'multiband':
                 cap_ += ' · multi-band'
         self.bev.set_image(img, cap_)

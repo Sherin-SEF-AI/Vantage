@@ -95,7 +95,10 @@ def test_canonical_json_and_the_result_hash():
 
 def test_the_project_content_hash():
     a, b = _rig(), _rig()
-    assert a.variant.uid != b.variant.uid                                 # fresh random uids every time ...
+    b.name = 'other'                         # the sample's uids are fixed (samples.stable_uids): give b other ones
+    samples.stable_uids(b)
+    b.name = a.name
+    assert a.variant.uid != b.variant.uid                                 # other uids ...
     da, db = PV.project_digest(a), PV.project_digest(b)
     assert da == db                                                       # ... yet the same content
     assert set(da['sections']) == {'name', 'vehicle', 'mesh', 'library', 'variants', 'roi', 'analysis', 'targets',
@@ -758,7 +761,7 @@ def test_seeded_studies_are_bit_for_bit_the_same(proj, tmp_path):
 
 def _renamed(order):
     """The sample with uids that sort with (order 1) or against (order -1) the cameras' and boards' order: the same
-    rig, other identities (a sample or template gets fresh random uids every time it is built)."""
+    rig, other identities (objects made in the app get random uids)."""
     p = samples.tigor_sample_project()
     for i, t in enumerate(p.targets):
         t.uid = f'{(i if order > 0 else 99 - i):02d}aaaaaaaa'

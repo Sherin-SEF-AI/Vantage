@@ -355,7 +355,7 @@ def test_workflow_releases_only_after_every_bundle():
     for lib in ('libxcb-cursor0', 'libxcb-keysyms1', 'libxcb-shape0', 'libxcb-icccm4', 'libgl1-mesa-dri', 'libegl1',
                 'gstreamer1.0-tools', 'gstreamer1.0-plugins-base'):
         assert lib in apt, lib
-    upload = steps['actions/upload-artifact@v4']['with']
+    upload = steps['actions/upload-artifact@v7']['with']
     assert upload['if-no-files-found'] == 'error' and 'runner.arch' in upload['name']    # two Linux jobs
     rsteps = {s.get('name', s.get('uses', '')): s for s in rel['steps']}
     sums = rsteps['Checksums and release notes']['run']

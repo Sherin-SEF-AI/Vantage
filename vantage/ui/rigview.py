@@ -24,10 +24,20 @@ def selected_uid(ctx):
 
 
 def add_preset(ctx, kind: str) -> list[RigPart]:
-    """Add a preset sized from the vehicle's roof as one undo step and select its first part."""
+    """Add a preset sized from the vehicle's roof as one undo step and select its first part. It is fitted with the parts
+    already there (core.rig.fit_plan): a mast stands on a roof rack under it, and a rack fitted under a mast lifts the
+    mast with its head and the cameras and sensors mounted on them (in every variant)."""
     st = ctx.store
-    parts = R.preset(kind, st.project.vehicle.mesh)
-    st.edit('rig', lambda p: p.rig.extend(parts), f'Added {dict(R.PRESETS)[kind].lower()} to the rig')
+    plan = R.fit_plan(st.project, kind)
+    parts, dz, moved = plan
+    text = f'Added {dict(R.PRESETS)[kind].lower()} to the rig'
+    masts = [q for q in st.project.rig if q.uid in dz and q.kind == 'cylinder']
+    if masts:
+        devs = len({d.uid for _, d, _ in moved})
+        text += (f' · {", ".join(q.name for q in masts)} lifted onto it by {max(dz.values()) * 1000:.0f} mm'
+                 + (f' with {devs} device{"s" if devs > 1 else ""} on it' if devs else ''))
+    keys = ['rig'] + [f'variant:{u}' for u in dict.fromkeys(vu for vu, _, _ in moved)]
+    st.edit(keys, lambda p: R.apply_fit(p, plan), text)
     st.select_obj(('rig', parts[0].uid))
     return parts
 

@@ -265,7 +265,8 @@ def test_sample_drift_body_expansion_by_hand(sample_result):
 def test_rig_on_the_roof_warps_and_flexes():
     from vantage.core import rig
     p = _data_rig()
-    p.rig = rig.preset('roof_rack', p.vehicle.mesh) + rig.preset('sensor_mast', p.vehicle.mesh)
+    rack = rig.preset('roof_rack', p.vehicle.mesh)
+    p.rig = rack + rig.preset('sensor_mast', p.vehicle.mesh, rack)      # the mast stands on the rack's platform
     head = p.rig[-1]
     L1 = next(s for s in p.variant.sensors if s.tag == 'L1')
     L1.x, L1.y, L1.z = head.x, head.y, head.z + head.height / 2 + 0.04
@@ -273,13 +274,15 @@ def test_rig_on_the_roof_warps_and_flexes():
     assert res.heading_deg == 90.0 and not res.heading_auto
     parts = {pt['name']: pt for pt in res.parts}
     assert parts['Roof rack · platform']['on'] == ['Roof rack · bar 1', 'Roof rack · bar 2']
+    assert parts['Sensor mast']['on'] == ['Roof rack · platform']
     assert parts['Sensor mast · head']['on'] == ['Sensor mast']
     assert parts['Roof rack · bar 1']['mode']['kind'] == 'bar'
     d = res.device(L1.uid)
-    assert d['chain'] == ['Sensor mast', 'Sensor mast · head']
+    assert d['chain'] == ['Roof rack · bar 1', 'Roof rack · platform', 'Sensor mast', 'Sensor mast · head']
     assert d['thermal_worst']['deg'] > 0                         # the sun bows the mast
-    assert [m['kind'] for m in d['modes']] == ['mast', 'bracket']
-    assert d['f1_hz'] == pytest.approx(d['modes'][0]['f1_hz'])
+    # the crossbar carrying the mast and the lidar is the softest mount, then the mast, then the lidar's bracket
+    assert [m['kind'] for m in d['modes']] == ['bar', 'mast', 'bracket']
+    assert d['f1_hz'] == pytest.approx(min(m['f1_hz'] for m in d['modes']))
     pk = max(res.hours, key=lambda h: h['t_air_c'])
     assert pk['parts'][parts['Roof rack · platform']['uid']]['mean_c'] > pk['t_air_c']
     assert any(f['kind'] == 'rack_mismatch' for f in res.findings)

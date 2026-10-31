@@ -385,7 +385,7 @@ def _lidar_errors(lp, trials, seed, px=0.3):
             u, v, _, _ = intr.project_dirs(model @ Rb.T + cb)
             uv = np.stack([u, v], -1) + rng.normal(0, px, (len(model), 2))
             rays, _ = intr.unproject(uv[:, 0], uv[:, 1])
-            R, c, rms, cov = LC._board_pnp(intr, 1.0, 1.0, model, rays, uv)
+            R, c, rms, cov = LC.board_pnp(intr, 1.0, 1.0, model, rays, uv)
             pts = D * (s + rng.normal(0, sr, len(s)))[:, None]
             nl = R0.T @ Rb[:, 2]
             lb = LC.LidarBoard(pts, nl, float(nl @ pts.mean(0)), sr * cos_rms, np.zeros((0, 3)), np.zeros((0, 3)), 0)
@@ -440,7 +440,7 @@ def test_camera_plane_covariance_matches_the_board_pnp(lidar_pair):
         pu, pv, _, _ = intr.project_dirs(model @ Rb.T + cb)
         uv = np.stack([pu, pv], -1) + rng.normal(0, 0.3, (len(model), 2))
         rays, _ = intr.unproject(uv[:, 0], uv[:, 1])
-        R, c, _, _ = LC._board_pnp(intr, 1.0, 1.0, model, rays, uv)
+        R, c, _, _ = LC.board_pnp(intr, 1.0, 1.0, model, rays, uv)
         w = _log(R @ Rb.T)                                      # the turn about the board's centre, optical frame
         out.append([n @ (c - cb), v @ w, -(u @ w)])
     E = np.array(out)

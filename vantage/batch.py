@@ -356,7 +356,7 @@ def install_check(project, eng, res, folder, st, lut_out=None, balance=True, ble
     if jr is not None and jr.poses:
         doc['joint'] = report(jr)
     if lut_out and res is not None:
-        from .core.stitch import build_lut, export_lut, stitch, estimate_gains
+        from .core.stitch import build_lut, export_lut, stitch, estimate_gains, clipped_note, GAIN_MIN, GAIN_MAX
         poses = {u: (rot_zyx(r.yaw, r.pitch, r.roll), r.pos) for u, r in results.items() if r.pos is not None}
         lut = build_lut(project, eng, res, res=0.02, poses=poses)
         paths = _stamped(export_lut(lut, lut_out, project), '--lut-out', lut_out)
@@ -368,6 +368,11 @@ def install_check(project, eng, res, folder, st, lut_out=None, balance=True, ble
         if gains:
             tags = {c.uid: c.tag for c in cams}
             doc['exposure_gains'] = {tags[u]: [_r(x, 4) for x in g] for u, g in gains.items()}
+            if gains.clipped:
+                # the solved gains (before clipping to GAIN_MIN..GAIN_MAX) of the cameras that hit the limits
+                doc['exposure_gains_clipped'] = {tags[u]: [_r(float(x), 4) for x in g] for u, g in gains.clipped.items()}
+                print(f'install check: exposure gains clipped to {GAIN_MIN}-{GAIN_MAX}: {clipped_note(gains, tags)}',
+                      file=sys.stderr)
     return doc, results
 
 

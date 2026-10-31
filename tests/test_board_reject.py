@@ -23,7 +23,13 @@ fit to ≤ 0.29 px (≤ 1.22 px when the frames come from a unit whose lens diff
 model used, where the old search returned wrong grids 11 times and the new one the board). Floor grain reaches
 Weber ≤ 0.13; true boards ≥ 0.18 (haze 60 at gain 0.12), ≥ 0.5 in the realistic range. Search time on cluttered
 board-free 1920 × 1536 frames: detect_board median 4.1 → 0.75 s, worst 13.9 → 4.1 s; find_board median
-1.7 → 1.0 s, worst 3.1 → 2.1 s."""
+1.7 → 1.0 s, worst 3.1 → 2.1 s.
+
+The classic detector on the whole image (1–2 s a call on clutter, the 4.1 s worst case) now runs only once a view has
+found a board, and its board is then taken first as before: on the same render set the 89 true boards are identical
+(5 of them would otherwise come from SB in a view instead: same board, error to the true corners 0.202–0.207 px rms
+either way), still 0 false boards in 72 board-free frames, and detect_board on the 48 board-free frames takes a
+median 0.62–0.77 s and at worst 1.4–1.7 s (was 4.1 s); frames with a board it cannot find, worst 4.2 → 1.3–1.6 s."""
 import time
 
 import cv2
@@ -37,7 +43,7 @@ from vantage.core.lens import builtin_lenses, builtin_modules, resolve
 MOD = builtin_modules()[0]
 WIDE = builtin_lenses()[0]
 LENS_PAT = (9, 6)
-CLUTTER_S = 3.0            # a cluttered board-free frame at 1920 × 1536 (measured: see the module docstring)
+CLUTTER_S = 1.5            # a cluttered board-free frame at 1920 × 1536 (measured: see the module docstring)
 LIMIT_S = 2.0              # generous bound for a rejected frame (measured 0.02–0.15 s; target 0.3 s at 1920 × 1080)
 
 
@@ -65,6 +71,7 @@ def _old_code(monkeypatch):
     monkeypatch.setattr(calib, 'board_possible', lambda *a, **k: True)
     monkeypatch.setattr(calib, 'groups_in_view', lambda *a, **k: True)
     monkeypatch.setattr(LC, '_find_quick', lambda gray, pattern, **k: install._find(gray, pattern))
+    monkeypatch.setattr(LC, 'WHOLE_CLASSIC_LATE', False)
     monkeypatch.setattr(LC, 'MAX_BOARD_RMS_PX', float('inf'))
     monkeypatch.setattr(LC, '_checker_like', lambda *a, **k: True)
 
@@ -127,12 +134,16 @@ def test_a_planned_board_that_is_not_there_is_rejected_fast(rig):
     assert time.perf_counter() - t0 < LIMIT_S
 
 
-def test_cluttered_board_free_scenes_give_no_board_in_bounded_time(rig, record_property):
+def test_cluttered_board_free_scenes_give_no_board_in_bounded_time(rig, record_property, monkeypatch):
     """The sample's scenes (aliased edges, striped posts, a tiled wall: chessboard-like clutter the pre-check lets
     through) at the camera's full 1920 × 1536: no board (the old search assembled grids from clutter and reported
-    them, e.g. 25 px rms in the plain scene through camera F) and a bounded search time."""
+    them, e.g. 25 px rms in the plain scene through camera F) and a bounded search time. detect_board never runs the
+    classic detector on the whole image there (1–2 s a call on clutter): it runs only once a view has found a board."""
     from vantage.core.synth import render_world
     p, eng, cam, lid = rig
+    calls = []
+    find_classic = LC._find_classic
+    monkeypatch.setattr(LC, '_find_classic', lambda g, pat: calls.append(g.shape) or find_classic(g, pat))
     for scene, tag in (('plain', 'F'), ('parking', 'F'), ('parking', 'MR')):
         c = p.variant.by_tag(tag)
         intr = resolve(p.module_for(c), p.lens_for(c))
@@ -143,6 +154,7 @@ def test_cluttered_board_free_scenes_give_no_board_in_bounded_time(rig, record_p
         t1 = time.perf_counter()
         assert calib.find_board(img, (st.cols, st.rows), intr) is None
         t2 = time.perf_counter()
+        assert not calls, (scene, tag)
         record_property(f'detect_board {scene} {tag} s', round(t1 - t0, 3))
         record_property(f'find_board {scene} {tag} s', round(t2 - t1, 3))
         print(f'{scene} {tag}: detect_board {t1 - t0:.2f} s, find_board {t2 - t1:.2f} s')
@@ -184,6 +196,31 @@ def test_lidar_boards_are_found_with_the_same_pose(rig, monkeypatch):
     for a, b in zip(now, before):
         assert a is not None and b is not None
         assert a.how == b.how and a.phase == b.phase and a.rms_px == b.rms_px
+        for k in ('uv', 'rays', 'R', 'c', 'cov'):
+            assert np.array_equal(getattr(a, k), getattr(b, k)), k
+
+
+def test_whole_image_classic_corners_run_late_give_the_same_board(rig, monkeypatch):
+    """When SB finds nothing on the whole image, the classic detector's whole-image corners, tried only once a view has
+    found the board (WHOLE_CLASSIC_LATE), give the board the classic-first search gave: same corners, pose, how. (SB
+    is made to miss on the whole image so the classic detector is what finds it there.)"""
+    p, eng, cam, lid = rig
+    st = LC.LidarCalibSettings.from_dict(dict(camera='F', lidar='L1', seed=4))
+    poses, _ = LC.plan_poses(p, cam, lid, st, eng)
+    caps = LC.simulate(p, eng, cam, lid, [poses[0], poses[3]], st)      # boards the classic detector finds whole
+    find_quick = LC._find_quick
+
+    def sb_misses_whole(gray, pattern, precheck=True, classic=True):
+        if not precheck:                                    # the whole-image call
+            return LC._find_classic(gray, pattern) if classic else None
+        return find_quick(gray, pattern, precheck=precheck, classic=classic)
+    monkeypatch.setattr(LC, '_find_quick', sb_misses_whole)
+    late = [LC.detect_board(p, cam, c.image, st, None) for c in caps]
+    monkeypatch.setattr(LC, 'WHOLE_CLASSIC_LATE', False)
+    first = [LC.detect_board(p, cam, c.image, st, None) for c in caps]
+    for a, b in zip(late, first):
+        assert a is not None and b is not None and a.how == b.how == 'whole image'
+        assert a.phase == b.phase and a.rms_px == b.rms_px
         for k in ('uv', 'rays', 'R', 'c', 'cov'):
             assert np.array_equal(getattr(a, k), getattr(b, k)), k
 

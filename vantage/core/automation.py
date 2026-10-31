@@ -1342,7 +1342,7 @@ def ci_files(project, settings: AutomationSettings | None = None, version: str |
         'permissions:', '  contents: read', '',
         'jobs:', '  vantage:', '    runs-on: ubuntu-22.04', '    timeout-minutes: 60', '    env:',
         '      QT_QPA_PLATFORM: offscreen', f'      VANTAGE_PROJECT: {_yq(rel)}', '      VANTAGE_OUT: vantage-out',
-        '    steps:', '      - uses: actions/checkout@v4', '', '      - uses: actions/setup-python@v5', '        with:',
+        '    steps:', '      - uses: actions/checkout@v7', '', '      - uses: actions/setup-python@v7', '        with:',
         '          python-version: "3.12"', '',
         '      - name: Qt libraries for batch mode', '        run: |', '          sudo apt-get update',
         f'          sudo apt-get install -y --no-install-recommends {libs}', '',
@@ -1355,11 +1355,11 @@ def ci_files(project, settings: AutomationSettings | None = None, version: str |
                f'        run: {check_cmd}', '']
     if fmts:
         gh += ['      - name: Keep the calibration files', '        if: ${{ !cancelled() }}',
-               '        uses: actions/upload-artifact@v4', '        with:', '          name: vantage-calibration',
+               '        uses: actions/upload-artifact@v7', '        with:', '          name: vantage-calibration',
                '          path: vantage-out/calibration', '          if-no-files-found: warn', '']
     if st.check:
         gh += ['      - name: Keep the review pack', '        if: ${{ !cancelled() }}',
-               '        uses: actions/upload-artifact@v4', '        with:', '          name: vantage-review',
+               '        uses: actions/upload-artifact@v7', '        with:', '          name: vantage-review',
                '          path: vantage-out/review', '          if-no-files-found: warn', '']
     # ---------------------------------------------------------------- GitLab CI
     gl_rel = rel.replace('$', '$$')                    # GitLab expands $ in variables

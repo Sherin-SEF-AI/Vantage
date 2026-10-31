@@ -20,7 +20,7 @@ Information
   complement), so the views' information on the intrinsics adds up: I = Σ_views (A − B D⁻¹ Bᵀ) / σ². The linearisation
   point is the camera's current lens model (its unit calibration when it has one, else the library lens; a lens that is
   not Kannala–Brandt is fitted with core.exporters.kb_coefficients, as the lens calibration's start).
-- Lidar–camera: core.observability's model of that calibration (observability._lidar_model, the calibration's own
+- Lidar–camera: core.observability's model of that calibration (observability.lidar_model, the calibration's own
   weights: corners at σ, a board's lidar points at their RMS range noise across the plane, at most 2 500 a pose) per
   accepted board pose, the board's pose marginalised per view; the covariance is that estimator's, H⁻¹ M H⁻¹, where
   both the marginal H and the marginal M of the extrinsic add up view by view.
@@ -61,7 +61,7 @@ Accepting a view
 - Detection: the lens calibration's detector (core.calib.find_board: the whole image, then rectified pinhole views
   through the lens model) for both boards, on a copy at most 1280 px wide (lidar board: 1600 px); its time stays
   bounded on a frame without a board, which the lidar–camera calibration's exhaustive search does not (that one runs
-  later, on the saved frames). The board's pose from its corners (lidar_calib._board_pnp: PnP on the bearing rays,
+  later, on the saved frames). The board's pose from its corners (lidar_calib.board_pnp: PnP on the bearing rays,
   then least squares in pixels).
 - Sharp: rig_health's sharpness (variance of the Laplacian) of the board's region, scaled so that its squares are
   12 px wide (shrunk or enlarged: a blur counts in proportion to the squares, whatever the board's size in the
@@ -72,7 +72,7 @@ Accepting a view
 Simulated technician (testing and planning without hardware): a seeded sequence of board poses, either the coach's
 advice (with the technician's own error: jitter_m, jitter_deg, Gaussian) or random hand-held poses from the same
 feasible set; rendered through the camera's lens model as frames (core.calib.render_board for a lens board,
-core.lidar_calib._paint_board for a lidar board) and detected, or counted from the poses directly (run()).
+core.lidar_calib.paint_board for a lidar board) and detected, or counted from the poses directly (run()).
 
 Limits: predictions from the Fisher information at the current lens model and the estimated board poses, not a solve:
 corners equally noisy everywhere (a corner far out in a fisheye is noisier in practice), boards flat and printed true,
@@ -485,13 +485,13 @@ class Coach:
 
     def __init__(self, project, engine=None, settings: CoachSettings | None = None, variant=None):
         self.st = st = settings or settings_of(project)
-        self.project = p = OB._project_for(project, variant)
+        self.project = p = OB.project_for(project, variant)
         self.v = p.variant
         self.engine = engine
         self.ost = OB.settings_of(p)
         self.sigma_px = st.pixel_sigma if st.pixel_sigma > 0 else self.ost.pixel_sigma
         self.min_sq = st.min_square_px if st.min_square_px > 0 else self.ost.min_square_px
-        cams = [c for c in self.v.cameras if c.visible and OB._finite_pose(c)]
+        cams = [c for c in self.v.cameras if c.visible and OB.finite_pose(c)]
         self.lidar = None
         self.share = 0.0
         if st.mode == 'lidar':
@@ -512,7 +512,7 @@ class Coach:
         self.need = requirement(p, st, self.lst)
         cam = self.cam
         self.intr = resolve(p.module_for(cam), p.lens_for(cam))
-        self.W2O = LC._w2o(cam)
+        self.W2O = LC.world_to_optical(cam)
         self.C = cam.pos().astype(float)
         self.model = LC.model_corners(self.board)
         self.vg = engine.vehicle_geom(p, self.v) if engine is not None else None
@@ -675,9 +675,9 @@ class Coach:
 
     def _lidar_info(self, pose):
         """(a, m): pose's marginal information on T_camera_lidar under the calibration's weights and the matching
-        middle of the sandwich (observability._lidar_model with one pose), or None when too few lidar channels or
+        middle of the sandwich (observability.lidar_model with one pose), or None when too few lidar channels or
         points meet the board."""
-        H, M, data = OB._lidar_model(self.project, self.engine, self.vgl, self.cam, self.lidar, self.lst, [pose],
+        H, M, data = OB.lidar_model(self.project, self.engine, self.vgl, self.cam, self.lidar, self.lst, [pose],
                                      self.sigma_px)
         d = data['poses'][0]
         if d['rings'] < LC.MIN_RINGS or d['points'] < LC.MIN_BOARD_POINTS:
@@ -713,7 +713,7 @@ class Coach:
         if self.st.mode == 'lens':
             vals = lens_locks(cov, self.D)
             return dict(zip(LENS_LOCKS, (float(x) for x in vals)))
-        sg = LC._sigmas(self.cam, self.T0, cov)['vehicle']
+        sg = LC.pose_sigmas(self.cam, self.T0, cov)['vehicle']
         return {k: float(sg[k]) for k in LIDAR_LOCKS}
 
     def status(self, info=None) -> dict:
@@ -789,7 +789,7 @@ class Coach:
         sx, sy = sw / intr.width, sh / intr.height
         uvs = corners + 0.5                                      # the lens model's pixel convention, image scale
         rays, _ = intr.unproject(uvs[:, 0] / sx, uvs[:, 1] / sy)
-        sol = LC._board_pnp(intr, sx, sy, self.model, rays, uvs)
+        sol = LC.board_pnp(intr, sx, sy, self.model, rays, uvs)
         if sol is None:
             return Detection(False, reason='board pose not found', seconds=time.perf_counter() - t0)
         R, c, rms, _ = sol
@@ -1112,7 +1112,7 @@ class Technician:
         az = np.arctan2(d[:, 1], d[:, 0])
         img[inside] = (120 + 18 * np.sin(az[inside] * 3) * np.cos(th[inside] * 5))[:, None]
         img = img.reshape(h, w, 3)
-        LC._paint_board(img, intr, c.W2O, c.C, pose, c.board, lambda dw: np.full(len(dw), np.inf))
+        LC.paint_board(img, intr, c.W2O, c.C, pose, c.board, lambda dw: np.full(len(dw), np.inf))
         if noise:
             img += np.random.default_rng(seed).normal(0, noise, img.shape).astype(np.float32)
         return np.clip(img, 0, 255).astype(np.uint8)

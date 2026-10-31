@@ -1301,7 +1301,9 @@ def _edge_measurement(project, var, cam, rev, lid, sub, motion, dls, conv_ms, en
     if r.get('delta_deg') is None:
         return doc
     d = np.asarray(r['delta_deg'], float)
-    se = np.array([v if v is not None else np.inf for v in r['stderr_deg']], float)
+    # the relative standard error: the windows of one drive share the drive's scenes' common shift (a constant the
+    # models take up), so it would only blunt the steps
+    se = np.array([v if v is not None else np.inf for v in r.get('stderr_relative_deg') or r['stderr_deg']], float)
     obs = np.asarray(r.get('observable') or [False] * 3, bool)
     split = r.get('split')
     if split is not None:
