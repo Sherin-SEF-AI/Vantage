@@ -213,7 +213,8 @@ class TerminalView(QWidget):
         self._paint.setSingleShot(True)
         self._paint.setInterval(12)
         self._paint.timeout.connect(self.update)
-        self.scrolled = 0                              # lines scrolled back into the history
+        self.scrolled = 0                              # lines of history shown above the screen (0: the live screen)
+        self._hist_len = 0
         self.sel = None                                # ((row, col), (row, col)) in screen cells
         self._anchor = None
         self.ended = False
@@ -261,7 +262,11 @@ class TerminalView(QWidget):
     def _readable(self, *_):
         data = self.shell.read()
         if data:
+            before = len(self.screen.history.top)
             self.stream.feed(data)
+            if self.scrolled:                          # scrolled back: the lines in view stay where they are
+                grown = len(self.screen.history.top) - before
+                self.scrolled = min(len(self.screen.history.top), self.scrolled + max(0, grown))
             if self.screen.title:
                 self.title.emit(self.screen.title)
             if not self._paint.isActive():
@@ -280,23 +285,34 @@ class TerminalView(QWidget):
 
     # ---------------------------------------------------------------- scrollback
     def _scroll_to(self, n):
-        n = max(0, n)
-        while self.scrolled < n and self.screen.history.top:
-            self.screen.prev_page()
-            self.scrolled += 1
-        while self.scrolled > n:
-            self.screen.next_page()
-            self.scrolled -= 1
+        """Show n lines of history above the screen. Only the view moves: the screen the shell draws on is never
+        touched (pyte's own paging swaps lines into it, and the next output would land in the wrong place)."""
+        self.scrolled = max(0, min(int(n), len(self.screen.history.top)))
+        self.sel = None
         self.update()
 
-    def scroll_lines(self, pages: int):
-        """Shift+PageUp/PageDown and the wheel: whole half-pages back or forward through the history."""
-        self._scroll_to(self.scrolled + pages)
+    def scroll_lines(self, lines: int):
+        """Back (positive) or forward through the history: the wheel, Shift+PageUp/PageDown."""
+        self._scroll_to(self.scrolled + lines)
+
+    def row(self, r):
+        """Line r of the view: from the history while scrolled back, else the screen."""
+        if self.scrolled:
+            hist = self.screen.history.top
+            i = len(hist) - self.scrolled + r
+            if i < len(hist):
+                return hist[i]
+            r = i - len(hist)
+        return self.screen.buffer[r]
 
     def wheelEvent(self, e):
-        steps = e.angleDelta().y() / 120
-        if steps:
-            self.scroll_lines(int(round(steps)) or (1 if steps > 0 else -1))
+        d = e.pixelDelta().y() / max(1.0, self.ch) if not e.pixelDelta().isNull() else e.angleDelta().y() / 40
+        self._wheel = getattr(self, '_wheel', 0.0) + d     # three lines a notch; a touchpad's pixels add up
+        n = int(self._wheel)
+        if n:
+            self._wheel -= n
+            self.scroll_lines(n)
+        e.accept()
 
     # ---------------------------------------------------------------- keys
     def event(self, e):
@@ -324,7 +340,7 @@ class TerminalView(QWidget):
         if (mods & ctrl_shift) == ctrl_shift and key == Qt.Key.Key_V:
             return self.paste()
         if mods & Qt.KeyboardModifier.ShiftModifier and key in (Qt.Key.Key_PageUp, Qt.Key.Key_PageDown):
-            return self.scroll_lines(1 if key == Qt.Key.Key_PageUp else -1)
+            return self.scroll_lines((self.rows - 1) * (1 if key == Qt.Key.Key_PageUp else -1))
         if self.ended and key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self.restart.emit()
             return
@@ -351,7 +367,7 @@ class TerminalView(QWidget):
         (r0, c0), (r1, c1) = sorted(self.sel)
         lines = []
         for r in range(r0, r1 + 1):
-            row = self.screen.buffer[r]
+            row = self.row(r)
             a = c0 if r == r0 else 0
             b = c1 if r == r1 else self.cols - 1
             lines.append(''.join(row[c].data for c in range(a, b + 1)).rstrip())
@@ -364,7 +380,7 @@ class TerminalView(QWidget):
 
     def screen_text(self) -> str:
         """The visible screen as text (tests, and copy of the whole screen)."""
-        return '\n'.join(''.join(self.screen.buffer[r][c].data for c in range(self.cols)).rstrip()
+        return '\n'.join(''.join(self.row(r)[c].data for c in range(self.cols)).rstrip()
                          for r in range(self.rows))
 
     def _cell(self, pos):
@@ -415,10 +431,9 @@ class TerminalView(QWidget):
         p.setFont(self.font)
         sel = sorted(self.sel) if self.sel is not None else None
         selc = QColor(THEME.tok['sel'])
-        buf = self.screen.buffer
         for r in range(self.rows):
             y = 3 + r * self.ch
-            row = buf[r]
+            row = self.row(r)
             c = 0
             while c < self.cols:                       # a run of cells that look alike is one drawText
                 ch0 = row[c]
@@ -475,7 +490,7 @@ class TerminalView(QWidget):
         if self.scrolled:
             p.setPen(QColor(THEME.tok['muted']))
             p.drawText(self.rect().adjusted(0, 2, -8, 0), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop,
-                       f'history · Shift+PageDown')
+                       f'history · {self.scrolled} lines up · Shift+PageDown or any key returns')
         p.end()
 
     def _box(self, p, ch, x, y, colour):

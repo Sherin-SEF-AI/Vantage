@@ -81,6 +81,28 @@ def test_a_real_shell_runs_and_is_drawn(tmp_path):
     QTest.keyClicks(v, 'echo typed-by-keys')                                         # real key presses, not send()
     QTest.keyClick(v, K.Key_Return)
     assert _wait(app, lambda: v.screen_text().count('typed-by-keys') >= 2), v.screen_text()
+    v.send(b'seq 1 200\r')
+    assert _wait(app, lambda: '200' in v.screen_text().split())
+    from PyQt6.QtCore import QPoint, QPointF
+    from PyQt6.QtGui import QWheelEvent
+    from PyQt6.QtWidgets import QApplication as QA
+
+    def wheel(notches):
+        QA.sendEvent(v, QWheelEvent(QPointF(50, 50), QPointF(50, 50), QPoint(0, 0), QPoint(0, 120 * notches),
+                                    Qt.MouseButton.NoButton, M.NoModifier, Qt.ScrollPhase.NoScrollPhase, False))
+    wheel(10)                                                                         # 30 lines back
+    assert v.scrolled == 30
+    top = v.screen_text().split()[0]
+    assert '200' not in v.screen_text().split() and top.isdigit()
+    v.shell.write(b'echo more-output\r')                                             # output while scrolled back
+    assert _wait(app, lambda: v.scrolled > 30)
+    assert v.screen_text().split()[0] == top                                          # the view did not move
+    wheel(-200)
+    assert v.scrolled == 0 and 'more-output' in v.screen_text()
+    wheel(3)
+    QTest.keyClick(v, K.Key_Space)                                                    # a key brings the live screen back
+    assert v.scrolled == 0
+    QTest.keyClick(v, K.Key_Backspace)
     v.send(b'sleep 30; echo slept\r')
     _pump(app, 0.5)
     t0 = time.time()
