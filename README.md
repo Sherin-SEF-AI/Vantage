@@ -319,6 +319,11 @@ Claude Desktop takes the same command in `claude_desktop_config.json` under `mcp
   (with the presets), variants, ROI, ECU, analysis and study settings, targets, obstacles, the brief and the design
   log. Each call is checked as a whole before anything changes.
 - `undo_last_change`, which only ever undoes Claude's own last step, and `redo_change`.
+- `run_batch`, which runs any of batch mode's 94 job options on the project as it is now, unsaved changes included,
+  in a run folder beside the project. That covers studies, checks of drive logs, as-built recordings and installation
+  photos, lens calibration and import, online calibration, log replay, refinement, experiments, validation and
+  reproducing results. It returns the exit code and its meaning, the files written and the small JSON ones. CARLA
+  runs, model downloads and the automation command are not available through it.
 - `save_project`, `export_files`, `get_recent_activity` (what you changed in the window), `get_project_data` and
   `vantage_status`.
 

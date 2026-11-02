@@ -81,7 +81,9 @@ class NeedsWindow(Exception):
 
 # =========================================================================== results
 def text(doc, error=False) -> dict:
-    return {'content': [{'type': 'text', 'text': doc if isinstance(doc, str) else T.dump(doc)}], 'isError': error}
+    """An MCP result. Whole JSON (the assistant's tools cut their own text for the in-app chat; these never are)."""
+    body = doc if isinstance(doc, str) else json.dumps(doc, ensure_ascii=False, default=str, separators=(',', ':'))
+    return {'content': [{'type': 'text', 'text': body}], 'isError': error}
 
 
 def _figures(tc) -> dict:
@@ -171,6 +173,21 @@ def _export(s, formats=None, folder=None, **_):
     return {'folder': folder, 'files': [os.path.relpath(x, folder) for x in paths]}
 
 
+def _batch(s, args=None, help=False, timeout_s=600, **_):
+    from . import batchrun as B
+    if help or not args:
+        return B.help_doc()
+    why = B.check(args)
+    if why:
+        return {'error': why}
+    tc = s.context()
+    p = tc.project
+    base = os.path.dirname(p.path) if p.path and os.access(os.path.dirname(p.path), os.W_OK) else \
+        os.path.join(tc.working_dir or os.path.expanduser('~'), p.name)
+    os.makedirs(base, exist_ok=True)
+    return B.run(p, args, base, timeout_s)
+
+
 def _open(s, path=None, sample=False, template=None, **_):
     return s.open(path=path, sample=bool(sample), template=template)
 
@@ -216,6 +233,22 @@ MCP_TOOLS = [
          'Kalibr; mounting sheets; BOM; the remap tables …) to a folder. Without formats: the list of format ids.',
          {'formats': {'type': 'array', 'items': {'type': 'string'}}, 'folder': {'type': 'string'}}, _export,
          read_only=False),
+    Tool('run_batch', 'Run a Vantage job',
+         'Run any of Vantage\'s batch jobs on the project as it is now (unsaved changes included; the project itself '
+         'is not changed): studies (--perception-range, --sensor-coverage, --clock-tree, --thermo-vib, --isp, --gnss, '
+         '--exposure, --terrain, --harness …), checks on files (--drive-log RECORDING, --as-built-check, '
+         '--install-check IMAGES, --online-calib DRIVE, --lidar-calib, --log-replay, --detection-quality), '
+         'calibration (--calibrate-lens, --import-calib, then --save OUT.vantage), --refine-rig, --experiment, '
+         '--validate, --reproduce, --export with --formats, --rig-health. Runs in a folder of its own beside the '
+         'project; returns the exit code and its meaning, the output\'s end, the files written and the small JSON ones. '
+         'help: true lists every option with its arguments. CARLA runs, downloads and the automation command are not '
+         'here: CARLA runs go through propose_plan for the user to approve.',
+         {'args': {'type': 'array', 'items': {'type': 'string'},
+                   'description': 'the command-line words after the project, e.g. ["--perception-range", '
+                                  '"range.json"]; relative outputs land in the run folder'},
+          'help': {'type': 'boolean', 'description': 'list the options instead of running'},
+          'timeout_s': {'type': 'integer', 'description': 'stop after this many seconds (default 600, at most 3600)'}},
+         _batch, read_only=False),
     Tool('open_project', 'Open a project',
          'Work on another project. With the Vantage window open, Claude works on the project in it (open others there); '
          'without a window: path opens a .vantage file, sample the Tata Tigor EV sample, template a body '

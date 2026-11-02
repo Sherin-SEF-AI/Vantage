@@ -187,6 +187,30 @@ def test_a_file_open_in_a_window_is_left_to_the_window(tmp_path, sample, monkeyp
     assert [w['pid'] for w in SE.windows()] == [os.getpid()]
 
 
+# ======================================================================= batch jobs
+def test_run_batch_runs_jobs_on_the_project_as_it_is(tmp_path, sample, monkeypatch):
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'cfg'))
+    path = str(tmp_path / 'p.vantage')
+    sample.save(path)
+    r = Router(path, 'file')
+    _call(r, 'edit_project', ops=[{'op': 'set', 'target': 'camera', 'id': 'F', 'props': {'pitch': 33}}])
+    doc, err = _call(r, 'run_batch', args=['--analyse', 'a.json', '--sync-plan', 'sync.json'])
+    assert not err and doc['exit_code'] in (0, 2), doc
+    assert {'a.json', 'sync.json'} <= {f['file'] for f in doc['files']}
+    pose = next(c['pose'] for c in doc['json']['a.json']['cameras'] if c['tag'] == 'F')
+    assert pose['pitch'] == 33                                                     # the project as it is now
+    assert os.path.dirname(doc['folder']) == str(tmp_path)                         # beside the project
+    from vantage.core.project import Project
+    assert Project.load(path).variant.by_tag('F').pitch == 33                      # (the edit, saved by the edit)
+    doc, err = _call(r, 'run_batch', help=True)
+    assert '--perception-range' in doc['options'] and '--carla-run' not in doc['options']
+    for args, why in ((['--carla-run', 'x'], 'propose_plan'), (['--watch'], 'automation'),
+                      (['--sample', '--analyse', 'a.json'], 'this project'), (['--bogus'], 'not a batch option'),
+                      (['a.json'], 'no job')):
+        doc, err = _call(r, 'run_batch', args=args)
+        assert err and why in doc['error'], (args, doc)
+
+
 # ======================================================================= the window
 def test_claude_works_in_the_open_window_as_undo_steps(app_win):
     app, w = app_win
@@ -208,6 +232,7 @@ def test_claude_works_in_the_open_window_as_undo_steps(app_win):
         out['propose'] = _call(router, 'propose_changes', changes=[{'camera': 'F', 'dpitch': -2}], title='Tip F up',
                                rationale='test')
         out['activity'] = _call(router, 'get_recent_activity')
+        out['batch'] = _call(router, 'run_batch', args=['--analyse', 'live.json'])
         out['undo'] = _call(router, 'undo_last_change')
         bad = SE.LiveLink(dict(info, token='wrong'))
         try:
@@ -231,6 +256,10 @@ def test_claude_works_in_the_open_window_as_undo_steps(app_win):
     assert not out['propose'][1] and w.ctx.assistant.proposals                 # a card for the user to apply
     steps = out['activity'][0]['steps']
     assert steps[-1]['by'] == 'claude' and steps[-1]['text'].startswith('Claude · camera QL')
+    bd, err = out['batch']
+    assert not err and bd['exit_code'] in (0, 2) and 'live.json' in bd['json'], bd
+    assert 'critical' in bd['meaning'] or bd['exit_code'] == 0
+    assert next(c['pose']['pitch'] for c in bd['json']['live.json']['cameras'] if c['tag'] == 'QL') == 44   # unsaved edit
     assert out['undo'][0]['result'].startswith('undid')
     assert w.store.project.variant.by_tag('QL').pitch == 50 and w.store.project.variant.by_tag('QR').pitch == 50
     assert 'wrong token' in out['refused']
