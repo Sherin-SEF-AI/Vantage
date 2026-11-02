@@ -624,7 +624,10 @@ SCIPY_SEEDED = {'differential_evolution', 'dual_annealing', 'basinhopping', 'Sob
                 'shgo'}
 IDENTITIES = {('core/project.py', 'uuid4'), ('core/automation.py', 'token_hex'),        # identities, never numbers
               ('assistant/copilot.py', 'uuid4'),                                     # (a Copilot plan's id)
-              ('assistant/memory.py', 'uuid4')}                                      # (a design-log entry's id)
+              ('assistant/memory.py', 'uuid4'),                                      # (a design-log entry's id)
+              ('assistant/chats.py', 'uuid4'),                                       # (a kept conversation's id)
+              ('ui/mcp_bridge.py', 'token_hex')}                                     # (the MCP bridge's secret: must
+#                                                                                       be unpredictable, never seeded)
 # calls whose result is thrown away may be listed here; none are now (the SB detector's warm-up and the self-test's
 # check seed OpenCV's generator like every real call)
 CV_DISCARDED: set = set()

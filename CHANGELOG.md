@@ -2,6 +2,167 @@
 
 Versions follow [semantic versioning](https://semver.org). The top entry is what the release notes on GitHub show.
 
+## 0.8.0 — 2026-11-02
+
+Claude works on the rig. Vantage is now an MCP server, so Claude Code or Claude Desktop, on a Claude subscription,
+reads and changes the design and runs any of Vantage's jobs. The assistant panel switches between the in-app
+assistant and Claude Code running in a terminal beside the 3D view, where Claude's changes land as undo steps while
+you talk to it. Conversations are kept on both sides.
+
+**What's new**
+
+- **Claude over MCP** (`vantage --mcp`; standard library only). Add it once:
+  `claude mcp add --scope user vantage -- vantage --mcp` (on Windows `vantage-cli.exe --mcp`, on macOS
+  `/Applications/Vantage.app/Contents/MacOS/vantage-cli --mcp`).
+  - With a Vantage window open, Claude works on the project in it. Each change is one undo step "Claude · …", and the
+    reply carries the analysis before and after it. Its proposals, Copilot plans and design-log entries appear in the
+    assistant panel for you to apply, approve or accept. The window listens on 127.0.0.1 only and checks a token kept
+    in a file only you can read (Preferences ▸ General ▸ Claude).
+  - With no window open, Claude works on a `.vantage` file. It is analysed as the app does it and saved after each
+    change, with the original kept as `.bak`. Claude never opens a file a window has open, nor overwrites one that
+    changed on disk.
+  - **74 tools.**
+    - The in-app assistant's tools.
+    - `edit_project`: anything you can change in the design, as one undo step checked as a whole first. That covers
+      cameras, sensors, rig parts and presets, variants, ROI, ECU, analysis and study settings, targets, obstacles,
+      the brief and the design log.
+    - `run_batch`: any of batch mode's 94 job options, run on the design as it is now in a run folder beside the
+      project.
+    - Undo and redo of Claude's own steps only; save, export, recent activity, project data and status.
+  - Locked cameras and sensors, unit calibrations, stream sources, the fleet, photos, the vehicle model, Copilot
+    approvals and the automation settings stay yours. CARLA runs still go through a Copilot plan you approve, and model
+    downloads and the automation command are not available to Claude.
+- **Claude Code in the assistant panel** (Ctrl+J for the assistant, Ctrl+` for Claude Code). A switch at the top of
+  the panel picks the in-app assistant (Groq, or Claude through the API) or Claude Code · MCP: a terminal in which
+  Claude Code starts by itself and works on that window first.
+  - The terminal is your shell, started in the project's folder. It handles 256 and true colour, box drawing, wide
+    characters, copy and paste (Ctrl+Shift+C / Ctrl+Shift+V, bracketed paste) and the xterm keys.
+  - It supports the alternate screen and mouse reports that full-screen programs use, so the wheel scrolls Claude's
+    conversation. Shift selects text in the terminal, and Shift+wheel scrolls its own history.
+  - **Calls to action:** the app's live recommendations appear on this side too. Ask, Start goal and Plan it hand the
+    request to Claude Code; Open navigates.
+- **Conversations are kept.**
+  - Every in-app assistant conversation is saved on this computer, per project, after each answer. History lists them
+    to read, copy, delete or continue; a continued conversation sends a summary of the old one with your next question.
+  - On the Claude Code side, History continues Claude Code's last conversation or picks one.
+
+**What it does**
+
+Everything in 0.7.1 and before (below): place cameras, lidars, radars, GNSS antennas and IMUs on the vehicle and the
+rig; prove what they record, through every study from coverage to timing, heat and vibration; calibrate and check them
+against recordings; hand the calibration to the data pipeline; drive the rig in CARLA with ground truth, faults,
+detection quality and campaigns; and let the Copilot plan any of it for your approval. Now Claude, in Claude Code or
+Claude Desktop, can also do the work in the window with you. Free software under the GNU General Public License,
+version 3 or later; the reference stitchers are Apache-2.0.
+
+**Downloads**
+
+| System | File | Needs |
+|---|---|---|
+| Windows | `Vantage-0.8.0-windows-x64-setup.exe` (installer), or the `.zip` | Windows 10 or 11, x64 |
+| macOS | `Vantage-0.8.0-macos-arm64.zip` | macOS 14 or later, Apple silicon |
+| Linux x86_64 | `Vantage-0.8.0-linux-x86_64.tar.gz` | glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer) |
+| Linux arm64 | `Vantage-0.8.0-linux-arm64.tar.gz` | glibc 2.35 or later: NVIDIA Jetson Orin with JetPack 6, Ubuntu 22.04 arm64 and newer |
+
+`SHA256SUMS.txt` lists each file's SHA-256. Every bundle carries its own Python and libraries and can check itself
+on your machine: the *Vantage self-test* entry in the Start menu on Windows, `vantage --self-test` on Linux once
+installed, `/Applications/Vantage.app/Contents/MacOS/vantage-cli --self-test` on macOS. On a Jetson, GStreamer
+camera pipelines need `gst-launch-1.0` (JetPack installs it; else `sudo apt install gstreamer1.0-tools`).
+
+**Unsigned builds**
+
+The downloads are not code-signed, so the system warns the first time:
+
+- **Windows** (SmartScreen, "Windows protected your PC"): choose *More info*, then *Run anyway*.
+- **macOS** ("Vantage cannot be opened" or "Apple could not verify Vantage"): open *System Settings ▸ Privacy &
+  Security* and choose *Open Anyway* next to the message about Vantage (on macOS 14 you can instead Control-click the
+  app and choose *Open*). If macOS says the app is damaged, run in Terminal:
+  `xattr -dr com.apple.quarantine /Applications/Vantage.app`.
+- **Linux**: nothing to approve; check the download against `SHA256SUMS.txt`.
+
+**Known limits**
+
+- Validated in simulation and on synthetic captures only; the first fitted rig will tell how close the planned poses,
+  the installation check and the calibrations come in practice.
+- Lidar, radar, GNSS and IMU figures in the library are nominal datasheet values (the radars are typical classes, not
+  specific products); check them against your units.
+- The drift indicator of the live rig health is an indicator, not a measurement: it misses a rotation along a body
+  edge (a mirror camera's yaw) and featureless edges, and frame times are when frames reached Vantage, not sensor time.
+- STEP import needs the optional gmsh package, which the downloads do not include: run from source with
+  `pip install .[step]` for it.
+- No Intel Mac or Windows on Arm build (Windows on Arm runs the x64 build emulated); run from source there.
+- The Linux arm64 bundle needs glibc 2.35 or later: JetPack 6 on a Jetson (Ubuntu 22.04), not JetPack 5 (Ubuntu
+  20.04; run from source there). It carries Qt 6.7 rather than 6.11, because PyQt6's later arm64 builds need Ubuntu
+  24.04; the whole test suite passes on both. It was built and self-tested on GitHub's arm64 machines, not yet on a
+  Jetson; on a Jetson, OpenGL comes from NVIDIA's driver.
+- Without OpenGL 2.1 the 3D view falls back to a slower software renderer.
+- ROS 2 bags: rosbag2's whole-file compression (`.mcap.zstd`) is not read (`ros2 bag decompress` first), nor XCDR2
+  messages.
+- The assistant sends what it reads of the design (figures, issues, the project brief) to Groq; it is off until you
+  give it a key, and it proposes design changes for you to apply rather than making them.
+- Since 0.2.0: the road surface is used by the coverage analysis and the road study; the optimiser, tolerance study,
+  perception range, stitched-objects study, installation check and critical targets still assume flat ground. The
+  material, weather, headlamp and cable figures are typical values with their sources stated, not measurements of your
+  vehicle, parts or units. The automation command runs with your own permissions, unsandboxed.
+- Since 0.3.0: CARLA's cameras need a GPU. CARLA's lidar has no reflectivity and its radar no cross-section.
+- Since 0.4.0:
+  - CARLA renders a fisheye's views one after another: all six live fisheyes reach about 2.8 fps. One camera at a small
+    size keeps real time.
+  - **CARLA's car is not your vehicle's body.** The as-built check cannot judge mounts on a CARLA drive. The cameras
+    share a small common pitch of −0.04 to −0.10° there.
+  - **CARLA's lidar and radar ignore weather.**
+  - **Ground truth at full image size** exceeds the render budget, so use image scale 0.5.
+  - **The fog calibration** covers one town and CARLA 0.9.16.
+  - **Detector:** YOLOX sees fisheye images as they are; pinhole views cut from them find more cars.
+- Since 0.5.0:
+  - Groq's prices are not bundled: a Groq conversation shows a cost only once you enter Groq's prices in Preferences.
+  - An estimate is an estimate: CARLA minutes come from this machine's earlier drives (the development machine's
+    figures before the first one), the disk from the sample dataset's estimator for the same rig with the ground truth
+    as uncompressed PNG (an upper bound).
+  - In batch mode a CARLA step needs a server already running (`--run-plan` never starts one), and a live-rig step with
+    no duration watches until 5 s after its last fault (10 s without faults).
+  - Claude's effort changes between a planning turn and a question; Anthropic documents that a change of the top-level
+    effort invalidates the prompt cache of the conversation's messages, so such a turn reads fewer cached tokens.
+  - Tested against Groq's real API in a recorded session and against a local stand-in of Anthropic's API: the first
+    real Claude request (its betas, strict tools and streamed tool input) has not been made in development.
+- New in 0.6.0:
+  - The pitch suggestion for a selected camera tries only ±2° and ±4° of pitch, and only while the assistant panel is
+    open.
+  - Whether the last CARLA drive was checked or scored is known for the current session only, and the CARLA server's
+    state only once the CARLA page has been opened.
+  - The perception-range and requirements recommendations use those pages' last results; they do not run the studies.
+- New in 0.7.0:
+  - **Gradient refinement and log replay need PyTorch**, which the downloads leave out: they say so when started. Run
+    Vantage from source with `pip install torch` for them; log replay is practical only on an NVIDIA GPU with CUDA.
+  - **Log replay** compares rigs on re-rendered images, not real ones. It scores only what the lidar rebuilt, so its
+    absolute recall reads higher than real frames give; traffic lights are mostly not rebuilt and are not assessed; a
+    narrower lens cannot be credited with detail the recording never held.
+  - **Online self-calibration** uses depth edges by default; its outline and ground factors are off because they gave
+    false readings on CARLA drives. It has been checked on CARLA drives only.
+  - **SUMO traffic** needs SUMO (`eclipse-sumo`) in the Python that runs the CARLA bridge. The road networks CARLA ships
+    for Town01, Town04 and Town05 have no traffic lights (choose *generate*); SUMO's pedestrians are not synchronised.
+    CARLA's radar gives every point of a vehicle the vehicle's own velocity, so a turning vehicle's yaw rate is not in
+    its radial velocities.
+  - The clock-tree, exposure and thermal-vibration figures are typical values with their sources, not measurements of
+    your units.
+  - A busy camera frame with no calibration board takes up to about 1.5 s to reject in the lidar–camera board
+    search (about 2 s in the lens calibration's).
+- New in 0.7.1:
+  - Saved projects whose sensor mast passes through a roof rack are not changed on load; move the mast, or remove
+    and re-add it, to stand it on the rack.
+  - The C++ bird's-eye stitcher still clips exposure gains to 0.4–2.5 without saying so.
+- New in 0.8.0:
+  - The Claude Code terminal needs a pseudo-terminal: Linux and macOS (Windows runs the MCP server, not the
+    terminal panel). From source it needs the optional `pyte` package (`sudo apt install python3-pyte` or
+    `pip install pyte`); the Linux and macOS downloads include it.
+  - Claude Code itself is not part of Vantage: install it and sign in with your Claude account. Claude's answers
+    and changes can be wrong; each change is an undo step, and runs still need your approval.
+  - Tested with Claude Code 2.1. The terminal covers what Claude Code, shells and common tools use; other
+    full-screen programs may draw imperfectly.
+  - A conversation continued from the history carries a summary of the old one, not the old conversation itself.
+- The validation suite checks the models on the cases it builds against independent references; it does not
+  replace measuring a fitted rig.
+
 ## 0.7.1 — 2026-10-31
 
 A fix release. A sensor mast now stands on a roof rack instead of passing through it, the drive-log check's error bars
