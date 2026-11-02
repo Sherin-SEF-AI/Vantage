@@ -130,6 +130,13 @@ class PreferencesDialog(VDialog):
         wb.clicked.connect(self._browse_working)
         wl.addWidget(wb)
         row('Working folder', wrow)
+        from ..mcp_bridge import enabled as mcp_enabled
+        self.mcp = QCheckBox('Let Claude work in this window (MCP)')
+        self.mcp.setChecked(mcp_enabled(s))
+        self.mcp.setToolTip('Claude Code or Claude Desktop, with the Vantage MCP server added, reads and changes the '
+                            'project open here: each change is an undo step "Claude · …". Off: Claude works on project '
+                            'files only. Local only (127.0.0.1, a token only you can read).')
+        row('Claude', self.mcp, 'claude mcp add vantage -- vantage --mcp')
         self.soft = QCheckBox('Draw the 3D view with QPainter (no OpenGL)')
         self.soft.setChecked(s.value('render/software', False, type=bool))
         row('Renderer', self.soft, 'applies on restart')
@@ -157,6 +164,11 @@ class PreferencesDialog(VDialog):
         s.setValue('units/default', self.units.value())
         s.setValue('analysis/live', self.live.isChecked())
         s.setValue('render/software', self.soft.isChecked())
+        from ..mcp_bridge import SETTING as MCP_SETTING
+        s.setValue(MCP_SETTING, self.mcp.isChecked())
+        mcp = getattr(self.ctx, 'mcp', None) if self.ctx is not None else None
+        if mcp is not None:
+            mcp.start() if self.mcp.isChecked() else mcp.stop()
         from ... import workdir
         workdir.put(s, self.working.text())
         THEME.apply(QApplication.instance(), self.theme.value(), float(self.scale.value()))

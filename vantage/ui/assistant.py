@@ -4567,6 +4567,29 @@ class AssistantPanel(QWidget):
     def _add(self, w):
         self.col.insertWidget(self.col.count() - 1, w)
 
+    def show_from_claude(self, kind: str, data):
+        """A card Claude put here over MCP (vantage.ui.mcp_bridge): a proposal, a Copilot plan or a design-log entry,
+        under a 'Claude · via MCP' line. The user acts on it as on the assistant's own: apply, approve, accept."""
+        if self.empty is not None:
+            self.col.removeWidget(self.empty)
+            self._drop(self.empty)
+            self.empty = None
+            self.empty_list = None
+        box = QWidget()
+        v = QVBoxLayout(box)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(6)
+        v.addWidget(label('Claude · via MCP', ink2=True, small=True))
+        if kind == 'proposal':
+            v.addWidget(ProposalCard(self.ctl, data))
+        elif kind == 'copilot':
+            v.addWidget(CopilotCard(self.ctl, data))
+        else:
+            v.addWidget(LogProposalCard(self.ctl, data))
+        self._add(box)
+        self._stick = True
+        return box
+
     # ---------------------------------------------------------------- recommendations
     def _recs_chip(self):
         t = THEME.tok

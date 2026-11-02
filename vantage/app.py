@@ -50,6 +50,9 @@ def make_app(theme=None, scale=None):
 
 def main(argv=None):
     from . import __version__
+    if '--mcp' in (sys.argv[1:] if argv is None else argv):     # the MCP server: stdout is the protocol's alone
+        from .mcp.server import main as mcp_main
+        return mcp_main(sys.argv[1:] if argv is None else argv)
     for s in (sys.stdout, sys.stderr):              # batch output on a Windows console: never crash on → or ▸
         try:
             s.reconfigure(errors='replace')

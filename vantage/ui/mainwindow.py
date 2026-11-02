@@ -74,6 +74,8 @@ class MainWindow(QMainWindow):
         self.ctx.assistant = AssistantController(self.ctx)    # the chat about the design (Preferences ▸ Assistant)
         from .workspaces.automation_ws import AutomationController
         self.ctx.automation = AutomationController(self.ctx)  # Export ▸ Automation: triggers work before the page opens
+        from .mcp_bridge import Bridge
+        self.ctx.mcp = Bridge(self.ctx)                       # Claude over MCP works in this window (mcp_bridge.py)
         self.actions_by_id: dict[str, QAction] = {}
         self.palette_extra = []
         self._photo_cache = {}
@@ -1024,6 +1026,9 @@ class MainWindow(QMainWindow):
         self._update_state()
         self._on_selection()
         self.viewarea.frame_all()
+        from .mcp_bridge import enabled
+        if enabled(self.ctx.settings):
+            self.ctx.mcp.start()
         self.set_project_meta()
         self._cycle_snap(init=True)
 
@@ -1089,6 +1094,7 @@ class MainWindow(QMainWindow):
         self.ctx.settings.setValue('window/state', self.saveState())
         self.cancel_jobs()
         self.ctx.automation.shutdown()              # never leave the user's command running
+        self.ctx.mcp.stop()                         # Claude's calls go to the file (or another window) from now on
         if 'install' in self._page_widgets:
             self._page_widgets['install'].stop_live()
         if 'rig' in self._page_widgets:
@@ -1259,6 +1265,9 @@ class MainWindow(QMainWindow):
         else:
             self.saved_label.setText('unsaved' if dirty or not p.path else '')
         self.setWindowTitle(f'Vantage — {p.name}' + (' •' if dirty else ''))
+        mcp = getattr(self.ctx, 'mcp', None)
+        if mcp is not None and mcp.running:
+            mcp._publish()                          # the file it has open, for Claude's MCP server to find
         self._sync_frame()
 
     def _fill_variant_combo(self):

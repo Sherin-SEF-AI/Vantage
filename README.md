@@ -289,6 +289,42 @@ in the app; otherwise `--run-plan` returns the first failing step's own code, an
 requirements check fails, 4 when the project could not be read or a format not written, 130 when stopped during the
 command.
 
+### Claude over MCP (Claude Code, Claude Desktop)
+
+Vantage is an MCP server, so Claude (with a Claude subscription in Claude Code or Claude Desktop, or any MCP client)
+can read and change rig designs. Add it once:
+
+```bash
+claude mcp add --scope user vantage -- python3 /path/to/vantage/run_vantage.py --mcp     # from source
+claude mcp add --scope user vantage -- vantage --mcp                                     # installed (Linux)
+```
+
+On Windows use `vantage-cli.exe --mcp` and on macOS `/Applications/Vantage.app/Contents/MacOS/vantage-cli --mcp`.
+Claude Desktop takes the same command in `claude_desktop_config.json` under `mcpServers`.
+
+- **With a Vantage window open**, Claude works on the project in it. Each change is one undo step named
+  "Claude · …" (Edit ▸ Undo takes it back). The analysis reruns before Claude gets the figures before and after.
+  Proposals, Copilot plans and design-log entries Claude makes appear in the Assistant panel for you to apply,
+  approve or accept. The window listens on 127.0.0.1 only and checks a token kept in a file only you can read.
+  Preferences ▸ General ▸ Claude turns it off.
+- **With no window open**, Claude works on a `.vantage` file. Pass it with `--mcp-project FILE`, or Claude opens one
+  with the `open_project` tool. Each change is analysed and saved, and the file as it was is kept as `FILE.bak`.
+  Claude will not open a file that a window has open, nor overwrite one that changed on disk.
+
+**Tools.**
+- Everything the in-app assistant reads and runs: the design, the coverage, the studies, simulate and compare,
+  `look` (pictures), and the Copilot's plan tools.
+- `edit_project`, which changes anything you can change in the design as one undo step: cameras, sensors, rig parts
+  (with the presets), variants, ROI, ECU, analysis and study settings, targets, obstacles, the brief and the design
+  log. Each call is checked as a whole before anything changes.
+- `undo_last_change`, which only ever undoes Claude's own last step, and `redo_change`.
+- `save_project`, `export_files`, `get_recent_activity` (what you changed in the window), `get_project_data` and
+  `vantage_status`.
+
+**What Claude cannot change.** Locked cameras and sensors (Claude may lock one, never unlock it), unit calibrations,
+stream sources, the fleet, photos, the vehicle model, the Copilot's approval records and the automation settings.
+Runs such as CARLA drives still go through a Copilot plan that you approve in the window.
+
 ## What is in it
 
 | Area | Features |
@@ -451,6 +487,8 @@ vantage/sim    the CARLA bridge, run in CARLA's own Python (carla_bridge, record
                server (live) and the server (server)
 vantage/runtime  reference bird's-eye stitchers shipped with the remap tables (C++17, Python)
 vantage/batch  command-line batch mode
+vantage/mcp    the MCP server for Claude (server, the tools: service, changes as operations: edits, a window or a
+               file: session); the window's side is vantage/ui/mcp_bridge
 vantage/selftest  --self-test: checks an installation (analysis, exports, cameras, bags, plugins, OpenGL, every page)
                   without a window
 vantage/sysenv  the environment for system programs started from the bundle (GStreamer, ffmpeg, desktop tools)
