@@ -54,7 +54,8 @@
       fog and at night, whether the recorder, the power supply and the cables keep up, and what a drive with
       it looks like to your pipeline. Then calibrate the real rig, check its recordings against the plan and hand the
       calibration to your data pipeline. Drive it in the CARLA simulator for labelled training data and fault campaigns,
-      or just say what to run: the Copilot plans it, and runs it once you approve.</p>
+      or just say what to run: the Copilot plans it, and runs it once you approve. Or let
+        <a href="#claude-mcp">Claude Code</a> work on the design in the same window.</p>
     <div class="cta">
       <a class="btn primary" href="#download"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>Download</a>
       <a class="btn" href="#tour"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>Watch the tour</a>
@@ -1514,6 +1515,38 @@ does not match)</span></pre>
           <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
         </div>
         <p class="caption">A plan revised by a follow-up, waiting for approval.</p>
+      </div>
+    </article>
+    <article class="feature" id="claude-mcp">
+      <div class="text">
+        <div class="eyebrow">Claude Code · MCP · new</div>
+        <h3>Claude Code works on the rig, inside the window</h3>
+        <p>Vantage is an MCP server, so Claude Code or Claude Desktop, on your Claude subscription, reads and changes the
+          design. The assistant panel switches between the in-app assistant and <b>Claude Code</b> running in a
+          terminal beside the 3D view. Claude's changes land in that window as you talk to it.</p>
+        <ul>
+          <li><b>Change anything, undo anything:</b> cameras, sensors, rig parts, variants, the ROI, study settings and
+            the brief. Each change is one undo step named <i>Claude · …</i>, checked before anything changes, with the
+            analysis before and after it.</li>
+          <li><b>Every job:</b> the assistant's tools, plus <code>run_batch</code>, which runs any batch job (drive-log
+            and as-built checks, lens calibration, studies, refinement, validation) on the design as it is now.</li>
+          <li><b>Calls to action:</b> the same live recommendations as the assistant side. <i>Ask</i>, <i>Start goal</i>
+            and <i>Plan it</i> hand the request to Claude Code.</li>
+          <li><b>History on both sides:</b> the assistant keeps every conversation on your computer to continue, and
+            Claude Code resumes its own.</li>
+          <li><b>Yours stays yours:</b> locked cameras, measured calibrations, stream sources and the vehicle model are
+            never changed. CARLA runs still need your approval in the window. The connection is local only: 127.0.0.1
+            and a token only you can read.</li>
+        </ul>
+        <p class="note">Add it once with <code class="nowrap">claude mcp add vantage -- vantage --mcp</code>. The terminal
+          runs on Linux and macOS. In this picture a recommendation was clicked; Claude Code starts with it.</p>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <img src="media/claude-panel.jpg" alt="The assistant panel switched to Claude Code · MCP: two recommendations with Start goal and Ask buttons above a terminal in which a click has typed a claude command asking to close a blind patch below the rear bumper" loading="lazy" width="642" height="372">
+          <button class="expand" type="button" aria-label="Enlarge"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
+        <p class="caption">The Claude Code side of the assistant panel: a recommendation, clicked, starts Claude Code with its request.</p>
       </div>
     </article>
   </div>

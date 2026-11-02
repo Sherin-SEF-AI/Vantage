@@ -1546,6 +1546,37 @@ Images are never sent either, except the rendered analysis pictures, which need 
 
 ---
 
+### 17.7 Claude over MCP and the Claude Code panel
+
+Vantage is also an **MCP server** (`vantage --mcp`, standard library only). That means Claude Code or Claude Desktop,
+on a Claude subscription, reads and changes rig designs. Add it once with
+`claude mcp add --scope user vantage -- vantage --mcp`.
+
+- **With a window open**, Claude works on that window's project. Each change is one undo step named "Claude · …", and
+  the reply carries the analysis before and after it. Its proposals, plans and design-log entries appear in the
+  assistant panel for the user. The bridge listens on 127.0.0.1 with a token only the user can read (Preferences ▸
+  General ▸ Claude).
+- **With no window open**, Claude works on a `.vantage` file. It is analysed as the app does it and saved after each
+  change, with the original kept as `.bak`.
+- **Tools (74).**
+  - The assistant's tools.
+  - `edit_project`: anything the user can change in the design, checked as a whole before anything changes.
+  - `run_batch`: any of batch mode's 94 job options, on the design as it is now, in a run folder beside it.
+  - Undo and redo of Claude's own steps only; save, export, recent activity, project data and status.
+- **What stays the user's:** locked devices, unit calibrations, stream sources, the fleet, photos, the vehicle model,
+  Copilot approvals and the automation settings. CARLA runs, model downloads and the automation command are not
+  available to Claude.
+
+The **assistant panel** switches between the in-app assistant (Groq, or Claude through the API) and **Claude Code ·
+MCP**, a terminal in the same panel (Linux and macOS, with the optional `pyte` package). Claude Code starts there by
+itself and works on that window first.
+
+- **The terminal:** colours, box drawing, copy and paste, scrollback, and the alternate screen and mouse reports of
+  full-screen programs (the wheel scrolls Claude's conversation).
+- **Calls to action:** the app's recommendations hand their request to Claude Code.
+- **History:** Claude Code resumes its own conversations, and every in-app assistant conversation is kept on the
+  computer per project, to read, copy, delete or continue.
+
 ## 18. Automation, CI and batch mode
 
 ### 18.1 Automation (Export ▸ Automation)

@@ -92,6 +92,8 @@
     <a href="#copilot">The Copilot: plans you approve</a>
     <a href="#recommended">Recommended actions</a>
     <a href="#privacy">What is sent</a>
+    <a href="#claude-mcp">Claude over MCP</a>
+    <a href="#claude-panel">Claude Code in the panel</a>
     <p>Data</p>
     <a href="#sample-dataset">Sample dataset</a>
     <a href="#rosbags">ROS 2 bags</a>
@@ -1481,6 +1483,54 @@ vantage project.vantage            # open a project</code></pre>
       <code>~</code>). <b>More ▸ What was sent</b> shows the last request as it left. The first question to a provider
       asks once, naming it. The provider processes what is sent under its own terms. Answers can be wrong: check a
       proposal's predicted effect before applying it, and a plan before approving it.</p></div>
+
+    <h3 id="claude-mcp">Claude over MCP</h3>
+    <p>Vantage is an MCP server, so Claude reads and changes rig designs. That means Claude Code or Claude Desktop on
+      a Claude subscription, or any MCP client. Add it once:</p>
+<pre>claude mcp add --scope user vantage -- vantage --mcp
+# from source: claude mcp add --scope user vantage -- python3 /path/to/run_vantage.py --mcp</pre>
+    <p>On Windows the command is <code>vantage-cli.exe --mcp</code>, and on macOS
+      <code>/Applications/Vantage.app/Contents/MacOS/vantage-cli --mcp</code>. The server uses the Python standard
+      library only.</p>
+    <ul>
+      <li><b>With a Vantage window open</b>, Claude works on the project in it. Each change is one undo step named
+        <i>Claude · …</i>, and the analysis reruns before Claude sees the figures before and after. Proposals, Copilot
+        plans and design-log entries Claude makes appear in the assistant panel for you to apply, approve or accept.
+        The window listens on 127.0.0.1 only and checks a token kept in a file only you can read. Preferences ▸
+        General ▸ Claude turns it off.</li>
+      <li><b>With no window open</b>, Claude works on a <code>.vantage</code> file (<code>--mcp-project FILE</code>,
+        or Claude's <code>open_project</code>). Each change is analysed and saved, and the file as it was is kept as
+        <code>FILE.bak</code>. Claude never opens a file a window has open, nor overwrites one that changed on
+        disk.</li>
+      <li><b>The tools</b>: everything the in-app assistant reads and runs; <code>edit_project</code>, which changes
+        anything you can change in the design as one undo step (cameras, sensors, rig parts and their presets,
+        variants, ROI, ECU, analysis and study settings, targets, obstacles, the brief, the design log), checked as a
+        whole before anything changes; <code>run_batch</code>, every batch job on the project as it is now, in a run
+        folder beside it; undo and redo of Claude's own steps only; save, export and recent activity.</li>
+      <li><b>What stays yours</b>: locked cameras and sensors (Claude may lock one, never unlock it), unit
+        calibrations, stream sources, the fleet, photos, the vehicle model, the Copilot's approval records and the
+        automation settings. CARLA runs still go through a Copilot plan you approve in the window.</li>
+    </ul>
+
+    <h3 id="claude-panel">Claude Code in the panel</h3>
+    <p>The assistant panel has a switch at the top: <b>Groq assistant</b> (the in-app assistant, Groq or Claude
+      through the API) or <b>Claude Code · MCP</b>. The latter is a terminal in the same panel, where Claude Code
+      starts by itself the first time. That Claude works on <i>this</i> window even when several are open, so its
+      changes appear beside the conversation. Ctrl+J opens the assistant side and Ctrl+` opens Claude Code.</p>
+    <ul>
+      <li><b>The terminal</b> is your shell, started in the project's folder. It handles 256 and true colour, box
+        drawing, wide characters, copy and paste (Ctrl+Shift+C / Ctrl+Shift+V, bracketed paste) and the xterm keys.
+        Full-screen programs such as Claude Code get the alternate screen and the mouse: the wheel scrolls Claude's
+        conversation, and Shift selects text in the terminal. Shift+wheel or Shift+PageUp scrolls the terminal's own
+        history. It needs the optional <code>pyte</code> package and runs on Linux and macOS.</li>
+      <li><b>Calls to action</b>: the same recommendations as the assistant side, a strip about what you are doing
+        and a <b>Suggested</b> menu. <b>Ask</b>, <b>Start goal</b> and <b>Plan it</b> hand the request to Claude Code
+        (typed into it, or starting it); <b>Open</b> navigates.</li>
+      <li><b>History</b>: Claude Code keeps its conversations per folder. History continues the last one or picks
+        one (<code>claude --continue</code> / <code>--resume</code>, or <code>/resume</code> while it runs). On the
+        assistant side, every conversation is kept on this computer per project; History lists them to read, copy,
+        delete or continue, and a continued conversation carries a summary of the old one.</li>
+    </ul>
 
     <!-- ======================================================== data -->
     <h2 id="sample-dataset">Sample dataset</h2>
