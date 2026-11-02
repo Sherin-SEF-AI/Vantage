@@ -25,5 +25,6 @@ anthropic==2.3.0                   # the assistant's Claude provider (Anthropic'
 zstandard==0.25.0                  # zstd-compressed ROS 2 bags (MCAP chunks, rosbag2 message compression)
 lz4==4.4.5                         # lz4-compressed MCAP chunks
 tzdata==2026.5                     # named time zones for the sun glare study where the system has none (Windows)
+pyte==0.8.2                        # the Terminal panel's screen (LGPL-3.0; it brings wcwidth)
 pyinstaller==6.22.3
 pyinstaller-hooks-contrib==2026.9

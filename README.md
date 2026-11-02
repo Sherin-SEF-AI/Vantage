@@ -97,7 +97,8 @@ platform plugins, draws with OpenGL and with the software renderer, and builds e
 python3 -m pip install .            # from this folder; add [step] for STEP import through gmsh,
                                     # [bags] for compressed ROS 2 bags (zstd, lz4), [keyring] for the assistant's key,
                                     # [claude] for the Claude provider (Anthropic's SDK: or pip install --user anthropic),
-                                    # [torch] for gradient refinement and log replay (PyTorch; the downloads leave it out)
+                                    # [torch] for gradient refinement and log replay (PyTorch; the downloads leave it out),
+                                    # [terminal] for the Terminal panel (pyte)
 vantage                             # the window (vantage-gui on Windows starts it without a console)
 vantage --install-desktop           # Linux: Vantage in the app menu and dock with its icon, and .vantage files
 vantage --desktop-shortcut          # Linux: the same, plus a Vantage launcher on the desktop
@@ -320,6 +321,13 @@ Claude Desktop takes the same command in `claude_desktop_config.json` under `mcp
 - `undo_last_change`, which only ever undoes Claude's own last step, and `redo_change`.
 - `save_project`, `export_files`, `get_recent_activity` (what you changed in the window), `get_project_data` and
   `vantage_status`.
+
+**Claude inside the window.** Window ▸ Terminal (Ctrl+\`) opens your shell in a panel under the analysis panels,
+in the project's folder. Its **Claude** button starts Claude Code there, and that Claude works on *this* window even
+when several are open, so its changes appear beside the conversation. The terminal handles colours, Claude Code's
+interface, copy and paste (Ctrl+Shift+C / Ctrl+Shift+V) and scrollback (Shift+PageUp). Keys go to the shell while it
+has focus; Ctrl+\` returns to the window. The panel needs the optional `pyte` package (`sudo apt install python3-pyte`,
+`pip install pyte`, or the `[terminal]` extra; the Linux and macOS downloads include it) and runs on Linux and macOS.
 
 **What Claude cannot change.** Locked cameras and sensors (Claude may lock one, never unlock it), unit calibrations,
 stream sources, the fleet, photos, the vehicle model, the Copilot's approval records and the automation settings.

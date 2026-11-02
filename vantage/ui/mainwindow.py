@@ -233,6 +233,13 @@ class MainWindow(QMainWindow):
         ad.setTitleBarWidget(QWidget())                      # the panel has its own header
         ad.setMinimumWidth(300)
         ad.hide()
+        from .terminal import TerminalPanel
+        self.terminal_panel = TerminalPanel(self.ctx)
+        td = self._dock('terminal', 'Terminal', self.terminal_panel, B)
+        td.setTitleBarWidget(QWidget())                      # the panel has its own header
+        td.visibilityChanged.connect(lambda on: on and self.terminal_panel.ensure())
+        self.splitDockWidget(bd, td, Qt.Orientation.Vertical)  # full width under the analysis panels: room for 80+ columns
+        td.hide()
         self.splitDockWidget(self.docks['outliner'], self.docks['library'], Qt.Orientation.Vertical)
         self.splitDockWidget(self.docks['inspector'], self.docks['camview'], Qt.Orientation.Vertical)
         self.resizeDocks([self.docks['outliner'], self.docks['inspector']], [250, 312], Qt.Orientation.Horizontal)
@@ -292,6 +299,8 @@ class MainWindow(QMainWindow):
         A('prefs', 'Preferences…', self.preferences, 'Ctrl+,', 'gear', category='File')
         A('assistant', 'Assistant', self.toggle_assistant, 'Ctrl+J', 'sparkle', category='Window',
           tip='Ask questions about this design; changes are proposed, you apply them')
+        A('terminal', 'Terminal', self.toggle_terminal, 'Ctrl+`', 'keyboard', category='Window',
+          tip='A shell inside the window; Claude started there works on this project (its changes are undo steps)')
         A('start', 'Start window…', self.show_start, category='File')
         A('quit', 'Quit', self.close, 'Ctrl+Q', category='File')
         # edit
@@ -1095,6 +1104,7 @@ class MainWindow(QMainWindow):
         self.cancel_jobs()
         self.ctx.automation.shutdown()              # never leave the user's command running
         self.ctx.mcp.stop()                         # Claude's calls go to the file (or another window) from now on
+        self.terminal_panel.shutdown()              # the shell and what runs in it end with the window
         if 'install' in self._page_widgets:
             self._page_widgets['install'].stop_live()
         if 'rig' in self._page_widgets:
@@ -1676,7 +1686,7 @@ class MainWindow(QMainWindow):
         w = self.win_menu
         w.clear()
         names = {'outliner': 'Outliner', 'library': 'Library', 'inspector': 'Inspector', 'camview': 'Camera view',
-                 'bottom': 'Analysis panels', 'assistant': 'Assistant'}
+                 'bottom': 'Analysis panels', 'assistant': 'Assistant', 'terminal': 'Terminal'}
         for k, d in self.docks.items():
             a = w.addAction(names[k])
             a.setCheckable(True)
@@ -2026,6 +2036,18 @@ class MainWindow(QMainWindow):
             d.hide()
             return
         self.show_assistant()
+
+    def toggle_terminal(self):
+        d = self.docks['terminal']
+        v = self.terminal_panel.view
+        if d.isVisible() and v is not None and v.hasFocus():
+            d.hide()
+            return
+        d.show()
+        d.raise_()
+        if self.terminal_panel.ensure() is not None:
+            self.resizeDocks([d], [max(340, d.height())], Qt.Orientation.Vertical)
+            self.terminal_panel.view.setFocus()
 
     def show_assistant(self):
         d = self.docks['assistant']

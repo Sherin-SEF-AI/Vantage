@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import traceback
 
@@ -40,7 +41,9 @@ class Router:
         if not self.sticky_file:
             ws = windows()
             if ws:
-                pick = next((w for w in ws if self.project and same_file(w.get('path', ''), self.project)), None) or \
+                here = os.environ.get('VANTAGE_MCP_PID', '')      # started in a window's Terminal panel: that window
+                pick = next((w for w in ws if here and str(w['pid']) == here), None) or \
+                    next((w for w in ws if self.project and same_file(w.get('path', ''), self.project)), None) or \
                     next((w for w in ws if self.link is not None and int(w['pid']) == self.link.pid), None) or ws[0]
                 if self.link is None or self.link.pid != int(pick['pid']):
                     if self.link is not None:
