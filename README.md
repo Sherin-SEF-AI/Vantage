@@ -322,12 +322,15 @@ Claude Desktop takes the same command in `claude_desktop_config.json` under `mcp
 - `save_project`, `export_files`, `get_recent_activity` (what you changed in the window), `get_project_data` and
   `vantage_status`.
 
-**Claude inside the window.** Window ▸ Terminal (Ctrl+\`) opens your shell in a panel under the analysis panels,
-in the project's folder. Its **Claude** button starts Claude Code there, and that Claude works on *this* window even
-when several are open, so its changes appear beside the conversation. The terminal handles colours, Claude Code's
-interface, copy and paste (Ctrl+Shift+C / Ctrl+Shift+V) and scrollback (Shift+PageUp). Keys go to the shell while it
-has focus; Ctrl+\` returns to the window. The panel needs the optional `pyte` package (`sudo apt install python3-pyte`,
-`pip install pyte`, or the `[terminal]` extra; the Linux and macOS downloads include it) and runs on Linux and macOS.
+**Claude inside the window.** The assistant panel on the right (Ctrl+J) has a switch at the top. **Groq assistant**
+is the in-app assistant: Groq, or Claude through the API, set in Preferences ▸ Assistant; it proposes changes for you
+to apply. **Claude Code · MCP** is a terminal in the same panel. Claude Code starts there by itself the first time,
+on your Claude subscription, and works on *this* window even when several are open, so its changes appear beside
+the conversation (Ctrl+\` goes straight to it). The terminal is your shell, in the project's folder. It handles
+colours, Claude Code's interface, copy and paste (Ctrl+Shift+C / Ctrl+Shift+V) and scrollback (the wheel, or
+Shift+PageUp). Keys go to the shell while it has focus. It needs the optional `pyte` package
+(`sudo apt install python3-pyte`, `pip install pyte`, or the `[terminal]` extra; the Linux and macOS downloads
+include it) and runs on Linux and macOS.
 
 **What Claude cannot change.** Locked cameras and sensors (Claude may lock one, never unlock it), unit calibrations,
 stream sources, the fleet, photos, the vehicle model, the Copilot's approval records and the automation settings.

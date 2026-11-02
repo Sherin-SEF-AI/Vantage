@@ -621,3 +621,56 @@ def test_br_in_a_table_cell_is_a_line_break():
     out = md_to_html('| a | b |\n|---|---|\n| one<br>two | x<br/>y |')
     assert '&lt;br' not in out and out.lower().count('<br') >= 2
     assert '&lt;script&gt;' in md_to_html('<script>x</script>')              # everything else stays escaped
+
+
+# ============================================================================== chat history
+def test_chats_are_kept_privately_and_pruned(tmp_path, monkeypatch):
+    from vantage.assistant import chats as CH
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path))
+    monkeypatch.setattr(CH, 'MAX_CHATS', 3)
+    assert CH.save(CH.new_id(), title='t', markdown='  ') is None                    # nothing said: nothing kept
+    ids = []
+    for i in range(4):
+        cid = f'2026110{i}-120000-abcdef'
+        ids.append(cid)
+        CH.save(cid, title=f'Q{i}', markdown=f'**You:** q{i}', project='p', project_path='/x/p.vantage')
+        os.utime(CH._path(cid), (1000 + i, 1000 + i))
+    assert [r['title'] for r in CH.listing('/x/p.vantage')] == ['Q3', 'Q2', 'Q1']      # newest first, oldest pruned
+    assert CH.load(ids[0]) is None and 'markdown' not in CH.listing('/x/p.vantage')[0]
+    assert CH.listing('/y/other.vantage') == [] and len(CH.listing(everything=True)) == 3
+    if os.name == 'posix':
+        assert os.stat(CH._path(ids[3])).st_mode & 0o077 == 0
+    assert CH.delete(ids[3]) and CH.load(ids[3]) is None
+    with pytest.raises(ValueError):
+        CH._path('../../etc/passwd')
+    assert CH.title_of('a ' * 100).endswith('…') and len(CH.title_of('a ' * 100)) == CH.TITLE_MAX
+
+
+def test_conversations_are_kept_and_can_be_continued(app, win, srv, tmp_path, monkeypatch):
+    from vantage.assistant import chats as CH
+    from vantage.ui.assistant import ChatHistoryDialog
+    _ready(win, srv)
+    win.show_assistant()
+    ctl = win.ctx.assistant
+    ctl.new_chat()
+    srv.script.append(srv.answer('QR sees the least ground on its own.'))
+    assert ctl.ask('Which camera sees the least?')
+    _wait_idle(app, win)
+    p = win.store.project
+    recs = CH.listing(p.path, p.name)
+    assert recs and recs[0]['title'] == 'Which camera sees the least?' and recs[0]['provider'] == 'groq'
+    assert 'QR sees the least' in CH.load(recs[0]['id'])['markdown']
+    first = recs[0]['id']
+    ctl.new_chat()                                                                   # a new chat: the old one stays
+    d = ChatHistoryDialog(ctl, win.assistant_panel)
+    assert d.list.count() >= 1 and 'QR sees the least' in d.view.toPlainText()
+    d._continue()
+    assert ctl._resume is not None and ctl.chat_title.startswith('↪')
+    srv.script.append(srv.answer('Tilt it down 3°.'))
+    assert ctl.ask('And what should I change?')
+    _wait_idle(app, win)
+    sent = json.dumps(srv.requests[-1])
+    assert 'QR sees the least' in sent                                               # the summary went along
+    assert ctl._resume is None and ctl.chat_id != first
+    titles = [r['title'] for r in CH.listing(p.path, p.name)]
+    assert titles[0].startswith('↪ Which camera') and 'Which camera sees the least?' in titles

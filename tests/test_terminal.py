@@ -116,23 +116,84 @@ def test_a_real_shell_runs_and_is_drawn(tmp_path):
 
 
 @pytest.mark.skipif(bool(TM.available()), reason=TM.available() or 'available')
-def test_the_panel_opens_with_the_window_and_starts_claude_there(tmp_path, monkeypatch):
+@pytest.mark.skipif(bool(TM.available()), reason=TM.available() or 'available')
+def test_full_screen_programs_get_the_wheel_and_their_own_screen(tmp_path):
+    """What Claude Code turns on: the alternate screen (1049), mouse reports (1000, SGR 1006), alternate scroll (1007)."""
+    from PyQt6.QtCore import QPoint, QPointF
+    from PyQt6.QtGui import QMouseEvent, QWheelEvent
+    from PyQt6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    v = TM.TerminalView(str(tmp_path), dict(os.environ, PS1='$ '), argv=['/bin/sh'])
+    v.resize(800, 300)
+    v.show()
+    _pump(app, 0.3)
+    sent = []
+    v.shell.write = lambda b: sent.append(b)
+
+    def wheel(notches, mods=M.NoModifier):
+        QApplication.sendEvent(v, QWheelEvent(QPointF(4 + 10.5 * v.cw, 3 + 2.5 * v.ch), QPointF(0, 0), QPoint(0, 0),
+                                              QPoint(0, 120 * notches), Qt.MouseButton.NoButton, mods,
+                                              Qt.ScrollPhase.NoScrollPhase, False))
+    v.stream.feed(b'main-text\r\n' + b'\n'.join(b'%d' % i for i in range(60)) + b'\r\n')
+    hist = len(v.screen.history.top)
+    v.stream.feed(b'\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[Halt-text')
+    assert v.screen.alt and 'alt-text' in v.screen_text() and 'main-text' not in v.screen_text()
+    wheel(1)                                                                          # three lines a notch
+    assert sent == [b'\x1b[<64;11;3M'] * 3                                          # wheel up at column 11, row 3
+    sent.clear()
+    wheel(-1)
+    assert sent == [b'\x1b[<65;11;3M'] * 3
+    sent.clear()
+    pos = QPointF(4 + 2.5 * v.cw, 3 + 0.5 * v.ch)
+    for kind in (QMouseEvent.Type.MouseButtonPress, QMouseEvent.Type.MouseButtonRelease):
+        QApplication.sendEvent(v, QMouseEvent(kind, pos, pos, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+                                              M.NoModifier))
+    assert sent == [b'\x1b[<0;3;1M', b'\x1b[<0;3;1m']                              # a click, pressed and released
+    sent.clear()
+    v.stream.feed(b'\n' * 40)                                                       # scrolling on the alternate screen
+    assert len(v.screen.history.top) == hist                                          # leaves no history behind
+    v.stream.feed(b'\x1b[?1000l\x1b[?1007h')                                        # no mouse, alternate scroll
+    wheel(1)
+    assert sent == [b'\x1b[A' * 3]
+    sent.clear()
+    v.stream.feed(b'\x1b[?1049l')                                                   # back to the shell's screen
+    assert not v.screen.alt and 'alt-text' not in v.screen_text() and '59' in v.screen_text()
+    wheel(2)                                                                          # the shell: the history scrolls
+    assert not sent and v.scrolled == 6
+    v.close_shell()
+
+
+def test_claude_code_is_a_side_of_the_assistant_panel(tmp_path, monkeypatch):
     from PyQt6.QtWidgets import QApplication
     from vantage.core import samples
     from vantage.ui.mainwindow import MainWindow
     app = QApplication.instance() or QApplication([])
+    started = []
+    monkeypatch.setattr(TM.TerminalPanel, 'start_claude', lambda self: (started.append(1),
+                                                                        setattr(self, 'claude_started', True)))
     w = MainWindow(samples.tigor_sample_project(), soft_3d=True)
+    w.resize(1600, 1000)
     w.show()
     assert _wait(app, lambda: w.ctx.analysis.result is not None, 120)
-    w.toggle_terminal()
+    side, dock = w.side_panel, w.docks['assistant']
+    assert 'terminal' not in w.docks and side.mode() == 'assistant'
+    w.show_assistant()
+    assert dock.isVisible() and side.mode() == 'assistant' and not started
+    side.switch.buttons['claude'].click()                                             # the switch at the top
+    _pump(app, 0.3)
     pn = w.terminal_panel
-    assert w.docks['terminal'].isVisible() and pn.view is not None and not pn.view.ended
+    assert side.mode() == 'claude' and pn.view is not None and not pn.view.ended
+    assert started == [1] and dock.width() >= 600                                     # Claude Code, with room
+    assert w.ctx.settings.value('assistant/side') == 'claude'
     assert pn.env()['VANTAGE_MCP_PID'] == str(os.getpid()) and pn.env()['TERM'] == 'xterm-256color'
-    sent = []
-    monkeypatch.setattr(pn.view, 'send', lambda b: sent.append(b))
-    monkeypatch.setattr(TM.shutil, 'which', lambda *a, **k: '/usr/bin/claude')
-    pn.start_claude()
-    assert sent == [b'claude\r']
+    side.set_mode('assistant')
+    side.set_mode('claude')
+    assert started == [1]                                                             # once per shell
+    w.toggle_assistant()                                                              # Ctrl+J: the assistant side
+    assert side.mode() == 'assistant' and dock.isVisible()
+    w.toggle_terminal()                                                               # Ctrl+`: Claude's side
+    assert side.mode() == 'claude' and pn.view.hasFocus() or side.mode() == 'claude'
+    w.ctx.settings.setValue('assistant/side', 'assistant')
     assert _wait(app, lambda: not (w.ctx.analysis._busy or w.ctx.analysis.timer.isActive()), 120)
     _pump(app, 0.3)                                    # never close a window while its analysis still emits
     w.store.undo.setClean()
@@ -152,3 +213,38 @@ def test_without_pyte_the_panel_says_what_it_needs(monkeypatch):
         settings = None
     pn = TM.TerminalPanel(Ctx())
     assert pn.note is not None and not pn.b_claude.isEnabled() and pn.ensure() is None
+
+
+@pytest.mark.skipif(bool(TM.available()), reason=TM.available() or 'available')
+def test_claude_codes_own_history_from_the_panel(tmp_path, monkeypatch):
+    from PyQt6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+
+    class Ctx:
+        class settings:
+            @staticmethod
+            def value(k, d=None, type=None):
+                return str(tmp_path) if k == 'dir/working' else d
+
+        class store:
+            class project:
+                path = ''
+        window = mcp = None
+    pn = TM.TerminalPanel(Ctx())
+    monkeypatch.setattr(pn, 'cwd', lambda: str(tmp_path))
+    v = pn.ensure(argv=['/bin/sh'])
+    _pump(app, 0.3)
+    sent = []
+    real = v.send
+    monkeypatch.setattr(v, 'send', lambda b: sent.append(b))
+    monkeypatch.setattr(TM.shutil, 'which', lambda *a, **k: '/usr/bin/claude')
+    assert not pn.busy()
+    pn.claude_history(False)
+    pn.claude_history(True)
+    assert sent == [b'claude --continue\r', b'claude --resume\r'] and pn.claude_started
+    real(b'sleep 5\r')                                                                # a program in the foreground
+    assert _wait(app, pn.busy, 5)
+    sent.clear()
+    pn.claude_history(True)
+    assert sent == [b'/resume\r']                                                     # Claude Code's own command
+    v.close_shell()

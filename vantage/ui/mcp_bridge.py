@@ -181,7 +181,11 @@ class LiveSession:
         w = self.ctx.window
         if w is None:
             return None
-        w.show_assistant()
+        side = getattr(w, 'side_panel', None)
+        if side is not None and side.mode() == 'claude' and w.docks['assistant'].isVisible():
+            w.msg('Claude put a card in the assistant side of the panel: switch to it to apply it', 8000)
+        else:                                          # (never switch away from the terminal Claude talks in)
+            w.show_assistant()
         return w.assistant_panel
 
     def show(self, req):

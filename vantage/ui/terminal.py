@@ -48,6 +48,9 @@ KEYS = {Qt.Key.Key_Home: b'\x1b[H', Qt.Key.Key_End: b'\x1b[F', Qt.Key.Key_PageUp
 ARROWS = {Qt.Key.Key_Up: b'A', Qt.Key.Key_Down: b'B', Qt.Key.Key_Right: b'C', Qt.Key.Key_Left: b'D'}
 BRACKETED_PASTE = 2004 << 5                          # pyte keeps private modes shifted by 5
 DECCKM = 1 << 5                                      # application cursor keys (pyte 0.8.0 has no name for it)
+ALT_SCREEN = (1049, 1047, 47)                        # private modes: the alternate screen (pyte 0.8 has none)
+MOUSE = (1000, 1002, 1003)                           # the program wants mouse buttons and the wheel (X10/normal)
+MOUSE_DRAG, MOUSE_SGR, ALT_SCROLL = 1002 << 5, 1006 << 5, 1007 << 5
 # box drawing, drawn as lines through the whole cell (a font's glyph leaves gaps between rows): the arms each
 # character has (left, right, up, down), heavy or not; rounded corners are drawn as arcs
 _L, _R, _U, _D = 1, 2, 4, 8
@@ -178,11 +181,42 @@ class Shell:
 
 
 class _Screen(pyte.HistoryScreen if pyte is not None else object):
-    """pyte's screen with a way back to the shell for the terminal's answers (cursor position, device attributes)."""
+    """pyte's screen with a way back to the shell for the terminal's answers (cursor position, device attributes),
+    and the alternate screen full-screen programs draw on (Claude Code, vim, less): entering it keeps the main screen
+    and its cursor, nothing drawn there goes into the history, and leaving it brings the main screen back."""
 
     def __init__(self, cols, rows, reply):
         super().__init__(cols, rows, history=HISTORY, ratio=0.5)
         self._reply = reply
+        self.alt = False
+        self._main = None
+
+    def set_mode(self, *modes, **kw):
+        if kw.get('private') and set(modes) & set(ALT_SCREEN) and not self.alt:
+            import copy
+            self._main = ({y: dict(line) for y, line in self.buffer.items()}, copy.copy(self.cursor))
+            self.alt = True
+            self.erase_in_display(2)
+        super().set_mode(*modes, **kw)
+
+    def reset_mode(self, *modes, **kw):
+        super().reset_mode(*modes, **kw)
+        if kw.get('private') and set(modes) & set(ALT_SCREEN) and self.alt:
+            self.alt = False
+            lines, cursor = self._main
+            self.buffer.clear()
+            for y, line in lines.items():
+                self.buffer[y].update(line)
+            self.cursor = cursor
+            self.dirty.update(range(self.lines))
+
+    def index(self):
+        if self.alt:                                   # the alternate screen keeps no history
+            return pyte.Screen.index(self)
+        return super().index()
+
+    def mouse(self) -> bool:
+        return any((m << 5) in self.mode for m in MOUSE)
 
     def write_process_input(self, data):
         self._reply(data.encode('utf-8') if isinstance(data, str) else data)
@@ -306,13 +340,35 @@ class TerminalView(QWidget):
         return self.screen.buffer[r]
 
     def wheelEvent(self, e):
+        """The wheel goes where the program wants it: as mouse reports when it asked for the mouse (Claude Code
+        scrolls its own conversation), as arrow keys on its alternate screen with alternate scroll on, else through
+        this panel's history. Shift+wheel always scrolls the history."""
         d = e.pixelDelta().y() / max(1.0, self.ch) if not e.pixelDelta().isNull() else e.angleDelta().y() / 40
         self._wheel = getattr(self, '_wheel', 0.0) + d     # three lines a notch; a touchpad's pixels add up
         n = int(self._wheel)
-        if n:
-            self._wheel -= n
-            self.scroll_lines(n)
         e.accept()
+        if not n:
+            return
+        self._wheel -= n
+        shift = bool(e.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        if not shift and not self.scrolled and self.screen.mouse():
+            r, c = self._cell(e.position())
+            for _ in range(abs(n)):
+                self.shell.write(self.mouse_bytes(64 if n > 0 else 65, r, c, True))
+            return
+        if not shift and not self.scrolled and self.screen.alt and ALT_SCROLL in self.screen.mode:
+            app_cursor = DECCKM in self.screen.mode
+            key = (b'\x1bO' if app_cursor else b'\x1b[') + (b'A' if n > 0 else b'B')
+            self.shell.write(key * abs(n))
+            return
+        self.scroll_lines(n)
+
+    def mouse_bytes(self, button: int, row: int, col: int, press: bool) -> bytes:
+        """A mouse report as the program asked for it: SGR (1006) or the classic X10 encoding."""
+        if MOUSE_SGR in self.screen.mode:
+            return b'\x1b[<%d;%d;%d%s' % (button, col + 1, row + 1, b'M' if press else b'm')
+        b = button if press else 3
+        return b'\x1b[M' + bytes([32 + b, min(255, 33 + col), min(255, 33 + row)])
 
     # ---------------------------------------------------------------- keys
     def event(self, e):
@@ -387,8 +443,20 @@ class TerminalView(QWidget):
         return (max(0, min(self.rows - 1, int((pos.y() - 3) / self.ch))),
                 max(0, min(self.cols - 1, int((pos.x() - 4) / self.cw))))
 
+    _BUTTONS = {Qt.MouseButton.LeftButton: 0, Qt.MouseButton.MiddleButton: 1, Qt.MouseButton.RightButton: 2}
+
+    def _report(self, e) -> bool:
+        """Clicks go to a program that asked for the mouse (Shift held: select here instead)."""
+        return (self.screen.mouse() and not self.scrolled and not self.ended and e.button() in self._BUTTONS
+                and not e.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+
     def mousePressEvent(self, e):
         self.setFocus()
+        if self._report(e):
+            r, c = self._cell(e.position())
+            self.shell.write(self.mouse_bytes(self._BUTTONS[e.button()], r, c, True))
+            self._reported = e.button()
+            return
         if e.button() == Qt.MouseButton.LeftButton:
             self._anchor = self._cell(e.position())
             self.sel = None
@@ -399,11 +467,23 @@ class TerminalView(QWidget):
                 self.send(text.encode('utf-8'))
 
     def mouseMoveEvent(self, e):
+        held = getattr(self, '_reported', None)
+        if held is not None:
+            if MOUSE_DRAG in self.screen.mode:
+                r, c = self._cell(e.position())
+                self.shell.write(self.mouse_bytes(self._BUTTONS[held] + 32, r, c, True))
+            return
         if self._anchor is not None:
             self.sel = (self._anchor, self._cell(e.position()))
             self.update()
 
     def mouseReleaseEvent(self, e):
+        held = getattr(self, '_reported', None)
+        if held is not None:
+            r, c = self._cell(e.position())
+            self.shell.write(self.mouse_bytes(self._BUTTONS[held], r, c, False))
+            self._reported = None
+            return
         if self.sel is not None and self.sel[0] != self.sel[1]:
             cb = QGuiApplication.clipboard()
             if cb.supportsSelection():
@@ -540,6 +620,7 @@ class TerminalPanel(QWidget):
         super().__init__(parent)
         self.ctx = ctx
         self.view = None
+        self.claude_started = False                    # Claude Code was started in this shell
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)
@@ -555,6 +636,14 @@ class TerminalPanel(QWidget):
                                  'are undo steps "Claude · …")')
         self.b_claude.clicked.connect(self.start_claude)
         h.addWidget(self.b_claude)
+        self.b_hist = button('History', 'ghost')
+        self.b_hist.setToolTip('Claude Code keeps its conversations per folder: continue the last one or pick one')
+        from PyQt6.QtWidgets import QMenu
+        hm = QMenu(self.b_hist)
+        hm.addAction('Continue the last conversation', lambda: self.claude_history(False))
+        hm.addAction('Pick a past conversation…', lambda: self.claude_history(True))
+        self.b_hist.setMenu(hm)
+        h.addWidget(self.b_hist)
         self.b_new = button('New shell', 'ghost')
         self.b_new.clicked.connect(self.restart)
         h.addWidget(self.b_new)
@@ -576,7 +665,7 @@ class TerminalPanel(QWidget):
             self.note.setContentsMargins(14, 12, 14, 12)
             self.note.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
             self.body.addWidget(self.note, 1)
-            for b in (self.b_claude, self.b_new):
+            for b in (self.b_claude, self.b_new, self.b_hist):
                 b.setEnabled(False)
 
     # ---------------------------------------------------------------- the shell
@@ -604,6 +693,7 @@ class TerminalPanel(QWidget):
                 self.view.close_shell()
                 self.view.deleteLater()
             self.view = TerminalView(self.cwd(), self.env(), self, argv)
+            self.claude_started = False
             self.view.exited.connect(self._exited)
             self.view.restart.connect(self.restart)
             self.view.title.connect(lambda t: self.where.setText(f'Terminal · {t}'[:90]))
@@ -641,7 +731,104 @@ class TerminalPanel(QWidget):
                 w.msg('Claude can read files here, but Preferences ▸ General ▸ Claude is off: it cannot work in this '
                       'window', 6000)
         v.send(b'claude\r')
+        self.claude_started = True
+
+    def busy(self) -> bool:
+        """A program runs in the shell's foreground (Claude Code, say): keys go to it, not to the shell."""
+        v = self.view
+        if v is None or v.ended:
+            return False
+        try:
+            return os.tcgetpgrp(v.shell.fd) != v.shell.pid
+        except OSError:
+            return False
+
+    def claude_history(self, pick: bool):
+        """Claude Code's own history of this folder: /resume inside a running Claude Code, else claude --continue
+        (the last conversation) or claude --resume (a list to pick from)."""
+        v = self.ensure()
+        if v is None:
+            return
+        v.setFocus()
+        if self.busy():
+            v.send(b'/resume\r')
+            return
+        if shutil.which('claude', path=self.env().get('PATH')) is None:
+            v.send(b"echo 'Claude Code is not installed: https://claude.com/claude-code'\r")
+            return
+        v.send(b'claude --resume\r' if pick else b'claude --continue\r')
+        self.claude_started = True
 
     def shutdown(self):
         if self.view is not None:
             self.view.close_shell()
+
+
+class SidePanel(QWidget):
+    """The right-hand panel: the in-app assistant (Groq, or Claude through the API) or Claude Code in the terminal
+    (on the subscription, working on this window over MCP), one or the other, switched at the top. The choice is
+    remembered; Claude Code starts by itself the first time its side is shown (setting terminal/auto_claude)."""
+    MODES = ('assistant', 'claude')
+
+    def __init__(self, ctx, assistant, terminal, parent=None):
+        super().__init__(parent)
+        from PyQt6.QtWidgets import QStackedWidget
+        from .widgets import SegmentedControl
+        self.ctx, self.assistant, self.terminal = ctx, assistant, terminal
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+        bar = QWidget()
+        bar.setObjectName('panel')
+        h = QHBoxLayout(bar)
+        h.setContentsMargins(8, 6, 8, 4)
+        h.setSpacing(6)
+        self.switch = SegmentedControl([('assistant', self._assistant_label()), ('claude', 'Claude Code · MCP')])
+        self.switch.buttons['assistant'].setToolTip('The in-app assistant (Preferences ▸ Assistant): proposes changes '
+                                                    'for you to apply')
+        self.switch.buttons['claude'].setToolTip('Claude Code on your Claude subscription, in a terminal here: it '
+                                                 'works on this window over MCP (its changes are undo steps)')
+        self.switch.changed.connect(self.set_mode)
+        h.addWidget(self.switch)
+        h.addStretch(1)
+        v.addWidget(bar)
+        self.stack = QStackedWidget()
+        self.stack.addWidget(assistant)
+        self.stack.addWidget(terminal)
+        v.addWidget(self.stack, 1)
+        saved = str(ctx.settings.value('assistant/side', 'assistant') or 'assistant')
+        self.set_mode(saved if saved in self.MODES else 'assistant', start=False)
+
+    def _assistant_label(self) -> str:
+        try:
+            from ..assistant import providers as PR
+            return f'{PR.LABEL[self.ctx.assistant.provider]} assistant'
+        except Exception:                              # noqa: BLE001 — a label never breaks the panel
+            return 'Assistant'
+
+    def mode(self) -> str:
+        return 'claude' if self.stack.currentWidget() is self.terminal else 'assistant'
+
+    def set_mode(self, mode: str, start=True):
+        if mode not in self.MODES:
+            return
+        self.switch.set_value(mode)
+        self.switch.buttons['assistant'].setText(self._assistant_label())
+        self.stack.setCurrentWidget(self.terminal if mode == 'claude' else self.assistant)
+        self.ctx.settings.setValue('assistant/side', mode)
+        if mode == 'claude' and start and self.isVisible():
+            self.activate()
+
+    def activate(self):
+        """The Claude side is showing: a shell, Claude Code in it the first time, room for its lines, focus."""
+        t = self.terminal
+        v = t.ensure()
+        if v is None:
+            return
+        w = self.ctx.window
+        dock = w.docks.get('assistant') if w is not None else None
+        if dock is not None and dock.width() < 600:
+            w.resizeDocks([dock], [640], Qt.Orientation.Horizontal)
+        if not t.claude_started and self.ctx.settings.value('terminal/auto_claude', True, type=bool):
+            t.start_claude()
+        v.setFocus()

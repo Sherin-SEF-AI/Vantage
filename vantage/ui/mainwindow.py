@@ -227,19 +227,16 @@ class MainWindow(QMainWindow):
         bd = self._dock('bottom', 'Analysis', self.bottom, B)
         bd.setTitleBarWidget(QWidget())
         from .assistant import AssistantPanel
+        from .terminal import SidePanel, TerminalPanel
         self.assistant_panel = AssistantPanel(self.ctx)
-        ad = self._dock('assistant', 'Assistant', self.assistant_panel, R)
+        self.terminal_panel = TerminalPanel(self.ctx)       # Claude Code in a shell (terminal.py)
+        self.side_panel = SidePanel(self.ctx, self.assistant_panel, self.terminal_panel)
+        ad = self._dock('assistant', 'Assistant', self.side_panel, R)
         self.addDockWidget(R, ad, Qt.Orientation.Horizontal)  # a full-height column of its own, not under the inspector
         ad.setTitleBarWidget(QWidget())                      # the panel has its own header
         ad.setMinimumWidth(300)
+        ad.visibilityChanged.connect(lambda on: on and self.side_panel.mode() == 'claude' and self.side_panel.activate())
         ad.hide()
-        from .terminal import TerminalPanel
-        self.terminal_panel = TerminalPanel(self.ctx)
-        td = self._dock('terminal', 'Terminal', self.terminal_panel, B)
-        td.setTitleBarWidget(QWidget())                      # the panel has its own header
-        td.visibilityChanged.connect(lambda on: on and self.terminal_panel.ensure())
-        self.splitDockWidget(bd, td, Qt.Orientation.Vertical)  # full width under the analysis panels: room for 80+ columns
-        td.hide()
         self.splitDockWidget(self.docks['outliner'], self.docks['library'], Qt.Orientation.Vertical)
         self.splitDockWidget(self.docks['inspector'], self.docks['camview'], Qt.Orientation.Vertical)
         self.resizeDocks([self.docks['outliner'], self.docks['inspector']], [250, 312], Qt.Orientation.Horizontal)
@@ -299,8 +296,8 @@ class MainWindow(QMainWindow):
         A('prefs', 'Preferences…', self.preferences, 'Ctrl+,', 'gear', category='File')
         A('assistant', 'Assistant', self.toggle_assistant, 'Ctrl+J', 'sparkle', category='Window',
           tip='Ask questions about this design; changes are proposed, you apply them')
-        A('terminal', 'Terminal', self.toggle_terminal, 'Ctrl+`', 'keyboard', category='Window',
-          tip='A shell inside the window; Claude started there works on this project (its changes are undo steps)')
+        A('terminal', 'Claude Code (terminal)', self.toggle_terminal, 'Ctrl+`', 'keyboard', category='Window',
+          tip='Claude Code in a terminal in the side panel: it works on this project over MCP (changes are undo steps)')
         A('start', 'Start window…', self.show_start, category='File')
         A('quit', 'Quit', self.close, 'Ctrl+Q', category='File')
         # edit
@@ -1686,7 +1683,7 @@ class MainWindow(QMainWindow):
         w = self.win_menu
         w.clear()
         names = {'outliner': 'Outliner', 'library': 'Library', 'inspector': 'Inspector', 'camview': 'Camera view',
-                 'bottom': 'Analysis panels', 'assistant': 'Assistant', 'terminal': 'Terminal'}
+                 'bottom': 'Analysis panels', 'assistant': 'Assistant'}
         for k, d in self.docks.items():
             a = w.addAction(names[k])
             a.setCheckable(True)
@@ -1697,6 +1694,7 @@ class MainWindow(QMainWindow):
                            ('history', 'History'), ('log', 'Log')):
             w.addAction(title, lambda k=key: (self.docks['bottom'].show(), self.bottom.show_tab(k)))
         w.addAction(self.actions_by_id['copilot_plans'])
+        w.addAction(self.actions_by_id['terminal'])
         w.addSeparator()
         ws = w.addMenu('Workspaces')
         ws.addActions([self.actions_by_id['ws_placement'], self.actions_by_id['ws_analysis'], self.actions_by_id['ws_review'],
@@ -1707,6 +1705,7 @@ class MainWindow(QMainWindow):
 
     def show_copilot_plans(self):
         """Window ▸ Copilot plans…: the assistant dock with its list of plans (drafts, approved, run)."""
+        self.side_panel.set_mode('assistant', start=False)
         self.docks['assistant'].show()
         self.assistant_panel.show_plans()
 
@@ -2032,25 +2031,26 @@ class MainWindow(QMainWindow):
 
     def toggle_assistant(self):
         d = self.docks['assistant']
-        if d.isVisible() and self.assistant_panel.composer.edit.hasFocus():
+        if d.isVisible() and self.side_panel.mode() == 'assistant' and self.assistant_panel.composer.edit.hasFocus():
             d.hide()
             return
         self.show_assistant()
 
     def toggle_terminal(self):
-        d = self.docks['terminal']
+        """Ctrl+`: Claude Code in the side panel (its terminal), or back to the window when it has focus."""
+        d = self.docks['assistant']
         v = self.terminal_panel.view
-        if d.isVisible() and v is not None and v.hasFocus():
+        if d.isVisible() and self.side_panel.mode() == 'claude' and v is not None and v.hasFocus():
             d.hide()
             return
-        d.show()
+        if not d.isVisible():
+            d.show()
         d.raise_()
-        if self.terminal_panel.ensure() is not None:
-            self.resizeDocks([d], [max(340, d.height())], Qt.Orientation.Vertical)
-            self.terminal_panel.view.setFocus()
+        self.side_panel.set_mode('claude')
 
     def show_assistant(self):
         d = self.docks['assistant']
+        self.side_panel.set_mode('assistant', start=False)
         if not d.isVisible():
             d.show()
             self.resizeDocks([d], [420], Qt.Orientation.Horizontal)

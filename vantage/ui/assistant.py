@@ -174,6 +174,10 @@ class AssistantController(QObject):
         self._retired = []              # Usage of conversations handed over to the other provider (still counted)
         self._retired_md = []           # ... and their transcripts (Save conversation keeps the whole of it)
         self._said = set()              # fallback notes already shown once
+        self.chat_id = None             # this conversation in the chat history (assistant/chats.py)
+        self.chat_title = ''
+        self.chat_started = 0.0
+        self._resume = None             # (transcript, provider) of a past conversation the next one continues
         self.recommender = None
         self._raw.connect(self._on_raw)
         self._ui_req.connect(self._do_ui)
@@ -391,12 +395,20 @@ class AssistantController(QObject):
         planning = CP.is_plan_request(text) or self.current_plan is not None and self.current_plan.status == 'draft'
         key = self.keys.get(r.provider, (None, None))[0]
         old = self.session
+        if self.chat_id is None:
+            from ..assistant import chats as CH
+            self.chat_id, self.chat_started = CH.new_id(), time.time()
+            self.chat_title = self.chat_title or CH.title_of(text)
         if old is None or old.provider != r.provider:
             try:
                 new = A.new_session(r.provider, key, self._settings(agent, planning, r.model))
             except C.ApiError as e:
                 self._fail_now(e)
                 return False
+            if old is None and self._resume is not None:       # continuing a past conversation (Chat history)
+                md, prov = self._resume
+                new.handover = RT.handover_text(md, prov or r.provider)
+                self._resume = None
             if old is not None:
                 md = old.transcript_markdown()
                 if md.strip():
@@ -497,6 +509,7 @@ class AssistantController(QObject):
             self.status = ev.data['text']
         elif ev.kind == 'done':
             self.busy, self.status = False, ''
+            self.save_chat()
             ev.data['seconds'] = time.perf_counter() - self._started
             if self.session is not None:
                 self._count_tokens(self.session.provider, max(0, self.session.usage.tokens -
@@ -527,7 +540,35 @@ class AssistantController(QObject):
                                          'seconds': time.perf_counter() - self._started}))
         self.changed.emit()
 
+    # ---------------------------------------------------------------- chat history
+    def save_chat(self):
+        """Keep this conversation in the chat history (after every answer); never fails the conversation."""
+        if self.chat_id is None:
+            return None
+        try:
+            from ..assistant import chats as CH
+            p = self.ctx.store.project
+            return CH.save(self.chat_id, title=self.chat_title, markdown=self.transcript(), project=p.name,
+                           project_path=p.path, provider=self.provider, model=self.model, started=self.chat_started)
+        except (OSError, ValueError) as e:
+            print('assistant: the chat history could not be saved:', e)
+            return None
+
+    def continue_chat(self, cid) -> dict | None:
+        """Start a new conversation that carries a past one as a hand-over summary (the next question sends it)."""
+        from ..assistant import chats as CH
+        rec = CH.load(cid)
+        if rec is None:
+            return None
+        self.new_chat()
+        self._resume = (rec.get('markdown', ''), rec.get('provider', ''))
+        self.chat_title = f'↪ {rec.get("title", "")}'[:CH.TITLE_MAX]
+        return rec
+
     def new_chat(self, *_):
+        if self.chat_id is not None and not self.busy:
+            self.save_chat()
+        self.chat_id, self.chat_title, self._resume = None, '', None
         if self.busy:
             self._cancel.set()
             self._tid += 1
@@ -2735,6 +2776,106 @@ class LogProposalCard(QFrame):
             pass
 
 
+class ChatHistoryDialog(QDialog):
+    """The assistant's past conversations (assistant/chats.py): this project's or all, newest first, with the
+    transcript; Continue starts a new conversation that carries the chosen one as a hand-over summary."""
+
+    def __init__(self, ctl: AssistantController, panel=None):
+        super().__init__(panel)
+        from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QSplitter  # noqa: F401
+        self.ctl, self.panel = ctl, panel
+        self.setWindowTitle('Chat history')
+        self.resize(900, 560)
+        v = QVBoxLayout(self)
+        top = QHBoxLayout()
+        top.addWidget(label('Conversations with the assistant, kept on this computer only. Continue one to carry it '
+                            'on in a new conversation (a summary of it goes with your next question).',
+                            ink2=True, wrap=True), 1)
+        self.every = QCheckBox('All projects')
+        self.every.toggled.connect(self.refresh)
+        top.addWidget(self.every)
+        v.addLayout(top)
+        sp = QSplitter(Qt.Orientation.Horizontal)
+        self.list = QListWidget()
+        self.list.currentRowChanged.connect(self._show)
+        self.list.itemDoubleClicked.connect(lambda *_: self._continue())
+        sp.addWidget(self.list)
+        self.view = QTextBrowser()
+        self.view.setOpenExternalLinks(False)
+        sp.addWidget(self.view)
+        sp.setSizes([300, 600])
+        v.addWidget(sp, 1)
+        self.empty = label('No conversations yet: they are kept here after each answer.', muted=True, small=True)
+        v.addWidget(self.empty)
+        bar = QHBoxLayout()
+        self.b_del = button('Delete', 'ghost')
+        self.b_del.clicked.connect(self._delete)
+        bar.addWidget(self.b_del)
+        bar.addStretch(1)
+        self.b_copy = button('Copy', 'ghost')
+        self.b_copy.clicked.connect(self._copy)
+        bar.addWidget(self.b_copy)
+        self.b_cont = button('Continue', 'primary')
+        self.b_cont.clicked.connect(self._continue)
+        bar.addWidget(self.b_cont)
+        close = button('Close', 'ghost')
+        close.clicked.connect(self.close)
+        bar.addWidget(close)
+        v.addLayout(bar)
+        self.recs = []
+        self.refresh()
+
+    def refresh(self, *_):
+        from ..assistant import chats as CH
+        p = self.ctl.ctx.store.project
+        self.ctl.save_chat()                           # the conversation on screen is in the list too
+        self.recs = CH.listing(p.path, p.name, everything=self.every.isChecked())
+        self.list.clear()
+        for r in self.recs:
+            when = time.strftime('%d %b %Y %H:%M', time.localtime(r.get('updated', 0)))
+            extra = f' · {r.get("project", "")}' if self.every.isChecked() else ''
+            self.list.addItem(f'{r.get("title", "")}\n{when} · {PR.LABEL.get(r.get("provider"), r.get("provider", ""))}'
+                              f'{extra}')
+        self.empty.setVisible(not self.recs)
+        for b in (self.b_del, self.b_copy, self.b_cont):
+            b.setEnabled(bool(self.recs))
+        if self.recs:
+            self.list.setCurrentRow(0)
+        else:
+            self.view.clear()
+
+    def _current(self):
+        from ..assistant import chats as CH
+        i = self.list.currentRow()
+        return CH.load(self.recs[i]['id']) if 0 <= i < len(self.recs) else None
+
+    def _show(self, *_):
+        rec = self._current()
+        self.view.setMarkdown(rec.get('markdown', '') if rec else '')
+
+    def _copy(self):
+        rec = self._current()
+        if rec:
+            QApplication.clipboard().setText(rec.get('markdown', ''))
+
+    def _delete(self):
+        from ..assistant import chats as CH
+        rec = self._current()
+        if rec and CH.delete(rec['id']):
+            if rec['id'] == self.ctl.chat_id:
+                self.ctl.chat_id = None                # not written back by the refresh
+            self.refresh()
+
+    def _continue(self):
+        rec = self._current()
+        if rec is None or self.ctl.busy:
+            return
+        rec = self.ctl.continue_chat(rec['id'])
+        if rec is not None and self.panel is not None:
+            self.panel.note_continued(rec)
+        self.close()
+
+
 class DesignLogDialog(QDialog):
     """The project's design log: list, add, edit and delete entries (each one undo step). Kept in the project file;
     the assistant reads it with every question and never proposes a rejected change again unasked."""
@@ -4252,6 +4393,12 @@ class AssistantPanel(QWidget):
         self.b_brief.setFont(sans(10))
         self.b_brief.clicked.connect(lambda: edit_brief(self.ctl, self))
         h.addWidget(self.b_brief)
+        self.b_hist = QPushButton('History')
+        self.b_hist.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.b_hist.setFont(sans(10))
+        self.b_hist.setToolTip('Past conversations about this project, kept on this computer: read, copy, continue')
+        self.b_hist.clicked.connect(self.show_history)
+        h.addWidget(self.b_hist)
         self.b_log = QPushButton('Log')
         self.b_log.setCursor(Qt.CursorShape.PointingHandCursor)
         self.b_log.setFont(sans(10))
@@ -4710,6 +4857,22 @@ class AssistantPanel(QWidget):
         d = SentDialog(self.ctl, self)
         d.show()
         return d
+
+    def show_history(self):
+        """Chat history: the past conversations (this project's, or all), to read, copy, delete or continue."""
+        d = ChatHistoryDialog(self.ctl, self)
+        d.show()
+        return d
+
+    def note_continued(self, rec: dict):
+        """After Continue in the chat history: say which conversation the next question carries on."""
+        if self.empty is not None:
+            self.col.removeWidget(self.empty)
+            self._drop(self.empty)
+            self.empty = None
+            self.empty_list = None
+        self._add(label(f'Continuing “{rec.get("title", "")}” ({time.strftime("%d %b %H:%M", time.localtime(rec.get("updated", 0)))}): '
+                        'your next question sends a summary of it along.', ink2=True, small=True, wrap=True))
 
     def show_log(self):
         """The design log view (list, add, edit, delete)."""
