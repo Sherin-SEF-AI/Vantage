@@ -102,7 +102,7 @@ class Proposal:
     issues_after: int
     revision: int
     before: dict                         # camera uid -> {prop: value} as it was when proposed (staleness check)
-    seams: dict = field(default_factory=dict)            # 'uidA|uidB' -> angle deg
+    seams: dict = field(default_factory=dict)            # 'uidA|uidB' -> angle deg (None: back to automatic)
     seams_before: dict = field(default_factory=dict)
     settings: dict = field(default_factory=dict)         # 'min_density' | 'target_density' | 'roi_distance' -> value
     settings_before: dict = field(default_factory=dict)
@@ -457,28 +457,128 @@ def find_blind_regions(tc, min_area_m2=0.002, **_):
             'min_density_px_cm': tc.project.analysis.min_density}
 
 
-def get_seams(tc, **_):
-    res = tc.result
-    if res is None:
-        return {'error': 'No analysis result yet.'}
-    tags = _tags(tc.project)
-    sv = {}
-    if tc.stitched is not None:
-        sv = {(s['a'], s['b']): s for s in tc.stitched.seams}
-    adv = {}
-    if tc.advice is not None:
-        adv = {(s.a, s.b): s for s in tc.advice.seams}
+def stitched_for(tc, p, res, key):
+    """Objects in the stitched view (core.stitched_objects) of project p analysed as res, with the project's object
+    and the map the Stitch seams page shows; cached in tc.cache under key (None without a result or when cancelled)."""
+    ck = ('stitched', key)
+    if ck not in tc.cache:
+        from ..core import stitched_objects as so
+        sres = None
+        if res is not None:
+            tc.status('Objects in the stitched view…')
+            tc.engine.vehicle_geom(p)
+            sres = so.analyse(p, tc.engine, res, cancel=tc.cancel)
+        tc.cache[ck] = sres
+    return tc.cache[ck]
+
+
+def _seam_rows(p, res, sres) -> list:
+    """Each seam as get_seams lists it: cameras, angle, placement, density along it, where the object vanishes."""
+    tags = _tags(p)
+    van = {(x['a'], x['b']): x['vanish_m2'] for x in sres.seams} if sres is not None else {}
     out = []
     for s in res.seams:
         row = {'between': [tags.get(s.a, s.a), tags.get(s.b, s.b)], 'angle_deg': _r(s.angle, 1),
                'placed': 'automatic' if s.auto else 'by hand', 'density_px_cm': _r(s.density, 2)}
-        if (s.a, s.b) in sv:
-            row['object_vanishes_m2'] = _r(sv[(s.a, s.b)]['vanish_m2'], 3)
-        if (s.a, s.b) in adv and adv[(s.a, s.b)].moved:
-            row['advised_angle_deg'] = _r(adv[(s.a, s.b)].best, 1)
+        if (s.a, s.b) in van:
+            row['object_vanishes_m2'] = _r(van[(s.a, s.b)], 3)
         out.append(row)
-    return {'seams': out, 'azimuth': 'degrees about the body centre, counter-clockwise from +x (forward)',
-            'centre': [_r(v) for v in res.centre]}
+    return out
+
+
+def _stitched_issue(sres):
+    from ..core import stitched_objects as so
+    return so.issue(sres) if sres is not None else None
+
+
+def stitched_compare(p0, r0, s0, p1, r1, s1) -> dict:
+    """The stitched view before and after a change (simulate_changes, edit_project): per seam [before, after] of its
+    angle, placement, density and the area where the object vanishes at it; the totals; the stitched-view issue."""
+    def pair(s):
+        return frozenset((s.a, s.b))
+    t0, t1 = _tags(p0), _tags(p1)
+    m0 = {pair(s): s for s in r0.seams} if r0 is not None else {}
+    m1 = {pair(s): s for s in r1.seams} if r1 is not None else {}
+    v0 = {frozenset((x['a'], x['b'])): x['vanish_m2'] for x in s0.seams} if s0 is not None else {}
+    v1 = {frozenset((x['a'], x['b'])): x['vanish_m2'] for x in s1.seams} if s1 is not None else {}
+    keys = list(m1) + [k for k in m0 if k not in m1]
+    rows = []
+    for k in keys:
+        a, b = m0.get(k), m1.get(k)
+        s, tg = (b, t1) if b is not None else (a, t0)
+        rows.append({'between': [tg.get(s.a, s.a), tg.get(s.b, s.b)],
+                     'angle_deg': [_r(a.angle, 1) if a else None, _r(b.angle, 1) if b else None],
+                     'placed': [('automatic' if a.auto else 'by hand') if a else None,
+                                ('automatic' if b.auto else 'by hand') if b else None],
+                     'density_px_cm': [_r(a.density, 2) if a else None, _r(b.density, 2) if b else None],
+                     'object_vanishes_m2': [_r(v0[k], 3) if k in v0 else None, _r(v1[k], 3) if k in v1 else None]})
+    out = {'object': (s1 or s0).settings.label if (s1 or s0) is not None else None, 'seams': rows}
+    for name, key in (('object_vanishes_m2', 'vanish_m2'), ('cut_off_m2', 'cut_m2'),
+                      ('ground_below_min_density_m2', 'ground_low_m2')):
+        out[name] = [_r(s.metrics[key], 3) if s is not None else None for s in (s0, s1)]
+    i0, i1 = _stitched_issue(s0), _stitched_issue(s1)
+    a, b = (i0.message if i0 else None), (i1.message if i1 else None)
+    out['issue'] = {'before': a, 'after': b,
+                    'change': ('none' if a is None and b is None else 'resolved' if b is None else 'new' if a is None
+                               else 'unchanged' if a == b else 'changed')}
+    return out
+
+
+def _advice(tc, p, res):
+    """The Stitch seams page's Suggest seams (core.stitched_objects.advise): the window's own when it has one."""
+    if 'advice' not in tc.cache:
+        from ..core import stitched_objects as so
+        adv = tc.advice
+        if adv is None and res is not None and res.seams:
+            tc.status('Searching seam angles…')
+            tc.engine.vehicle_geom(p)
+            adv = so.advise(p, tc.engine, res, cancel=tc.cancel)
+        tc.cache['advice'] = adv
+    return tc.cache['advice']
+
+
+def get_seams(tc, advise=True, **_):
+    res = tc.result
+    if res is None:
+        return {'error': 'No analysis result yet.'}
+    p = tc.project
+    tags = _tags(p)
+    sres = stitched_for(tc, p, res, 'now')
+    out = {'seams': _seam_rows(p, res, sres)}
+    if sres is not None:
+        iss = _stitched_issue(sres)
+        out.update({'object': sres.settings.label, 'object_vanishes_m2': _r(sres.metrics['vanish_m2'], 3),
+                    'cut_off_m2': _r(sres.metrics['cut_m2'], 3), 'map_cell_m': _r(sres.cell, 3),
+                    'issue': iss.message if iss else None})
+    adv = _advice(tc, p, res) if advise is not False and res.seams else None
+    if adv is not None:
+        by = {(x.a, x.b): x for x in adv.seams}
+        for s, row in zip(res.seams, out['seams']):
+            x = by.get((s.a, s.b))
+            if x is None:
+                continue
+            row['advised_angle_deg'] = _r(x.best, 1)
+            row['advice'] = 'move' if x.moved else 'keep'
+            if x.tried:
+                row['tried'] = [[_r(t[0], 1), _r(t[1], 3), _r(t[2], 3)] for t in x.tried]
+        moves = [x for x in adv.seams if x.moved]
+        out['seam_advice'] = {
+            'vanish_m2_now': _r(adv.vanish_now, 3), 'vanish_m2_after': _r(adv.vanish_after, 3),
+            'ground_below_min_density_m2_now': _r(adv.ground_low_now, 3),
+            'ground_below_min_density_m2_after': _r(adv.ground_low_after, 3),
+            'edit_project_ops': [{'op': 'set', 'target': 'seam', 'id': f'{tags.get(x.a)}|{tags.get(x.b)}',
+                                  'props': {'angle_deg': _r(x.best, 1)}} for x in moves],
+            'propose_changes_seams': [{'between': [tags.get(x.a), tags.get(x.b)], 'angle_deg': _r(x.best, 1)}
+                                      for x in moves],
+            'note': ('the Stitch seams page\'s Suggest seams: each seam, worst first, tried within ±15° (2.5° steps, '
+                     'then 0.5°) and moved where the object vanishes on less ground without more ground below the '
+                     'minimum density, on a 10 cm map. tried: [angle, total vanish m², ground below the minimum '
+                     'density m²] with that seam there and the seams searched before it at their advised angles; an '
+                     'angle that leaves more ground below the minimum density than now is not advised. No moves: no '
+                     'angle within ±15° does better.')}
+    out['azimuth'] = 'degrees about the body centre, counter-clockwise from +x (forward)'
+    out['centre'] = [_r(v) for v in res.centre]
+    return out
 
 
 def get_studies(tc, **_):
@@ -1403,15 +1503,25 @@ def _apply_seams(tc, p, seams):
             errors.append(f'no seam between {sp.get("between") if isinstance(sp, dict) else sp}; seams: '
                           + ', '.join(f'{tags.get(x.a)}|{tags.get(x.b)}' for x in res.seams))
             continue
+        key = f'{seam.a}|{seam.b}'
+        if sp.get('auto') is True:                  # back to the automatic placement
+            if key not in p.variant.seams:
+                errors.append(f'{tags.get(seam.a)}|{tags.get(seam.b)} is placed automatically already')
+                continue
+            before[key] = p.variant.seams.pop(key)
+            targets[key] = None
+            rows.append({'kind': 'seam', 'label': f'{tags.get(seam.a)} | {tags.get(seam.b)}', 'camera': '', 'slot': -1,
+                         'prop': 'seam angle', 'before': float(seam.angle), 'after': 'automatic', 'unit': '°',
+                         'mirrored_from': None})
+            continue
         try:
             ang = _norm_angle(float(sp.get('angle_deg')))
         except (TypeError, ValueError):
-            errors.append('a seam angle must be a number (degrees about the body centre)')
+            errors.append('a seam angle must be a number (degrees about the body centre), or auto: true')
             continue
         if abs((ang - seam.angle + 180) % 360 - 180) > 45:
             errors.append(f'{tags.get(seam.a)}|{tags.get(seam.b)}: move a seam by at most 45°')
             continue
-        key = f'{seam.a}|{seam.b}'
         before[key] = p.variant.seams.get(key, seam.angle)
         p.variant.seams[key] = ang
         targets[key] = ang
@@ -1447,7 +1557,9 @@ def _apply_settings(p, settings):
     return rows, targets, before, errors
 
 
-def _simulate(tc, changes=None, seams=None, settings=None):
+def _simulate(tc, changes=None, seams=None, settings=None, stitched=False):
+    """The analysis of the design with the changes applied to a copy; stitched: also the objects in the stitched view
+    before and after (per seam), its issue counted with the others (simulate_changes and propose_changes)."""
     t0 = time.perf_counter()
     base = tc.project.snapshot()
     trial = tc.project.snapshot()
@@ -1463,6 +1575,13 @@ def _simulate(tc, changes=None, seams=None, settings=None):
     r1, i1 = _evaluate(tc, trial)
     if r0 is None or r1 is None:
         return None, {'error': 'The analysis cannot run (no vehicle or ROI).', 'notes': errors}
+    sv = None
+    if stitched:
+        from ..core import stitched_objects as so
+        s0 = stitched_for(tc, base, r0, 'base')
+        tc.status('Objects in the stitched view, changed…')
+        s1 = so.analyse(trial, tc.engine, r1, cancel=tc.cancel)
+        sv = stitched_compare(base, r0, s0, trial, r1, s1)
     effects = []
     for key, lab, unit, up in METRICS:
         a, b = float(r0.metrics.get(key, 0.0)), float(r1.metrics.get(key, 0.0))
@@ -1476,6 +1595,15 @@ def _simulate(tc, changes=None, seams=None, settings=None):
             per.append({'camera': tags.get(ce.uid), 'seen_m2': [_r(d0.get('seen_m2'), 2), _r(d1.get('seen_m2'), 2)],
                         'only_this_camera_m2': [_r(d0.get('unique_m2'), 2), _r(d1.get('unique_m2'), 2)]})
     sev = lambda lst: {s: sum(1 for i in lst if i.severity == s) for s in ('critical', 'serious', 'warning')}
+    new = [i.message for i in i1 if i.message not in {j.message for j in i0}][:6]
+    gone = [i.message for i in i0 if i.message not in {j.message for j in i1}][:6]
+    if sv is not None:                          # its issue counted as the app's Issues list holds it
+        j0, j1 = _stitched_issue(s0), _stitched_issue(s1)
+        i0, i1 = i0 + ([j0] if j0 else []), i1 + ([j1] if j1 else [])
+        if j1 is not None and j0 is None:
+            new.append(j1.message)
+        elif j0 is not None and j1 is None:
+            gone.append(j0.message)
     allrows = rows + srows + grows
     report = {
         'changes': [{({'camera': 'camera', 'add': 'camera', 'seam': 'seam'}.get(r.get('kind', 'camera'), 'setting')):
@@ -1484,11 +1612,13 @@ def _simulate(tc, changes=None, seams=None, settings=None):
                      'from': _r(r['before'], 4) if not isinstance(r['before'], str) else r['before'],
                      'to': _r(r['after'], 4) if not isinstance(r['after'], str) else r['after'],
                      **({'mirrored_from': r['mirrored_from']} if r.get('mirrored_from') else {})} for r in allrows],
-        'effect': {e['key']: {'before': _r(e['before'], 3), 'after': _r(e['after'], 3)} for e in effects},
+        'effect': {**{e['key']: {'before': _r(e['before'], 3), 'after': _r(e['after'], 3)} for e in effects},
+                   **({'object_vanishes_m2': dict(zip(('before', 'after'), sv['object_vanishes_m2']))}
+                      if sv is not None else {})},
         'cameras_changed': per,
+        **({'stitched_view': sv} if sv is not None else {}),
         'issues': {'before': sev(i0), 'after': sev(i1),
-                   'new': [i.message for i in i1 if i.message not in {j.message for j in i0}][:6],
-                   'resolved': [i.message for i in i0 if i.message not in {j.message for j in i1}][:6]},
+                   'new': new, 'resolved': gone},
         'seconds': _r(time.perf_counter() - t0, 2)}
     if errors:
         report['notes'] = errors
@@ -1511,12 +1641,12 @@ def _log_check(tc, sim, report):
 
 
 def simulate_changes(tc, changes=None, seams=None, settings=None, **_):
-    sim, report = _simulate(tc, changes, seams, settings)
+    sim, report = _simulate(tc, changes, seams, settings, stitched=True)
     return _log_check(tc, sim, report)
 
 
 def propose_changes(tc, changes=None, seams=None, settings=None, title='', rationale='', **_):
-    sim, report = _simulate(tc, changes, seams, settings)
+    sim, report = _simulate(tc, changes, seams, settings, stitched=True)
     if sim is None:
         return report
     tc._proposals += 1
@@ -1978,8 +2108,9 @@ _CHANGE_ITEM = {
 }
 _SEAM_ITEM = {'type': 'object', 'properties': {
     'between': {'type': 'array', 'items': {'type': 'string'}, 'description': 'the two camera tags, e.g. ["QR", "R"]'},
-    'angle_deg': {'type': 'number', 'description': 'azimuth about the body centre, counter-clockwise from +x'}},
-    'required': ['between', 'angle_deg']}
+    'angle_deg': {'type': 'number', 'description': 'azimuth about the body centre, counter-clockwise from +x'},
+    'auto': {'type': 'boolean', 'description': 'true: back to the automatic placement (no angle)'}},
+    'required': ['between']}
 _SETTINGS = {'type': 'object', 'properties': {
     'min_density': {'type': 'number', 'description': 'px/cm'}, 'target_density': {'type': 'number', 'description': 'px/cm'},
     'roi_distance': {'type': 'number', 'description': 'm around the body'}}}
@@ -2033,8 +2164,13 @@ TOOLS = [
          {'min_area_m2': {'type': 'number', 'description': 'ignore smaller regions (default 0.002)'}},
          find_blind_regions),
     Tool('get_seams', 'Read the stitch seams',
-         'The bird\'s-eye stitch seams: which cameras, angle, density at the seam, where standing objects vanish, '
-         'advised angles.', {}, get_seams),
+         'The bird\'s-eye stitch seams: per seam its cameras, angle, whether it is placed automatically or by hand, '
+         'density along it and the area where the project\'s standing object (a 0.9 m child by default) vanishes at '
+         'it (object_vanishes_m2, with the total and the issue), and the advised angle per seam from the Stitch seams '
+         'page\'s Suggest seams search (move or keep, with the vanish area each tried angle gave) and the seam changes '
+         'that apply it.',
+         {'advise': {'type': 'boolean', 'description': 'search for advised angles (default true; a second or two)'}},
+         get_seams),
     Tool('get_studies', 'Read the studies',
          'Results of studies already run in the app: objects in the stitched view, the 3D blind volume, parking '
          'guidelines and the worst single-camera error. Use run_study to compute one that has not been run.', {},
@@ -2286,7 +2422,10 @@ TOOLS = [
          optimise_camera, 'compute', ('camera',)),
     Tool('simulate_changes', 'Simulate a change',
          'Run the analysis with camera, seam or threshold changes applied to a copy of the design and report the '
-         'effect (blind area, coverage, density, issues). Nothing changes in the user\'s design.',
+         'effect (blind area, coverage, density, issues) and the stitched view before and after: per seam its angle, '
+         'density and where the standing object vanishes (object_vanishes_m2), the total, and its issue. A seam: '
+         'between two tags with angle_deg, or auto: true to return it to the automatic placement. Nothing changes in '
+         'the user\'s design.',
          dict(_CHANGE_PARAMS), simulate_changes, 'simulate'),
     Tool('propose_changes', 'Propose a change',
          'Offer changes to the user: they see them with the predicted effect and apply them as one undo step (or as '

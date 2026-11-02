@@ -744,7 +744,10 @@ class AssistantController(QObject):
                         for k, v in props.items():
                             setattr(c, k, v)
                 for k, ang in prop.seams.items():
-                    p.variant.seams[k] = ang
+                    if ang is None:                 # back to the automatic placement
+                        p.variant.seams.pop(k, None)
+                    else:
+                        p.variant.seams[k] = ang
                 for k, v in prop.settings.items():
                     T.SETTINGS[k][3](p, v)
             keys = (['variant'] if prop.targets or prop.seams else []) + \
@@ -784,7 +787,10 @@ class AssistantController(QObject):
                     for k, val in props.items():
                         setattr(c, k, val)
             for k, ang in prop.seams.items():
-                v.seams[rk(k)] = ang
+                if ang is None:
+                    v.seams.pop(rk(k), None)
+                else:
+                    v.seams[rk(k)] = ang
             p.variants.append(v)
             p.active_uid = v.uid
         st.edit('variants', fn, f'Assistant · new variant: {prop.title}')

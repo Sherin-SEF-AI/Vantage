@@ -316,8 +316,11 @@ Claude Desktop takes the same command in `claude_desktop_config.json` under `mcp
 - Everything the in-app assistant reads and runs: the design, the coverage, the studies, simulate and compare,
   `look` (pictures), and the Copilot's plan tools.
 - `edit_project`, which changes anything you can change in the design as one undo step: cameras, sensors, rig parts
-  (with the presets), variants, ROI, ECU, analysis and study settings, targets, obstacles, the brief and the design
-  log. Each call is checked as a whole before anything changes.
+  (with the presets), variants, stitch seams, ROI, ECU, analysis and study settings, targets, obstacles, the brief and
+  the design log. Each call is checked as a whole before anything changes. A seam is set by hand
+  (`{"op": "set", "target": "seam", "id": "QR|MR", "props": {"angle_deg": -107}}`) or handed back to the automatic
+  placement (`"props": {"auto": true}`). `get_seams` gives the advised angles, and `simulate_changes` compares them by
+  where a standing object vanishes at each seam.
 - `undo_last_change`, which only ever undoes Claude's own last step, and `redo_change`.
 - `run_batch`, which runs any of batch mode's 94 job options on the project as it is now, unsaved changes included,
   in a run folder beside the project. That covers studies, checks of drive logs, as-built recordings and installation

@@ -399,6 +399,8 @@ class SeamAdvice:
     best: float                 # degrees advised (== angle when nothing helps)
     vanish_before: float        # total vanish m² before this seam moved
     vanish_after: float         # ... after (with the seams advised before it)
+    tried: list = field(default_factory=list)   # the coarse sweep: [(angle deg, total vanish m², ground below the
+    #                                             minimum density m²)] with this seam there, the seams before it moved
 
     @property
     def key(self):
@@ -462,6 +464,7 @@ def suggest_seams(sres: StitchedObjects, span_deg=15.0, step_deg=2.5, fine_deg=0
         hi = min(span_deg, gap_next - min_gap_deg)
         before = cur
         best = (cur, 0.0, cur_low)
+        tried = [(_wrap(base), cur, cur_low)]
 
         def trial(delta):
             t = list(seams)
@@ -471,10 +474,11 @@ def suggest_seams(sres: StitchedObjects, span_deg=15.0, step_deg=2.5, fine_deg=0
         if hi > lo:
             for delta in _steps(lo, hi, step_deg):
                 v, t = trial(delta)
-                if v < best[0] - 1e-9 or (abs(v - best[0]) < 1e-9 and abs(delta) < abs(best[1])):
-                    low = _ground_low(geo, t)
-                    if low <= low_now + tol_low:
-                        best = (v, delta, low)
+                low = _ground_low(geo, t)
+                tried.append((_wrap(base + delta), v, low))
+                if (v < best[0] - 1e-9 or (abs(v - best[0]) < 1e-9 and abs(delta) < abs(best[1]))) and \
+                        low <= low_now + tol_low:
+                    best = (v, delta, low)
             c0 = best[1]
             for delta in np.arange(c0 - step_deg + fine_deg, c0 + step_deg - fine_deg / 2, fine_deg):
                 if not (lo <= delta <= hi) or abs(delta - c0) < 1e-9:
@@ -487,12 +491,13 @@ def suggest_seams(sres: StitchedObjects, span_deg=15.0, step_deg=2.5, fine_deg=0
         if best[1] != 0.0 and before - best[0] >= gain_min:
             seams[k] = replace(seams[k], angle=_wrap(base + best[1]))
             cur, cur_low = best[0], best[2]
-            advice[k] = (base, seams[k].angle, before, cur)
+            advice[k] = (base, seams[k].angle, before, cur, tried)
         else:
-            advice[k] = (base, base, before, before)
+            advice[k] = (base, base, before, before, tried)
     tags = {c.uid: c.tag for c in geo.cams}
     out = [SeamAdvice(s.a, s.b, (tags.get(s.a, '?'), tags.get(s.b, '?')), advice[k][0], advice[k][1], advice[k][2],
-                      advice[k][3]) for k, s in enumerate(seams)]
+                      advice[k][3], sorted(advice[k][4], key=lambda t: (t[0] - advice[k][0] + 180.0) % 360.0))
+           for k, s in enumerate(seams)]
     return Advice(out, now, cur, low_now, cur_low)
 
 

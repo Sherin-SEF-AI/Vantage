@@ -1504,9 +1504,10 @@ vantage project.vantage            # open a project</code></pre>
         disk.</li>
       <li><b>The tools</b>: everything the in-app assistant reads and runs; <code>edit_project</code>, which changes
         anything you can change in the design as one undo step (cameras, sensors, rig parts and their presets,
-        variants, ROI, ECU, analysis and study settings, targets, obstacles, the brief, the design log), checked as a
-        whole before anything changes; <code>run_batch</code>, every batch job on the project as it is now, in a run
-        folder beside it; undo and redo of Claude's own steps only; save, export and recent activity.</li>
+        variants, stitch seams, ROI, ECU, analysis and study settings, targets, obstacles, the brief, the design log),
+        checked as a whole before anything changes. <code>get_seams</code> gives each seam's advised angle, and
+        <code>simulate_changes</code> compares seam angles by where a standing object vanishes at each seam;
+        <code>run_batch</code>, every batch job on the project as it is now, in a run folder beside it; undo and redo of Claude's own steps only; save, export and recent activity.</li>
       <li><b>What stays yours</b>: locked cameras and sensors (Claude may lock one, never unlock it), unit
         calibrations, stream sources, the fleet, photos, the vehicle model, the Copilot's approval records and the
         automation settings. CARLA runs still go through a Copilot plan you approve in the window.</li>

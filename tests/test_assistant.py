@@ -473,6 +473,12 @@ def test_seam_and_threshold_proposals(sample):
     assert 'move a seam' in T.simulate_changes(tc, seams=[{'between': pair, 'angle_deg': s0.angle + 90}])['error']
     assert 'must be' in T.simulate_changes(tc, settings={'roi_distance': 50})['error']
     assert 'target density' in T.simulate_changes(tc, settings={'min_density': 9.0})['error']
+    # the report has the stitched view per seam; a seam placed automatically is not handed back to it
+    sv = out['stitched_view']
+    assert sv['seams'][0]['angle_deg'] == [round(s0.angle, 1), round(s0.angle + 5, 1)]
+    assert len(sv['object_vanishes_m2']) == 2 and len(sv['seams'][0]['object_vanishes_m2']) == 2
+    assert 'automatically already' in T.simulate_changes(tc, seams=[{'between': pair, 'auto': True}])['error']
+    assert not T.validate_args('simulate_changes', {'seams': [{'between': pair, 'auto': True}]})
 
 
 def test_plan_and_app_actions_go_to_the_ui(sample):
@@ -545,6 +551,38 @@ def test_agent_toggle_slash_popup_and_brief(app, win, srv):
     assert panel.b_brief.text() == 'Brief ✓'
     win.store.undo.undo()
     assert ctl.brief() == ''
+
+
+def test_a_seam_proposal_hands_a_seam_back_to_the_automatic_placement(app, win):
+    st, ctl = win.store, win.ctx.assistant
+    _wait(app, lambda: win.ctx.analysis.result is not None, 60)
+    s0 = win.ctx.analysis.result.seams[0]
+    key = f'{s0.a}|{s0.b}'
+    tags = {c.uid: c.tag for c in st.project.variant.cameras}
+    st.edit('variant', lambda p: p.variant.seams.__setitem__(key, round(s0.angle - 3, 1)), 'Seam angle')
+    seen = []
+    tc = T.ToolContext(st.project.snapshot(), None, win.ctx.analysis.engine.share(), on_proposal=seen.append)
+    out = T.propose_changes(tc, seams=[{'between': [tags[s0.a], tags[s0.b]], 'auto': True}], title='Seam back')
+    prop = seen[0]
+    assert prop.seams == {key: None} and prop.rows[0]['after'] == 'automatic'
+    assert out['stitched_view']['seams'][0]['placed'] == ['by hand', 'automatic']
+    prop.id = max(ctl.proposals, default=0) + 100
+    ctl.proposals[prop.id] = {'p': prop, 'state': 'pending', 'undo_index': -1}
+    assert ctl.apply(prop.id) == ''
+    pump(app, 0.2)
+    assert key not in st.project.variant.seams and st.undo.undoText() == 'Assistant · Seam back'
+    st.undo.undo()
+    assert st.project.variant.seams[key] == round(s0.angle - 3, 1)
+    ctl.proposals[prop.id]['state'] = 'pending'
+    orig = st.project.active_uid
+    assert ctl.apply(prop.id, as_variant=True) == ''
+    pump(app, 0.2)
+    assert st.project.active_uid != orig and not st.project.variant.seams           # the copy's seam is automatic
+    assert st.project.variant_by_uid(orig).seams == {key: round(s0.angle - 3, 1)}   # the original as it was
+    st.undo.undo()
+    st.undo.undo()
+    pump(app, 0.2)
+    assert key not in st.project.variant.seams
 
 
 def test_agent_run_in_the_panel_with_a_variant_and_a_measurement(app, win, srv):

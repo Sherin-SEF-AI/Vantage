@@ -9,10 +9,16 @@ An operation names a target and what to do with it:
     {"op": "remove", "target": "obstacle", "id": "Pole 1.0 m"}
     {"op": "activate", "target": "variant", "id": "Data rig · 6-cam + lidar + radars"}
     {"op": "link", "target": "camera", "id": "ML", "partner": "MR"}
+    {"op": "set", "target": "seam", "id": "QR|MR", "props": {"angle_deg": -107}}
+    {"op": "set", "target": "seam", "id": "QR|MR", "props": {"auto": true}}
 
 apply() runs them in order on a project and returns the project sections they touched (the undo keys) and a line per
 operation. Every value is checked against the field it replaces (its type, its range, the library for a lens or a
 model), so a wrong operation raises EditError and changes nothing: the caller runs the list on a snapshot first.
+
+A seam is named by its two cameras' tags as get_seams lists them. It is set the way the Camera views ▸ Stitch seams
+page sets it (variant.seams, the angle by hand to 0.1°) or handed back to the automatic placement, so apply() takes
+the analysis' seams to find it.
 
 What Claude cannot change here: a locked camera or sensor (the user locked it; Claude may lock, never unlock), a unit
 calibration (measured data), stream sources (they may hold passwords), the fleet, photos, the vehicle model, the
@@ -27,7 +33,7 @@ from ..core import sensors as S
 
 OPS = ('set', 'add', 'remove', 'activate', 'link', 'unlink')
 TARGETS = ('camera', 'sensor', 'rig_part', 'obstacle', 'target', 'variant', 'roi', 'ecu', 'analysis',
-           'target_settings', 'project', 'log')
+           'target_settings', 'project', 'log', 'seam')
 LISTED = ('camera', 'sensor', 'rig_part', 'obstacle', 'target', 'variant')      # targets named by an id
 
 CAMERA_FIELDS = ('tag', 'name', 'location', 'x', 'y', 'z', 'yaw', 'pitch', 'roll', 'module_id', 'lens_id', 'port',
@@ -53,6 +59,8 @@ RANGES = {'x': (-50.0, 50.0), 'y': (-50.0, 50.0), 'z': (-5.0, 20.0), 'pitch': (-
           'cell_m': (0.01, 0.5), 'min_density': (0.1, 100.0), 'target_density': (0.1, 100.0), 'tol_deg': (0.0, 45.0),
           'tol_mm': (0.0, 1000.0), 'distance@roi': (0.1, 50.0), 'ports': (1, 16)}
 TAG_MAX = 12
+SEAM_FIELDS = ('angle_deg', 'auto')
+SEAM_GAP_DEG = 1.0          # neighbouring seams stay at least this far apart, in their order round the vehicle
 
 
 class EditError(ValueError):
@@ -230,6 +238,9 @@ def _set(p, op, touched):
         return _set_fields(_named(p.targets, ref, 'target'), props, TARGET_FIELDS, 'target', f'target {ref}')
     if t == 'variant':
         v = _variant(p, ref)
+        if isinstance(props, dict) and 'seams' in props:
+            raise EditError('seams are set one at a time: {"op": "set", "target": "seam", "id": "QR|MR", "props": '
+                            '{"angle_deg": -107}} or {"auto": true} for the automatic placement (get_seams lists them)')
         touched.add('variants')
         line = _set_fields(v, props, VARIANT_FIELDS, 'variant', f'variant {v.name!r}')
         if not v.name:
@@ -296,6 +307,87 @@ def _set(p, op, touched):
             done.append('brief updated')
         return 'project: ' + ', '.join(done)
     raise EditError(f'set: target {t!r} cannot be set')
+
+
+def _seam(p, op, touched, seams, done):
+    """Set one stitch seam of the active variant as the Stitch seams page does: an angle by hand (variant.seams,
+    'uidA|uidB' -> degrees to 0.1), or back to the automatic placement (the key removed). done collects
+    key -> angle (None: automatic) for the order check."""
+    if op['op'] != 'set':
+        raise EditError('a seam is set (props angle_deg, or auto: true for the automatic placement); it is not '
+                        'added, removed or linked')
+    if op.get('variant') not in (None, '', 'active') and _variant(p, op['variant']).uid != p.active_uid:
+        raise EditError('seams are set on the active variant: activate the other one first')
+    v = p.variant
+    if not seams:
+        raise EditError('this variant has no seams in the analysis (fewer than two cameras, or no vehicle or ROI)')
+    tags = {c.uid: c.tag for c in v.cameras}
+    names = ', '.join(f'{tags.get(s.a, "?")}|{tags.get(s.b, "?")}' for s in seams)
+    ref = op.get('id')
+    parts = [x.strip().lower() for x in (ref if isinstance(ref, list) else str(ref or '').replace(',', '|').split('|'))
+             if str(x).strip()]
+    seam = next((s for s in seams if len(parts) == 2 and
+                 sorted([tags.get(s.a, '').lower(), tags.get(s.b, '').lower()]) == sorted(parts)), None)
+    if seam is None:
+        raise EditError(f'no seam {ref!r}: name it by its two cameras\' tags, e.g. "{names.split(", ")[0]}" '
+                        f'(seams: {names})')
+    props = op.get('props')
+    if not isinstance(props, dict) or not props:
+        raise EditError('props: angle_deg (degrees about the body centre, counter-clockwise from +x) or auto: true')
+    bad = [k for k in props if k not in SEAM_FIELDS]
+    if bad:
+        raise EditError(f'cannot set {", ".join(bad)} (settable: {", ".join(SEAM_FIELDS)})')
+    key = f'{seam.a}|{seam.b}'
+    label = f'seam {tags[seam.a]} | {tags[seam.b]}'
+    cur = v.seams.get(key)
+    was = f'{cur:.1f}° by hand' if cur is not None else (f'{seam.angle:.1f}° automatic' if seam.auto else 'automatic')
+    auto = props.get('auto')
+    if 'auto' in props and not isinstance(auto, bool):
+        raise EditError(f'{label}: auto is true or false, not {auto!r}')
+    if 'angle_deg' in props:
+        if auto:
+            raise EditError(f'{label}: an angle or auto: true, not both')
+        a = props['angle_deg']
+        if isinstance(a, bool) or not isinstance(a, (int, float)) or not math.isfinite(float(a)):
+            raise EditError(f'{label}: angle_deg is a number of degrees, not {a!r}')
+        new = round(_wrap(float(a)), 1)
+    elif auto:
+        new = None
+    else:                                       # auto: false keeps the seam where it is, as placed by hand
+        new = cur if cur is not None else round(seam.angle, 1)
+    done[key] = new
+    touched.add(_variant_key(p, v))
+    if new == cur:
+        return f'{label}: no change'
+    if new is None:
+        v.seams.pop(key, None)
+        return f'{label}: {was} → automatic'
+    v.seams[key] = new
+    return f'{label}: {was} → {new:.1f}° by hand'
+
+
+def _check_seam_order(p, seams, done):
+    """A seam set by hand stays between the seams either side of it (and SEAM_GAP_DEG from them), as the stitch
+    gives each camera the sector between its two seams."""
+    n = len(seams)
+    if n < 2:
+        return
+    tags = {c.uid: c.tag for c in p.variant.cameras}
+    keys = [f'{s.a}|{s.b}' for s in seams]
+    ang = [done[k] if k in done else s.angle for k, s in zip(keys, seams)]
+    for k in range(n):
+        if keys[k] not in done or ang[k] is None:
+            continue
+        a, i, j = ang[k], (k - 1) % n, (k + 1) % n
+        lo, hi = ang[i], ang[j]
+        if lo is None or hi is None:
+            continue                            # a neighbour going back to automatic is placed between the two
+        span = (hi - lo) % 360.0 or 360.0
+        if not SEAM_GAP_DEG <= (a - lo) % 360.0 <= span - SEAM_GAP_DEG:
+            s, sp, sn = seams[k], seams[i], seams[j]
+            raise EditError(f'seam {tags.get(s.a)} | {tags.get(s.b)} at {a:.1f}° is not between the seams either side '
+                            f'of it ({tags.get(sp.a)} | {tags.get(sp.b)} at {lo:.1f}°, {tags.get(sn.a)} | '
+                            f'{tags.get(sn.b)} at {hi:.1f}°): each camera keeps the sector between its two seams')
 
 
 def _free_tag(v, base):
@@ -491,14 +583,15 @@ def _link(p, op, touched, on):
     return f'linked {a.tag} and {b.tag} as mirrored partners (later changes to one mirror to the other)'
 
 
-def apply(project, ops) -> tuple[list, list]:
+def apply(project, ops, seams=None) -> tuple[list, list]:
     """Run the operations in order on project: (undo keys, a line per operation). EditError on the first bad one (the
-    project may then be half-changed: run on a snapshot first)."""
+    project may then be half-changed: run on a snapshot first). seams: the analysis' seams of the active variant
+    (AnalysisResult.seams), which seam operations name."""
     if not isinstance(ops, list) or not ops:
         raise EditError('ops: a list of at least one operation')
     if len(ops) > 100:
         raise EditError('ops: at most 100 operations at a time')
-    touched, lines = set(), []
+    touched, lines, done = set(), [], {}
     for i, op in enumerate(ops):
         if not isinstance(op, dict):
             raise EditError(f'ops[{i}]: an object')
@@ -510,7 +603,9 @@ def apply(project, ops) -> tuple[list, list]:
         if kind in ('set', 'remove') and t in LISTED and t != 'variant' and not op.get('id'):
             raise EditError(f'ops[{i}]: id (the {t}\'s tag or name) is needed')
         try:
-            if kind == 'set':
+            if t == 'seam':
+                lines.append(_seam(project, op, touched, seams, done))
+            elif kind == 'set':
                 lines.append(_set(project, op, touched))
             elif kind == 'add':
                 lines.append(_add(project, op, touched))
@@ -527,6 +622,8 @@ def apply(project, ops) -> tuple[list, list]:
                 lines.append(_link(project, op, touched, kind == 'link'))
         except EditError as e:
             raise EditError(f'ops[{i}] ({kind} {t}): {e}') from None
+    if done:
+        _check_seam_order(project, seams, done)
     if 'variants' in touched:                       # the whole list covers each variant's own key
         touched = {k for k in touched if not k.startswith('variant:')}
     return sorted(touched), lines

@@ -294,8 +294,9 @@ def ground_rules(st: State, cx: Context):
                             f'{a}–{b} seam{after}.', 'ask', 'serious', 0.9 + min(v / 0.1, 0.5),
                             source='Objects in the stitched view',
                             prompt=f'A {h:g} m object vanishes on {v:.3f} m² at the {a}–{b} stitch seam. Where should '
-                                   f'the seam go (or what should change) so it stays visible? Check with '
-                                   f'simulate_changes.',
+                                   f'the seam go (or what should change) so it stays visible? get_seams has the '
+                                   f'advised angles; compare them with simulate_changes (its stitched_view gives the '
+                                   f'vanish area per seam).',
                             about=(('camera', a), ('camera', b), ('page', 'viewports')),
                             evidence={'vanish_m2': round(v, 3)}, topic='vanish'))
     return out

@@ -2,6 +2,28 @@
 
 Versions follow [semantic versioning](https://semver.org). The top entry is what the release notes on GitHub show.
 
+## Unreleased
+
+**What's new**
+
+- **Stitch seams for Claude over MCP**, as the Camera views ▸ Stitch seams page sets them.
+  - `edit_project` sets a seam's angle by hand, `{"op": "set", "target": "seam", "id": "QR|MR", "props":
+    {"angle_deg": -107}}`, or hands it back to the automatic placement with `"props": {"auto": true}`. Each call is
+    one undo step, and a seam must stay between the seams either side of it. The reply carries the stitched view
+    before and after: per seam its angle, placement, density and where the standing object vanishes, the total, and
+    the stitched-view issue. Camera operations carry it too, since the seams follow the cameras.
+  - `get_seams` gives the advised angle per seam from the page's Suggest seams search. Each seam is marked move or
+    keep, with every angle the search tried (vanish area and ground below the minimum density). The reply includes the
+    `edit_project` operations that apply the advice. It also works on a project file, where no page has run the
+    search.
+  - `simulate_changes` and `propose_changes` report the stitched view before and after, per seam and in total, so seam
+    angles can be compared. Before, −90°, −102° and −107° gave the same figures. A seam can be handed back to the
+    automatic placement there too (`"auto": true`), and the in-app assistant gets all of this as well.
+
+**Fixed**
+
+- `edit_project` refused seams (`set variant` with `seams`: "cannot set seams"). It now says how to set them.
+
 ## 0.8.0 — 2026-11-02
 
 Claude works on the rig. Vantage is now an MCP server, so Claude Code or Claude Desktop, on a Claude subscription,

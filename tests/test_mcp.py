@@ -149,6 +149,183 @@ def test_project_data_lists_what_can_be_set(sample):
     assert 'error' in E.data(sample, ['nope'])
 
 
+# ======================================================================= stitch seams
+@pytest.fixture(scope='module')
+def analysed(sample):
+    from vantage.core.analysis import Engine
+    e = Engine()
+    return e, e.analyse(sample)
+
+
+def test_a_seam_is_set_by_hand_or_handed_back_to_the_automatic_placement(sample, analysed):
+    _, res = analysed
+    p = _proj(sample)
+    tags = {c.uid: c.tag for c in p.variant.cameras}
+    s0, s1 = res.seams[0], res.seams[1]
+    name = f'{tags[s0.a]}|{tags[s0.b]}'
+    key = f'{s0.a}|{s0.b}'
+    assert s0.auto and key not in p.variant.seams
+    keys, lines = E.apply(p, [{'op': 'set', 'target': 'seam', 'id': name, 'props': {'angle_deg': s0.angle - 4.04}}],
+                          res.seams)
+    assert keys == [f'variant:{p.variant.uid}'] and p.variant.seams[key] == round(s0.angle - 4.04, 1)
+    assert lines == [f'seam {tags[s0.a]} | {tags[s0.b]}: {s0.angle:.1f}° automatic → {s0.angle - 4.04:.1f}° by hand']
+    # either order of the tags, in the same list as another seam; then back to automatic
+    rev = f'{tags[s0.b]} | {tags[s0.a]}'
+    pin = {'op': 'set', 'target': 'seam', 'id': f'{tags[s1.a]}|{tags[s1.b]}', 'props': {'auto': False}}
+    _, lines = E.apply(p, [{'op': 'set', 'target': 'seam', 'id': rev, 'props': {'auto': True}}, pin], res.seams)
+    assert key not in p.variant.seams and lines[0].endswith('→ automatic')
+    assert p.variant.seams[f'{s1.a}|{s1.b}'] == round(s1.angle, 1)             # auto: false pins it where it is
+    assert E.apply(p, [{'op': 'set', 'target': 'seam', 'id': name, 'props': {'auto': True}}], res.seams)[1] == \
+        [f'seam {tags[s0.a]} | {tags[s0.b]}: no change']
+    other = res.seams[2]
+    for op, why in (({'props': {'angle_deg': s0.angle}, 'id': f'{tags[s0.a]}|{tags[other.b]}'}, 'no seam'),
+                    ({'props': {'angle_deg': 'left'}}, 'a number'),
+                    ({'props': {'angle_deg': float('nan')}}, 'a number'),
+                    ({'props': {'angle_deg': 1.0, 'auto': True}}, 'not both'),
+                    ({'props': {'auto': 'yes'}}, 'true or false'),
+                    ({'props': {'blend_m': 0.2}}, 'cannot set blend_m'),
+                    ({'props': {}}, 'angle_deg'),
+                    ({'props': {'angle_deg': s1.angle + 2}}, 'not between the seams either side'),
+                    ({'op': 'remove'}, 'is set'),
+                    ({'props': {'angle_deg': 1.0}, 'variant': 'Front-heavy'}, 'active variant')):
+        q = _proj(sample)
+        o = {'op': 'set', 'target': 'seam', 'id': name, **op}
+        if o.get('variant'):
+            E.apply(q, [{'op': 'add', 'target': 'variant', 'props': {'name': 'Front-heavy'}, 'activate': False}])
+        with pytest.raises(E.EditError, match=why):
+            E.apply(q, [o], res.seams)
+    with pytest.raises(E.EditError, match='no seams'):
+        E.apply(_proj(sample), [{'op': 'set', 'target': 'seam', 'id': name, 'props': {'auto': True}}])
+    with pytest.raises(E.EditError, match='target.: "seam"'):           # the shape that was refused before
+        E.apply(_proj(sample), [{'op': 'set', 'target': 'variant', 'props': {'seams': [{'between': ['QR', 'MR']}]}}])
+
+
+def test_edit_project_sets_a_seam_with_the_stitched_view_before_and_after(tmp_path, sample, monkeypatch):
+    from vantage.core.project import Project
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'cfg'))
+    path = str(tmp_path / 'p.vantage')
+    sample.save(path)
+    r = Router(path, 'file')
+    seams, err = _call(r, 'get_seams', advise=False)
+    assert not err and 'seam_advice' not in seams
+    row = seams['seams'][0]
+    name = '|'.join(row['between'])
+    assert row['placed'] == 'automatic' and row['object_vanishes_m2'] is not None
+    assert seams['object'] == '0.9 m child'
+    assert seams['object_vanishes_m2'] == pytest.approx(sum(x['object_vanishes_m2'] for x in seams['seams']), abs=0.01)
+    ang = row['angle_deg'] - 9
+    doc, err = _call(r, 'edit_project', ops=[{'op': 'set', 'target': 'seam', 'id': name, 'props': {'angle_deg': ang}}])
+    assert not err, doc
+    sv = doc['stitched_view']
+    first = sv['seams'][0]
+    assert first['between'] == row['between'] and first['angle_deg'] == [row['angle_deg'], round(ang, 1)]
+    assert first['placed'] == ['automatic', 'by hand']
+    assert first['object_vanishes_m2'][0] == row['object_vanishes_m2']
+    assert sv['object_vanishes_m2'][0] == seams['object_vanishes_m2']
+    after, _ = _call(r, 'get_seams', advise=False)                       # what the edit reported is what is there now
+    assert after['seams'][0]['angle_deg'] == round(ang, 1) and after['seams'][0]['placed'] == 'by hand'
+    assert sv['object_vanishes_m2'][1] == after['object_vanishes_m2']
+    assert first['object_vanishes_m2'][1] == after['seams'][0]['object_vanishes_m2']
+    p = Project.load(path)
+    assert round(ang, 1) in p.variant.seams.values()                           # saved, one undo step
+    doc, _ = _call(r, 'undo_last_change')
+    assert doc['result'].startswith('undid: Claude · seam') and not Project.load(path).variant.seams
+    _call(r, 'redo_change')
+    doc, err = _call(r, 'edit_project', ops=[{'op': 'set', 'target': 'seam', 'id': name, 'props': {'auto': True}}])
+    assert not err and doc['stitched_view']['seams'][0]['placed'] == ['by hand', 'automatic']
+    assert not Project.load(path).variant.seams
+    doc, err = _call(r, 'edit_project', ops=[{'op': 'set', 'target': 'camera', 'id': 'F', 'props': {'pitch': 1}},
+                                             {'op': 'set', 'target': 'variant', 'props': {'seams': {}}}])
+    assert err and 'target": "seam"' in doc['error'] and doc['changed'] == 'nothing'
+    doc, err = _call(r, 'edit_project', ops=[{'op': 'set', 'target': 'camera', 'id': 'F', 'props': {'pitch': 38}}])
+    assert not err and 'stitched_view' in doc                                  # a camera moves the seams too
+
+
+def test_simulate_changes_compares_seam_angles_by_where_the_object_vanishes(tmp_path, sample, analysed, monkeypatch):
+    from vantage.core import stitched_objects as so
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'cfg'))
+    r = Router(None, 'file')
+    _call(r, 'open_project', sample=True)
+    seams, _ = _call(r, 'get_seams', advise=False)
+    row = seams['seams'][0]
+    out = {}
+    for d in (-8, 0, 8):
+        doc, err = _call(r, 'simulate_changes', seams=[{'between': row['between'], 'angle_deg': row['angle_deg'] + d}])
+        assert not err, doc
+        out[d] = doc
+    sv = out[-8]['stitched_view']
+    assert sv['object'] == '0.9 m child' and len(sv['seams']) == len(seams['seams'])
+    assert [s['object_vanishes_m2'][0] for s in sv['seams']] == [s['object_vanishes_m2'] for s in seams['seams']]
+    assert out[-8]['effect']['object_vanishes_m2'] == {'before': seams['object_vanishes_m2'],
+                                                       'after': sv['object_vanishes_m2'][1]}
+    # the same computation as the stitched-objects analysis of the changed design
+    e, res = analysed
+    q = _proj(sample)
+    s0 = res.seams[0]
+    q.variant.seams[f'{s0.a}|{s0.b}'] = round(row['angle_deg'] + 8, 1)
+    e.vehicle_geom(q)
+    r1 = e.analyse(q)
+    sres = so.analyse(q, e, r1)
+    got = out[8]['stitched_view']
+    assert got['object_vanishes_m2'][1] == round(sres.metrics['vanish_m2'], 3)
+    assert [s['object_vanishes_m2'][1] for s in got['seams']] == [round(x['vanish_m2'], 3) for x in sres.seams]
+    assert got['seams'][0]['density_px_cm'][1] == round(r1.seams[0].density, 2)
+    # the angles differ where it matters: the vanish area at the moved seam, its density
+    firsts = {d: o['stitched_view']['seams'][0] for d, o in out.items()}
+    assert len({f['object_vanishes_m2'][1] for f in firsts.values()} | {f['density_px_cm'][1] for f in firsts.values()}
+               ) > 2
+    assert firsts[0]['placed'] == ['automatic', 'by hand'] and firsts[0]['angle_deg'][1] == row['angle_deg']
+    assert out[0]['stitched_view']['issue']['change'] in ('unchanged', 'changed', 'none')
+    # back to automatic is a change only for a seam placed by hand
+    doc, err = _call(r, 'simulate_changes', seams=[{'between': row['between'], 'auto': True}])
+    assert err and 'automatically already' in doc['error']
+    _call(r, 'edit_project', ops=[{'op': 'set', 'target': 'seam', 'id': '|'.join(row['between']),
+                                   'props': {'angle_deg': row['angle_deg'] + 8}}])
+    doc, err = _call(r, 'simulate_changes', seams=[{'between': row['between'], 'auto': True}])
+    assert not err and doc['changes'][0]['to'] == 'automatic'
+    assert doc['stitched_view']['seams'][0]['placed'] == ['by hand', 'automatic']
+    assert doc['stitched_view']['seams'][0]['angle_deg'][1] == row['angle_deg']
+    # a camera change moves the seams: reported too
+    doc, err = _call(r, 'simulate_changes', changes=[{'camera': 'F', 'dyaw': 6}])
+    assert not err and len(doc['stitched_view']['seams']) == len(seams['seams'])
+
+
+def test_get_seams_advises_angles_that_edit_project_applies(tmp_path, sample, analysed, monkeypatch):
+    from vantage.core import stitched_objects as so
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'cfg'))
+    r = Router(None, 'file')
+    _call(r, 'open_project', sample=True)
+    doc, err = _call(r, 'get_seams')
+    assert not err
+    e, res = analysed
+    adv = so.advise(_proj(sample), e, res)                                    # the Stitch seams page's Suggest seams
+    assert adv.changes
+    tags = {c.uid: c.tag for c in sample.variant.cameras}
+    for row, x in zip(doc['seams'], adv.seams):
+        assert row['between'] == [tags[x.a], tags[x.b]]
+        assert row['advised_angle_deg'] == round(x.best, 1) and row['advice'] == ('move' if x.moved else 'keep')
+        assert [row['angle_deg'], round(x.vanish_before, 3)] in [t[:2] for t in row['tried']]   # where it is now
+        assert all(len(t) == 3 for t in row['tried']) and len(row['tried']) > 5
+    sa = doc['seam_advice']
+    assert sa['vanish_m2_now'] == round(adv.vanish_now, 3) and sa['vanish_m2_after'] == round(adv.vanish_after, 3)
+    assert sa['vanish_m2_after'] < sa['vanish_m2_now']
+    assert {o['id']: o['props']['angle_deg'] for o in sa['edit_project_ops']} == \
+        {f'{tags[k.split("|")[0]]}|{tags[k.split("|")[1]]}': v for k, v in adv.changes.items()}
+    assert len(sa['propose_changes_seams']) == len(sa['edit_project_ops'])
+    ed, err = _call(r, 'edit_project', ops=sa['edit_project_ops'])          # Apply: one undo step
+    assert not err, ed
+    assert len(ed['changed']) == len(adv.changes) and all('by hand' in x for x in ed['changed'])
+    assert ed['stitched_view']['object_vanishes_m2'][1] < ed['stitched_view']['object_vanishes_m2'][0]
+    doc, _ = _call(r, 'undo_last_change')
+    assert doc['result'].startswith('undid')
+    names = {t['name']: t for t in SV.listing()}
+    desc = names['get_seams']['description']
+    assert 'advised angle' in desc and '"target": "seam"' in desc
+    assert '"auto": true' in names['edit_project']['description'] and 'seam' in \
+        names['edit_project']['inputSchema']['properties']['ops']['items']['properties']['target']['enum']
+    assert 'object_vanishes_m2' in names['simulate_changes']['description']
+
+
 # ======================================================================= a file
 def test_file_session_saves_each_change_keeps_a_backup_and_undoes(tmp_path, sample, monkeypatch):
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'cfg'))
@@ -270,6 +447,25 @@ def test_claude_works_in_the_open_window_as_undo_steps(app_win):
     while t.is_alive():
         _pump(app, 0.05)
     assert "the user's" in out['undo2'][0]['result'] and w.store.project.variant.by_tag('F').pitch == 39
+    # a seam, set in the window as the Stitch seams page sets it (one undo step of Claude's)
+    res = w.ctx.analysis.result
+    s0 = res.seams[0]
+    tags = {c.uid: c.tag for c in w.store.project.variant.cameras}
+
+    def seam():
+        out['seam'] = _call(router, 'edit_project', ops=[{'op': 'set', 'target': 'seam',
+                                                          'id': f'{tags[s0.a]}|{tags[s0.b]}',
+                                                          'props': {'angle_deg': s0.angle - 5}}])
+    t = threading.Thread(target=seam)
+    t.start()
+    while t.is_alive():
+        _pump(app, 0.05)
+    sd, err = out['seam']
+    assert not err and sd['stitched_view']['seams'][0]['placed'] == ['automatic', 'by hand'], sd
+    assert w.store.project.variant.seams == {f'{s0.a}|{s0.b}': round(s0.angle - 5, 1)}
+    assert w.store.undo.command(w.store.undo.index() - 1).text().startswith('Claude · seam')
+    w.store.undo.undo()
+    assert not w.store.project.variant.seams
     w.ctx.mcp.stop()
     assert not os.path.exists(info and os.path.join(SE.bridge_dir(), f'{os.getpid()}.json'))
 

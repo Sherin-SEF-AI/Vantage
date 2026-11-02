@@ -645,6 +645,11 @@ a seam both smears can land in the other camera's sector, so the object vanishes
 **Suggest seams** searches ±15° per seam for less vanishing ground without losing density. **Apply** moves the seams in
 one undo step.
 
+Claude does the same over MCP. `get_seams` gives each seam's vanish area and advised angle, with every angle tried.
+`simulate_changes` compares angles by the vanish area per seam. `edit_project` sets a seam
+(`{"op": "set", "target": "seam", "id": "QR|MR", "props": {"angle_deg": -107}}`) or hands it back to the automatic
+placement (`"props": {"auto": true}`).
+
 ### 9.3 3D surround view (bowl)
 
 **What it is.** The view an in-car display shows: the camera images projected onto a bowl (a flat floor and a curved
@@ -1560,7 +1565,8 @@ on a Claude subscription, reads and changes rig designs. Add it once with
   change, with the original kept as `.bak`.
 - **Tools (74).**
   - The assistant's tools.
-  - `edit_project`: anything the user can change in the design, checked as a whole before anything changes.
+  - `edit_project`: anything the user can change in the design, stitch seams included, checked as a whole before
+    anything changes.
   - `run_batch`: any of batch mode's 94 job options, on the design as it is now, in a run folder beside it.
   - Undo and redo of Claude's own steps only; save, export, recent activity, project data and status.
 - **What stays the user's:** locked devices, unit calibrations, stream sources, the fleet, photos, the vehicle model,

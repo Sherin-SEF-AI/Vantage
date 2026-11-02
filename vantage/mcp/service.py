@@ -42,10 +42,13 @@ _OP_ITEM = {'type': 'object', 'properties': {
                                                                  'link or unlink mirrored cameras'},
     'target': {'type': 'string', 'enum': list(E.TARGETS)},
     'id': {'type': 'string', 'description': 'which one: a camera or sensor tag, a rig part, obstacle or target name, '
-                                            'a variant name (set/remove/activate; for add variant: the one to copy)'},
-    'props': {'type': 'object', 'description': 'the fields to set (get_project_data lists them); add sensor: kind '
-                                               '(lidar|radar|gnss|imu), model_id and pose optional; add log: kind '
-                                               '(decision|rejected|constraint|note), text, about (tags)'},
+                                            'a variant name (set/remove/activate; for add variant: the one to copy), '
+                                            'a seam\'s two camera tags as get_seams lists them ("QR|MR")'},
+    'props': {'type': 'object', 'description': 'the fields to set (get_project_data lists them); set seam: angle_deg '
+                                               '(degrees about the body centre) or auto: true (back to the automatic '
+                                               'placement); add sensor: kind (lidar|radar|gnss|imu), model_id and pose '
+                                               'optional; add log: kind (decision|rejected|constraint|note), text, '
+                                               'about (tags)'},
     'preset': {'type': 'string', 'enum': ['roof_rack', 'sensor_mast', 'enclosure', 'bar'],
                'description': 'add rig_part: a preset sized from the roof and fitted with the parts there'},
     'variant': {'type': 'string', 'description': 'camera/sensor ops: which variant (default: the active one)'},
@@ -114,22 +117,35 @@ def _data(s, sections=None, **_):
     return E.data(s.project(), sections)
 
 
+def _moves_seams(ops) -> bool:
+    """Operations that move the stitch seams: a seam itself, or a camera (the seams follow the cameras)."""
+    return isinstance(ops, list) and any(isinstance(o, dict) and o.get('target') in ('seam', 'camera') for o in ops)
+
+
 def _edit(s, ops=None, **_):
     before = s.context()
+    seams = list(before.result.seams) if before.result is not None else None    # what seam operations name
+    stitched = _moves_seams(ops)
+    p0 = before.project.snapshot() if stitched else None       # as it is, before the trial changes the snapshot
     trial = before.project                     # a snapshot: the operations are tried on it first
     try:
-        keys, lines = E.apply(trial, ops)
+        keys, lines = E.apply(trial, ops, seams)
     except E.EditError as e:
         return {'error': str(e), 'changed': 'nothing'}
+    s0 = T.stitched_for(before, p0, before.result, 'now') if stitched else None
     label = E.title(lines)
-    s.edit(keys, lambda p: E.apply(p, ops), label)
+    s.edit(keys, lambda p: E.apply(p, ops, seams), label)
     after = s.context()
     old = set(_issue_lines(before))
     now = _issue_lines(after)
-    return {'changed': lines, 'undo_step': label, 'before': _figures(before), 'after': _figures(after),
-            'new_issues': [i for i in now if i not in old], 'resolved_issues': sorted(old - set(now)),
-            'note': 'undo_last_change takes it back' + ('; not saved yet (save_project)' if s.unsaved() else
-                                                        '; saved to the file')}
+    out = {'changed': lines, 'undo_step': label, 'before': _figures(before), 'after': _figures(after),
+           'new_issues': [i for i in now if i not in old], 'resolved_issues': sorted(old - set(now))}
+    if stitched:
+        s1 = T.stitched_for(after, after.project, after.result, 'now')
+        out['stitched_view'] = T.stitched_compare(p0, before.result, s0, after.project, after.result, s1)
+    out['note'] = 'undo_last_change takes it back' + ('; not saved yet (save_project)' if s.unsaved() else
+                                                      '; saved to the file')
+    return out
 
 
 def _undo(s, **_):
@@ -208,11 +224,16 @@ MCP_TOOLS = [
          'Change the design: a list of operations applied together as ONE undo step, checked first (a bad '
          'operation changes nothing and says why). Set any field of a camera (pose, lens, module, port, trigger line, '
          'cable, bracket, name, visible), sensor, rig part, obstacle, calibration target, variant, ROI, ECU, analysis '
-         'or study settings, the project (name, frame, units, brief); add cameras, sensors (default pose by kind), '
+         'or study settings, the project (name, frame, units, brief); set a stitch seam\'s angle by hand '
+         '({"op": "set", "target": "seam", "id": "QR|MR", "props": {"angle_deg": -107}}) or return it to the '
+         'automatic placement ({"auto": true}) as the Stitch seams page does; add cameras, sensors (default pose by '
+         'kind), '
          'rig parts (presets roof_rack, sensor_mast, enclosure, bar, or a custom box/cylinder/bar), obstacles, '
          'targets, variants (a copy of the active one by default), design-log entries; remove them; activate a '
          'variant; link or unlink mirrored cameras (a change to one then mirrors to the other). Returns the lines '
-         'changed and the coverage figures and issues before and after. Locked cameras and sensors cannot change.',
+         'changed and the coverage figures and issues before and after; for seam and camera operations also the '
+         'stitched view before and after (per seam and in total, where the standing object vanishes). Locked cameras '
+         'and sensors cannot change.',
          {'ops': {'type': 'array', 'items': _OP_ITEM, 'description': 'the operations, in order'}},
          _edit, required=('ops',), read_only=False, destructive=True),
     Tool('undo_last_change', 'Undo Claude\'s last change',
@@ -269,6 +290,10 @@ def _assistant_tools():
             desc += ' (Needs the Vantage window open: it shows there for the user.)'
         if t.name == 'propose_changes':
             desc += ' To make a change yourself, use edit_project.'
+        if t.name == 'get_seams':
+            desc += (' Set a seam with edit_project: {"op": "set", "target": "seam", "id": "QR|MR", "props": '
+                     '{"angle_deg": -107}}; {"auto": true} returns it to the automatic placement '
+                     '(seam_advice.edit_project_ops applies the advice).')
         out.append(Tool(t.name, t.label, desc, t.params, None, t.required, assistant=t))
     return out
 
