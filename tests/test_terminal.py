@@ -40,6 +40,11 @@ def test_claude_in_a_windows_terminal_works_on_that_window(tmp_path, monkeypatch
     assert Router().session().pid == os.getpid()                                     # the window it started in
 
 
+def TM_rec(kind, prompt, target=None):
+    from vantage.assistant import recommend as RC
+    return RC.Recommendation(id=f't-{kind}', title='t', why='w', kind=kind, prompt=prompt, target=target)
+
+
 def _pump(app, s):
     from PyQt6.QtCore import QEventLoop
     t = time.time()
@@ -189,6 +194,27 @@ def test_claude_code_is_a_side_of_the_assistant_panel(tmp_path, monkeypatch):
     side.set_mode('assistant')
     side.set_mode('claude')
     assert started == [1]                                                             # once per shell
+    # the app's recommendations, as calls to action for Claude Code
+    rc = w.assistant_panel.recommender
+    assert _wait(app, lambda: bool(rc.recs), 30)
+    assert _wait(app, lambda: pn.strip.isVisible(), 10) and pn.b_all.text().startswith('Suggested (')
+    sent = []
+    monkeypatch.setattr(pn.view, 'send', lambda b: sent.append(b))
+    monkeypatch.setattr(TM.shutil, 'which', lambda *a, **k: '/usr/bin/claude')
+    ask = next((r for r in rc.recs if r.kind in ('ask', 'goal', 'plan') and r.prompt), None)
+    assert ask is not None
+    monkeypatch.setattr(pn, 'busy', lambda: False)
+    assert pn.run_cta(ask)
+    assert sent[-1].startswith(b"claude '") and b'In Vantage:' in sent[-1]           # Claude starts with it
+    monkeypatch.setattr(pn, 'busy', lambda: True)                                    # Claude Code is running
+    sent.clear()
+    goal = TM_rec('goal', 'Get the blind area under 0.005 m²')
+    assert pn.run_cta(goal)
+    _pump(app, 0.4)
+    assert sent[0].startswith(b'In Vantage: Work towards this') and sent[-1] == b'\r'   # typed, then Enter
+    opened = []
+    monkeypatch.setattr(w.assistant_panel, 'open_target', lambda t: opened.append(t) or True)
+    assert pn.run_cta(TM_rec('open', '', target={'page': 'sim'})) and opened == [{'page': 'sim'}]
     w.toggle_assistant()                                                              # Ctrl+J: the assistant side
     assert side.mode() == 'assistant' and dock.isVisible()
     w.toggle_terminal()                                                               # Ctrl+`: Claude's side

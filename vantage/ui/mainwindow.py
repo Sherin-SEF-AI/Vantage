@@ -230,6 +230,7 @@ class MainWindow(QMainWindow):
         from .terminal import SidePanel, TerminalPanel
         self.assistant_panel = AssistantPanel(self.ctx)
         self.terminal_panel = TerminalPanel(self.ctx)       # Claude Code in a shell (terminal.py)
+        self.terminal_panel.attach(self.assistant_panel.recommender, self.assistant_panel)   # its calls to action
         self.side_panel = SidePanel(self.ctx, self.assistant_panel, self.terminal_panel)
         ad = self._dock('assistant', 'Assistant', self.side_panel, R)
         self.addDockWidget(R, ad, Qt.Orientation.Horizontal)  # a full-height column of its own, not under the inspector

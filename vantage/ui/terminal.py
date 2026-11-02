@@ -653,6 +653,10 @@ class TerminalPanel(QWidget):
             b.clicked.connect(lambda _=False, d=d: self.view and self.view.set_font_px(self.view.font_px + d))
             h.addWidget(b)
         v.addWidget(bar)
+        self.strip = None                              # the recommendations as calls to action (attach)
+        self._strip_at = v.count()
+        self._v = v
+        self.rc = self.apanel = None
         self.body = QVBoxLayout()
         self.body.setContentsMargins(0, 0, 0, 0)
         v.addLayout(self.body, 1)
@@ -731,6 +735,77 @@ class TerminalPanel(QWidget):
                 w.msg('Claude can read files here, but Preferences ▸ General ▸ Claude is off: it cannot work in this '
                       'window', 6000)
         v.send(b'claude\r')
+        self.claude_started = True
+
+    # ---------------------------------------------------------------- calls to action
+    LEAD = {'ask': '',
+            'goal': 'Work towards this with the Vantage tools; try each change with simulate_changes before '
+                    'edit_project, and tell me the figures before and after: ',
+            'plan': 'Plan this as a Copilot plan with propose_plan (I approve it in the Vantage window): '}
+
+    def attach(self, recommender, assistant_panel=None):
+        """Show the app's recommendations (assistant.Recommender, worked out here, nothing sent) as calls to action:
+        a click hands the request to Claude Code; Open only navigates; × dismisses one, as on the assistant side."""
+        from .assistant import LiveStrip
+        from ..assistant import recommend as RC
+        self.rc, self.apanel = recommender, assistant_panel
+        self.strip = LiveStrip()
+        self._v.insertWidget(self._strip_at, self.strip)
+        self.strip.act.connect(self.run_cta)
+        self.strip.dismiss.connect(lambda r: self.rc.dismiss(r))
+        self.b_all = button('Suggested', 'ghost')
+        self.b_all.setToolTip('Every recommendation for this design: click one to hand it to Claude Code')
+        from PyQt6.QtWidgets import QMenu
+        self._menu = QMenu(self.b_all)
+        self._menu.aboutToShow.connect(self._fill_menu)
+        self.b_all.setMenu(self._menu)
+        self.b_claude.parentWidget().layout().insertWidget(1, self.b_all)
+        recommender.updated.connect(self._recs_updated)
+        self._RC = RC
+        self._recs_updated()
+
+    def _recs_updated(self):
+        if self.strip is None or self.rc is None:
+            return
+        items = self.rc.strip()
+        self.strip.set_items(items, 'For Claude Code · ' + self._RC.context_label(self.rc.context, items))
+        n = len(self.rc.recs)
+        self.b_all.setText(f'Suggested ({n})' if n else 'Suggested')
+        self.b_all.setEnabled(bool(n))
+
+    def _fill_menu(self):
+        self._menu.clear()
+        for r in self.rc.recs[:20]:
+            a = self._menu.addAction(f'{r.title}  ·  {r.button}', lambda r=r: self.run_cta(r))
+            a.setToolTip(r.why)
+
+    def claude_prompt(self, rec) -> str:
+        return ' '.join(f'In Vantage: {self.LEAD.get(rec.kind, "")}{rec.prompt}'.split())
+
+    def run_cta(self, rec) -> bool:
+        """What a call to action does here: Open navigates the window; ask, goal and plan give the request to Claude
+        Code (typed into it when it runs, else it starts with it). Nothing else runs by itself."""
+        if rec.kind == 'open':
+            return bool(self.apanel is not None and self.apanel.open_target(rec.target or {}))
+        if rec.kind not in self.LEAD or not rec.prompt:
+            return False
+        self.ask_claude(self.claude_prompt(rec))
+        return True
+
+    def ask_claude(self, text: str):
+        v = self.ensure()
+        if v is None:
+            return
+        v.setFocus()
+        if self.busy():                                # Claude Code is running: type it, then Enter on its own
+            v.send(text.encode('utf-8'))               # (a key right after a burst would count as part of a paste)
+            QTimer.singleShot(250, lambda: v.send(b'\r'))
+            return
+        if shutil.which('claude', path=self.env().get('PATH')) is None:
+            v.send(b"echo 'Claude Code is not installed: https://claude.com/claude-code'\r")
+            return
+        import shlex
+        v.send(f'claude {shlex.quote(text)}\r'.encode('utf-8'))
         self.claude_started = True
 
     def busy(self) -> bool:
