@@ -1871,7 +1871,7 @@ vantage/batch.py    command-line batch mode
 vantage/selftest.py --self-test
 tests/              pytest suites (tests/fake_carla: a fake carla module)
 docs/               the .vantage project format and its JSON Schema
-site/               the website, documentation and technical reference (methods.html)
+site/               the website: the guide (guide.html), documentation and technical reference (methods.html)
 packaging/          PyInstaller spec, build script, icons, Linux install scripts, Windows installer
 ```
 

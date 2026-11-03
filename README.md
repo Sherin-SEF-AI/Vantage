@@ -21,7 +21,7 @@ into a plan with every value and its reason, and nothing runs until you approve 
 The same engine also serves production surround-view systems: stitched bird's-eye remap tables, a 3D bowl view, parking
 guidelines and where standing people vanish at stitch seams.
 
-**Website and documentation:** <https://sherin-sef-ai.github.io/Vantage/> (feature videos recorded from the app, the full documentation, batch-mode reference). A 70-minute full tour of the app is on YouTube: <https://youtu.be/s0TM2iDErBI>. The site's source is `site/`; it is published by `.github/workflows/pages.yml`.
+**Website and documentation:** <https://sherin-sef-ai.github.io/Vantage/> (feature videos recorded from the app, [a step-by-step guide with an example for every feature](https://sherin-sef-ai.github.io/Vantage/guide.html), the full documentation, batch-mode reference). A 70-minute full tour of the app is on YouTube: <https://youtu.be/s0TM2iDErBI>. The site's source is `site/`; it is published by `.github/workflows/pages.yml`.
 
 It opens with the **Tata Tigor EV** sample: the body is lofted from the profile measured on the 19-frame studio spin
 (wheel-centre calibration, 1.6 px RMS), the cameras are e-con Systems STURDeCAM31 (Sony ISX031, 1920 × 1536, 3.0 µm) with
@@ -130,6 +130,29 @@ python3 run_vantage.py project.vantage          # open a project
 
 Options: `--theme dark|light|system`, `--scale 1.15`, `--software-3d` (QPainter 3D view instead of OpenGL),
 `--template sedan|hatchback|suv|van|truck|tigor`, `--self-test`, `--version`.
+
+### A first session
+
+The full walk-through, with every feature, where it lives and a worked example, is the guide:
+<https://sherin-sef-ai.github.io/Vantage/guide.html> (also in this repository as
+[`docs/user-guide.md`](docs/user-guide.md)). In brief, on the bundled sample:
+
+1. **Open the sample** (`vantage --sample`). The active variant, *6-cam · v3*, has six STURDeCAM31 cameras
+   (`F`, `R`, `ML`, `MR`, `QL`, `QR`). The Coverage panel reads 0.010 m² blind out of a 34.46 m² ROI, 99.97 % covered,
+   53.0 % seen by two or more cameras and 3.12 px/cm at the coarsest. The Issues tab has three entries: the blind
+   ground, the disk sets per shift and a 0.9 m child vanishing at the `ML | QL` seam.
+2. **Change a camera** in the inspector, and the analysis follows. Raising `F`'s aim from 40° to 35° makes the blind ground
+   0.038 m². `Ctrl+Z` undoes it.
+3. **Fix the seams.** *Camera views* (`Ctrl+Shift+B`) ▸ *Stitch seams* ▸ *Suggest seams* moves three seams, and the
+   area where the child vanishes falls from 1.22 m² to 1.18 m².
+4. **Compare layouts.** *Layout ▸ Compare variants…*: *4-cam* is blind on 0.073 m² with 6.9 % redundancy, and
+   *4-cam, mirror cameras 5° off* on 0.623 m².
+5. **Add sensors and run the studies** on *Data rig* (`--variant 5`). The front radar hides 13.7 % of `F`'s image
+   (blind ground 0.240 m²). Cars are resolved to 70.1 m ahead against the 80 m asked. The worst camera fires 12.41 ms
+   off the lidar sweep, and an 8 TB disk set holds 2.0 h.
+6. **Sign off** with *Analysis ▸ Requirements scorecard* (`--check review/`, exit 5 on a failed must). **Build** with
+   the brackets and harness. **Calibrate and verify** from the Calibrate menu. **Export** the calibration
+   (`--export out/ --formats nuscenes_calib,ros2,opencv_yaml`).
 
 ### Batch mode (no window)
 
@@ -514,9 +537,9 @@ vantage/sysenv  the environment for system programs started from the bundle (GSt
 vantage/ui     Qt UI: main window, docks, viewports (render_gl: the shader renderer), plan views, camera images,
                charts, dialogs, workspaces, the bowl controller
 tests/         pytest suites (tests/fake_carla: a fake carla module for the bridge's tests)
-docs/          the .vantage project format (project-format.md) and its JSON Schema; the simulator bridge contract
-               (simulator-bridge.md) and its schemas
-site/          the website: index, docs, the technical reference (methods.html) and the published validation report
+docs/          the user guide (user-guide.md, generated from site/guide.html), the .vantage project format
+               (project-format.md) and its JSON Schema; the simulator bridge contract (simulator-bridge.md) and its schemas
+site/          the website: index, the guide (guide.html), docs, the technical reference (methods.html) and the published validation report
 packaging/     PyInstaller spec, build script, icons, Linux install scripts and desktop entry,
                Windows installer (Inno Setup); .github/workflows/build.yml builds them on GitHub
 ```

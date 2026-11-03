@@ -1,0 +1,934 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guide · Vantage</title>
+<meta name="description" content="How to use Vantage, step by step: a walk-through of the sample rig from the first analysis to the calibration files, then every feature with where to find it and a worked example, recipes for common jobs, example questions for the assistant and Claude, and the batch-mode exit codes.">
+<meta property="og:title" content="How to use Vantage">
+<meta property="og:image" content="https://sherin-sef-ai.github.io/Vantage/media/hero.jpg">
+<meta name="theme-color" content="#0f0f0e">
+<link rel="icon" type="image/png" href="assets/img/favicon.png">
+<link rel="stylesheet" href="assets/css/site.css">
+</head>
+<body>
+<a class="skip" href="#doc">Skip to content</a>
+<nav class="nav" aria-label="Main">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="assets/img/logo.png" alt="" width="26" height="26">Vantage</a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="nav-links">Menu</button>
+    <div class="nav-links" id="nav-links">
+      <a href="./#features">Features</a>
+      <a href="./#assistant">Assistant</a>
+      <a href="guide.html" aria-current="page">Guide</a>
+      <a href="docs.html">Docs</a>
+      <a href="methods.html">Methods</a>
+      <a href="./#download">Download</a>
+      <a href="https://github.com/Sherin-SEF-AI/Vantage">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<div class="docs">
+  <aside class="toc" aria-label="On this page">
+    <p>Start here</p>
+    <a href="#what">What Vantage is for</a>
+    <a href="#setup">Install and check</a>
+    <a href="#flow">The workflow</a>
+    <p>Tutorial: the sample rig</p>
+    <a href="#t-open">1 · Open the sample</a>
+    <a href="#t-move">2 · Find your way around</a>
+    <a href="#t-read">3 · Read the analysis</a>
+    <a href="#t-edit">4 · Change a camera</a>
+    <a href="#t-seams">5 · The stitch seams</a>
+    <a href="#t-variants">6 · Compare layouts</a>
+    <a href="#t-robust">7 · Make it robust</a>
+    <a href="#t-sensors">8 · Lidar, radar, GNSS</a>
+    <a href="#t-studies">9 · Run the studies</a>
+    <a href="#t-reqs">10 · Write the requirements</a>
+    <a href="#t-build">11 · Build it</a>
+    <a href="#t-calib">12 · Calibrate and verify</a>
+    <a href="#t-handover">13 · Hand over the data</a>
+    <p>Your own vehicle</p>
+    <a href="#own">From a 3D model to a rig</a>
+    <p>Every feature</p>
+    <a href="#f-design">Designing the rig</a>
+    <a href="#f-studies">Studies</a>
+    <a href="#f-surround">Surround view</a>
+    <a href="#f-calib">Calibration and checks</a>
+    <a href="#f-sim">Simulation and data</a>
+    <a href="#f-ai">Assistant and Claude</a>
+    <a href="#f-auto">Exports, automation, CI</a>
+    <p>Reference</p>
+    <a href="#recipes">Recipes</a>
+    <a href="#exit">Exit codes</a>
+    <a href="#keys">Shortcuts to learn first</a>
+    <a href="#next">Where to go next</a>
+  </aside>
+
+  <main class="doc" id="doc">
+    <div class="eyebrow">Guide</div>
+    <h1>How to use Vantage</h1>
+    <p class="intro">This guide teaches Vantage by using it. The tutorial takes the bundled sample, a Tata Tigor EV with
+      six cameras, from its first analysis to the calibration files a dataset needs, quoting the figures the app
+      really gives. After it, every feature is listed with where it lives, what it answers and an example. The
+      <a href="docs.html">documentation</a> holds the full detail of each, and the
+      <a href="methods.html">technical reference</a> its equations.</p>
+
+    <!-- ======================================================== start -->
+    <h2 id="what">What Vantage is for</h2>
+    <p>A data-collection vehicle records cameras, lidars, radars, GNSS and an IMU so that a perception team can
+      train and test on what they recorded. What the dataset can contain is decided when the sensors are bolted on:
+      a camera too high misses the kerb, a lidar behind a roof rack loses a third of its points, a seam in the
+      bird's-eye view hides a child, a disk set fills in two hours. Vantage answers those questions on the computer,
+      before anything is bought or drilled, and then checks the real rig against the plan.</p>
+    <table>
+      <tr><th>Stage</th><th>Questions Vantage answers</th></tr>
+      <tr><td>Design</td><td>Where do the cameras go? What does each see? Where is the ground blind, where is it too coarse? Which lens?</td></tr>
+      <tr><td>Studies</td><td>How far out are pedestrians resolved? What do rain, night, a loaded boot or a speed bump change? Are the triggers in step with the lidar? Will the disks, links and power keep up?</td></tr>
+      <tr><td>Build</td><td>What bracket holds each camera? How long is every cable? Which boards pin the calibration?</td></tr>
+      <tr><td>Calibrate and verify</td><td>Which intrinsics does this unit have? Is each camera where the plan put it? Does the first recording show what the plan promised? Has a camera been knocked since?</td></tr>
+      <tr><td>Hand over</td><td>Calibration files for nuScenes, KITTI, ROS 2, OpenCV and Kalibr; a sample dataset; a design-review pack; the same checks in CI.</td></tr>
+    </table>
+    <p>Every figure is computed on your computer. The AI assistant and Claude are optional. They read the design
+      only through Vantage's tools, and nothing is sent anywhere until you set one up.</p>
+
+    <h2 id="setup">Install and check</h2>
+    <p>Download the file for your system from the <a href="https://github.com/Sherin-SEF-AI/Vantage/releases/latest">latest
+      release</a>. Each bundle carries its own Python, so nothing else needs installing.</p>
+<pre><code># Linux (x86_64, or arm64 for a Jetson)
+tar xf Vantage-*-linux-x86_64.tar.gz &amp;&amp; cd Vantage-*-linux-*/
+./install.sh                 # menu entry, the .vantage file type, ~/.local/bin/vantage
+vantage --self-test          # one line per check, ends with "self-test passed"
+
+# Windows: run Vantage-…-windows-x64-setup.exe, then the "Vantage self-test" shortcut
+# macOS:   move Vantage.app to Applications, then
+/Applications/Vantage.app/Contents/MacOS/vantage-cli --self-test
+
+# from source, Python 3.10 or later
+python3 -m pip install .     # extras: [step] STEP import, [bags] compressed bags, [terminal] Claude Code panel
+vantage</code></pre>
+    <p>The downloads are not code-signed. On Windows choose <em>More info ▸ Run anyway</em>. On macOS choose
+      <em>Open Anyway</em> in <em>System Settings ▸ Privacy &amp; Security</em>. Details are in
+      <a href="docs.html#install">Install</a>.</p>
+
+    <h2 id="flow">The workflow</h2>
+    <div class="steps">
+      <div class="step"><h3>Vehicle</h3><p>Import the body (or start from the sample or a template), set the wheels,
+        glass and the zones where sensors may go.</p></div>
+      <div class="step"><h3>Rig</h3><p>Place cameras from the library, add rig parts, lidars, radars, GNSS and an IMU.
+        The analysis follows every edit.</p></div>
+      <div class="step"><h3>Studies</h3><p>Check robustness, range, weather, timing, budgets and the requirements.
+        Keep alternatives as variants.</p></div>
+      <div class="step"><h3>Build and verify</h3><p>Brackets, harness and boards. Then calibrate, check the installed
+        rig and its drives, and export the calibration.</p></div>
+    </div>
+
+    <!-- ======================================================== tutorial -->
+    <h2 id="t-open">Tutorial 1 · Open the sample</h2>
+    <p>Start Vantage. The start window lists recent projects, the <b>Tata Tigor EV</b> sample and five templates
+      (sedan, hatchback, SUV, van, truck). Open the sample, or from a terminal:</p>
+<pre><code>vantage --sample</code></pre>
+    <p>The sample has a measured body and five <b>variants</b>, which are alternative layouts of the same vehicle (the <b>Variant</b> box in the toolbar, or <b>Layout ▸ Switch to</b>).
+      The active one, <i>6-cam · v3</i>, has six STURDeCAM31 cameras with the H05R2 wide lens:</p>
+    <table>
+      <tr><th>Tag</th><th>Where</th><th>Pose in the sample</th></tr>
+      <tr><td><code>F</code></td><td>front grille</td><td>x 3.23 m, z 0.62 m, pitch 40° down</td></tr>
+      <tr><td><code>R</code></td><td>rear, above the bumper</td><td>x −0.80 m, z 0.56 m, yaw 180°, pitch 40°</td></tr>
+      <tr><td><code>ML</code>, <code>MR</code></td><td>under the mirrors</td><td>x 1.88 m, y ±0.94 m, z 0.95 m, yaw ±65°, pitch 45°</td></tr>
+      <tr><td><code>QL</code>, <code>QR</code></td><td>the sides, over the rear axle</td><td>x 0, y ±0.88 m, z 0.95 m, yaw ±90°, pitch 50°</td></tr>
+    </table>
+    <p>The other variants are <i>4-cam</i>, <i>4-cam, mirror cameras 5° off</i>, <i>6-cam front-heavy</i> and
+      <i>Data rig · 6-cam + lidar + radars</i>. The last adds an Ouster OS1-128 lidar on the roof (<code>L1</code>) and
+      five radars (<code>RD1</code>–<code>RD5</code>) at the bumpers' corners and centre.</p>
+    <div class="callout"><p>A project is one <code>.vantage</code> file. Every change is one undo step
+      (<kbd>Ctrl</kbd>+<kbd>Z</kbd>), and the History tab lists them. Save the sample under a new name with
+      <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> before you change it.</p></div>
+
+    <h2 id="t-move">Tutorial 2 · Find your way around</h2>
+    <figure><div class="frame natural"><img src="media/window.jpg" alt="The main window: outliner on the left, 3D and top views in the middle, the inspector and the analysis panels on the right" loading="lazy" width="1600" height="900"></div>
+      <figcaption>The main window with the sample open.</figcaption></figure>
+    <ul>
+      <li><b>Outliner</b> (left): the vehicle, rig parts, cameras, sensors, calibration targets and obstacles.
+        Click a camera to select it.</li>
+      <li><b>Views</b> (middle): one, two or four views, chosen from 3D, top, through a camera, and the stitched bird's-eye.
+        <kbd>Ctrl</kbd>+<kbd>Space</kbd> maximises a view.</li>
+      <li><b>Inspector</b> (right): the selected object's fields. Every number accepts units and arithmetic
+        (<code>1880/2 mm</code>, <code>0.62 + 0.05</code>, <code>12°</code>) and can be scrubbed with the mouse.</li>
+      <li><b>Analysis panels</b>: Coverage, Cameras, Tolerance, Issues, History and Log.</li>
+      <li><b>Assistant</b> (<kbd>Ctrl</kbd>+<kbd>J</kbd>): recommendations, chat and Claude Code.</li>
+      <li><b>Command palette</b> (<kbd>Ctrl</kbd>+<kbd>K</kbd>): type any command's name instead of hunting the menus.</li>
+    </ul>
+    <p><b>In 3D:</b> left-drag orbits about the point under the cursor, right-drag pans, the wheel zooms towards the
+      cursor. <kbd>7</kbd> is the top view, <kbd>1</kbd> the front and <kbd>3</kbd> the side. <kbd>F</kbd> frames the selection
+      and <kbd>Home</kbd> frames everything. With a camera selected, <kbd>Ctrl</kbd>+<kbd>0</kbd> looks through it.
+      The navigation ball in the corner of each view does the same with any mouse or touchpad.</p>
+    <div class="callout"><p><b>Try it.</b> Select <code>F</code> in the outliner, press <kbd>Ctrl</kbd>+<kbd>0</kbd> to see
+      its simulated fisheye image, then <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> for all six camera images, the
+      stitched bird's-eye view and the 3D bowl.</p></div>
+
+    <h2 id="t-read">Tutorial 3 · Read the analysis</h2>
+    <p>Vantage samples the ground around the car (the <b>ROI</b>, a band offset from the body) on a 5 cm grid. For
+      every cell and camera it tests the lens, the sensor frame and occlusion by the body, rig and housings, and works
+      out the pixel density. The Coverage panel shows the result. For the sample:</p>
+    <table>
+      <tr><th>Figure</th><th>Sample</th><th>What it means</th></tr>
+      <tr><td>ROI</td><td>34.46 m²</td><td>the ground being judged</td></tr>
+      <tr><td>Blind in ROI</td><td>0.010 m²</td><td>ground no camera sees: four 5 cm cells hugging the body</td></tr>
+      <tr><td>Covered</td><td>99.97 %</td><td>seen by at least one camera</td></tr>
+      <tr><td>Seen by ≥ 2 cameras</td><td>53.0 %</td><td>redundancy, and the overlap a stitch needs</td></tr>
+      <tr><td>Minimum density</td><td>3.12 px/cm</td><td>the coarsest ground still seen; compare with your detector's needs</td></tr>
+    </table>
+    <p>The <b>Cameras</b> tab breaks it down per camera. For <code>F</code>: 7.20 m² seen, 2.92 m² that only it sees,
+      and 2.93 m² of the ROI would go blind without it. That last figure tells you which camera matters most.</p>
+    <p>The <b>Issues</b> tab lists what needs attention, worst first. The sample has three:</p>
+    <ul>
+      <li><b>Critical</b>: 0.010 m² of ground in the ROI is blind, mostly at the right rear wheel arch.</li>
+      <li><b>Warning</b>: one 8 TB disk set holds 2.0 h of driving, less than the 8 h shift, so a shift needs 4 sets (31.5 TB).</li>
+      <li><b>Warning</b>: a 0.9 m child can vanish from the stitched bird's-eye view on 1.22 m², mostly at the
+        <code>ML | QL</code> seam, although a camera sees it.</li>
+    </ul>
+    <p>Click an issue to select what it is about. <b>View ▸ Overlays ▸ Heatmap</b> colours the ground by best camera,
+      density, redundancy or the objects in the stitched view, with a legend in the corner of the top view.</p>
+    <figure><div class="frame natural"><img src="media/coverage.jpg" alt="The 3D view with the redundancy heatmap, and the Coverage panel with its figures, the ground only each camera sees and the density histogram" loading="lazy" width="1600" height="900"></div>
+      <figcaption>The redundancy heatmap and the Coverage panel: the figures, the ground only each camera sees, and the density histogram against the minimum and the target.</figcaption></figure>
+    <p>The same numbers come out of batch mode, for scripts:</p>
+<pre><code>vantage --sample --analyse report.json      # metrics, per camera, seams, issues, link budget</code></pre>
+
+    <h2 id="t-edit">Tutorial 4 · Change a camera</h2>
+    <p>With <b>Live analysis</b> on (the default), the figures update as you edit. Select <code>F</code> and change its
+      pitch in the inspector from <code>40</code> to <code>35</code>. The analysis reruns at once:</p>
+    <table>
+      <tr><th>F pitch</th><th>Blind</th><th>Covered</th><th>Seen by ≥ 2</th></tr>
+      <tr><td>40° (as planned)</td><td>0.010 m²</td><td>99.97 %</td><td>53.0 %</td></tr>
+      <tr><td>35° (raised 5°)</td><td>0.038 m²</td><td>99.89 %</td><td>53.0 %</td></tr>
+      <tr><td>45° (lowered 5°)</td><td>0.010 m²</td><td>99.97 %</td><td>53.1 %</td></tr>
+    </table>
+    <p>Raising the camera's aim loses ground at the bumper, so press <kbd>Ctrl</kbd>+<kbd>Z</kbd>. The assistant
+      panel's live strip quotes your last edit with the figures before and after, and offers to undo a change that
+      added blind ground.</p>
+    <p>Other ways to move a camera:</p>
+    <ul>
+      <li><kbd>G</kbd> and <kbd>R</kbd> show move and rotate handles in the 3D view. <kbd>Ctrl</kbd> snaps to 1 cm
+        and 5°, <kbd>Shift</kbd> moves finely and <kbd>Esc</kbd> puts the camera back. Dragging along the body keeps it on the surface.</li>
+      <li><b>Camera ▸ Aim ▸ At ground point</b>, then click where it should look.</li>
+      <li><kbd>C</kbd> places a new camera where you click on the body. <kbd>Alt</kbd>-click places a mirrored left and right pair.</li>
+      <li>The Cameras tab is an editable table that accepts a paste from a spreadsheet.</li>
+      <li><kbd>Ctrl</kbd>+<kbd>L</kbd> locks a camera so that nothing moves it: not you, the optimiser or the assistant.</li>
+    </ul>
+    <div class="callout"><p><b>Example.</b> Raising <code>F</code> 8 cm (z 0.62 → 0.70 m) lets it see 7.48 m² instead of
+      7.20 m² and lifts the redundancy to 53.8 %. The blind area grows to 0.015 m², because the higher camera sees
+      less of the ground right at the bumper. Every change is a trade, and the analysis shows both sides of it.</p></div>
+
+    <h2 id="t-seams">Tutorial 5 · The stitch seams</h2>
+    <p>A surround-view display stitches the cameras into one bird's-eye image. Each <b>seam</b> hands the ground from
+      one camera to the next. A standing object is drawn as a smear away from the camera that sees it. At a seam, the
+      smear can fall to a camera that does not see the object, and it vanishes from the stitched image.</p>
+    <p>Open <b>Camera views</b> (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd>) ▸ <b>Stitch seams</b> and press
+      <b>Suggest seams</b>. Vantage tries each seam within ±15° and keeps only moves that do not leave more ground
+      below the minimum density. For the sample it moves three seams: <code>QR | MR</code> from −98.0° to −110.5°,
+      <code>F | ML</code> from 23.4° to 22.9° and <code>R | QR</code> from −156.2° to −157.7°. <b>Apply</b> makes
+      that one undo step. The area where the child vanishes falls from 1.22 m² to 1.18 m².</p>
+    <p>The gain is small because seams can only fix the case where an object <i>vanishes at a seam</i>. Most of the
+      remaining trouble on the sample is <i>cut off</i> (3.49 m²): the smear leaves the view, which only a camera's
+      height or pitch can change. Choose the <b>Objects</b> heatmap to see which is which, and hover over a point to see each
+      camera's smear.</p>
+    <figure><div class="frame natural"><img src="media/stitched.jpg" alt="Camera views: six fisheye images, the stitched bird's-eye view with seam handles, the Stitch seams table and the 3D bowl" loading="lazy" width="1600" height="900"></div>
+      <figcaption>Camera views: the six images, the stitched bird's-eye view with a handle on each seam, the Stitch seams table with <b>Suggest seams</b>, and the bowl.</figcaption></figure>
+
+    <h2 id="t-variants">Tutorial 6 · Compare layouts</h2>
+    <p>Keep each idea as a <b>variant</b> instead of overwriting the last one. The <b>Layout</b> menu adds, duplicates, renames
+      and switches variants. <b>Layout ▸ Compare variants…</b> shows them side by side with a difference map of best-camera density and
+      a table of every figure. The sample's five variants, compared against <i>6-cam · v3</i>:</p>
+    <table>
+      <tr><th>Variant</th><th>Cameras</th><th>Blind</th><th>Seen by ≥ 2</th><th>Min density</th><th>Blind ground is mostly…</th></tr>
+      <tr><td>6-cam · v3 (reference)</td><td>6</td><td>0.010 m²</td><td>53.0 %</td><td>3.1 px/cm</td><td>at the right rear wheel arch</td></tr>
+      <tr><td>4-cam</td><td>4</td><td>0.073 m²</td><td>6.9 %</td><td>2.1 px/cm</td><td>beside the doors, on the left sill</td></tr>
+      <tr><td>4-cam, mirror cameras 5° off</td><td>4</td><td>0.623 m²</td><td>9.9 %</td><td>2.3 px/cm</td><td>ahead of the front bumper</td></tr>
+      <tr><td>6-cam front-heavy</td><td>6</td><td>1.948 m²</td><td>35.0 %</td><td>1.9 px/cm</td><td>below the rear bumper</td></tr>
+      <tr><td>Data rig · 6-cam + lidar + radars</td><td>6</td><td>0.240 m²</td><td>52.8 %</td><td>3.1 px/cm</td><td>below the front bumper</td></tr>
+    </table>
+    <p>The two quarter cameras take the redundancy from 6.9 % to 53 %, and a mirror camera mounted 5° wrong costs
+      more than half a square metre. <b>Make … active</b> switches to the variant you prefer, and <b>Export
+      comparison…</b> writes the table.</p>
+    <figure><div class="frame natural"><img src="media/compare.jpg" alt="Two variants side by side with a difference map and a table of figures" loading="lazy" width="1600" height="900"></div>
+      <figcaption>Compare variants.</figcaption></figure>
+
+    <h2 id="t-robust">Tutorial 7 · Make it robust</h2>
+    <p>Nobody mounts a camera to the exact degree. <b>Analysis ▸ Tolerance study</b> moves every camera at random
+      within your tolerances (for example ±1° in yaw, pitch and roll and ±5 mm in position, over 2,000 samples by default) and reports the spread of the
+      blind area, the minimum density and how far the seams move. Its <b>tornado</b> chart ranks which parameter of
+      which camera matters most. That is the mount to make stiff, and the one to check first at installation.</p>
+    <p><b>Layout ▸ Optimise placement…</b> searches camera poses with an evolutionary search, scored under the same tolerances, and
+      shows the Pareto front of coverage against robustness. Apply a result as a new variant so the original is
+      kept. <b>Refine with gradients</b>, on the second tab, then tunes every camera's six pose values continuously.
+      Locked cameras stay put, mirrored pairs move together, and every layout is re-checked with the exact engine.</p>
+<pre><code>vantage rig.vantage --refine-rig refined.json --refine-from "6-cam · v3"</code></pre>
+
+    <h2 id="t-sensors">Tutorial 8 · Lidar, radar, GNSS</h2>
+    <p>Switch to the <i>Data rig · 6-cam + lidar + radars</i> variant. <b>Vehicle ▸ Add lidar</b>, <b>Add radar</b>,
+      <b>Add GNSS antenna</b> and <b>Add IMU</b> put sensors where they usually go: a lidar on top of the highest mast,
+      a radar mid-bumper, two GNSS antennas as far apart as the roof allows, and the IMU over the rear axle. Move them like
+      cameras. <b>Vehicle ▸ Add rig part</b> adds a roof rack, mast, enclosure or bar, sized to the roof. Rig parts
+      block the cameras' view like the body does.</p>
+    <p>Each sensor's housing and each camera module is a solid that the other cameras cannot see through, so a
+      lidar on a mast shows up as a dark shape in the cameras behind it. On the data rig, the front radar
+      <code>RD1</code> sits 12 cm below <code>F</code> and hides 13.7 % of its image, so the blind ground grows from
+      0.010 m² to 0.240 m², mostly below the front bumper. <b>Analysis ▸ Lidar and radar coverage</b>
+      says what this costs the lidar itself. On the data rig, 35 % of <code>L1</code>'s points land on the
+      vehicle or the rig, and of the sector checks 28 are covered redundantly, 1 by a single sensor and 3 have a gap.</p>
+    <figure><div class="frame natural"><img src="media/sensors.jpg" alt="A lidar on a sensor mast and five radars with their fields drawn around the car; the inspector shows the lidar model's figures" loading="lazy" width="1600" height="900"></div>
+      <figcaption>A lidar on a sensor mast and five radars, with their fields. The inspector shows the lidar model's figures.</figcaption></figure>
+
+    <h2 id="t-studies">Tutorial 9 · Run the studies</h2>
+    <p>The <b>Analysis</b> menu holds one page per question. Each page has an <b>Export</b> button, and each has a
+      batch option that writes the same JSON. These are the data rig's results (<code>--variant 5</code> picks it by
+      its place in the list):</p>
+    <table>
+      <tr><th>Study</th><th>The data rig's answer</th><th>Batch</th></tr>
+      <tr><td>Perception range</td><td>Ahead, a car is resolved to 70.1 m, a pedestrian to 66.3 m and a sign to 47.1 m.
+        The front sector asks for 80 m, so it fails by 9.9 m for cars. Front-left asks for 40 m and passes.</td><td><code>--perception-range</code></td></tr>
+      <tr><td>Sync and timing</td><td>The worst camera fires 12.41 ms away from the lidar sweep, which is 17.2 cm of travel at 50 km/h.
+        Suggested trigger lines bring it to 0.94 ms.</td><td><code>--sync-plan</code></td></tr>
+      <tr><td>Recording budget</td><td>The disks need 1,444 of their 1,500 MB/s (96 %). One 8 TB set holds 2.0 h, so a shift
+        needs 5 sets (32 TB). The busiest camera link, <code>F</code>, carries 1,557 of 6,000 Mbit/s.</td><td><code>--recording-budget</code></td></tr>
+      <tr><td>Power budget</td><td>170.5 W steady and 220.7 W peak. The 600 W DC-DC converter runs at 28 %, and the enclosure must shed 135 W of heat.</td><td><code>--power-budget</code></td></tr>
+      <tr><td>Blind volume</td><td>A 0.9 m child goes undetected on 0.005 m², all within 5 cm of the body.</td><td><code>--blind-volume</code></td></tr>
+    </table>
+<pre><code>vantage --sample --variant 5 --perception-range range.json
+vantage --sample --variant 5 --sync-plan sync.json
+vantage --sample --variant 5 --recording-budget recording.json</code></pre>
+    <p>The <a href="#f-studies">feature list</a> below describes every study, with an example for each.</p>
+
+    <h2 id="t-reqs">Tutorial 10 · Write the requirements</h2>
+    <p>A rig is signed off against written requirements, not a feeling. <b>Analysis ▸ Requirements scorecard</b>
+      holds each as a metric, an operator and a target, marked <i>must</i> or <i>should</i>. An example is "perception range, pedestrians,
+      every sector ≥ 40 m". Start with <b>Add from the plan</b>, which proposes the requirements the project
+      already implies (the perception range's required ranges, the minimum density, the recording shift, the blur
+      limit, the power runtime, the GNSS sky threshold). You can also start from a template, or <b>Suggest from the brief</b>, which picks out
+      phrases with a number and a unit from the project brief. Nothing is added until you tick it.</p>
+    <p><b>Run</b> evaluates every requirement from the studies behind it. The verdict passes only when every must
+      requirement passes. <b>Export</b> writes <code>requirements.json</code>, <code>requirements.csv</code> and
+      <code>review_pack.pdf</code>, a design-review pack with one page per study used.</p>
+<pre><code>vantage rig.vantage --check review/        # exit 5 when a must requirement fails</code></pre>
+    <figure><div class="frame natural"><img src="media/requirements.jpg" alt="The requirements scorecard with must and should rows, values and margins" loading="lazy" width="1600" height="900"></div>
+      <figcaption>The requirements scorecard.</figcaption></figure>
+
+    <h2 id="t-build">Tutorial 11 · Build it</h2>
+    <ul>
+      <li><b>Analysis ▸ Mount brackets</b> makes a 3D-printable bracket per camera that holds it at exactly its
+        planned optical centre and angles, on the surface under it. <b>Generate</b>, check the preview (which also shows how much of the image the bracket blocks), then
+        export an STL per camera and a sheet.</li>
+      <li><b>Analysis ▸ Cable harness</b> routes every cable along the body to the compute box and checks each length
+        against what the link allows, the GNSS cable loss and the voltage drop on power pairs.</li>
+      <li><b>Calibrate ▸ Target planner</b> places the calibration boards on the floor. <b>Calibrate ▸ Calibration
+        observability</b> then says how firmly those boards will pin each camera's pose, before anything is printed.</li>
+      <li>The <b>Mount sheet</b> format of <b>Export ▸ Export</b> is a PDF for the workshop with every pose.</li>
+    </ul>
+<pre><code>vantage rig.vantage --brackets out/        # out/brackets: STL per camera, brackets.json, a sheet
+vantage rig.vantage --harness harness.json  # exit 2 when a cable is longer than its link allows
+vantage rig.vantage --observability obs/    # each camera's 1σ from the planned boards</code></pre>
+
+    <h2 id="t-calib">Tutorial 12 · Calibrate and verify</h2>
+    <p>Once the rig is built, the Calibrate menu turns it back into numbers and checks them against the plan:</p>
+    <ol>
+      <li><b>Lens calibration</b> (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd>): 10 to 20 views of a hand-held
+        checkerboard give each unit its own fisheye intrinsics. The <b>Calibration coach</b> on the Live rig page shows
+        where to hold the board next.</li>
+      <li><b>Installation check</b> (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd>): one image per camera of the boards
+        on the floor gives each camera's pose, compared with the plan within ±10 mm and ±1° by default.</li>
+      <li><b>Lidar–camera calibration</b>: a board held at several poses that both sensors see gives the lidar's pose relative to a camera.</li>
+      <li><b>Live rig</b>: every stream's frame rate, drops, exposure, sharpness and sync, before and during a drive.</li>
+      <li><b>As-built check</b>: a short drive shows whether each real camera sees what the simulation says it
+        sees, with pose corrections and the coverage as built.</li>
+      <li><b>Drive-log check</b>: a whole recorded drive (ROS 2 bag or nuScenes) against the plan: rates, gaps,
+        timing and the lidar's agreement with each image.</li>
+      <li><b>Online self-calibration</b> follows each camera's rotation relative to the lidar through a drive and finds knocks and flex.</li>
+      <li><b>Fleet</b> tracks the rig on every vehicle built to the design and points out the one that differs.</li>
+    </ol>
+<pre><code>vantage rig.vantage --calibrate-lens views_F/ --camera F --board 9x6 --square 60 --serial SN0042 \
+        --calib-out F.yaml --save rig.vantage
+vantage rig.vantage --install-check captures/ --report install.json --as-built rig-asbuilt.vantage
+vantage rig.vantage --drive-log drive.mcap drivecheck/   # exit 3 when a sensor has to be re-mounted</code></pre>
+
+    <h2 id="t-handover">Tutorial 13 · Hand over the data</h2>
+    <p><b>Export ▸ Export</b> (<kbd>Ctrl</kbd>+<kbd>E</kbd>) previews every file before writing it. Choose the frame
+      (rear axle, front axle, front bumper, ground centre or a custom origin), the units and the angles. The calibration
+      formats are: extrinsics (JSON, YAML, CSV), OpenCV YAML per camera, ROS 2 (URDF and a static TF launch file),
+      ROS <code>camera_info</code>, nuScenes <code>calibrated_sensor</code>, KITTI and a Kalibr camchain.
+      <b>Export ▸ Sample dataset</b> writes a short synthetic drive recorded by exactly this rig, as a nuScenes folder and
+      a ROS 2 bag, so the ingestion pipeline can be tested before the car exists.</p>
+<pre><code>vantage --sample --export out/ --formats extrinsics_json,ros2,nuscenes_calib,opencv_yaml
+# out/extrinsics.json  out/vantage_cameras.urdf  out/static_tf.launch.py
+# out/nuscenes/calibrated_sensor.json, sensor.json  out/opencv/F.yaml … QR.yaml
+vantage --sample --dataset sample_drive/</code></pre>
+    <p>That completes the tutorial. The rest of this page goes through each feature.</p>
+
+    <!-- ======================================================== own vehicle -->
+    <h2 id="own">Your own vehicle: from a 3D model to a rig</h2>
+    <ol>
+      <li><b>File ▸ Import ▸ Vehicle model</b> (<kbd>Ctrl</kbd>+<kbd>I</kbd>), or <code>vantage car.glb</code>. It reads
+        glTF/GLB, OBJ, STL, PLY, FBX and, with the optional gmsh package, STEP.</li>
+      <li>The wizard guesses the <b>units</b> from the size and asks for the <b>up and forward axes</b>. Inside-out meshes are flipped by themselves.</li>
+      <li>Confirm the <b>wheel centres</b>, which are found from the wheel parts or picked on the mesh. They set the ground and the
+        origin (the rear-axle centre on the ground, ISO 8855: x forward, y left, z up).</li>
+      <li>Check the <b>spec</b> against the datasheet's length, width, height and wheelbase, and confirm which parts are <b>glass</b>.</li>
+      <li>Paint <b>mount zones</b> with the brush: where cameras may go and where they may not (doors that open, the bonnet's shut line).</li>
+      <li>Drag modules from the <b>Library</b> onto the body, or press <kbd>C</kbd> and click. Start with a mirrored pair
+        (<kbd>Alt</kbd>-click), lock what is fixed, and let the analysis guide the rest.</li>
+    </ol>
+    <p>A template (<code>vantage --template suv</code>) gives a generated body with a starting layout when there is no
+      model yet. Swap the body later and the rig stays.</p>
+    <div class="callout"><p><b>Conventions to remember.</b> Metres and degrees. Yaw is positive to the left, and pitch
+      is positive pointing <i>down</i>. Pixel density is in px/cm. Exported intrinsics use OpenCV's convention, so the
+      centre of a 1920-wide sensor is cx = 959.5.</p></div>
+
+    <!-- ======================================================== features -->
+    <h2 id="f-design">Every feature: designing the rig</h2>
+    <p>Each entry gives where to find the feature, what it answers and an example. <i>Reference</i> links to its full section in the docs.</p>
+
+    <h3>Camera library</h3>
+    <p><b>Where:</b> the Library panel; <b>Camera ▸ Change lens</b>; <b>Camera ▸ Edit module…</b>. There are 17 e-con Systems
+      modules (STURDeCAM, NileCAM, NeduCAM) with 20 lenses, each with the figures from e-con's public product page and the
+      date they were read. You can add your own modules: rectilinear, equidistant, equisolid, stereographic or
+      measured Kannala–Brandt, imported from JSON, CSV or OpenCV YAML.</p>
+    <div class="callout"><p><b>Example.</b> To try a narrow lens ahead, select <code>F</code> and use <b>Camera ▸ Change lens</b> to
+      switch from the STURDeCAM31 H05R2 (128.7° horizontal) to the H03R2 (54.0°). The perception range ahead grows and the
+      ground near the bumper is lost. Undo, or keep it as a variant. <a href="docs.html#camera-library">Reference</a></p></div>
+
+    <h3>Rig parts</h3>
+    <p><b>Where:</b> <b>Vehicle ▸ Add rig part</b>: a roof rack, sensor mast, sensor enclosure or bar, edited in the
+      inspector. Parts block the cameras' view and can carry sensors.</p>
+    <div class="callout"><p><b>Example.</b> Add a roof rack, then look through <code>R</code> (<kbd>Ctrl</kbd>+<kbd>0</kbd>) to see whether its
+      rear bar enters the image. The coverage and blind volume count it at once. <a href="docs.html#rig">Reference</a></p></div>
+
+    <h3>Lidars, radars, GNSS and IMU</h3>
+    <p><b>Where:</b> <b>Vehicle ▸ Add lidar / Add radar / Add GNSS antenna / Add IMU</b>; <b>View ▸ Overlays</b> draws
+      their fields. Each sensor belongs to the variant, like a camera.</p>
+    <div class="callout"><p><b>Example.</b> Add a second radar and move it to a rear corner. <b>Analysis ▸ Lidar and radar
+      coverage</b> shows the gap it closes, sector by sector, against the cameras. <a href="docs.html#sensors">Reference</a></p></div>
+
+    <h3>Housings in view</h3>
+    <p><b>Where:</b> the Inspector's <b>Mount ▸ Housings</b> row; <b>Analysis ▸ Housings block cameras</b> switches the
+      effect off for comparison. Every sensor housing and camera module is a solid in every other camera's view.</p>
+    <div class="callout"><p><b>Example.</b> On the data rig, <code>RD1</code> hides 13.7 % of <code>F</code>'s image and
+      <code>RD4</code> and <code>RD5</code> 0.1 % of <code>QL</code>'s and <code>QR</code>'s. With housings the rig is
+      blind on 0.240 m², and without them on 0.010 m². Lowering <code>RD1</code> from 0.50 m to 0.40 m brings the blind
+      ground down to 0.055 m², and to 0.028 m² at 0.35 m. Moving it 30 cm to the left of <code>F</code> instead gets back
+      to 0.010 m².</p></div>
+<pre><code>vantage rig.vantage --housings housings.json   # exit 2 when a camera sits inside a housing</code></pre>
+    <p><a href="docs.html#housings">Reference</a></p>
+
+    <h3>Heatmaps and overlays</h3>
+    <p><b>Where:</b> <b>View ▸ Overlays</b>. The heatmap colours the ground by best camera, density, redundancy or
+      objects. Other overlays draw frustums, sensor fields, the harness, critical targets, wipers, parking guidelines and the
+      clock tree. <b>View ▸ Render image</b> (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>) saves a picture of the view.</p>
+    <div class="callout"><p><b>Example.</b> Pick the Density heatmap: ground below the project's minimum is grey and hatched, with
+      lines at the minimum and the target, so a low-density patch shows at a glance. <a href="docs.html#overlays">Reference</a></p></div>
+
+    <h3>Issues and rules</h3>
+    <p><b>Where:</b> the Issues tab. Blind ground, cable lengths, GMSL port conflicts and link budget, forbidden zones, density
+      below the minimum, objects vanishing at seams, housings in view, misplaced sensors, the recording and power budgets, the GNSS sky, and more. Click
+      one to select what it is about. <a href="docs.html#issues">Reference</a></p>
+
+    <h3>Variants and compare</h3>
+    <p><b>Where:</b> the <b>Layout</b> menu; <b>Layout ▸ Compare variants…</b>. Duplicate before a big change, and compare when you want the case for one layout
+      over another. <code>--variant</code> picks one in batch mode, by name or 1-based number. <a href="docs.html#variants">Reference</a></p>
+
+    <!-- ======================================================== studies -->
+    <h2 id="f-studies">Every feature: studies</h2>
+    <p>Each study is a page in the <b>Analysis</b> menu with an Export button and a batch option. The batch option
+      writes the same JSON with a provenance block (see <a href="#f-auto">Reproducing a result</a>).</p>
+
+    <h3>Tolerance study, optimiser and gradient refinement</h3>
+    <p><b>Where:</b> <b>Analysis ▸ Tolerance study…</b>; <b>Layout ▸ Optimise placement…</b>. <b>Answers:</b> how much a
+      mounting error costs, which mount matters most, and the best poses under tolerance.</p>
+    <div class="callout"><p><b>Example.</b> Set ±1° and ±5 mm, run it and pin the worst case to preview it. If one quarter camera's pitch
+      dominates the tornado, give that mount a pin or a stiffer bracket. <a href="docs.html#tolerance">Reference</a></p></div>
+
+    <h3>Load cases and suspension</h3>
+    <p><b>Where:</b> <b>Analysis ▸ Load cases…</b> and its Suspension tab. <b>Answers:</b> how far each corner drops
+      with the crew, the rig and the luggage, and so how far every camera moves relative to the road between the
+      calibration load and each case.</p>
+<pre><code>vantage rig.vantage --suspension-data corners.csv --suspension cases.json   # exit 2 when a wheel lifts or the GVM is exceeded</code></pre>
+    <p><a href="docs.html#loadcases">Reference</a></p>
+
+    <h3>Road and body motion</h3>
+    <p><b>Where:</b> <b>Analysis ▸ Road and body motion…</b>. Add a ramp, crest, garage ramp, speed bump, kerb or crowned road.
+      <b>Answers:</b> the coverage on that road, when a bump or kerb is first resolved, the clearance driving over it,
+      and each camera's horizon shift under braking, squat and cornering roll.</p>
+    <div class="callout"><p><b>Example.</b> Add a 10 cm speed bump 8 m ahead and read the distance at which <code>F</code> first resolves it and
+      whether the bumper clears it. <code>--terrain road.json</code> exits 2 when the body would touch the road. <a href="docs.html#terrain">Reference</a></p></div>
+
+    <h3>Thermal and vibration drift</h3>
+    <p><b>Where:</b> <b>Analysis ▸ Thermal and vibration drift…</b>. <b>Answers:</b> how far the midday sun bends the rig
+      hour by hour (in pixels for camera–lidar and stereo pairs), each mount's first mode, and the blur on a rough road, a speed bump and an expansion joint.</p>
+<pre><code>vantage rig.vantage --thermo-vib drift/   # exit 2 when a mount resonates in the body or wheel-hop band</code></pre>
+    <p><a href="docs.html#thermo-vib">Reference</a></p>
+
+    <h3>3D blind volume</h3>
+    <p><b>Where:</b> <b>Analysis ▸ Blind volume</b>. <b>Answers:</b> the space up to 2 m that no camera sees, where a 0.5 m pole,
+      a 0.9 m child or a 1.8 m adult can stand unseen, and how far from the body, per direction.</p>
+    <div class="callout"><p><b>Example.</b> On the data rig a 0.9 m child is undetected on 0.005 m², all within 5 cm of the body.
+      Drag the height slider to see where the blind space starts. <a href="docs.html#volume">Reference</a></p></div>
+
+    <h3>Perception range</h3>
+    <p><b>Where:</b> <b>Analysis ▸ Perception range</b>. <b>Answers:</b> how far out each object class (car,
+      pedestrian, cyclist, sign, or your own) is resolved with enough pixels for your detector, per direction, against the
+      range each sector requires, and the stereo pairs.</p>
+    <div class="callout"><p><b>Example.</b> On the data rig the front sector asks for 80 m, but cars are resolved to 70.1 m. Try
+      the narrow lens on <code>F</code> or a second, narrow forward camera, and watch the front sector's shortfall. <a href="docs.html#perception">Reference</a></p></div>
+
+    <h3>Weather and night</h3>
+    <p><b>Where:</b> <b>Analysis ▸ Weather and night…</b>. The conditions are clear, overcast, night (unlit or lit), light or heavy rain, fog and
+      snow, each with figures you can edit. <b>Answers:</b> the range per object, camera, lidar and radar against clear weather.</p>
+<pre><code>vantage rig.vantage --weather weather.json                          # every condition compared
+vantage rig.vantage --perception-range fog.json --condition fog     # one condition</code></pre>
+    <p><a href="docs.html#weather">Reference</a></p>
+
+    <h3>Critical targets and mounting envelopes</h3>
+    <p><b>Where:</b> <b>Analysis ▸ Critical targets</b>. Place what the rig must resolve where it matters, such as a 0.9 m child
+      2 m ahead of the bumper, a traffic light, a kerb by the front wheel or a lane marking on a curve. <b>Answers:</b>
+      which cameras resolve each target, and each camera's <i>mounting envelope</i>: where it can sit and still resolve them all.</p>
+<pre><code>vantage rig.vantage --critical-targets critical/   # exit 2 when no camera resolves a target</code></pre>
+    <p><a href="docs.html#critical">Reference</a></p>
+
+    <h3>Lidar and radar coverage</h3>
+    <p><b>Where:</b> <b>Analysis ▸ Lidar and radar coverage</b>. <b>Answers:</b> the share of lidar points lost to the vehicle,
+      the ground blind zone, the points on a car 25, 50 and 100 m ahead, the detection range per object and sector against the
+      cameras', and the camera–lidar overlap.</p>
+    <div class="callout"><p><b>Example.</b> On the data rig 35 % of <code>L1</code>'s points hit the vehicle. Raise <code>L1</code> 20 cm
+      on a mast (<b>Vehicle ▸ Add rig part ▸ Sensor mast</b>) and see what that does to the figure and to the ground blind zone. <a href="docs.html#sensor-coverage">Reference</a></p></div>
+
+    <h3>Sync and timing</h3>
+    <p><b>Where:</b> <b>Analysis ▸ Sync and timing</b>. <b>Answers:</b> when each camera should fire so that it sees the
+      scene as the spinning lidar sweeps past, the trigger lines, motion blur and the rolling-shutter skew.</p>
+    <div class="callout"><p><b>Example.</b> The data rig's worst camera is 12.41 ms off the sweep (17.2 cm at 50 km/h). The suggested
+      trigger lines bring that to 0.94 ms. <code>--sync-plan sync.json</code>. <a href="docs.html#timing">Reference</a></p></div>
+
+    <h3>Clock tree and time sync</h3>
+    <p><b>Where:</b> <b>Analysis ▸ Clock tree and time sync</b>. It draws the GNSS PPS, the grandmaster, gPTP and the
+      deserializers' FSYNC, and lets you put faults on a timeline, such as a PPS dropout or a lost grandmaster. <b>Answers:</b> every
+      sensor's timestamp error, and how far it moves lidar points in each image.</p>
+<pre><code>vantage rig.vantage --clock-tree clock/   # exit 3 when lidar points land beyond the limit</code></pre>
+    <p><a href="docs.html#clock-tree">Reference</a></p>
+
+    <h3>Recording budget</h3>
+    <p><b>Where:</b> <b>Analysis ▸ Recording budget</b>. <b>Answers:</b> each sensor's data rate (raw, JPEG or H.265), the
+      links, the write speed and the hours per disk set.</p>
+    <div class="callout"><p><b>Example.</b> The data rig needs 96 % of its disks' sustained write and 5 disk sets per 8 h shift.
+      Switching the cameras to H.265 in the page shows how many sets that saves. <a href="docs.html#recording">Reference</a></p></div>
+
+    <h3>Power budget</h3>
+    <p><b>Where:</b> <b>Analysis ▸ Power budget</b>. <b>Answers:</b> the steady and peak draw, the DC-DC converter's load,
+      the fuses and power cables, the alternator margin and how long the rig runs with the engine off.</p>
+    <div class="callout"><p><b>Example.</b> The data rig draws 170.5 W steady and 220.7 W peak, and the 600 W converter runs at 28 %. <a href="docs.html#power">Reference</a></p></div>
+
+    <h3>Cable harness</h3>
+    <p><b>Where:</b> <b>Analysis ▸ Cable harness</b>; <b>View ▸ Overlays</b> draws the routes. <b>Answers:</b> each cable's
+      routed length against its link's limit, the GNSS cable loss and the power-pair drop. <code>--harness harness.json</code>.
+      <a href="docs.html#harness">Reference</a></p>
+
+    <h3>GNSS and IMU</h3>
+    <p><b>Where:</b> <b>Analysis ▸ GNSS and IMU</b>. <b>Answers:</b> the sky each antenna sees (and what blocks the rest),
+      the heading baseline, the INS lever arms and the pose error budget. <code>--gnss gnss.json</code>.
+      <a href="docs.html#gnss">Reference</a></p>
+
+    <h3>Sun glare and dirt</h3>
+    <p><b>Where:</b> <b>Analysis ▸ Sun glare and dirt</b>. Set the location, the dates and the daily driving window.
+      <b>Answers:</b> which cameras have the sun in the image, when and on which headings, and how exposed each lens is to
+      dirt, spray and rain.</p>
+    <div class="callout"><p><b>Example.</b> Keep the default location (Munich), choose a winter campaign from 08:00 to 17:00 and the Europe/Berlin time zone. The low sun shows which
+      heading blinds <code>R</code> in the afternoon. <code>--exposure sun.json</code>. <a href="docs.html#exposure">Reference</a></p></div>
+
+    <h3>Exposure metering and HDR seams</h3>
+    <p><b>Where:</b> <b>Analysis ▸ Exposure metering and HDR seams</b>. <b>Answers:</b> what each camera's auto-exposure
+      should meter (ground only: no body, sky or dark image circle), as PNG masks and weighted AE rectangles for the ISP, and the
+      exposure step across each seam at low sun, a tunnel exit and night.</p>
+<pre><code>vantage rig.vantage --isp isp/   # exit 2 when a seam keeps a critical step after balancing</code></pre>
+    <p><a href="docs.html#isp">Reference</a></p>
+
+    <h3>Materials, glass and wipers</h3>
+    <p><b>Where:</b> <b>Analysis ▸ Materials, glass and wipers</b>. <b>Answers:</b> what each radar looks through (two-way loss,
+      derated range, multipath risk), which cameras are behind glass and whether the wipers clear their view.
+      <code>--materials materials.json</code> exits 2 when a radar looks into metal over half its field.
+      <a href="docs.html#materials">Reference</a></p>
+
+    <h3>Mount brackets</h3>
+    <p><b>Where:</b> <b>Analysis ▸ Mount brackets</b>. <b>Answers:</b> a printable bracket per camera that sets its exact pose
+      on the surface under it, and how much of the image the bracket blocks. <code>--brackets out/</code>.
+      <a href="docs.html#brackets">Reference</a></p>
+
+    <h3>Requirements scorecard</h3>
+    <p><b>Where:</b> <b>Analysis ▸ Requirements scorecard</b>. <b>Answers:</b> does this rig meet what the programme
+      wrote down, and by what margin? It exports a design-review PDF. <code>--check review/</code> exits 5 when a must
+      requirement fails. <a href="docs.html#requirements">Reference</a></p>
+
+    <h3>Experiments</h3>
+    <p><b>Where:</b> <b>Analysis ▸ Experiments</b>. Pick factors (a camera's pose or lens, a sensor's model, the ROI, a load
+      case, the weather) and responses (any scorecard metric). <b>Answers:</b> what drives each figure (sensitivity), and
+      the spread of a figure when the factors are uncertain.</p>
+    <div class="callout"><p><b>Example.</b> Vary <code>F</code>'s pitch from 25° to 45° in 5° steps against both STURDeCAM31 lenses, with the blind area and
+      the pedestrian range ahead as responses. Export the spec and run it headless; an interrupted run resumes:</p></div>
+<pre><code>vantage rig.vantage --experiment spec.json exp/</code></pre>
+    <p><a href="docs.html#experiments">Reference</a></p>
+
+    <!-- ======================================================== surround -->
+    <h2 id="f-surround">Every feature: surround view</h2>
+    <h3>Bird's-eye view, seams and remap tables</h3>
+    <p><b>Where:</b> <b>Camera views</b> (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd>). Drag a seam's handle to move it, or use
+      <b>Stitch seams ▸ Suggest seams</b>. Exposure balancing and multi-band blending are available. The <b>Bird's-eye remap tables</b> export gives each
+      camera float32 sensor coordinates per output pixel, blend weights and a body mask. The <b>Reference stitcher</b>
+      export adds a C++ and Python stitcher under the Apache 2.0 licence, for production use.
+      <a href="docs.html#birdseye">Reference</a></p>
+
+    <h3>3D surround-view bowl</h3>
+    <p><b>Where:</b> <b>Camera views ▸ bowl</b>. It shows what an in-car display shows: the images on a bowl around the car,
+      whose floor, wall height and reach are saved with the project. It exports as a textured OBJ with per-vertex remap
+      tables. <a href="docs.html#bowl">Reference</a></p>
+
+    <h3>Parking guidelines</h3>
+    <p><b>Where:</b> <b>Camera ▸ Parking guidelines…</b>, or <b>View ▸ Overlays ▸ Parking guidelines</b> (<kbd>Alt</kbd>+<kbd>G</kbd>).
+      It draws static width lines, distance markers and the trajectory at the steering angle, from the vehicle's own
+      wheelbase and track. They export as tables in each camera's pixels. <a href="docs.html#guidelines">Reference</a></p>
+    <figure><div class="frame natural"><img src="media/bowl.jpg" alt="The 3D surround-view bowl with the car in the middle" loading="lazy" width="1600" height="900"></div>
+      <figcaption>The bowl, as an in-car display would show it.</figcaption></figure>
+
+    <!-- ======================================================== calibration -->
+    <h2 id="f-calib">Every feature: calibration and checks</h2>
+    <p>Each camera source can be a file, a live stream (a V4L2 device such as <code>/dev/video0</code>, a GStreamer pipeline, an RTSP or
+      HTTP URL) or a synthetic capture to try a page without hardware. Sources are saved with the project.</p>
+
+    <h3>Unit lens calibration</h3>
+    <p><b>Where:</b> <b>Calibrate ▸ Lens calibration</b> (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd>). Fit 10 to 20 checkerboard
+      views as <code>cv::fisheye</code>, with the RMS per view and advice on corner coverage, or import a calibration from
+      OpenCV, ROS, Kalibr or JSON. <code>--calibrate-lens DIR --camera F</code>; <code>--import-calib files…</code>.
+      <a href="docs.html#lens">Reference</a></p>
+
+    <h3>Installation check</h3>
+    <p><b>Where:</b> <b>Calibrate ▸ Installation check</b> (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd>). One image per
+      camera of the floor boards gives each camera's pose by PnP and a joint solve, against the plan's tolerances. It can save an
+      <i>as-built</i> variant and remap tables for the measured poses.</p>
+    <div class="callout"><p><b>Example.</b> Name the images by camera tag (<code>F.png</code>, <code>ML.png</code>, …) and run
+      <code>--install-check captures/ --report install.json --lut-out luts/</code>. If glare hides a board, click its
+      corners by hand and pass them with <code>--install-picks</code>. <a href="docs.html#install-check">Reference</a></p></div>
+
+    <h3>Lidar–camera calibration</h3>
+    <p><b>Where:</b> <b>Calibrate ▸ Lidar–camera calibration</b>. Hold up a checkerboard with a white margin at several poses that both sensors see.
+      <b>Answers:</b> the lidar's pose relative to the camera, with its uncertainty, and an overlay per pose to check it.</p>
+<pre><code>vantage rig.vantage --lidar-calib out/ --lidar-calib-pair F L1 --lidar-calib-folder pairs/   # pose01.png + pose01.pcd …</code></pre>
+    <p><a href="docs.html#lidar-calib">Reference</a></p>
+
+    <h3>Calibration observability</h3>
+    <p><b>Where:</b> <b>Calibrate ▸ Calibration observability</b>. <b>Answers:</b> before anything is printed, how firmly the
+      planned boards will pin each camera, each pair and each lidar. <code>--observability obs/ --verify 20</code> checks the
+      prediction with 20 Monte Carlo trials. <a href="docs.html#observability">Reference</a></p>
+
+    <h3>Live rig health and the calibration coach</h3>
+    <p><b>Where:</b> <b>Calibrate ▸ Live rig</b>. Press Start to see every stream's frame rate against the module's, its drops,
+      exposure, sharpness and sync, each with a verdict. The <b>Calibration coach</b> tab shows a ghost board where the board should be held next, and
+      bars that turn green as the calibration meets its requirement.</p>
+<pre><code>vantage rig.vantage --rig-health 60 health.json   # watch every stream for 60 s
+vantage rig.vantage --calib-coach coach/          # how many views the coach needs against random ones</code></pre>
+    <p><a href="docs.html#live-rig">Reference</a></p>
+
+    <h3>Drive-log check</h3>
+    <p><b>Where:</b> <b>Calibrate ▸ Drive-log check</b>. Open a ROS 2 bag (folder, <code>.mcap</code> or <code>.db3</code>) or a
+      nuScenes folder. Topics are matched to sensors by tag (<code>/F/image_raw/compressed</code> is camera <code>F</code>).
+      <b>Answers:</b> rates, gaps and timing against the plan, and whether the lidar's edges still line up with each image.
+      Long drives are fine, because the log is streamed rather than loaded whole. <a href="docs.html#drive-log">Reference</a></p>
+
+    <h3>As-built check</h3>
+    <p><b>Where:</b> <b>Calibrate ▸ As-built check…</b>. A few seconds of driving by the real rig shows whether each camera's outline of
+      the car is where the plan expects it, the pose corrections, and the coverage as built.</p>
+<pre><code>vantage rig.vantage --as-built-check first_drive/ asbuilt/ --save rig.vantage   # exit 3 when the coverage does not hold</code></pre>
+    <p><a href="docs.html#as-built">Reference</a></p>
+
+    <h3>Online self-calibration</h3>
+    <p><b>Where:</b> <b>Calibrate ▸ Online self-calibration</b>. It follows each camera's rotation relative to the lidar through a whole
+      drive in 10 s windows, and finds the moment a camera was knocked. It writes a nuScenes folder with one calibration row per
+      segment and a <code>/tf</code> sidecar bag. <code>--online-calib drive/ online/</code>.
+      <a href="docs.html#online-calib">Reference</a></p>
+
+    <h3>Fleet</h3>
+    <p><b>Where:</b> <b>Calibrate ▸ Fleet</b>. Add each vehicle and import its records (installation check reports,
+      extrinsics, nuScenes, Kalibr). <b>Answers:</b> the latest offsets, the drift over time and the vehicles that differ from the
+      rest.</p>
+<pre><code>vantage rig.vantage --fleet-import car-07 install.json --save rig.vantage
+vantage rig.vantage --fleet fleet/</code></pre>
+    <p><a href="docs.html#fleet">Reference</a></p>
+    <figure><div class="frame natural"><img src="media/asbuilt.jpg" alt="The as-built check comparing each camera's outline of the vehicle with the plan" loading="lazy" width="1600" height="900"></div>
+      <figcaption>The as-built check.</figcaption></figure>
+
+    <!-- ======================================================== simulation -->
+    <h2 id="f-sim">Every feature: simulation and data</h2>
+    <h3>Sample dataset</h3>
+    <p><b>Where:</b> <b>Export ▸ Sample dataset</b>. It writes a seeded synthetic drive (a street with a bend, or a highway, with traffic,
+      cyclists and a pedestrian crossing) recorded by exactly the planned rig, as nuScenes and a ROS 2 bag. It takes about
+      1.5 min at the defaults. <code>--dataset out/</code>, with <code>--condition night</code> for another weather.
+      <a href="docs.html#sample-dataset">Reference</a></p>
+
+    <h3>ROS 2 bags</h3>
+    <p>Vantage writes and reads ROS 2 bags (MCAP, and SQLite <code>.db3</code> for reading) without a ROS installation.
+      <code>ros2 bag play</code>, Foxglove and rosbags open them. <a href="docs.html#rosbags">Reference</a></p>
+
+    <h3>CARLA: drives, ground truth, faults and scenarios</h3>
+    <p><b>Where:</b> <b>Simulate ▸ CARLA…</b>. Point it at a CARLA 0.9.16 folder and its client Python. The planned
+      rig is put on the CARLA car nearest your vehicle's size and recorded at the sync plan's times, with semantic, instance and
+      range ground truth. Scenarios include a lead vehicle braking, a cut-in, and a pedestrian or cyclist crossing. Faults with known answers
+      (a camera turned, a clock offset, dropped or frozen frames) let you test your own checks.</p>
+<pre><code>vantage rig.vantage --carla-run run/ --carla-scenario pedestrian_crossing --carla-ground-truth all
+vantage rig.vantage --carla-run run/ --carla-faults '[{"tag": "F", "kind": "rotation", "deg": [0, 0.5, 0]}]'
+vantage --ground-truth-summary run/</code></pre>
+    <p><a href="docs.html#carla">Reference</a> · <a href="docs.html#carla-gt">Ground truth and faults</a></p>
+
+    <h3>CARLA as a live rig</h3>
+    <p><b>Where:</b> <b>Simulate ▸ CARLA live rig…</b>. It streams the planned cameras from CARLA into <b>Calibrate ▸ Live rig</b> as if they
+      were the real rig, with faults injected while it runs.</p>
+<pre><code>vantage rig.vantage --carla-live 30 live/ --live-fault '5:{"tag": "F", "kind": "freeze"}'</code></pre>
+    <p><a href="docs.html#carla-live">Reference</a></p>
+
+    <h3>Detection quality</h3>
+    <p><b>Where:</b> <b>Simulate ▸ Detection quality…</b>. It runs the YOLOX detector (downloaded on request and checked by SHA-256)
+      on a CARLA drive with ground truth. <b>Answers:</b> recall, precision, AP and the detection range per camera, class and range,
+      and recordings compared. <code>--detection-quality det/ --detection-download</code>.
+      <a href="docs.html#detection">Reference</a></p>
+
+    <h3>Log replay</h3>
+    <p><b>Where:</b> <b>Simulate ▸ Log replay</b>. It rebuilds a recorded drive as 3D Gaussians, checks the rebuild against held-out frames,
+      and renders it through a different rig. <b>Answers:</b> what rig B would have seen on the drive rig A recorded.</p>
+<pre><code>vantage rig.vantage --log-replay run/ replay/ --replay-variant "6-cam front-heavy"   # exit 3 when it does not validate</code></pre>
+    <p><a href="docs.html#log-replay">Reference</a></p>
+
+    <h3>Simulation campaigns</h3>
+    <p><b>Where:</b> <b>Simulate ▸ Simulation campaigns…</b>. It drives the rig in CARLA many times, each drive varied in one known way, and
+      checks every drive as a real recording would be checked. <b>Answers:</b> the smallest knock, offset or drop each check finds.
+      Templates: <code>fault_detectability</code>, <code>weather_sweep</code>, <code>rig_ab</code>.</p>
+<pre><code>vantage rig.vantage --campaign camp/ --campaign-template fault_detectability   # run again to resume</code></pre>
+    <p><a href="docs.html#campaigns">Reference</a></p>
+
+    <h3>Critical targets in CARLA</h3>
+    <p><b>Where:</b> <b>Simulate ▸ Critical targets in CARLA…</b>. It stands the critical targets in CARLA and compares what each camera
+      sees with the study, in another renderer. <code>--critical-carla crit/</code> exits 3 when a view disagrees.
+      <a href="docs.html#critical-carla">Reference</a></p>
+    <figure><div class="frame natural"><img src="media/carla.jpg" alt="The CARLA page with the planned rig recorded in a CARLA town" loading="lazy" width="1600" height="900"></div>
+      <figcaption>The planned rig driven in CARLA.</figcaption></figure>
+
+    <!-- ======================================================== AI -->
+    <h2 id="f-ai">Every feature: the assistant and Claude</h2>
+    <p>Two optional ways to work with an AI on the design, both in the assistant panel (<kbd>Ctrl</kbd>+<kbd>J</kbd>).
+      Its switch at the top chooses between them:</p>
+    <table>
+      <tr><th></th><th>Assistant (Groq or Claude API)</th><th>Claude Code · MCP</th></tr>
+      <tr><td>Needs</td><td>Your own API key, set in Preferences ▸ Assistant</td><td>Claude Code on a Claude subscription (or any MCP client)</td></tr>
+      <tr><td>Changes the design</td><td>Through proposals that you apply</td><td>Directly, as undo steps named <i>Claude · …</i></td></tr>
+      <tr><td>Runs batch jobs</td><td>Through Copilot plans that you approve</td><td>Yes, with <code>run_batch</code>, on a copy, in a run folder. CARLA still goes through a plan you approve.</td></tr>
+    </table>
+
+    <h3>Setting up the assistant</h3>
+    <p>Create a key with <a href="https://console.groq.com/keys">Groq</a> or in the Claude Console. Open <b>Preferences ▸
+      Assistant</b> (<kbd>Ctrl</kbd>+<kbd>,</kbd>), tick <b>Use the assistant</b>, choose the provider, paste the key and press
+      <b>Test</b>. <b>More ▸ What was sent</b> shows the last request exactly. The vehicle model, images, recordings, point clouds,
+      keys and stream passwords are never sent. <a href="docs.html#assistant">Reference</a></p>
+
+    <h3>Asking questions</h3>
+    <p>The model reads the design only through Vantage's tools, so its numbers come from the analysis. Every lookup is listed
+      under the answer, and you can click one to see what was asked and returned. Questions that work well:</p>
+    <ul>
+      <li>"Why is the ground behind the right rear wheel blind?"</li>
+      <li>"Which camera would cost the most if it failed?"</li>
+      <li>"What sees the point 2 m in front of the left headlamp, and how sharply?"</li>
+      <li>"Would lowering the mirror cameras 20 mm help the seam at ML | QL?" (it simulates on a copy, then proposes)</li>
+      <li>"Compare the variants and tell me which to take to the design review."</li>
+    </ul>
+
+    <h3>Agent mode and goals</h3>
+    <p>Switch on <b>Agent</b> in the composer, or type <code>/goal</code>, and describe an outcome. For example, "no blind ground and at least
+      4 px/cm everywhere, without moving F". It writes a checklist, runs studies, searches poses, checks each option and
+      proposes the best one. It has up to 30 rounds of tool calls and 4 minutes, and <kbd>Esc</kbd> stops it.
+      <a href="docs.html#agent">Reference</a></p>
+
+    <h3>The Copilot: plans you approve</h3>
+    <p>Say what should run, and the Copilot writes a plan that you read and approve. It never runs anything itself.</p>
+    <ul>
+      <li>"A 10 s drive in Town10 at dusk in rain, 30 cars, 10 walkers, a pedestrian crossing, ground truth on, half-size images."</li>
+      <li>"A fault campaign: turn F and ML by 0.1 to 1°, three seeds, plus clean drives."</li>
+      <li>"An experiment: F pitch 25–45° by 5° × the two lenses, blind area."</li>
+      <li>"Start the live rig and freeze QR after 10 s."</li>
+    </ul>
+    <p>An approved plan can be run again headless, exactly as approved: <code>vantage rig.vantage --run-plan ID out/</code>.
+      <a href="docs.html#copilot">Reference</a></p>
+    <figure><div class="frame natural"><img src="media/copilot.jpg" alt="A Copilot plan with its steps, settings and the approve button" loading="lazy" width="1015" height="820"></div>
+      <figcaption>A Copilot plan waiting for approval.</figcaption></figure>
+
+    <h3>Recommended actions</h3>
+    <p>Without any AI, the panel recommends what to look at next, worked out on your computer from Vantage's own results. A
+      live strip follows what you are doing. For a selected camera it might say "QR alone sees 3.00 m²: check what its loss or a mounting
+      error costs", and after an edit "Your last change added 0.155 m² blind ground: undo it". <b>Recommended (n)</b> opens the
+      full list. <a href="docs.html#recommended">Reference</a></p>
+
+    <h3>Claude over MCP</h3>
+    <p>Vantage is an MCP server, so Claude Code or Claude Desktop can read and change rig designs. Register it once:</p>
+<pre><code>claude mcp add --scope user vantage -- vantage --mcp
+# Windows:  … -- vantage-cli.exe --mcp
+# macOS:    … -- /Applications/Vantage.app/Contents/MacOS/vantage-cli --mcp
+# a checkout: … -- python3 /path/to/run_vantage.py --mcp</code></pre>
+    <p>With a Vantage window open, Claude works on the project in it, and every change shows at once as one undo step. With
+      no window, it works on a <code>.vantage</code> file and keeps a <code>.bak</code> of the file as it was opened. Locked
+      cameras, unit calibrations, stream sources, the fleet and the automation settings stay yours. Things to ask Claude Code:</p>
+    <ul>
+      <li>"Give me the overview of the open rig and the three things most worth fixing."</li>
+      <li>"Try QR's pitch from 30° to 45° with simulate_changes and apply the best if it adds no blind ground."</li>
+      <li>"Move the seams to their advised angles and tell me how much less ground the child vanishes on."</li>
+      <li>"Run the requirements check with run_batch and summarise what fails and by how much."</li>
+      <li>"Export the calibration for nuScenes and ROS 2 in millimetres from the front axle."</li>
+      <li>"Duplicate the variant, add a second narrow camera ahead, and compare the front perception range."</li>
+    </ul>
+    <p>Preferences ▸ General ▸ Claude turns the window's side of the connection off. <a href="docs.html#claude-mcp">Reference</a></p>
+
+    <h3>Claude Code in the panel</h3>
+    <p>Choose <b>Claude Code · MCP</b> at the top of the assistant panel, or press <kbd>Ctrl</kbd>+<kbd>`</kbd>. A terminal opens in the
+      project's folder and Claude Code starts in it, connected to this window. Scrolling, mouse, colours, copy and paste
+      (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> / <kbd>V</kbd>) work as in a normal terminal. The <b>Suggested</b> menu
+      and the strip of recommendations hand a request straight to Claude. <b>History</b> continues an earlier conversation.
+      It runs on Linux and macOS and needs the optional <code>pyte</code> package.</p>
+    <figure><div class="frame natural"><img src="media/claude-panel.jpg" alt="The Claude Code terminal inside the assistant panel" loading="lazy" width="642" height="372"></div>
+      <figcaption>Claude Code in the assistant panel.</figcaption></figure>
+
+    <!-- ======================================================== automation -->
+    <h2 id="f-auto">Every feature: exports, automation, CI</h2>
+    <h3>Export formats</h3>
+    <p><b>Where:</b> <b>Export ▸ Export</b> (<kbd>Ctrl</kbd>+<kbd>E</kbd>). There are documents (mount sheet, HTML and PDF report),
+      every study's JSON, the calibration formats, the surround-view tables and meshes, images, DXF and STEP. Each has an id
+      for <code>--formats</code>. Common ones are <code>extrinsics_json</code>, <code>extrinsics_yaml</code>,
+      <code>opencv_yaml</code>, <code>ros2</code>, <code>ros_camera_info</code>, <code>nuscenes_calib</code>,
+      <code>kitti_calib</code>, <code>kalibr_camchain</code>, <code>bev_lut</code>, <code>bowl_mesh</code>,
+      <code>report_pdf</code> and <code>mount_sheet_pdf</code>.</p>
+<pre><code>vantage rig.vantage --export out/ --formats nuscenes_calib,kitti_calib --frame front_axle --units mm --angles rad</code></pre>
+    <p><a href="docs.html#formats">Reference</a> · <a href="docs.html#datasets">How each dataset format is written</a></p>
+
+    <h3>Automation</h3>
+    <p><b>Where:</b> <b>Export ▸ Automation</b>. With it on, saving the project regenerates the chosen exports into a folder next to
+      it, runs the requirements check, writes <code>vantage_summary.json</code> and then runs your own command (for example
+      <code>make perception-test</code>). You approve the command once. It is kept in your settings, never in the project file.</p>
+<pre><code>vantage --watch rig.vantage --on-change "make perception-test"   # the same, headless
+vantage --watch rig.vantage --watch-runs 1                        # regenerate once, for CI</code></pre>
+
+    <h3>CI templates</h3>
+    <p><code>vantage rig.vantage --ci-templates .</code> writes a GitHub Actions workflow and a GitLab CI job that run
+      <code>--export</code> and <code>--check</code> on the project in its repository, and keep the calibration files and the review
+      pack as artifacts. A pull request that moves a camera then shows its effect on the requirements.
+      <a href="docs.html#automation">Reference</a></p>
+
+    <h3>Validation</h3>
+    <p><b>Help ▸ Validate the models…</b> or <code>vantage --validate report/</code> checks every model against an independent
+      reference (closed forms, OpenCV, ITU-R tables, Monte Carlo) and writes an HTML report. <code>--validate-quick</code> takes about
+      30 s. The <a href="validation/validation.html">published report</a> is on this site.
+      <a href="docs.html#validation">Reference</a></p>
+
+    <h3>Reproducing a result</h3>
+    <p>Every JSON Vantage writes ends with a <b>provenance</b> block: the version and code hash, the library versions, the
+      project's content hash and the study's settings. <code>--reproduce</code> runs it again and reports, for each number, whether it
+      reproduces:</p>
+<pre><code>vantage rig.vantage --reproduce range.json repro.json --tolerance 'blind_m2=0.005' '*_pct=0.1%'</code></pre>
+    <p><a href="docs.html#provenance">Reference</a> · <a href="docs.html#batch">Every batch option</a></p>
+
+    <!-- ======================================================== recipes -->
+    <h2 id="recipes">Recipes</h2>
+    <h3>Hand the calibration to a nuScenes or ROS 2 pipeline</h3>
+<pre><code>vantage rig.vantage --export calib/ --formats nuscenes_calib,ros2,ros_camera_info --variant "Data rig · 6-cam + lidar + radars"</code></pre>
+    <p>Lens calibrations made with <b>Lens calibration</b> or imported with <code>--import-calib</code> replace the library lens
+      in every format.</p>
+
+    <h3>Check the rig will work at night and in rain</h3>
+<pre><code>vantage rig.vantage --weather weather.json
+vantage rig.vantage --perception-range night.json --condition night
+vantage rig.vantage --dataset night_drive/ --condition night</code></pre>
+
+    <h3>Prepare a design review</h3>
+    <ol>
+      <li>Write the requirements (<b>Add from the plan</b>, then the programme's own).</li>
+      <li>Keep the candidate layouts as variants and <b>Compare</b> them.</li>
+      <li><code>vantage rig.vantage --check review/ --variant 2</code> writes <code>review_pack.pdf</code> with the verdict, one page per study and the Issues.</li>
+    </ol>
+
+    <h3>Bring up a new vehicle</h3>
+<pre><code>vantage rig.vantage --install-check captures/ --report install.json --as-built rig-asbuilt.vantage
+vantage rig.vantage --rig-health 60 health.json
+vantage rig.vantage --as-built-check first_drive/ asbuilt/
+vantage rig.vantage --fleet-import car-07 install.json --save rig.vantage</code></pre>
+
+    <h3>Find out whether your checks catch a knocked camera</h3>
+<pre><code>vantage rig.vantage --campaign camp/ --campaign-template fault_detectability</code></pre>
+    <p>The campaign's report gives, per check, the smallest turn it detects. If none catches 0.3°, you know before a real drive
+      is wasted.</p>
+
+    <h3>Find the drive where a camera moved</h3>
+<pre><code>vantage rig.vantage --online-calib drive_0412/ online/   # exit 3: a camera was knocked beyond the tolerance</code></pre>
+
+    <h3>Ask Claude to optimise and report</h3>
+    <p>In the Claude Code panel: "Without moving locked cameras, raise the minimum density above 3.5 px/cm with no new blind ground.
+      Simulate first, apply the best as one change, and write what you did in the design log." Every change is one undo step.</p>
+
+    <!-- ======================================================== reference -->
+    <h2 id="exit">Exit codes</h2>
+    <p>Batch mode returns a code that a CI job can act on:</p>
+    <table>
+      <tr><th>Code</th><th>Meaning</th></tr>
+      <tr><td><code>0</code></td><td>Done, fine.</td></tr>
+      <tr><td><code>1</code></td><td>Failed with an error (see the output).</td></tr>
+      <tr><td><code>2</code></td><td>Done, but the plan has critical issues or the study's own failure condition is met (a cable too long, a camera inside a housing, a wheel lifted…).</td></tr>
+      <tr><td><code>3</code></td><td>A camera or sensor has to be re-mounted or could not be checked (drive log, as-built, online calibration, rig health, clock tree, CARLA comparisons).</td></tr>
+      <tr><td><code>4</code></td><td>An input could not be read, an output not written, or a calibration matched no camera.</td></tr>
+      <tr><td><code>5</code></td><td>The requirements check failed (<code>--check</code>).</td></tr>
+      <tr><td><code>6</code></td><td>A validation check failed, or a result does not reproduce.</td></tr>
+      <tr><td><code>7</code></td><td>No CARLA server answered, or the run failed.</td></tr>
+      <tr><td><code>8</code></td><td>The detector model is missing (<code>--detection-download</code> fetches it).</td></tr>
+      <tr><td><code>9</code></td><td>A campaign drive failed (run again to resume).</td></tr>
+      <tr><td><code>10</code></td><td>No approved, intact Copilot plan of that id, or a step no longer validates.</td></tr>
+    </table>
+
+    <h2 id="keys">Shortcuts to learn first</h2>
+    <table>
+      <tr><th>Keys</th><th>Command</th><th>Keys</th><th>Command</th></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>K</kbd></td><td>Command palette</td><td><kbd>C</kbd></td><td>Place a camera on the surface</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>J</kbd></td><td>Assistant</td><td><kbd>G</kbd> / <kbd>R</kbd></td><td>Move / rotate</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>`</kbd></td><td>Claude Code</td><td><kbd>Ctrl</kbd>+<kbd>M</kbd></td><td>Mirror to the other side</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd></td><td>Camera views, bird's-eye, bowl</td><td><kbd>Ctrl</kbd>+<kbd>L</kbd></td><td>Lock</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>0</kbd></td><td>Look through the camera</td><td><kbd>F</kbd> / <kbd>Home</kbd></td><td>Frame selection / all</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>E</kbd></td><td>Export</td><td><kbd>F5</kbd></td><td>Run the analysis now</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>I</kbd></td><td>Import a vehicle model</td><td><kbd>7</kbd> / <kbd>1</kbd> / <kbd>3</kbd></td><td>Top / front / side view</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd></td><td>Installation check</td><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd></td><td>Lens calibration</td></tr>
+    </table>
+    <p><kbd>?</kbd> in the app lists every shortcut. The full table is in <a href="docs.html#shortcuts">the docs</a>.</p>
+
+    <h2 id="next">Where to go next</h2>
+    <ul>
+      <li><a href="docs.html">The documentation</a>: every page, setting and option in full.</li>
+      <li><a href="methods.html">The technical reference</a>: each model's equations, assumptions, limits and references.</li>
+      <li><a href="validation/validation.html">The validation report</a>: every model checked against an independent reference.</li>
+      <li><a href="https://github.com/Sherin-SEF-AI/Vantage/blob/main/docs/project-format.md">The project format</a> and
+        <a href="https://github.com/Sherin-SEF-AI/Vantage/blob/main/docs/simulator-bridge.md">the simulator bridge</a>.</li>
+      <li><a href="https://github.com/Sherin-SEF-AI/Vantage/issues">Report a problem or ask for a feature</a>.</li>
+    </ul>
+  </main>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <a class="brand" href="./"><img src="assets/img/logo.png" alt="" width="22" height="22">Vantage</a>
+      <p class="fine">Free software under the GNU General Public License, version 3 or later
+        (<a href="docs.html#licence">GPL-3.0-or-later</a>).</p>
+    </div>
+    <div class="links">
+      <a href="./">Home</a>
+      <a href="./#download">Download</a>
+      <a href="https://github.com/Sherin-SEF-AI/Vantage/releases/latest">Releases</a>
+      <a href="https://github.com/Sherin-SEF-AI/Vantage">GitHub</a>
+    </div>
+  </div>
+</footer>
+<script src="assets/js/site.js"></script>
+</body>
+</html>
