@@ -84,8 +84,9 @@ def test_the_request_is_what_the_documentation_asks_for(srv, sample):
     assert names == sorted(names) and len(names) == len(T.TOOLS)           # a fixed order
     assert all(t['eager_input_streaming'] is True for t in body['tools'])
     strict = [t for t in body['tools'] if t.get('strict')]
-    assert {t['name'] for t in body['tools']} - {t['name'] for t in strict} == {'optimise_camera',
-                                                                                'propose_requirements'}
+    assert len(strict) == CL.STRICT_MAX == 20                                # the API's limit (a 400 beyond it)
+    assert {'propose_changes', 'propose_plan', 'simulate_changes', 'add_design_log'} <= {t['name'] for t in strict}
+    assert not {'optimise_camera', 'propose_requirements'} & {t['name'] for t in strict}     # open schemas
 
     def closed(o):
         if isinstance(o, dict):
@@ -206,6 +207,8 @@ def test_typed_errors_and_retries(srv, sample):
     srv.script += [srv.error(400, 'messages: roles must alternate')]
     ev = _run(s, _tc(sample))
     assert _errors(ev)[0]['kind'] == 'bad_request' and 'alternate' in _errors(ev)[0]['message']
+    msg = _errors(ev)[0]['message']                                  # Anthropic's own sentence, not the SDK's dump
+    assert msg.startswith('messages: roles must alternate') and "{'type'" not in msg and 'Error code' not in msg
     s3 = CL.ClaudeSession(KEY, A.Settings('claude-opus-5-5'), url='http://127.0.0.1:9')
     s3.client = s3.client.with_options(max_retries=0, timeout=2.0)
     ev = _run(s3, _tc(sample))

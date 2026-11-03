@@ -9,8 +9,10 @@ How the requests are made, as Anthropic's documentation for these models says:
   parser can hand over a partial or silently truncated input: the loop validates every parsed input against its
   schema before running it (agent.BaseSession), and checks the stop_reason first: max_tokens with a tool_use runs no
   tool, a refusal runs nothing and shows stop_details plainly.
-- Forced tool_choice is a 400 on these models: tool_choice auto, with strict: true on every tool whose schema is
-  closed (every object lists its properties; additionalProperties: false is added). Parallel tool calls come back as
+- Forced tool_choice is a 400 on these models: tool_choice auto, with strict: true on at most STRICT_MAX tools (the
+  API's limit is 20 per request): those whose input matters most (proposals, plans, simulations, then the studies),
+  each with a closed schema (every object lists its properties; additionalProperties: false is added). Every tool's
+  input, strict or not, is checked against its schema before it runs. Parallel tool calls come back as
   all their tool_result blocks in one user message, failures with is_error.
 - Prompt caching: one frozen system prompt (nothing volatile: the context of a turn goes in its user message), the
   tools in a fixed order (sorted by name), a cache_control breakpoint on the system prompt and automatic caching of
@@ -100,16 +102,28 @@ def _strict_schema(schema):
     return s
 
 
+STRICT_MAX = 20                 # Anthropic: "The maximum number of strict tools supported is 20"
+STRICT_ORDER = ('propose', 'copilot', 'plan', 'simulate', 'ui', 'compute', 'look', 'read')   # whose input matters most
+
+
+def strict_names() -> set:
+    """The tools marked strict: closed schemas, the kinds whose input matters most first, then by name; at most
+    STRICT_MAX (the same set every turn, so the tools stay a cacheable prefix)."""
+    rank = {k: i for i, k in enumerate(STRICT_ORDER)}
+    closed = [t for t in T.TOOLS if _closed(T.input_schema(t))]
+    closed.sort(key=lambda t: (rank.get(t.kind, len(rank)), t.name))
+    return {t.name for t in closed[:STRICT_MAX]}
+
+
 def tool_defs() -> list:
-    """The tools in a fixed order (sorted by name), each with eager_input_streaming; strict where the schema is
-    closed."""
+    """The tools in a fixed order (sorted by name), each with eager_input_streaming; strict for strict_names()."""
+    strict = strict_names()
     out = []
     for t in sorted(T.TOOLS, key=lambda x: x.name):
         schema = T.input_schema(t)
-        closed = _closed(schema)
         d = {'name': t.name, 'description': t.description,
-             'input_schema': _strict_schema(schema) if closed else schema, 'eager_input_streaming': True}
-        if closed:
+             'input_schema': _strict_schema(schema) if _closed(schema) else schema, 'eager_input_streaming': True}
+        if t.name in strict:
             d['strict'] = True
         out.append(d)
     return out
@@ -154,10 +168,22 @@ def echo_content(content) -> list:
             ('thinking', 'redacted_thinking', 'tool_use', 'server_tool_use')]
 
 
+def _message(e) -> str:
+    """Anthropic's own sentence from an API error (its body's error.message) with the request id, not the SDK's dump
+    of the whole body."""
+    body = getattr(e, 'body', None)
+    err = body.get('error') if isinstance(body, dict) else None
+    text = err.get('message') if isinstance(err, dict) else None
+    if not text:
+        return getattr(e, 'message', '') or str(e)
+    rid = getattr(e, 'request_id', None) or (body.get('request_id') if isinstance(body, dict) else None)
+    return f'{text}' + (f' (request {rid})' if rid else '')
+
+
 def map_error(e) -> ApiError:
     """The SDK's exception as an error the panel shows, most specific class first."""
     A = anthropic
-    msg = getattr(e, 'message', '') or str(e)
+    msg = _message(e)
     if isinstance(e, A.RateLimitError):
         retry = None
         try:

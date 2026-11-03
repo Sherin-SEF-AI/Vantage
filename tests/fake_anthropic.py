@@ -202,6 +202,14 @@ class FakeAnthropic:
                                                                  'message': 'not JSON'}})
                     return
                 fake.requests.append(body)
+                n_strict = sum(1 for t in body.get('tools') or () if isinstance(t, dict) and t.get('strict'))
+                if n_strict > 20:                          # the real API's limit, word for word
+                    self._json(400, {'type': 'error', 'error': {
+                        'type': 'invalid_request_error',
+                        'message': f'Too many strict tools ({n_strict}). The maximum number of strict tools supported '
+                                   'is 20. Try reducing the number of tools marked as strict.'},
+                        'request_id': 'req_fake'})
+                    return
                 bad = fake.check_images(body)
                 if bad:
                     self._json(400, {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': bad},
