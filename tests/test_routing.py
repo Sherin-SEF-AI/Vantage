@@ -326,7 +326,7 @@ ADD = {'camera': 'SL', 'add': True, 'x': 1.6, 'y': 0.92, 'z': 0.95, 'yaw': 90.0,
        'mirror_partner': True, 'name': 'Side left', 'location': 'left B-pillar'}
 
 
-def test_the_rig_tools_are_registered_and_the_add_change_is_strict():
+def test_the_rig_tools_are_registered_and_the_add_change_is_checked():
     from vantage.assistant import claude as CL
     from vantage.assistant import tools as T
     assert {'optimise_rig', 'add_camera_options'} <= set(T.BY_NAME)
@@ -338,7 +338,8 @@ def test_the_rig_tools_are_registered_and_the_add_change_is_strict():
     assert T.validate_args('propose_changes', {'changes': [dict(ADD, colour='red')]})
     d = next(t for t in CL.tool_defs() if t['name'] == 'propose_changes')
     item = d['input_schema']['properties']['changes']['items']
-    assert d['strict'] is True and item['additionalProperties'] is False
+    assert not d.get('strict') and item['additionalProperties'] is False     # too many optional parameters for
+    #                                                                          the API's strict limit: checked here
     assert {'add', 'module', 'name', 'location'} <= set(item['properties'])
 
 

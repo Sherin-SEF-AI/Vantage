@@ -392,7 +392,8 @@ def test_tools_are_registered_once_with_strict_schemas():
         closed(strict)
         assert t.kind == 'compute' and len(t.description) < 1200
     defs = {d['name']: d for d in CL.tool_defs()}
-    assert defs['optimise_rig'].get('strict') and defs['add_camera_options'].get('strict')
+    assert defs['add_camera_options'].get('strict')                          # within the API's strict limits
+    assert not defs['optimise_rig'].get('strict')                            # (16 optional parameters: not)
     ok = {'objective': 'cameras', 'count': [4, 6], 'min_density': 3, 'ranges': {'yaw_deg': 10}, 'budget_s': 30,
           'cameras': ['QL'], 'vary': ['pitch'], 'critical': 'require', 'options': 3}
     assert T.validate_args('optimise_rig', ok) == []

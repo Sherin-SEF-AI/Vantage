@@ -280,7 +280,8 @@ def test_claude_gets_the_picture_as_an_image_block_in_the_tool_result(sample, mo
         s = CL.ClaudeSession('sk-ant-test-key', A.Settings('claude-opus-5-5'))
         assert s.vision and 'look' in [t['name'] for t in s.tools]
         look = next(t for t in s.tools if t['name'] == 'look')
-        assert look.get('strict') is True and look['input_schema']['additionalProperties'] is False
+        assert look['input_schema']['additionalProperties'] is False             # closed (strict only within the
+        assert look.get('strict') == ('look' in CL.strict_names() or None)       # API's limits)
         srv.script += [srv.reply(tools=[('look', {'view': 'top'}, 'toolu_a'),
                                         ('look', {'view': 'camera', 'camera': 'F'}, 'toolu_b')]),
                        srv.reply(text='The blind patch is below the rear bumper.')]
