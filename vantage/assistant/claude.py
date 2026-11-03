@@ -9,9 +9,9 @@ How the requests are made, as Anthropic's documentation for these models says:
   parser can hand over a partial or silently truncated input: the loop validates every parsed input against its
   schema before running it (agent.BaseSession), and checks the stop_reason first: max_tokens with a tool_use runs no
   tool, a refusal runs nothing and shows stop_details plainly.
-- Forced tool_choice is a 400 on these models: tool_choice auto, with strict: true on at most STRICT_MAX tools (the
-  API's limit is 20 per request): those whose input matters most (proposals, plans, simulations, then the studies),
-  each with a closed schema (every object lists its properties; additionalProperties: false is added). Every tool's
+- Forced tool_choice is a 400 on these models: tool_choice auto, with strict: true within the API's limits (at most
+  20 strict tools, at most 24 optional parameters among them): those whose input matters most that fit, each with a
+  closed schema (every object lists its properties; additionalProperties: false is added). Every tool's
   input, strict or not, is checked against its schema before it runs. Parallel tool calls come back as
   all their tool_result blocks in one user message, failures with is_error.
 - Prompt caching: one frozen system prompt (nothing volatile: the context of a turn goes in its user message), the
@@ -103,16 +103,37 @@ def _strict_schema(schema):
 
 
 STRICT_MAX = 20                 # Anthropic: "The maximum number of strict tools supported is 20"
+STRICT_OPTIONAL_MAX = 24        # ... and at most 24 optional parameters in all their schemas together
 STRICT_ORDER = ('propose', 'copilot', 'plan', 'simulate', 'ui', 'compute', 'look', 'read')   # whose input matters most
 
 
+def optional_count(schema) -> int:
+    """Optional parameters in a schema as the API counts them: every property not required, at every level."""
+    n = 0
+    if isinstance(schema, dict):
+        if schema.get('type') == 'object' and isinstance(schema.get('properties'), dict):
+            req = set(schema.get('required', ()))
+            n += sum(1 for k in schema['properties'] if k not in req)
+            n += sum(optional_count(v) for v in schema['properties'].values())
+        elif schema.get('type') == 'array':
+            n += optional_count(schema.get('items', {}))
+    return n
+
+
 def strict_names() -> set:
-    """The tools marked strict: closed schemas, the kinds whose input matters most first, then by name; at most
-    STRICT_MAX (the same set every turn, so the tools stay a cacheable prefix)."""
+    """The tools marked strict, within both of the API's limits: closed schemas, the kinds whose input matters most
+    first, then by name, each taken while the optional parameters still fit (a tool with too many, such as
+    propose_changes, is not strict). The same set every turn, so the tools stay a cacheable prefix."""
     rank = {k: i for i, k in enumerate(STRICT_ORDER)}
     closed = [t for t in T.TOOLS if _closed(T.input_schema(t))]
     closed.sort(key=lambda t: (rank.get(t.kind, len(rank)), t.name))
-    return {t.name for t in closed[:STRICT_MAX]}
+    out, budget = set(), STRICT_OPTIONAL_MAX
+    for t in closed:
+        n = optional_count(T.input_schema(t))
+        if len(out) < STRICT_MAX and n <= budget:
+            out.add(t.name)
+            budget -= n
+    return out
 
 
 def tool_defs() -> list:
@@ -178,6 +199,13 @@ def _message(e) -> str:
         return getattr(e, 'message', '') or str(e)
     rid = getattr(e, 'request_id', None) or (body.get('request_id') if isinstance(body, dict) else None)
     return f'{text}' + (f' (request {rid})' if rid else '')
+
+
+def _strict_refused(message: str) -> bool:
+    """A 400 about the strict tool schemas (too many strict tools, too many optional parameters, a schema the grammar
+    compiler does not take)."""
+    m = (message or '').lower()
+    return 'strict' in m or 'optional parameters' in m or 'grammar' in m
 
 
 def map_error(e) -> ApiError:
@@ -271,6 +299,19 @@ class ClaudeSession(BaseSession):
         return kw
 
     def _request(self, wrap, emit, cancel) -> Reply:
+        """One request; refused because of the strict tool schemas (a limit of the API's grammar compiler, which
+        may change), it is sent once more with no strict tools, and the conversation stays without them: every tool
+        input is checked against its schema before it runs either way."""
+        try:
+            return self._request_once(wrap, emit, cancel)
+        except ApiError as e:
+            if e.kind != 'bad_request' or not _strict_refused(e.message) or not any(t.get('strict') for t in self.tools):
+                raise
+        self.tools = [{k: v for k, v in t.items() if k != 'strict'} for t in self.tools]
+        emit_event(emit, 'status', 'Claude refused the strict tool schemas; asking again without them…')
+        return self._request_once(wrap, emit, cancel)
+
+    def _request_once(self, wrap, emit, cancel) -> Reply:
         if wrap and self.messages and self.messages[-1]['role'] == 'user' and \
                 not any(b.get('text') == WRAP_UP for b in self.messages[-1]['content'] if isinstance(b, dict)):
             # appended once, after the tool results of a message not sent yet: nothing sent before changes

@@ -84,9 +84,11 @@ def test_the_request_is_what_the_documentation_asks_for(srv, sample):
     assert names == sorted(names) and len(names) == len(T.TOOLS)           # a fixed order
     assert all(t['eager_input_streaming'] is True for t in body['tools'])
     strict = [t for t in body['tools'] if t.get('strict')]
-    assert len(strict) == CL.STRICT_MAX == 20                                # the API's limit (a 400 beyond it)
-    assert {'propose_changes', 'propose_plan', 'simulate_changes', 'add_design_log'} <= {t['name'] for t in strict}
-    assert not {'optimise_camera', 'propose_requirements'} & {t['name'] for t in strict}     # open schemas
+    assert len(strict) <= CL.STRICT_MAX == 20                                # the API's limits (a 400 beyond)
+    assert sum(CL.optional_count(t['input_schema']) for t in strict) <= CL.STRICT_OPTIONAL_MAX == 24
+    assert {'propose_plan', 'add_design_log', 'update_plan'} <= {t['name'] for t in strict}
+    assert not {'optimise_camera', 'propose_requirements', 'propose_changes'} & {t['name'] for t in strict}
+    assert len(strict) >= 15                                                 # the budget is used, not wasted
 
     def closed(o):
         if isinstance(o, dict):
@@ -205,9 +207,18 @@ def test_typed_errors_and_retries(srv, sample):
     ev = _run(s, _tc(sample))
     assert _errors(ev)[0]['kind'] == 'overloaded'
     srv.script += [srv.error(400, 'messages: roles must alternate')]
-    ev = _run(s, _tc(sample))
+    ev = ev_bad = _run(s, _tc(sample))
     assert _errors(ev)[0]['kind'] == 'bad_request' and 'alternate' in _errors(ev)[0]['message']
-    msg = _errors(ev)[0]['message']                                  # Anthropic's own sentence, not the SDK's dump
+    srv.script += [srv.error(400, 'tools.3.custom: this schema cannot be compiled to a grammar for strict mode'),
+                   srv.reply(text='Answered without strict tools.')]
+    s4 = _session()
+    ev = _run(s4, _tc(sample))                                       # a new limit of the API's: asked again without
+    assert ev[-1].data['ok'], _errors(ev)
+    assert any(e.kind == 'status' and 'without them' in e.data['text'] for e in ev)
+    assert any(t.get('strict') for t in srv.requests[-2]['tools']) and not any(t.get('strict') for t in
+                                                                                srv.requests[-1]['tools'])
+    assert not any(t.get('strict') for t in s4.tools)                 # and the conversation stays without them
+    msg = _errors(ev_bad)[0]['message']                              # Anthropic's own sentence, not the SDK's dump
     assert msg.startswith('messages: roles must alternate') and "{'type'" not in msg and 'Error code' not in msg
     s3 = CL.ClaudeSession(KEY, A.Settings('claude-opus-5-5'), url='http://127.0.0.1:9')
     s3.client = s3.client.with_options(max_retries=0, timeout=2.0)

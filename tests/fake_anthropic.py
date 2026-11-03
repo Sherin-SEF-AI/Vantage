@@ -26,6 +26,18 @@ MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5']
 _IDS = itertools.count(1)
 
 
+def _optional(schema) -> int:
+    """Optional parameters in a strict schema as the real API counts them (every property not required, nested)."""
+    n = 0
+    if isinstance(schema, dict):
+        if schema.get('type') == 'object' and isinstance(schema.get('properties'), dict):
+            req = set(schema.get('required', ()))
+            n += sum(1 for k in schema['properties'] if k not in req) + sum(map(_optional, schema['properties'].values()))
+        elif schema.get('type') == 'array':
+            n += _optional(schema.get('items', {}))
+    return n
+
+
 class FakeAnthropic:
     def __init__(self, key='sk-ant-test-key', models=None):
         self.key = key
@@ -209,6 +221,15 @@ class FakeAnthropic:
                         'message': f'Too many strict tools ({n_strict}). The maximum number of strict tools supported '
                                    'is 20. Try reducing the number of tools marked as strict.'},
                         'request_id': 'req_fake'})
+                    return
+                n_opt = sum(_optional(t.get('input_schema')) for t in body.get('tools') or ()
+                            if isinstance(t, dict) and t.get('strict'))
+                if n_opt > 24:                             # the real API's second limit, word for word
+                    self._json(400, {'type': 'error', 'error': {
+                        'type': 'invalid_request_error',
+                        'message': f'Schemas contains too many optional parameters ({n_opt}), which would make '
+                                   'grammar compilation inefficient. Reduce the number of optional parameters in your '
+                                   'tool schemas (limit: 24).'}, 'request_id': 'req_fake'})
                     return
                 bad = fake.check_images(body)
                 if bad:
