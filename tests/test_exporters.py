@@ -27,6 +27,10 @@ from PyQt6.QtCore import QBuffer, QIODevice  # noqa: E402
 from PyQt6.QtGui import QColor, QGuiApplication, QImage  # noqa: E402
 
 from vantage.core import exporters as ex  # noqa: E402
+
+# the formats written here: the research and AV-stack bridges (exporters._BRIDGES) have their own tests in
+# tests/test_research_exports.py and the bridged modules' test files
+CLASSIC = [f for f in ex.FORMATS if f.id not in ex._BRIDGES]
 from vantage.core.analysis import Engine  # noqa: E402
 from vantage.core.lens import Lens, r_of_theta, resolve  # noqa: E402
 from vantage.core.mathutil import BODY_TO_OPTICAL, rot_zyx  # noqa: E402
@@ -87,7 +91,7 @@ def exported(sample, images, tmp_path_factory, qapp):
         mp.setattr(ex, '_now', lambda: FIXED_NOW)
         from vantage import workdir
         mp.setattr(workdir, 'default', lambda: str(out / 'work'))   # (no campaign of the user's working folder)
-        paths = ex.export([f.id for f in ex.FORMATS], p, res, ex.ExportOptions(out_dir=str(out), images=images),
+        paths = ex.export([f.id for f in CLASSIC], p, res, ex.ExportOptions(out_dir=str(out), images=images),
                           progress=steps.append)
     return out, paths, steps
 
@@ -98,16 +102,16 @@ def _cams(p):
 
 # ----------------------------------------------------------------------------- registry
 def test_formats_registry():
-    ids = [f.id for f in ex.FORMATS]
+    ids = [f.id for f in CLASSIC]
     assert len(ids) == len(set(ids)) == 53
     # written only when named (batch --export without --formats leaves them out): an experiment runs for minutes,
     # the CARLA rig's remap tables are tens of MB, a campaign's analysis and the detector's evaluation take minutes, the
     # calibration coach simulates technicians for seconds per camera (a live tool), the gradient refinement runs 10–40 s
     # and the log replay needs a recorded drive and minutes
-    assert [f.id for f in ex.FORMATS if not f.default] == ['calib_coach', 'diff_optim', 'experiment', 'sim_campaign',
+    assert [f.id for f in CLASSIC if not f.default] == ['calib_coach', 'diff_optim', 'experiment', 'sim_campaign',
                                                             'detection_quality', 'log_replay', 'sim_rig']
-    assert {f.group for f in ex.FORMATS} == set(ex.GROUPS)
-    for f in ex.FORMATS:
+    assert {f.group for f in CLASSIC} | {'Research', 'AV stack'} == set(ex.GROUPS)
+    for f in CLASSIC:
         assert f.kind in ('text', 'binary')
         assert f.label and f.ext_label
     with pytest.raises(ValueError):
@@ -551,7 +555,7 @@ def test_images_written_verbatim(sample, exported, images):
 def test_preview_text_matches_export(sample, images, tmp_path):
     p, res = sample
     opts = _opts(tmp_path / 'exports' / 'v3', images)
-    for f in ex.FORMATS:
+    for f in CLASSIC:
         rel, text, size = ex.preview(f.id, p, res, opts)
         assert rel.startswith('exports/v3/'), rel
         if f.kind != 'text':
@@ -628,7 +632,7 @@ def test_exports_without_analysis_result(sample, tmp_path, qapp, monkeypatch):
     from vantage import workdir
     monkeypatch.setattr(workdir, 'default', lambda: str(tmp_path / 'work'))   # (no campaign of the user's own)
     p, _ = sample
-    ids = [f.id for f in ex.FORMATS if f.group not in ('Images', 'Surround view')]
+    ids = [f.id for f in CLASSIC if f.group not in ('Images', 'Surround view')]
     paths = ex.export(ids, p, None, ex.ExportOptions(out_dir=str(tmp_path)))
     with pytest.raises(ValueError, match='analysis result'):
         ex.export(['bev_lut'], p, None, ex.ExportOptions(out_dir=str(tmp_path / 'lut')))
@@ -653,7 +657,7 @@ def test_exports_without_analysis_result(sample, tmp_path, qapp, monkeypatch):
 def test_empty_variant(tmp_path, qapp):
     from vantage.core.samples import blank_project
     b = blank_project()
-    ids = [f.id for f in ex.FORMATS if f.group not in ('Images', 'Surround view')]
+    ids = [f.id for f in CLASSIC if f.group not in ('Images', 'Surround view')]
     ex.export(ids, b, None, ex.ExportOptions(out_dir=str(tmp_path)))
     assert json.loads((tmp_path / 'extrinsics.json').read_text('utf-8'))['cameras'] == []
     assert len(ET.parse(tmp_path / 'vantage_cameras.urdf').getroot().findall('link')) == 1

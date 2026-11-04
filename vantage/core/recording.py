@@ -401,6 +401,7 @@ def to_doc(res: RecordingResult, project=None) -> dict:
         'units': 'decimal: Mbit/s = 1e6 bit/s, MB = 1e6 bytes, GB = 1e9 bytes, TB = 1e12 bytes',
         'settings': dict(st.to_dict(), raw_bits_per_pixel=res.raw_bpp),
         'assumptions': ASSUMPTIONS,
+        'hardware': _hardware_sources(project),   # the selected project hardware the figures came from
         'sensors': [_row_doc(r, t['mbps']) for r in res.rows],
         'other': {'gnss_imu_can_mbit_s': _r(t['extra_mbps']), 'container_overhead_mbit_s': _r(t['overhead_mbps'])},
         'totals': {'data_mbit_s': _r(t['mbps']), 'data_mb_s': _r(t['mb_s']), 'gb_per_hour': _r(t['gb_h']),
@@ -455,3 +456,11 @@ def export(res: RecordingResult, project, out_dir) -> list[str]:
             fh.write(data)
         paths.append(path)
     return paths
+
+
+def _hardware_sources(project) -> dict:
+    """{role: source} of the selected custom rig hardware whose figures this study used (core/hardware.py)."""
+    if project is None:
+        return {}
+    from .hardware import sources
+    return sources(project)

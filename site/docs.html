@@ -39,6 +39,10 @@
     <a href="#conventions">Conventions</a>
     <p>Design</p>
     <a href="#import">Importing a vehicle</a>
+    <a href="#vehicle-library">Vehicle library</a>
+    <a href="#research-tools">Research tools in 3D</a>
+    <a href="#custom-hardware">Custom hardware</a>
+    <a href="#research-bridges">AV research bridges</a>
     <a href="#placement">Placing cameras</a>
     <a href="#camera-library">Camera library</a>
     <a href="#rig">Rig parts</a>
@@ -351,6 +355,46 @@ vantage project.vantage            # open a project</code></pre>
         (W × H), the incidence to the ground, the lens's dr/dθ at the image point, and the worst-case shift in cm
         when that camera's extrinsics drift 0.2°. Up to four probes stay; they update when a camera moves.</li>
     </ul>
+
+    <h3 id="custom-hardware">Custom hardware</h3>
+    <p><b>Vehicle ▸ New custom hardware…</b> (and <b>Camera ▸ New custom camera module…</b>, or the Library panel's
+      <b>Hardware</b> list) builds an item from its datasheet. The items are camera modules, lenses, lidars, radars,
+      GNSS antennas, GNSS/INS units and IMUs, plus rig hardware: the compute unit, recorder, network switch, time server
+      and DC-DC converter. The form shows exactly the fields Vantage reads, each with its unit, range, a mark when it is
+      required, and the studies that use it. A lidar, for example, needs its channels, beam angles, azimuth step, spin
+      rate and range; its point rate is checked against them. Validation runs as you type: errors stop <b>Add</b>,
+      warnings do not. Save a blank spec sheet as JSON, fill it from the datasheet, and load it back, or start from a
+      library item. A selected compute unit, recorder, switch, time server or converter feeds the power, recording,
+      link-budget and clock-tree studies, which then name it as the source. A 3,000 MB/s recorder, for example, clears
+      the 8-camera templates' recording critical issue. Each addition or selection is one undo step.</p>
+
+    <h3 id="research-bridges">Bridges to the AV research stack</h3>
+    <p><b>Export ▸ Research</b>, <b>Export ▸ AV research stack</b> and <b>Export ▸ Stream to Rerun / Foxglove</b>
+      (also <code>--export &lt;id&gt;</code>; none is in the default export set):</p>
+    <table>
+      <tr><th>Format</th><th>id</th><th>What it writes</th></tr>
+      <tr><td>Plücker rays</td><td><code>plucker_rays</code></td><td>Per camera, per pixel at stride 16: [d, o × d] from the exact lens, incidence, ground range, ego mask, validity (float16 NPZ + manifest)</td></tr>
+      <tr><td>Occupancy voxel ray density</td><td><code>occupancy_density</code></td><td>200 × 200 × 16 voxels of 0.4 m: cameras seeing each, feature cells at stride 16, expected lidar returns, best-pair depth σ</td></tr>
+      <tr><td>Virtual pinhole / canonical camera</td><td><code>rectify_maps</code>, <code>rectify_canonical</code></td><td>OpenCV K and remap tables per camera; one shared canonical camera every camera fills</td></tr>
+      <tr><td>Cross-rig domain gap</td><td><code>rig_gap</code></td><td>The exported variant against every other: components, total, camera matching, findings, figure</td></tr>
+      <tr><td>Calibration stress test</td><td><code>stress_test</code></td><td>A seeded drift/suspension/knock/vibration schedule, its effects, and perturbed nuScenes/Kalibr/KITTI calibrations</td></tr>
+      <tr><td>3DGS / 3DGUT / Nerfstudio</td><td><code>gsplat_bridge</code></td><td><code>transforms.json</code> (OPENCV_FISHEYE), a 3DGRUT COLMAP model and NCore sensors, rig timing</td></tr>
+      <tr><td>Foxglove scene</td><td><code>foxglove_mcap</code></td><td>MCAP: SceneUpdate, FrameTransforms, CameraCalibration, ego masks, lidar rings</td></tr>
+      <tr><td>Autoware</td><td><code>stack_autoware</code></td><td><code>sensors_calibration.yaml</code>, <code>sensor_kit_calibration.yaml</code>, camera infos</td></tr>
+      <tr><td>NAVSIM / HUGSIM</td><td><code>stack_navsim</code>, <code>stack_hugsim</code></td><td>Camera infos in nuPlan slots and a <code>SensorConfig</code>; a HUGSIM camera config</td></tr>
+      <tr><td>MMDetection3D</td><td><code>stack_mmdet3d</code></td><td>A multi-view dataset config, v2 infos, ego masks and ego-free crop ROIs</td></tr>
+      <tr><td>OpenPCDet / LeRobot</td><td><code>stack_openpcdet</code>, <code>stack_lerobot</code></td><td>A custom lidar dataset config; <code>meta/info.json</code> features with a calibration sidecar</td></tr>
+    </table>
+    <p><b>Analysis ▸ Compare rigs…</b> scores the geometric shift between two variants, a reference rig or a nuScenes or
+      KITTI calibration folder. The Rig Contrastive Distance is built from six components: viewing-direction coverage,
+      resolution, camera heights and depressions, fields of view, topology and ground seen. It is an index with a
+      heuristic transfer band, not a predicted mAP. The sample's data rig against nuScenes scores 0.52, mostly because
+      of camera height and depression.</p>
+    <p><b>File ▸ New from template ▸ Reference rigs</b> opens a published AV rig on its library vehicle: nuScenes (its
+      published calibration), KITTI and the Tesla HW3 camera suite (estimated positions, stated ranges). Waymo (the
+      Open Dataset and the 5th- and 6th-gen Driver), Argoverse 2, Mobileye SuperVision and Wayve list their published
+      counts and roles; with no published positions, they are not placed. Every figure is marked stated, measured or
+      estimated, with its source.</p>
 
     <h2 id="placement">Placing cameras</h2>
     <ul>

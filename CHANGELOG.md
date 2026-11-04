@@ -116,8 +116,69 @@ templates give way to a library of real vehicles.
 - **Probe tool (P):** a pedestrian, car or ChArUco board with rays to every camera that sees it. Per camera it gives
   the box in pixels, the incidence, dr/dθ and the shift a 0.2° extrinsic drift makes.
 
+**Custom hardware** (Vehicle ▸ New custom hardware…, Camera ▸ New custom camera module…, the Library panel's
+Hardware list)
+
+- **What you can add:** camera modules, lenses, lidars, radars, GNSS antennas, GNSS/INS units and IMUs, and rig
+  hardware: the compute unit, recorder, network switch, time server and DC-DC converter.
+- **The form:** built from a registry of exactly the fields Vantage reads. Each field has a unit, a range, whether it
+  is required, and the studies that use it.
+- **Checks:** live validation, with consistency checks such as a lidar's point rate against its channels, azimuth
+  step and spin rate, or a camera's pixel pitch against its optical format.
+- **Spec sheets:** save a blank sheet as JSON, fill it from a datasheet, load it back, or start from a library item.
+- **Rig hardware drives the studies:** the compute's links and power, the recorder's write speed and capacity, the
+  switch's uplink and PTP figures, the time server's oscillator, and the converter's rating, efficiency and bus. These
+  replace the studies' generic figures, and their sources are named. With nothing selected, everything is as before.
+
+**Bridges to the AV research stack** (Export ▸ Research, Export ▸ AV research stack; none in the default
+export set)
+
+- **Plücker rays:** for each camera, per pixel at stride 16 (or any stride), the ray direction and moment (d, o × d),
+  from the exact lens model, with the incidence to the ground, the ground range, the ego mask and validity, as
+  float16 NPZ files and a manifest stating the conventions.
+- **Occupancy voxel ray density:** an Occ3D-style grid (200 × 200 × 16 voxels of 0.4 m). Per voxel it gives the cameras
+  that see it, backbone feature cells (feature-stride starvation), expected lidar returns per sweep, and the best
+  camera pair's depth σ. On the data rig, 50 % of voxels are feature-starved at stride 16 and 1.8 % are lidar-sparse.
+- **Virtual canonical cameras:** for each fisheye, a virtual pinhole or cylindrical camera, or one shared canonical
+  camera every camera fills, with OpenCV remap tables. The virtual centre keeps the lens's own resolution, so there
+  is no upsampling.
+- **Cross-rig domain gap** (Analysis ▸ Compare rigs…): a Rig Contrastive Distance between two variants, a reference
+  rig, or a nuScenes or KITTI calibration folder. Its components are viewing-direction coverage, resolution, camera
+  heights and depressions, fields of view, topology and ground seen; it also matches cameras. It is an index of
+  geometric shift with a heuristic transfer band, not a predicted mAP.
+- **Calibration stress tests:** seeded extrinsic schedules (thermal drift, suspension pitch and roll from the
+  project's own suspension model, single-camera knocks, vibration) at mild, moderate or severe levels. They come with
+  each one's ground error, pixel shift and BEV cell shift, and perturbed nuScenes, Kalibr and KITTI calibration sets
+  for out-of-distribution evaluation.
+- **3DGS / 3DGUT / Nerfstudio:** Nerfstudio `transforms.json` (OPENCV_FISHEYE), a 3DGRUT COLMAP model and NCore sensor
+  parameters, and the rig's timing (rolling-shutter readout, exposure, lidar beam tables) for novel-rig log replay.
+- **AV stack:** Autoware `sensors_calibration.yaml` and `sensor_kit_calibration.yaml`; NAVSIM camera infos and
+  `SensorConfig`; a HUGSIM camera config; an MMDetection3D multi-view config with ego masks and ego-free crop ROIs; an
+  OpenPCDet dataset config; a LeRobot `info.json` with a calibration sidecar. Each schema was read from the project's
+  own repository at a cited commit.
+- **Stream to Rerun / Foxglove** (Export ▸ Stream to Rerun / Foxglove):
+  - the scene as a Foxglove MCAP file: frustums with the true fisheye field, footprints, lidar rings, radar fields,
+    the blind volume, ego masks, camera calibrations and TF;
+  - a live Foxglove server (foxglove-sdk);
+  - sending to Rerun (rerun-sdk).
+  Vantage says what to `pip install` when a package is missing.
+- **Reference rigs** (File ▸ New from template ▸ Reference rigs):
+  - nuScenes (measured from its published calibration);
+  - KITTI (measured relative poses);
+  - the Tesla HW3 camera suite (estimated positions, stated ranges) on the library vehicles;
+  - Waymo (Open Dataset, 5th- and 6th-gen Driver), Argoverse 2, Mobileye SuperVision and Wayve: counts and roles where
+    published, not placed.
+  Every figure is marked stated, measured or estimated, with its source.
+
 **Known limits**
 
+- **Bridges:**
+  - In the domain gap, directions are seen from each camera's centre (no parallax), and a rig read from a folder has
+    no body to hide its views.
+  - Occupancy treats free space as unobstructed apart from the vehicle.
+  - Rerun's camera is a pinhole, with the true fisheye field drawn beside it.
+  - HUGSIM and NAVSIM take fisheyes as pinholes with the same focal length.
+  - Autoware's `base_link` height is written on the ground; see its README.
 - **Research tools:**
   - The BEV map counts a cell for a camera when its centre is visible.
   - The motion warp keeps the body level (no pitch or roll) and uses one readout figure for every camera.

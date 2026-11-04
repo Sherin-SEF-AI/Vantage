@@ -252,7 +252,8 @@ def _detection_names(p, v):
                                                'detection_ranges.csv', 'detection_rig.csv', 'detection_quality.png')]
 
 
-GROUPS = ['Documents', 'Extrinsics', 'Calibration and robotics', 'Datasets', 'Surround view', 'Images', 'Mount points']
+GROUPS = ['Documents', 'Extrinsics', 'Calibration and robotics', 'Datasets', 'Research', 'AV stack', 'Surround view',
+          'Images', 'Mount points']
 
 FORMATS: list[ExportFormat] = [
     ExportFormat('mount_sheet_pdf', 'Documents', 'Mount sheet', 'PDF', lambda p, v: 'mount-sheet.pdf', 'binary'),
@@ -372,6 +373,50 @@ FORMATS: list[ExportFormat] = [
     ExportFormat('bev_png', 'Images', "Bird's-eye", 'PNG', lambda p, v: 'birds-eye.png', 'binary'),
     ExportFormat('camera_views_png', 'Images', 'All camera views', 'PNG ×N',
                  lambda p, v: [f'views/{safe_tags(v)[c.uid]}.png' for c in _view_cams(v)], 'binary', multi=True),
+    # research and AV-stack bridges: modules that write their own folder (_BRIDGES); not in the default set
+    ExportFormat('plucker_rays', 'Research', 'Plücker rays per pixel (stride 16)', 'NPZ ×N, JSON',
+                 lambda p, v: ['plucker/plucker_manifest.json'] + [f'plucker/plucker_{t}.npz'
+                                                                   for t in safe_tags(v).values()],
+                 'binary', multi=True, default=False),
+    ExportFormat('occupancy_density', 'Research', 'Occupancy voxel ray density (Occ3D grid)', 'NPZ, JSON, PNG',
+                 lambda p, v: ['occupancy/occupancy_density.npz', 'occupancy/occupancy_density.json'], 'binary',
+                 multi=True, default=False),
+    ExportFormat('rectify_maps', 'Research', 'Virtual pinhole per camera (remap tables)', 'YAML, NPZ ×N',
+                 lambda p, v: [f'rectify/{t}_virtual.yaml' for t in safe_tags(v).values()], 'binary', multi=True,
+                 default=False),
+    ExportFormat('rectify_canonical', 'Research', 'One canonical camera for every camera (remap tables)', 'YAML, NPZ ×N',
+                 lambda p, v: [f'rectify_canonical/{t}_virtual.yaml' for t in safe_tags(v).values()], 'binary',
+                 multi=True, default=False),
+    ExportFormat('rig_gap', 'Research', 'Cross-rig domain gap against the other variants', 'JSON, PNG',
+                 lambda p, v: [f'rig_gap/{_slug(o.name)}/rig_gap.json' for o in p.variants
+                               if o.uid != v.uid and o.cameras], 'binary', multi=True, default=False),
+    ExportFormat('stress_test', 'Research', 'Calibration stress test (moderate): schedule + perturbed calibrations',
+                 'JSON, CSV, MD', lambda p, v: ['stress/stress_schedule.json', 'stress/stress_schedule.csv',
+                                                'stress/stress_report.md'], 'binary', multi=True, default=False),
+    ExportFormat('gsplat_bridge', 'Research', '3DGS / 3DGUT / Nerfstudio rig (cameras, timing, lidar beams)',
+                 'JSON, TXT', lambda p, v: ['gsplat/rig_timing.json', 'gsplat/nerfstudio/transforms.json',
+                                            'gsplat/3dgut/ncore_sensors.json'], 'binary', multi=True, default=False),
+    ExportFormat('stack_autoware', 'AV stack', 'Autoware sensor kit calibration', 'YAML',
+                 lambda p, v: ['autoware/vantage_sensor_kit_description/config/sensors_calibration.yaml',
+                               'autoware/vantage_sensor_kit_description/config/sensor_kit_calibration.yaml',
+                               'autoware/README.md'], 'text', multi=True, default=False),
+    ExportFormat('stack_navsim', 'AV stack', 'NAVSIM cameras and sensor config', 'JSON, PY',
+                 lambda p, v: ['navsim/vantage_cams.json', 'navsim/vantage_sensor_config.py'], 'text', multi=True,
+                 default=False),
+    ExportFormat('stack_hugsim', 'AV stack', 'HUGSIM camera config', 'YAML', lambda p, v: ['hugsim/vantage_camera.yaml'], 'text',
+                 multi=True, default=False),
+    ExportFormat('stack_mmdet3d', 'AV stack', 'MMDetection3D multi-view config, ego masks and crops', 'PY, JSON, PNG',
+                 lambda p, v: ['mmdet3d/vantage_nus_multiview.py', 'mmdet3d/vantage_rig_infos.json'], 'binary',
+                 multi=True, default=False),
+    ExportFormat('stack_openpcdet', 'AV stack', 'OpenPCDet dataset config (lidar)', 'YAML, JSON',
+                 lambda p, v: (['openpcdet/vantage_custom_dataset.yaml', 'openpcdet/vantage_lidar.json']
+                               if any(s.kind == 'lidar' for s in v.sensors) else ['openpcdet/NOT_WRITTEN.txt']),
+                 'text', multi=True, default=False),
+    ExportFormat('stack_lerobot', 'AV stack', 'LeRobot dataset features and calibration sidecar', 'JSON',
+                 lambda p, v: ['lerobot/meta/info.json', 'lerobot/meta/vantage_calibration.json'], 'text',
+                 multi=True, default=False),
+    ExportFormat('foxglove_mcap', 'Research', 'Foxglove scene (frustums, blind volume, ego masks, TF)', 'MCAP',
+                 lambda p, v: 'foxglove/vantage_scene.mcap', 'binary', default=False),
     ExportFormat('dxf', 'Mount points', 'Mount points', 'DXF', lambda p, v: 'mount-points.dxf', 'text'),
     ExportFormat('step', 'Mount points', 'Mount points', 'STEP', lambda p, v: 'mount-points.step', 'text'),
 ]
@@ -3006,8 +3051,76 @@ def _render(fmt_id: str, ctx: _Ctx) -> list:
                           when=ctx.now, cache=ctx.meta)
 
 
+# format id -> (core module, function, folder, keyword arguments): research and AV-stack bridges that write their own
+# files (into a temporary folder here, then handed back like every other format's)
+_BRIDGES = {
+    'plucker_rays': ('plucker', 'export_plucker', 'plucker', {'stride': 16, 'dtype': 'float16', 'frame': 'vehicle'}),
+    'occupancy_density': ('occupancy', 'export_occupancy', 'occupancy', {}),
+    'rectify_maps': ('rectify', lambda m, q, e, td: m.export_rectify(q, td, mode='pinhole'), 'rectify', {}),
+    'rectify_canonical': ('rectify', lambda m, q, e, td: m.export_rectify(q, td, mode='canonical'), 'rectify_canonical',
+                          {}),
+    'rig_gap': ('rig_gap', lambda m, q, e, td: _rig_gap_all(m, q, e, td), 'rig_gap', {}),
+    'stress_test': ('stress', lambda m, q, e, td: m.export_stress(q, e, td, m.StressSettings.from_dict(
+        {'severity': 'moderate'})), 'stress', {}),
+    'gsplat_bridge': ('gsplat_bridge', lambda m, q, e, td: m.export_gsplat_bridge(q, e, td), 'gsplat', {}),
+    **{f'stack_{t}': ('stack_exports', (lambda t_: lambda m, q, e, td: m.EXPORTERS[t_](q, e, td))(t), t,
+                      {'_own_folder': True})        # these write their own <target>/ folder
+       for t in ('autoware', 'navsim', 'hugsim', 'mmdet3d', 'openpcdet', 'lerobot')},
+    'foxglove_mcap': ('viz_bridge', lambda m, q, e, td: m.export_foxglove_mcap(q, e, os.path.join(td, 'vantage_scene.mcap')),
+                      'foxglove', {}),
+}
+
+
+def _rig_gap_all(m, q, eng, td):
+    """The exported variant against every other variant of the project (with sensors or cameras): one folder each."""
+    a = m.rig_from_variant(q, q.variant, engine=eng)
+    for v in q.variants:
+        if v.uid == q.variant.uid or not v.cameras:
+            continue
+        b = m.rig_from_variant(q, v, engine=eng)
+        m.export_rig_gap(a, b, os.path.join(td, _slug(v.name)))
+
+
+def _bridge_files(fmt_id: str, ctx: _Ctx) -> list:
+    """[(relative path, bytes)] of a bridge format: its module writes into a temporary folder, the files come back
+    under the format's folder; the exported variant is made active on a shallow copy of the project."""
+    import copy
+    import importlib
+    import tempfile
+    from .analysis import Engine
+    mod, fn, sub, kw = _BRIDGES[fmt_id]
+    kw = dict(kw)
+    own = kw.pop('_own_folder', False)
+    m = importlib.import_module(f'.{mod}', __package__)
+    q = copy.copy(ctx.project)
+    q.active_uid = ctx.variant.uid
+    eng = ctx.opts.engine or Engine()
+    out = []
+    with tempfile.TemporaryDirectory(prefix='vantage-export-') as td:
+        try:
+            if callable(fn):
+                fn(m, q, eng, td, **kw)
+            else:
+                getattr(m, fn)(q, eng, td, **kw)
+        except ValueError as e:              # the format does not apply to this variant (OpenPCDet without a lidar)
+            return [(f'{sub}/NOT_WRITTEN.txt', f'{format_by_id(fmt_id).label}: not written for '
+                                               f'{ctx.variant.name}: {e}\n'.encode('utf-8'))]
+        for root, _, files in os.walk(td):
+            for f in sorted(files):
+                full = os.path.join(root, f)
+                rel = os.path.relpath(full, td).replace(os.sep, '/')
+                with open(full, 'rb') as fh:
+                    out.append((rel if own else f'{sub}/{rel}', fh.read()))
+    if not out:
+        out.append((f'{sub}/NOT_WRITTEN.txt', f'{format_by_id(fmt_id).label}: nothing to write for '
+                                              f'{ctx.variant.name}.\n'.encode('utf-8')))
+    return sorted(out)
+
+
 def _render_files(fmt_id: str, ctx: _Ctx) -> list:
     """[(relative path, bytes)] for one format."""
+    if fmt_id in _BRIDGES:
+        return _bridge_files(fmt_id, ctx)
     fmt = format_by_id(fmt_id)
     name = lambda: _names(fmt, ctx.project, ctx.variant)[0]
     t = lambda s: s.encode('utf-8')

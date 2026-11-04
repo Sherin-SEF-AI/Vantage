@@ -670,6 +670,25 @@ Everything here is computed by `core/research_maps.py` and `core/motion_footprin
 - **Probe tool:** a pedestrian, car box or ChArUco board. For each camera it gives the box in pixels, the incidence,
   dr/dθ and the worst ground shift for a 0.2° extrinsic drift.
 
+### 8.10 Bridges to the AV research stack
+
+The export registry's `_BRIDGES` connect modules that write their own folders; each is a normal format
+(`--export <id>`) and none is in the default set:
+
+| Module | Export ids |
+|---|---|
+| `core/plucker.py` | `plucker_rays` |
+| `core/occupancy.py` | `occupancy_density` |
+| `core/rectify.py` | `rectify_maps`, `rectify_canonical` |
+| `core/rig_gap.py` | `rig_gap`, and Analysis ▸ Compare rigs |
+| `core/stress.py` | `stress_test` |
+| `core/gsplat_bridge.py` | `gsplat_bridge` |
+| `core/viz_bridge.py` | `foxglove_mcap`, plus Stream to Rerun / Foxglove |
+| `core/stack_exports.py` | `stack_autoware`, `stack_navsim`, `stack_hugsim`, `stack_mmdet3d`, `stack_openpcdet`, `stack_lerobot` |
+
+`core/reference_rigs.py` holds published AV layouts. Every figure is stated, measured or estimated, with its source;
+only rigs with positions are placed.
+
 ## 9. Surround view: bird's-eye, bowl and parking guidelines
 
 ### 9.1 Bird's-eye stitching and remap tables

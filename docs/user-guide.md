@@ -300,6 +300,25 @@ Each entry gives where to find the feature, what it answers and an example. *Ref
 
 > **Example.** On the data rig, set **Heat map ▸ BEV features**: at stride 16, 0.8 % of the grid within 10 m is starved, but 78 % within 25 m. Press <kbd>P</kbd> and click 5 m ahead. F's card gives the pedestrian's box in pixels and how far it would move if F drifted 0.2°. Type 15 m/s in the toolbar to see where each camera really samples the ground. [Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#research-tools)
 
+### Custom hardware
+
+**Where:** **Vehicle ▸ New custom hardware…**, **Camera ▸ New custom camera module…**, the Library panel's **Hardware** list. Add a camera, lens, lidar, radar, GNSS/INS, IMU, compute unit, recorder, switch, time server or converter from its datasheet. The form asks only for what Vantage uses, says which study uses each figure, and checks the figures as you type.
+
+> **Example.** Open the Sprinter template: its eight cameras need more than the default recorder writes. In **New custom hardware…** choose *Recorder*, enter 3000 MB/s and 16 TB, add it, and select it for the rig. The recording study's critical issue clears, and the power budget gains its watts. [Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#custom-hardware)
+
+### Bridges to the AV research stack
+
+**Where:** **Export ▸ Research**, **Export ▸ AV research stack**, **Export ▸ Stream to Rerun / Foxglove**, **Analysis ▸ Compare rigs…**, **File ▸ New from template ▸ Reference rigs**. Vantage exports:
+
+- per-pixel Plücker rays, occupancy voxel ray density and virtual canonical cameras;
+- calibration stress tests and 3DGS / Nerfstudio rigs;
+- configs for Autoware, NAVSIM, HUGSIM, MMDetection3D, OpenPCDet and LeRobot;
+- the scene to Foxglove or Rerun.
+
+It also scores the domain gap between your rig and nuScenes, KITTI or Tesla's camera suite.
+
+> **Example.** On the data rig, **Analysis ▸ Compare rigs…** against *Reference · Motional (nuTonomy) nuScenes* gives 0.52, a large band, mostly from camera height and depression. A detector trained on nuScenes would see these images from a very different angle. [Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#research-bridges)
+
 ### Vehicle library
 
 **Where:** the Library panel's **Vehicles** list; **File ▸ New from template**; the start window. There are 13 real vehicles with the dimensions their makers state and their sources: the nuScenes Renault ZOE, the KITTI Passat B6 Variant, the Lincoln MKZ, Toyota Prius and Sienna, Chrysler Pacifica Hybrid, Hyundai IONIQ 5, Kia e-Niro, Lexus RX 450h, Tesla Model 3, a Sprinter van, the Tata Nexon.ev and a Cascadia tractor with a 53 ft trailer. A new project gets its family's body at the stated length, width, height, wheelbase, overhangs, track and wheel size. The body is shaped, with glass, alloy rims, lamps, black trim and mirror pods. A figure not stated is drawn and named in the design log. **View ▸ Overlays ▸ Range rings** (<kbd>Alt</kbd>+<kbd>R</kbd>) marks 1, 2, 5 and 10 m from the body on the ground. Three vehicles (MKZ, Prius, RX 450h) have freely licensed 3D models that Vantage downloads from their publishers and opens in the import wizard, with the stated figures for the spec check.

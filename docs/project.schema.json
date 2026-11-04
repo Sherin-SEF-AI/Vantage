@@ -31,6 +31,16 @@
     "units": {"enum": ["m", "mm"], "description": "Display length unit (the file always stores metres)."},
     "streams": {"type": "object", "description": "Live stream source per camera tag: RTSP/HTTP URL (never with a password: passwords live in the user's private store), a device, a file or 'synthetic'.", "additionalProperties": {"type": "string"}},
     "fleet": {"$ref": "#/$defs/fleet"},
+    "hardware": {
+      "type": "object",
+      "description": "Custom rig hardware (core/hardware.py): items per role, the selected item per role, and the settings each selection replaced.",
+      "properties": {
+        "items": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": {"type": "object"}}},
+        "selected": {"type": "object", "additionalProperties": {"type": "string"}},
+        "replaced": {"type": "object", "additionalProperties": {"type": "object"}}
+      },
+      "additionalProperties": false
+    },
     "log": {"type": "array", "description": "The last 400 entries of the project's history: [time (s since 1970 UTC), kind, text].", "items": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": ["number", "string"]}}}
   },
   "$defs": {

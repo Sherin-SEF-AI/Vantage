@@ -240,6 +240,80 @@
       </div>
     </article>
 
+    <article class="feature flip" id="vehicles">
+      <div class="text">
+        <div class="eyebrow">Real vehicles and reference rigs</div>
+        <h3>Thirteen real vehicles, and the rigs of nuScenes, KITTI and Tesla</h3>
+        <p>Templates are real vehicles at their makers’ stated dimensions, with sources: the nuScenes Renault ZOE, the KITTI Passat, the Lincoln MKZ, Prius, Pacifica, IONIQ 5, RX 450h, Sienna, Model 3, a Sprinter van, the Tata Nexon.ev and a Cascadia tractor. Their bodies are shaped, with glass, alloy rims, lamps and trim. Published AV sensor layouts open as reference rigs.</p>
+        <ul>
+          <li>Freely licensed 3D models (MKZ, Prius, RX 450h) download from their publishers on request and import with the stated figures for the spec check.</li>
+          <li>Reference rigs: nuScenes (from its published calibration), KITTI and the Tesla HW3 camera suite. Waymo, Argoverse 2, Mobileye and Wayve are listed with their published counts. Every figure is marked stated, measured or estimated.</li>
+          <li>Analysis ▸ Compare rigs scores the geometric gap between your rig and any of them. The sample’s data rig against nuScenes scores 0.52, mostly from camera height and depression.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <img src="media/vehicle-library.jpg" alt="The Lexus RX 450h template body with glass, rims and lamps, its six cameras and their fields on the ground" loading="lazy" width="1920" height="1080">
+        </div>
+      </div>
+    </article>
+
+    <article class="feature" id="research-tools">
+      <div class="text">
+        <div class="eyebrow">Research tools in the 3D view</div>
+        <h3>See where a BEV network starves, and what each camera sees</h3>
+        <p>The 3D view reads like a perception lab. A live legend and metrics card follows every drag. A through-the-lens picture shows the hovered camera’s view with the cursor as a crosshair. Heat maps show what a BEV transformer and a stereo pair get from your rig.</p>
+        <ul>
+          <li>BEV features: backbone feature cells per 0.5 m pillar to 50 m at stride 16. On the sample, 78 % of the grid within 25 m is starved.</li>
+          <li>Stereo σ: the triangulation depth error of the best camera pair in every overlap.</li>
+          <li>The probe tool pins a pedestrian, car or ChArUco board. Per camera it gives the box in pixels, the incidence, dr/dθ and the shift a 0.2° drift makes.</li>
+          <li>Lidar–camera fusion density, lidar timing wedges against each camera’s exposure, and footprints warped by speed and yaw rate.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <img src="media/research-probe.jpg" alt="A pedestrian probe pinned beside the car with its rays to the cameras that see it and a card listing each camera’s box in pixels, incidence and drift shift" loading="lazy" width="1920" height="1080">
+        </div>
+      </div>
+    </article>
+
+    <article class="feature flip" id="research-bridges">
+      <div class="text">
+        <div class="eyebrow">Bridges to the AV research stack</div>
+        <h3>From rig design to BEV training, simulation and the car</h3>
+        <p>Export what perception and learning teams consume. Every external schema was read from the project’s own repository.</p>
+        <ul>
+          <li>Plücker rays per pixel from the exact fisheye lens, occupancy voxel ray density on an Occ3D grid, and virtual canonical cameras with remap tables.</li>
+          <li>Calibration stress tests (thermal drift, suspension, knocks, vibration) with perturbed nuScenes, Kalibr and KITTI calibrations for out-of-distribution evaluation.</li>
+          <li>Configs for Autoware, NAVSIM, HUGSIM, MMDetection3D (with ego masks and crops), OpenPCDet and LeRobot, plus a 3DGS / 3DGUT / Nerfstudio rig with rolling-shutter timing.</li>
+          <li>Stream the scene to Foxglove (MCAP) or Rerun.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <img src="media/research-bev.jpg" alt="The BEV features heat map around the data rig out to 50 m: feature cells per pillar, with the starved far field hatched" loading="lazy" width="1920" height="1080">
+        </div>
+      </div>
+    </article>
+
+    <article class="feature" id="custom-hardware">
+      <div class="text">
+        <div class="eyebrow">Custom hardware</div>
+        <h3>Your own cameras, sensors and rig hardware, with exactly the figures Vantage needs</h3>
+        <p>Add a camera module, lens, lidar, radar, GNSS/INS, IMU, compute unit, recorder, switch, time server or DC-DC converter from its datasheet. The form asks only for what Vantage reads. Each field shows its unit, range and the studies that use it, and the figures are checked as you type.</p>
+        <ul>
+          <li>Consistency checks: a lidar’s point rate against its channels, step and spin rate; a camera’s pixel pitch against its optical format.</li>
+          <li>JSON spec sheets: save a blank one, fill it from the datasheet, load it back, or start from a library item.</li>
+          <li>Selected rig hardware drives the power, recording, link-budget and clock-tree studies, named as their source.</li>
+        </ul>
+      </div>
+      <div class="media">
+        <div class="frame">
+          <img src="media/custom-hardware.jpg" alt="The New custom hardware dialog for a lidar: every field Vantage reads with its unit and the required ones marked, and the missing figures listed" loading="lazy" width="1100" height="900">
+        </div>
+      </div>
+    </article>
+
     <article class="feature" id="volume">
       <div class="text">
         <div class="eyebrow">3D analysis</div>

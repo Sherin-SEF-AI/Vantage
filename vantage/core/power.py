@@ -686,6 +686,7 @@ def to_doc(res: PowerResult, project=None) -> dict:
         'frame': 'vehicle (ISO 8855, rear axle): cable routes from the ECU position',
         'settings': st.to_dict(),
         'assumptions': ASSUMPTIONS,
+        'hardware': _hardware_sources(project),   # the selected project hardware the figures came from
         'devices': [_row_doc(r) for r in res.rows],
         'circuits': [_circuit_doc(c) for c in res.circuits],
         'totals': {'steady_w': _r(t['steady_w']), 'peak_w': _r(t['peak_w']), 'cable_loss_w': _r(t['cable_loss_w']),
@@ -760,3 +761,11 @@ def export(res: PowerResult, project, out_dir) -> list[str]:
             fh.write(data)
         paths.append(path)
     return paths
+
+
+def _hardware_sources(project) -> dict:
+    """{role: source} of the selected custom rig hardware whose figures this study used (core/hardware.py)."""
+    if project is None:
+        return {}
+    from .hardware import sources
+    return sources(project)

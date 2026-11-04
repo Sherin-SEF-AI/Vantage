@@ -443,6 +443,8 @@ class LibraryTree(QTreeWidget):
             self.ctx.window.edit_module(mid, lid)
         elif it.data(0, ROLE_KIND) == 'template' and self.ctx.window:
             self.ctx.window.new_from_template(it.data(0, ROLE_ID))
+        elif it.data(0, ROLE_KIND) in ('hardware', 'hardware-new') and self.ctx.window:
+            open_hardware_item(self.ctx, it.data(0, ROLE_ID) if it.data(0, ROLE_KIND) == 'hardware' else None)
 
     def _menu(self, pos):
         it = self.itemAt(pos)
@@ -457,6 +459,17 @@ class LibraryTree(QTreeWidget):
             if not self.ctx.store.project.lenses[lid].builtin:
                 m.addSeparator()
                 m.addAction('Delete lens', lambda: self.ctx.window.delete_lens(lid))
+        if it is not None and it.data(0, ROLE_KIND) in ('hardware', 'hardware-new'):
+            ident = it.data(0, ROLE_ID) if it.data(0, ROLE_KIND) == 'hardware' else None
+            m.addAction('New custom hardware…', lambda: open_hardware_item(self.ctx, None))
+            if ident is not None:
+                m.addAction('Open its spec sheet…', lambda: open_hardware_item(self.ctx, ident))
+                from ..core import hardware as HW
+                if ident[0] in HW.RIG_ROLES:
+                    m.addAction('Select for the rig', lambda: select_hardware(self.ctx, *ident))
+                    m.addAction('Clear the selection', lambda: select_hardware(self.ctx, ident[0], None))
+            m.exec(self.viewport().mapToGlobal(pos))
+            return
         if it is not None and it.data(0, ROLE_KIND) == 'template':
             from ..core.vehicles import resolve
             key = it.data(0, ROLE_ID)
@@ -486,7 +499,7 @@ class LibraryPanel(QWidget):
         self.search.setPlaceholderText('Search')
         self.search.addAction(icons.icon('search', 12), QLineEdit.ActionPosition.LeadingPosition)
         self.kind = QComboBox()
-        self.kind.addItems(['Camera modules', 'Lenses', 'Vehicles', 'Brackets'])
+        self.kind.addItems(['Camera modules', 'Lenses', 'Vehicles', 'Brackets', 'Hardware'])
         self.kind.setFixedWidth(126)
         top.addWidget(self.search, 1)
         top.addWidget(self.kind)
@@ -497,7 +510,7 @@ class LibraryPanel(QWidget):
         lay.addWidget(self.hint)
         self.search.textChanged.connect(self.rebuild)
         self.kind.currentIndexChanged.connect(self.rebuild)
-        ctx.store.changed.connect(lambda s: self.rebuild() if 'library' in s else None)
+        ctx.store.changed.connect(lambda s: self.rebuild() if ('library' in s or 'hardware' in s) else None)
         ctx.store.project_replaced.connect(self.rebuild)
         THEME.changed.connect(self._theme_changed)      # a bound slot: disconnected when the widget goes
         self.rebuild()
@@ -561,6 +574,32 @@ class LibraryPanel(QWidget):
                 it.setData(0, ROLE_ICON, ic)
                 it.setData(0, ROLE_META, meta)
                 it.setToolTip(0, (tip + '\n\n' if tip else '') + 'Double-click to start a new project from this body')
+        elif kind == 4:
+            # custom sensors, cameras and rig hardware of this project (core/hardware.py)
+            from ..core import hardware as HW
+            new = QTreeWidgetItem(t, ['New custom hardware…'])
+            new.setData(0, ROLE_KIND, 'hardware-new')
+            new.setData(0, ROLE_ICON, 'plus')
+            new.setData(0, ROLE_META, 'cameras, lenses, sensors, rig')
+            new.setToolTip(0, 'A spec sheet with every figure Vantage reads, its unit and who reads it')
+            groups = {}
+            for kind_, iid, name, _ in HW.library_items(self.ctx.store.project):
+                if q and q not in name.lower() and q not in kind_:
+                    continue
+                g = groups.get(kind_)
+                if g is None:
+                    g = groups[kind_] = QTreeWidgetItem(t, [HW.KIND_LABEL[kind_]])
+                    g.setData(0, ROLE_KIND, 'group2')
+                    g.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                    g.setExpanded(True)
+                it = QTreeWidgetItem(g, [name])
+                it.setData(0, ROLE_KIND, 'hardware')
+                it.setData(0, ROLE_ID, (kind_, iid))
+                it.setData(0, ROLE_ICON, {'lidar': 'sensor', 'radar': 'sensor', 'gnss': 'sun', 'ins': 'sync',
+                                          'imu': 'sync', 'camera_module': 'lens', 'lens': 'lens'}.get(kind_, 'layers'))
+                sel = kind_ in HW.RIG_ROLES and (HW.selected(self.ctx.store.project, kind_) or {}).get('id') == iid
+                it.setData(0, ROLE_META, 'selected for the rig' if sel else iid)
+                it.setToolTip(0, 'Double-click to open its spec sheet (a copy to edit and add)')
         else:
             for name, meta in (('Flat plate · 25 mm', 'bumper, grille'), ('Mirror underside clip', 'mirror housing'),
                                ('Quarter-panel pod · 40 mm', 'body side'), ('Boot-lid wedge 10°', 'boot lid')):
@@ -571,4 +610,37 @@ class LibraryPanel(QWidget):
                 it.setData(0, ROLE_ICON, 'bumper-mount')
                 it.setData(0, ROLE_META, meta)
         self.hint.setText('Drag a module onto the body to place it.\nDouble-click to edit.' if kind < 2 else
-                          'Double-click a body to start a project from it.' if kind == 2 else 'Brackets set the camera standoff.')
+                          'Double-click a body to start a project from it.' if kind == 2 else
+                          'Custom kit with the figures Vantage reads.\nDouble-click to open its sheet.' if kind == 4 else
+                          'Brackets set the camera standoff.')
+
+
+def open_hardware_item(ctx, ident=None):
+    """The custom-hardware dialog, empty (ident None) or with a project item's sheet (kind, id) to copy and add."""
+    from ..core import hardware as HW
+    from .dialogs.hardware_dialog import open_hardware_dialog
+    p = ctx.store.project
+    if ident is None:
+        return open_hardware_dialog(ctx.window)
+    kind, iid = ident
+    if kind == 'camera_module':
+        obj = p.modules.get(iid)
+    elif kind == 'lens':
+        obj = p.lenses.get(iid)
+    elif kind in HW.RIG_ROLES:
+        obj = ((p.hardware.get('items') or {}).get(kind) or {}).get(iid)
+    else:
+        obj = p.sensor_models.get(iid)
+    spec = HW.to_spec(obj, kind) if obj is not None else None
+    return open_hardware_dialog(ctx.window, kind=kind, spec=spec)
+
+
+def select_hardware(ctx, role, iid):
+    """Select (or clear, iid None) the rig item for its role: one undo step; the studies follow."""
+    from ..core import hardware as HW
+
+    def fn(p):
+        HW.select_item(p, role, iid)
+    ctx.store.edit(['hardware', 'ecu', 'analysis'], fn,
+                   f'{"Selected" if iid else "Cleared"} the {HW.KIND_LABEL[role].lower()}')
+    ctx.analysis.request(force=True)

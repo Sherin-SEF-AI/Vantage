@@ -500,9 +500,12 @@ def build_topology(project, variant=None, settings: ClockTreeSettings | None = N
     pw = _power(project)
     tst = TM.TimingSettings.from_dict(getattr(project.analysis, 'timing', None))
     nodes, notes = [], []
+    from .hardware import clock_params, selected
+    hw = clock_params(project)                  # the selected switch's and time server's figures, sourced to them
 
     def add(nid, kind, label, parent, uids=(), slot=-1, model=None, interface='', info=None, note='', force=None):
         typ = _typical(kind, model, interface)
+        typ.update(hw.get(kind, {}))
         if kind == 'camera':
             typ['readout_ms'] = (tst.readout_ms, S_TIMING)
             typ['exposure_ms'] = (tst.exposure_ms, S_TIMING)
@@ -534,11 +537,13 @@ def build_topology(project, variant=None, settings: ClockTreeSettings | None = N
     server = pw.ptp_w > 0
     switch = pw.switch_w > 0
     ecu = project.ecu
+    ts_item, sw_item = selected(project, 'time_server'), selected(project, 'switch')
     if server:
-        add('server', 'server', 'Time server', 'gnss', info={'role': 'grandmaster'})
+        add('server', 'server', f'Time server · {ts_item["name"]}' if ts_item else 'Time server', 'gnss',
+            info={'role': 'grandmaster'})
     eth_root = 'server' if server else 'compute'
     if switch:
-        add('switch', 'switch', 'Ethernet switch', eth_root)
+        add('switch', 'switch', f'Ethernet switch · {sw_item["name"]}' if sw_item else 'Ethernet switch', eth_root)
     add('compute', 'compute', f'{ecu.name}' if ecu.name else 'Compute',
         ('switch' if switch else 'server') if server else 'gnss', info={'location': ecu.location})
     if not server:

@@ -22,7 +22,7 @@ MENU_TO_FMT = {'bev_lut': 'bev_lut', 'mount_sheet_pdf': 'mount_sheet_pdf', 'repo
                'opencv_yaml': 'opencv_yaml', 'ros2': 'ros2', 'jetson': 'jetson_json', 'img_viewport': 'viewport_png',
                'img_bev': 'bev_png', 'img_cams': 'camera_views_png', 'dxf': 'dxf', 'step': 'step'}
 ICONS = {'Documents': 'report', 'Extrinsics': 'axes', 'Calibration and robotics': 'ecu', 'Datasets': 'layers',
-         'Surround view': 'bowl', 'Images': 'bev',
+         'Surround view': 'bowl', 'Images': 'bev', 'Research': 'density', 'AV stack': 'ecu',
          'Mount points': 'mount-zone'}
 DEFAULT_ON = {'mount_sheet_pdf', 'report_html', 'extrinsics_json', 'ros2', 'jetson_json'}
 
@@ -82,7 +82,8 @@ class ExportDialog(VDialog):
         self.lut = None
         self.current = None
         self.tab_ids = []          # the checked formats that have a preview tab (some write no file)
-        pre = MENU_TO_FMT.get(preselect) if preselect else None
+        pre = (MENU_TO_FMT.get(preselect) or (preselect if preselect in {f.id for f in ex.FORMATS} else None)) \
+            if preselect else None
         body = QVBoxLayout(self.body)
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)

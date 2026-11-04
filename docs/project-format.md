@@ -92,6 +92,7 @@ writes; it describes version 1 as Vantage 0.2 writes it.
 | `frame`, `custom_origin`, `units` | | display and default export frame; display units |
 | `streams` | object | live-stream source per camera tag |
 | `fleet` | object | vehicles built to this design and their calibrations |
+| `hardware` | object | custom rig hardware (compute, recorder, switch, time server, converter) and the item selected per role |
 | `log` | array | the last 400 history entries `[time, kind, text]` |
 
 ### vehicle
@@ -395,6 +396,13 @@ user) and puts them back when it opens the stream.
 
 `fleet`: `vehicles` ([`id`, `name`, `vin`, `note`, `records`: measured poses of some sensors on one date, in the
 vehicle frame]) and `settings` (`core/fleet.py`).
+
+`hardware` (`core/hardware.py`): `items` (role → id → the item's spec: `name`, `vendor`, `url`, `note` and the role's
+figures, e.g. a recorder's `write_mb_s`, `storage_tb`, `power_w`), `selected` (role → item id) and `replaced` (role →
+`section.key` → the value the selection replaced, put back when it is cleared). Selecting an item writes its figures
+into `ecu`, `analysis.power` and `analysis.recording`; the clock tree reads a switch's and a time server's timing
+figures from it. Custom cameras, lenses and sensors go into `modules`, `lenses` and `sensor_models` with `builtin`
+false.
 
 `log`: the last 400 entries of the project's history, `[time, kind, text]`.
 

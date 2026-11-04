@@ -273,6 +273,9 @@ def template_project(key: str) -> Project:
     from .vehicles import resolve, body_spec
     if key == 'tigor':
         return tigor_sample_project()
+    if key.startswith('ref:'):                  # a published AV rig on its (or the closest) library vehicle
+        from .reference_rigs import reference_project
+        return reference_project(key[4:])
     lv = resolve(key)
     if lv is None:
         raise KeyError(key)

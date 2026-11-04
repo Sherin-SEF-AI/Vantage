@@ -413,6 +413,11 @@ class MainWindow(QMainWindow):
             a.triggered.connect(lambda _=False, k=key: c.set_tool(k))
         # vehicle
         A('veh_replace', 'Replace model…', self.import_vehicle, None, 'import', category='Vehicle')
+        A('new_hardware', 'New custom hardware…', lambda: self.new_hardware(), None, 'plus', category='Vehicle',
+          tip='A camera, lens, lidar, radar, GNSS/INS, IMU or rig hardware (compute, recorder, switch, time server, '
+              'DC-DC) with every figure Vantage reads')
+        A('new_camera_module', 'New custom camera module…', lambda: self.new_hardware('camera_module'), None, 'lens',
+          category='Camera', tip='A camera module from its datasheet: the fields Vantage reads, checked as you type')
         A('veh_align', 'Align, scale & origin…', lambda: self.import_vehicle(step=1, reuse=True), None, 'axes', category='Vehicle')
         A('veh_wheels', 'Pick wheel centres', lambda: self.import_vehicle(step=2, reuse=True), None, 'axle', category='Vehicle')
         A('veh_ground', 'Ground plane…', lambda: self.import_vehicle(step=2, reuse=True), None, 'ground', category='Vehicle')
@@ -637,6 +642,22 @@ class MainWindow(QMainWindow):
             cat = 'Export ▸ Extrinsics' if fid.startswith('extrinsics') else 'Export ▸ Images' if fid.startswith('img') else \
                 'Export ▸ Mount points' if fid in ('dxf', 'step') else 'Export'
             A(f'exp_{fid}', text, lambda f=fid: self.export_dialog(preselect=f), None, None, category=cat)
+        # research and AV-stack exports, the scene to Rerun / Foxglove, rig comparison
+        from ..core import exporters as EXF
+        for f in EXF.FORMATS:
+            if f.group in ('Research', 'AV stack'):
+                A(f'exp_{f.id}', f'{f.label}…', lambda fid=f.id: self.export_dialog(preselect=fid), None, None,
+                  category=f'Export ▸ {f.group}')
+        A('stream_foxglove', 'Save the scene for Foxglove (MCAP)…', self.stream_foxglove, None, None,
+          category='Export ▸ Stream to Rerun / Foxglove',
+          tip='Frustums, footprints, lidar rings, radar fields, the blind volume, ego masks and the TF tree as one '
+              'MCAP file to open in Foxglove')
+        A('stream_foxglove_live', 'Live Foxglove server', self.stream_foxglove_live, None, None,
+          category='Export ▸ Stream to Rerun / Foxglove', tip='Needs the foxglove-sdk package (pip install foxglove-sdk)')
+        A('stream_rerun', 'Send to Rerun', self.stream_rerun, None, None, category='Export ▸ Stream to Rerun / Foxglove',
+          tip='Needs the rerun-sdk package (pip install rerun-sdk): opens the Rerun viewer with the scene')
+        A('compare_rigs', 'Compare rigs…', self.compare_rigs, None, None, category='Analysis',
+          tip='Cross-rig domain gap between two variants, a reference rig or a nuScenes/KITTI calibration folder')
         # window
         A('ws_placement', 'Placement', lambda: self.workspace('placement'), None, None, category='Window ▸ Workspaces')
         A('ws_analysis', 'Analysis', lambda: self.workspace('analysis'), None, None, category='Window ▸ Workspaces')
@@ -676,6 +697,15 @@ class MainWindow(QMainWindow):
         self.tpl_menu.addSeparator()
         for lv in VL.library():                    # the vehicle library: stated dimensions on the family's body
             self.tpl_menu.addAction(f'{lv.title} · {lv.generation}', lambda k=lv.id: self.new_from_template(k))
+        from ..core import reference_rigs as RR
+        rm = self.tpl_menu.addMenu('Reference rigs (published AV sensor layouts)')
+        for rig in RR.library():
+            act = rm.addAction(f'{rig.company} · {rig.name}', lambda k=rig.id: self.new_from_template(f'ref:{k}'))
+            counts = ', '.join(f'{v} {k}' for k, v in (rig.counts or {}).items() if v)
+            act.setToolTip(f'{counts or "counts not published"} · layout: {rig.layout}'
+                           + ('' if rig.placed else ' (no published positions: not placed)'))
+            act.setEnabled(bool(rig.placed))
+        rm.setToolTipsVisible(True)
         f.addAction(a['open'])
         self.recent_menu = f.addMenu('Open recent')
         self.recent_menu.aboutToShow.connect(self._fill_recent)
@@ -722,7 +752,7 @@ class MainWindow(QMainWindow):
         v.addSeparator()
         v.addAction(a['maximise'])
         ve = menu('Vehicle')
-        ve.addActions([a['veh_replace'], a['veh_align'], a['veh_wheels'], a['veh_ground']])
+        ve.addActions([a['veh_replace'], a['veh_align'], a['veh_wheels'], a['veh_ground'], a['new_hardware']])
         sub(ve, 'Mount zones', ['zone_allow', 'zone_forbid', 'zone_glass', 'zone_clear'])
         sub(ve, 'Occluder', ['occ_full', 'occ_hull', 'occ_level'])
         sub(ve, 'Reference photos', ['photo_load', 'photo_cal', 'photo_pane'])
@@ -735,7 +765,7 @@ class MainWindow(QMainWindow):
         ve.addSeparator()
         ve.addAction(a['spec'])
         ca = menu('Camera')
-        ca.addActions([a['add_cam'], a['place']])
+        ca.addActions([a['add_cam'], a['place'], a['new_camera_module']])
         self.mod_menu = ca.addMenu('Change module')
         self.lens_menu = ca.addMenu('Change lens')
         self.mod_menu.aboutToShow.connect(lambda: self._fill_lens_menu(self.mod_menu, True))
@@ -767,7 +797,7 @@ class MainWindow(QMainWindow):
                        a['power_budget'], a['cable_harness'], a['gnss_imu'], a['sun_dirt'], a['isp'],
                        a['materials'], a['mount_brackets']])
         an.addSeparator()
-        an.addActions([a['requirements'], a['experiments']])
+        an.addActions([a['requirements'], a['experiments'], a['compare_rigs']])
         an.addSeparator()
         an.addAction(a['an_settings'])
         cb = menu('Calibrate')
@@ -791,6 +821,10 @@ class MainWindow(QMainWindow):
         ex.addActions([a['exp_opencv_yaml'], a['exp_ros2'], a['exp_jetson']])
         sub(ex, 'Images', ['exp_img_viewport', 'exp_img_bev', 'exp_img_cams'])
         sub(ex, 'Mount points', ['exp_dxf', 'exp_step'])
+        from ..core import exporters as EXF
+        sub(ex, 'Research', [f'exp_{f.id}' for f in EXF.FORMATS if f.group == 'Research'])
+        sub(ex, 'AV research stack', [f'exp_{f.id}' for f in EXF.FORMATS if f.group == 'AV stack'])
+        sub(ex, 'Stream to Rerun / Foxglove', ['stream_foxglove', 'stream_foxglove_live', 'stream_rerun'])
         ex.addSeparator()
         ex.addAction(a['sample_dataset'])
         ex.addSeparator()
@@ -2333,6 +2367,50 @@ class MainWindow(QMainWindow):
     def custom_frame(self):
         from .dialogs.misc import CustomFrameDialog
         CustomFrameDialog(self.ctx, self).exec()
+
+    def new_hardware(self, kind=None, spec=None):
+        """Vehicle ▸ New custom hardware… (Camera ▸ New custom camera module…): the spec-sheet dialog."""
+        from .dialogs.hardware_dialog import open_hardware_dialog
+        return open_hardware_dialog(self, kind, spec)
+
+    def compare_rigs(self):
+        from .dialogs.rig_gap_dialog import RigGapDialog
+        RigGapDialog(self.ctx, self).exec()
+
+    def stream_foxglove(self, path=None):
+        """Export ▸ Stream to Rerun / Foxglove ▸ Save the scene for Foxglove (MCAP)."""
+        from ..core import viz_bridge as VB
+        if not path:
+            path, _ = QFileDialog.getSaveFileName(self, 'Save the scene for Foxglove', 'vantage_scene.mcap',
+                                                  'MCAP (*.mcap)')
+            if not path:
+                return None
+        out = VB.export_foxglove_mcap(self.store.project, self.ctx.analysis.engine, path,
+                                      result=self.ctx.analysis.result)
+        self.msg(f'Saved the scene for Foxglove: {os.path.basename(out)}', 6000)
+        return out
+
+    def stream_foxglove_live(self):
+        """Start (or stop) a live Foxglove server with the scene (foxglove-sdk); says what to install otherwise."""
+        from ..core import viz_bridge as VB
+        live = getattr(self, '_foxglove_live', None)
+        if live is not None:
+            live.stop()
+            self._foxglove_live = None
+            self.msg('Stopped the Foxglove server.', 4000)
+            return 'stopped'
+        live, status = VB.serve_foxglove(self.store.project, self.ctx.analysis.engine, result=self.ctx.analysis.result)
+        self._foxglove_live = live
+        self.msg(status, 8000)
+        return status
+
+    def stream_rerun(self):
+        """Send the scene to the Rerun viewer (rerun-sdk); says what to install otherwise."""
+        from ..core import viz_bridge as VB
+        status = VB.stream_rerun(self.store.project, self.ctx.analysis.engine, mode='spawn',
+                                 result=self.ctx.analysis.result)
+        self.msg(status, 8000)
+        return status
 
     def export_dialog(self, preselect=None):
         from .dialogs.export_dialog import ExportDialog

@@ -402,6 +402,30 @@ vantage --sample --dataset sample_drive/</code></pre>
       pixels and how far it would move if F drifted 0.2°. Type 15 m/s in the toolbar to see where each camera really
       samples the ground. <a href="docs.html#research-tools">Reference</a></p></div>
 
+    <h3>Custom hardware</h3>
+    <p><b>Where:</b> <b>Vehicle ▸ New custom hardware…</b>, <b>Camera ▸ New custom camera module…</b>, the Library
+      panel's <b>Hardware</b> list. Add a camera, lens, lidar, radar, GNSS/INS, IMU, compute unit, recorder, switch,
+      time server or converter from its datasheet. The form asks only for what Vantage uses, says which study uses each
+      figure, and checks the figures as you type.</p>
+    <div class="callout"><p><b>Example.</b> Open the Sprinter template: its eight cameras need more than the default
+      recorder writes. In <b>New custom hardware…</b> choose <i>Recorder</i>, enter 3000 MB/s and 16 TB, add it, and
+      select it for the rig. The recording study's critical issue clears, and the power budget gains its watts.
+      <a href="docs.html#custom-hardware">Reference</a></p></div>
+
+    <h3>Bridges to the AV research stack</h3>
+    <p><b>Where:</b> <b>Export ▸ Research</b>, <b>Export ▸ AV research stack</b>, <b>Export ▸ Stream to Rerun /
+      Foxglove</b>, <b>Analysis ▸ Compare rigs…</b>, <b>File ▸ New from template ▸ Reference rigs</b>. Vantage exports:</p>
+    <ul>
+      <li>per-pixel Plücker rays, occupancy voxel ray density and virtual canonical cameras;</li>
+      <li>calibration stress tests and 3DGS / Nerfstudio rigs;</li>
+      <li>configs for Autoware, NAVSIM, HUGSIM, MMDetection3D, OpenPCDet and LeRobot;</li>
+      <li>the scene to Foxglove or Rerun.</li>
+    </ul>
+    <p>It also scores the domain gap between your rig and nuScenes, KITTI or Tesla's camera suite.</p>
+    <div class="callout"><p><b>Example.</b> On the data rig, <b>Analysis ▸ Compare rigs…</b> against <i>Reference ·
+      Motional (nuTonomy) nuScenes</i> gives 0.52, a large band, mostly from camera height and depression. A detector
+      trained on nuScenes would see these images from a very different angle. <a href="docs.html#research-bridges">Reference</a></p></div>
+
     <h3>Vehicle library</h3>
     <p><b>Where:</b> the Library panel's <b>Vehicles</b> list; <b>File ▸ New from template</b>; the start window. There are 13
       real vehicles with the dimensions their makers state and their sources: the nuScenes Renault ZOE, the KITTI

@@ -503,6 +503,7 @@ class Project:
         self.photos = PhotoSet()
         self.streams: dict[str, str] = {}               # camera tag -> stream source (URL, device, file, 'synthetic')
         self.fleet: dict = {}                           # vehicles built to this design and their calibrations (core.fleet)
+        self.hardware: dict = {}                        # custom rig hardware and the selection per role (core.hardware)
         self.frame = 'rear_axle'
         self.custom_origin = [0.0, 0.0, 0.0]
         self.units = 'm'
@@ -520,7 +521,7 @@ class Project:
             setattr(q.vehicle, k, copy.deepcopy(getattr(self.vehicle, k)))
         q.variants = [Variant.from_dict(v.to_dict()) for v in self.variants]
         for k in ('roi', 'analysis', 'targets', 'target_settings', 'obstacles', 'rig', 'ecu', 'lenses', 'modules',
-                  'sensor_models', 'custom_origin', 'streams', 'fleet'):
+                  'sensor_models', 'custom_origin', 'streams', 'fleet', 'hardware'):
             setattr(q, k, copy.deepcopy(getattr(self, k)))
         q.photos = self.photos
         q.log = []
@@ -631,6 +632,8 @@ class Project:
             return dict(self.streams)
         if key == 'fleet':
             return copy.deepcopy(self.fleet)
+        if key == 'hardware':
+            return copy.deepcopy(self.hardware)
         if key == 'vehicle':
             # mesh is shared by reference (immutable once built); meta is deep-copied
             return {'meta': copy.deepcopy(self.vehicle.meta()), 'vehicle': self.vehicle}
@@ -678,6 +681,8 @@ class Project:
             self.streams = dict(state)
         elif key == 'fleet':
             self.fleet = copy.deepcopy(state)
+        elif key == 'hardware':
+            self.hardware = copy.deepcopy(state)
         elif key == 'vehicle':
             veh = state['vehicle']
             meta = state['meta']
@@ -713,6 +718,7 @@ class Project:
             # passwords in stream URLs go to the user's private store, never into the file (core/credentials.py)
             'streams': {k: _credentials.remember(v) for k, v in self.streams.items()},
             'fleet': self.fleet,
+            'hardware': self.hardware,
             'log': [[e.t, e.kind, e.text] for e in self.log[-400:]],
         }
 
@@ -790,6 +796,7 @@ class Project:
         p.photos = PhotoSet.from_dict(data.get('photos', {}))
         p.streams = {str(k): str(v) for k, v in (data.get('streams') or {}).items() if str(v).strip()}
         p.fleet = data.get('fleet') if isinstance(data.get('fleet'), dict) else {}
+        p.hardware = data.get('hardware') if isinstance(data.get('hardware'), dict) else {}
         p.frame = data.get('frame', 'rear_axle')
         p.custom_origin = data.get('custom_origin', [0, 0, 0])
         p.units = data.get('units', 'm')
