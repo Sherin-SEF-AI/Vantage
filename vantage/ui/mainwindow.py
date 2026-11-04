@@ -405,7 +405,10 @@ class MainWindow(QMainWindow):
                        'move': 'Drag the gizmo axes, or drag a camera along the body.',
                        'rotate': 'Drag the rings to change yaw and pitch.',
                        'place': 'Click the body to place. Alt-click places a mirrored L/R pair.',
-                       'measure': 'Click two points on the body or ground.'}[key])
+                       'measure': 'Click two points on the body or ground.',
+                       'probe': 'Click the ground to pin a pedestrian (right-click: a car or a ChArUco board): its rays '
+                                'to every camera that sees it, its box in pixels, incidence, dr/dθ and the shift a '
+                                '0.2° extrinsic drift makes.'}[key])
             g8.addAction(a)
             a.triggered.connect(lambda _=False, k=key: c.set_tool(k))
         # vehicle
@@ -829,6 +832,25 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         for k in ('view_persp', 'view_top', 'view_side', 'view_through'):
             tb.addAction(a[k])
+        tb.addSeparator()
+        # ego motion: the footprints and lidar rings where they are sampled at this speed and yaw rate
+        from PyQt6.QtWidgets import QDoubleSpinBox
+        self.motion_speed, self.motion_yaw = QDoubleSpinBox(), QDoubleSpinBox()
+        for w_, lo, hi, step, suf, tip in ((self.motion_speed, 0.0, 60.0, 1.0, ' m/s', 'Ego speed: the 3D view warps '
+                                            'each camera footprint and lidar ring to where it is sampled (trigger '
+                                            'time, rolling shutter, sweep). 0 = parked'),
+                                           (self.motion_yaw, -45.0, 45.0, 1.0, ' °/s', 'Ego yaw rate (left positive) '
+                                            'for the warped footprints')):
+            w_.setRange(lo, hi)
+            w_.setSingleStep(step)
+            w_.setDecimals(1)
+            w_.setSuffix(suf)
+            w_.setToolTip(tip)
+            w_.setFixedWidth(84)
+            w_.setKeyboardTracking(False)
+            tb.addWidget(w_)
+        self.motion_speed.valueChanged.connect(lambda v: self.ctx.set_motion(speed_mps=v))
+        self.motion_yaw.valueChanged.connect(lambda v: self.ctx.set_motion(yaw_rate_dps=v))
         tb.addSeparator()
         # shading menu button
         sb = QToolButton()
@@ -1580,6 +1602,14 @@ class MainWindow(QMainWindow):
                 m.addAction('Aim selected here', lambda: [ops.aim_at(self.ctx, u, g) for u in list(st.sel_cams)])
             m.addAction('Add pole here', lambda: self.add_pole(g))
             m.addAction('Add target here', lambda: self._add_target('checkerboard', g))
+            sc = self.viewarea.active.scene if hasattr(self.viewarea.active, 'scene') else None
+            if sc is not None and hasattr(sc, 'add_probe'):
+                pm = m.addMenu('Pin a probe here')
+                for kind, text in (('pedestrian', 'Pedestrian (0.5 × 1.75 m)'), ('box', 'Car (4.5 × 1.8 × 1.5 m)'),
+                                   ('board', 'ChArUco board (0.8 × 0.6 m)')):
+                    pm.addAction(text, lambda k=kind: (setattr(self.ctx, 'probe_kind', k), sc.add_probe(g, k)))
+                if getattr(sc, 'probes', None):
+                    m.addAction(f'Clear probes ({len(sc.probes)})', sc.clear_probes)
             m.addSeparator()
         m.addAction(self.actions_by_id['frame_all'])
         m.addAction(self.actions_by_id['add_cam'])

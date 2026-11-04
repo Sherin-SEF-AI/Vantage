@@ -11,6 +11,9 @@ OVERLAYS = [('frustums', 'Frustums', 'frustum', True), ('footprints', 'Footprint
             ('roi', 'ROI', 'roi', True), ('targets', 'Calibration targets', 'checker', False),
             ('dimensions', 'Dimensions', 'measure', False), ('grid', 'Grid', 'snap-grid', True),
             ('rings', 'Range rings', 'roi', False),              # 1, 2, 5, 10 m from the body on the ground
+            ('hud', 'Legend and live metrics', 'layers', True),  # the 3D view's bottom-left card
+            ('fusion', 'Lidar–camera fusion density', 'density', False),   # rings by camera px per lidar point
+            ('wedges', 'Lidar timing wedges', 'sync', False),    # where the sweep misses each camera's exposure
             ('labels', 'Labels', 'pin', True),                   # camera tags and target names on plates in 3D
             ('volume', 'Blind volume', 'blind', False), ('guidelines', 'Parking guidelines', 'axle', False),
             ('sensors', 'Lidar rings and radar fields', 'sensor', True),
@@ -22,9 +25,12 @@ OVERLAYS = [('frustums', 'Frustums', 'frustum', True), ('footprints', 'Footprint
             ('wipers', 'Wiper sweep', 'layers', False),          # Analysis ▸ Materials: the wipers on the windscreen
             ('clocktree', 'Timestamp error (lidar points × 50)', 'sync', False)]   # Analysis ▸ Clock tree and time sync
 HEATMAPS = [('none', 'None'), ('coverage', 'Coverage'), ('density', 'Density'), ('redundancy', 'Redundancy'),
-            ('stitched', 'Objects')]       # objects standing in the stitched bird's-eye view
+            ('stitched', 'Objects'),       # objects standing in the stitched bird's-eye view
+            ('bevfeat', 'BEV features'),   # feature cells per BEV pillar (Lift-Splat / BEVFormer grid), 50 m
+            ('stereo', 'Stereo σ')]        # triangulation depth sigma of the best camera pair
 TOOLS = [('select', 'Select', 'select', 'V'), ('move', 'Move', 'move', 'G'), ('rotate', 'Rotate', 'rotate', 'R'),
-         ('place', 'Place camera on surface', 'place', 'C'), ('measure', 'Measure', 'measure', 'M')]
+         ('place', 'Place camera on surface', 'place', 'C'), ('measure', 'Measure', 'measure', 'M'),
+         ('probe', 'Probe: pin a pedestrian, car or board and read every camera', 'target', 'P')]
 
 
 class AppContext(QObject):
@@ -42,6 +48,8 @@ class AppContext(QObject):
         self.analysis = AnalysisController(store)
         self.settings = QSettings('Vantage', 'Vantage')
         self.overlays = {k: bool(self.settings.value(f'overlay/{k}', d, type=bool)) for k, _, _, d in OVERLAYS}
+        self.motion = {'speed': 0.0, 'yaw': 0.0}             # m/s, deg/s: View ▸ Motion (warped footprints)
+        self.probe_kind = 'pedestrian'                       # the Probe tool's object
         self.heatmap = 'none'
         self.tool = 'select'
         self.shading = 'solid'
@@ -75,6 +83,17 @@ class AppContext(QObject):
     def set_overlay(self, key, on):
         self.overlays[key] = on
         self.settings.setValue(f'overlay/{key}', on)
+        self.overlays_changed.emit()
+
+    motion_changed = pyqtSignal()
+
+    def set_motion(self, speed_mps=None, yaw_rate_dps=None):
+        """The ego motion the footprints and lidar rings are warped for (0, 0: parked)."""
+        if speed_mps is not None:
+            self.motion['speed'] = float(speed_mps)
+        if yaw_rate_dps is not None:
+            self.motion['yaw'] = float(yaw_rate_dps)
+        self.motion_changed.emit()
         self.overlays_changed.emit()
 
     def set_heatmap(self, key):

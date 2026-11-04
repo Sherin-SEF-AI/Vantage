@@ -384,6 +384,24 @@ vantage --sample --dataset sample_drive/</code></pre>
     <h2 id="f-design">Every feature: designing the rig</h2>
     <p>Each entry gives where to find the feature, what it answers and an example. <i>Reference</i> links to its full section in the docs.</p>
 
+    <h3>Research tools in the 3D view</h3>
+    <p><b>Where:</b> the 3D view; <b>View ▸ Overlays</b>; <b>Heat map</b>; the toolbar; the <b>Probe</b> tool (<kbd>P</kbd>).
+      The view has these tools:</p>
+    <ul>
+      <li>a bottom-left card of live metrics and a legend of what is on;</li>
+      <li>a through-the-lens picture of the camera under the pointer, with the cursor as a crosshair;</li>
+      <li><kbd>Alt</kbd>-drag of seams and guideline markers, with a badge showing the effect;</li>
+      <li>the <b>BEV features</b> heat map (feature cells per 0.5 m pillar to 50 m: where BEV grids starve);</li>
+      <li>the <b>Stereo σ</b> heat map (triangulation depth σ of the best camera pair);</li>
+      <li>lidar rings coloured by camera pixels per lidar point, and the lidar's timing wedges against each camera;</li>
+      <li>footprints warped by a speed and yaw rate typed into the toolbar;</li>
+      <li>probes that read every camera.</li>
+    </ul>
+    <div class="callout"><p><b>Example.</b> On the data rig, set <b>Heat map ▸ BEV features</b>: at stride 16, 0.8 %
+      of the grid within 10 m is starved, but 78 % within 25 m. Press <kbd>P</kbd> and click 5 m ahead. F's card gives the pedestrian's box in
+      pixels and how far it would move if F drifted 0.2°. Type 15 m/s in the toolbar to see where each camera really
+      samples the ground. <a href="docs.html#research-tools">Reference</a></p></div>
+
     <h3>Vehicle library</h3>
     <p><b>Where:</b> the Library panel's <b>Vehicles</b> list; <b>File ▸ New from template</b>; the start window. There are 13
       real vehicles with the dimensions their makers state and their sources: the nuScenes Renault ZOE, the KITTI

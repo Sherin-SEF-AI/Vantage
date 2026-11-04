@@ -245,6 +245,19 @@ class MainScene(QObject):
         a = self.project.analysis
         thr = (a.min_density, a.target_density) if mode == 'density' else None
         key = (id(res), mode, THEME.name, iso, id(sres), thr)
+        if key != self._ground_key and mode in ('bevfeat', 'stereo'):
+            from . import research_overlays as RO
+            try:
+                if mode == 'bevfeat':
+                    img, ext = RO.bev_image(self.research('bev'))
+                else:
+                    img, ext = RO.stereo_image(self.research('stereo'), maps.extent(res))
+            except Exception as ex:                       # a research map failing must not take the view down
+                print(f'{mode} map:', ex)
+                img, ext = maps.make(res, 'blank', k=4), maps.extent(res)
+            self._ground = GroundDraw(maps.to_qimage(img), ext, 0.002, nearest=True, version=hash(key))
+            self._ground_key = key
+            return self._ground
         if key != self._ground_key:
             if sres is not None:
                 img, ext = maps.stitched(sres, k=4), maps.stitched_extent(sres)
@@ -366,6 +379,7 @@ class MainScene(QObject):
                         tri += [P[[0, 1, 2]], P[[0, 2, 3]]]
                         col += [cc, cc]
             out.append(TriDraw(np.array(tri), np.array(col)))
+        late += self.research_tris()                 # the lidar timing wedges, see-through
         vc = getattr(self.ctx, 'volume', None)
         if vc is not None and self.mode == 'scene' and (self.show_volume or self.ctx.overlays.get('volume')):
             td = vc.tri_draw(gl=getattr(vp, 'renderer', None) is not None)
@@ -707,6 +721,7 @@ class MainScene(QObject):
             out += wiper_lines(self.ctx)
         if self.mode == 'scene' and ov.get('clocktree'):  # View ▸ Overlays ▸ Timestamp error (Analysis ▸ Clock tree)
             out += self._clock_tree_lines()
+        out += self.research_lines()
         out += guides.scene_lines(self, vp)
         return out
 
@@ -820,7 +835,9 @@ class MainScene(QObject):
 
     # ------------------------------------------------------------------ view bar
     SHADING_NAMES = {'solid': 'Solid', 'wire': 'Wire', 'xray': 'X-ray', 'photo': 'Photo-matched'}
-    HEAT_NAMES = {'coverage': 'Coverage', 'density': 'Density', 'redundancy': 'Redundancy', 'stitched': 'Objects'}
+    HEAT_NAMES = {'coverage': 'Coverage', 'density': 'Density', 'redundancy': 'Redundancy', 'stitched': 'Objects',
+                  'bevfeat': 'BEV features', 'stereo': 'Stereo σ'}
+    from .research_overlays import RESEARCH_HEAT
 
     def view_bar(self, vp):
         """The view bar's buttons, [(key, text, tooltip, icon)]: the main window's 3D scene views only."""
@@ -868,6 +885,516 @@ class MainScene(QObject):
             elif i in a:
                 m.addAction(a[i])
         return m
+
+
+
+
+
+    # ------------------------------------------------------------------ research maps, probes, motion
+    def research(self, what):
+        """The current analysis's research map (core.research_maps / core.motion_footprint), cached per result and
+        motion: 'bev', 'stereo', 'fusion', 'warp', 'sweep', 'wedges'."""
+        from ..core import research_maps as RM
+        from ..core import motion_footprint as MF
+        res = self.result
+        mo = self.ctx.motion
+        key = (what, id(res), mo['speed'], mo['yaw'] if what in ('warp', 'sweep') else 0)
+        cache = self.__dict__.setdefault('_research', {})
+        if key in cache:
+            return cache[key]
+        eng = self.ctx.analysis.engine
+        p = self.project
+        if what == 'bev':
+            v = RM.bev_feature_map(p, eng, result=res)
+        elif what == 'stereo':
+            v = RM.stereo_depth_sigma(p, eng, result=res)
+        elif what == 'fusion':
+            v = RM.lidar_camera_association(p, eng, result=res)
+        elif what == 'warp':
+            v = MF.warp_footprints(p, eng, mo['speed'], mo['yaw'], result=res)
+        elif what == 'sweep':
+            v = MF.lidar_sweep(p, eng, mo['speed'], mo['yaw'])
+        elif what == 'wedges':
+            v = MF.temporal_wedges(p, eng)
+        else:
+            raise KeyError(what)
+        for k in [k for k in cache if k[1] != id(res)]:
+            cache.pop(k)                                  # results move on; keep only the current one's maps
+        cache[key] = v
+        return v
+
+    def add_probe(self, xy, kind=None):
+        """Pin a probe (the Probe tool's object) at a ground point: its readout from core.research_maps."""
+        from ..core import research_maps as RM
+        kind = kind or self.ctx.probe_kind
+        pr = RM.probe_readout(self.project, self.ctx.analysis.engine, (float(xy[0]), float(xy[1])), kind=kind,
+                              result=self.result)
+        self.probes = (getattr(self, 'probes', []) + [{'point': (float(xy[0]), float(xy[1]), 0.0), 'kind': kind,
+                                                       'readout': pr, 'res': id(self.result)}])[-4:]
+        self.changed.emit()
+        return pr
+
+    def clear_probes(self):
+        self.probes = []
+        self.changed.emit()
+
+    def _probes_current(self):
+        """The probes, their readouts refreshed when the analysis has moved on (a camera was moved)."""
+        from ..core import research_maps as RM
+        out = []
+        for pr in getattr(self, 'probes', []):
+            if pr['res'] != id(self.result):
+                try:
+                    pr = dict(pr, readout=RM.probe_readout(self.project, self.ctx.analysis.engine, pr['point'][:2],
+                                                           kind=pr['kind'], result=self.result), res=id(self.result))
+                except Exception as ex:
+                    print('probe:', ex)
+            out.append(pr)
+        self.probes = out
+        return out
+
+    def research_lines(self):
+        from . import research_overlays as RO
+        out = []
+        if self.mode != 'scene' or self.result is None:
+            return out
+        try:
+            if self.ctx.overlays.get('fusion') and self.project.variant.sensors:
+                out += RO.fusion_lines(self.research('fusion'), LineDraw)
+            probes = self._probes_current()
+            if probes:
+                tags = {c.tag: c for c in self.cameras()}
+                for pr in probes:
+                    out += RO.probe_lines(pr, tags, LineDraw)
+            mo = self.ctx.motion
+            if abs(mo['speed']) > 1e-6 or abs(mo['yaw']) > 1e-6:
+                uids = {c.uid: c for c in self.cameras()}
+                sweep = self.research('sweep') if self.project.variant.sensors else []
+                out += RO.motion_lines(self.research('warp'), sweep, uids, LineDraw)
+        except Exception as ex:
+            print('research overlays:', ex)
+        return out
+
+    def research_tris(self):
+        from . import research_overlays as RO
+        if self.mode != 'scene' or not self.ctx.overlays.get('wedges') or not self.project.variant.sensors:
+            return []
+        try:
+            uids = {c.uid: c for c in self.cameras()}
+            out = []
+            for tris, col in RO.wedge_tris(self.research('wedges'), uids, TriDraw):
+                rgba = np.tile([col.redF(), col.greenF(), col.blueF(), 0.13], (len(tris), 1)).astype(np.float32)
+                out.append(TriDraw(tris.astype(np.float32), rgba, depth=True))
+            return out
+        except Exception as ex:
+            print('timing wedges:', ex)
+            return []
+
+    def _paint_probes(self, p, vp):
+        from . import research_overlays as RO
+        for pr in getattr(self, 'probes', []):
+            q, _, ok = vp.project([[pr['point'][0], pr['point'][1], 1.0]])
+            if ok[0]:
+                rows = RO.probe_card_lines(pr['readout'])
+                p.setFont(mono(10))
+                wcard = max(p.fontMetrics().horizontalAdvance(r) for r in rows) + 28
+                x = q[0][0] + 14 if q[0][0] + 14 + wcard < vp.width() - 8 else q[0][0] - 14 - wcard
+                y = min(max(q[0][1] - 10, 40.0), vp.height() - 16.0 * len(rows) - 40)
+                self._label_box(p, QPointF(max(x, 8.0), y), rows)
+
+    # ------------------------------------------------------------------ Alt-drag seams and guideline markers
+    def _vanish_m2(self):
+        sres = getattr(getattr(self.ctx, 'stitched', None), 'result', None)
+        m = getattr(sres, 'metrics', None)
+        return float(m['vanish_m2']) if isinstance(m, dict) and 'vanish_m2' in m else None
+
+    def _alt_pick(self, vp, pos):
+        """With Alt held: the stitch seam (radial line from the stitch centre) or the guideline distance marker
+        under the pointer, as a drag dict; None when neither is within reach."""
+        g = vp.ground_at(pos.x(), pos.y())
+        res = self.result
+        if g is None or res is None:
+            return None
+        if self.ctx.overlays.get('seams', True) and res.seams:
+            cx, cy = res.centre
+            r = math.hypot(g[0] - cx, g[1] - cy)
+            ang = math.degrees(math.atan2(g[1] - cy, g[0] - cx))
+            best = None
+            for s in res.seams:
+                off = abs(wrap180(ang - s.angle)) * math.pi / 180 * r        # metres off the seam at that range
+                if r > 0.3 and off < 0.12 and (best is None or off < best[0]):
+                    best = (off, s)
+            if best is not None:
+                s = best[1]
+                return {'kind': 'seam', 'uid': f'{s.a}|{s.b}', 'a0': s.angle, 'mouse': pos, 'at': pos,
+                        'readout': '', 'vanish0': self._vanish_m2(), 'tags': self._seam_tags(s)}
+        if self.ctx.overlays.get('guidelines'):
+            from . import guides
+            try:
+                gs = guides.controller(self.ctx).ground()
+                st = guides.controller(self.ctx).stored()
+            except Exception:
+                return None
+            for ln in gs.lines:
+                if ln.kind != 'distance' or not len(ln.pts):
+                    continue
+                dd = np.hypot(ln.pts[:, 0] - g[0], ln.pts[:, 1] - g[1]).min()
+                if dd < 0.10:
+                    ds = list(st.distances)
+                    k = next((i for i, d in enumerate(ds) if f'{d:g}' in ln.label), None)
+                    if k is None:
+                        continue
+                    sign = -1.0 if st.direction == 'reverse' else 1.0
+                    return {'kind': 'guide', 'uid': ln.id, 'index': k, 'd0': ds[k], 'g0': (float(g[0]), float(g[1])),
+                            'sign': sign, 'mouse': pos, 'at': pos, 'readout': ''}
+        return None
+
+    def _seam_tags(self, s):
+        cams = {c.uid: c.tag for c in self.cameras()}
+        return f'{cams.get(s.a, "?")}|{cams.get(s.b, "?")}'
+
+    def _alt_move(self, vp, d, pos):
+        st = self.ctx.store
+        g = vp.ground_at(pos.x(), pos.y())
+        if g is None:
+            return
+        d['at'] = pos
+        if d['kind'] == 'seam':
+            cx, cy = self.result.centre
+            ang = round(math.degrees(math.atan2(g[1] - cy, g[0] - cx)), 1)
+            key = d['uid']
+
+            def fn(pj, key=key, ang=ang):
+                pj.variant.seams[key] = ang
+            st.edit('variant', fn, f'Moved seam {d["tags"]}', merge_key=('seam', key))
+            parts = [f'seam {d["tags"]} {wrap180(ang - d["a0"]):+.1f}°']
+            base = d.get('hud0')
+            mt = self.hud_metrics()
+            if base and mt:
+                parts.append(f'blind {mt["blind_m2"] - base["blind_m2"]:+.3f} m²')
+            v0, v1 = d.get('vanish0'), self._vanish_m2()
+            if v0 and v1 is not None:
+                parts.append(f'vanishing child area {100 * (v1 - v0) / v0:+.0f} %')
+            d['readout'] = '  |  '.join(parts)
+        else:
+            from . import guides
+            dx = (g[0] - d['g0'][0]) * d['sign']
+            nd = max(0.1, round(d['d0'] + dx, 2))
+            gc = guides.controller(self.ctx)
+            ds = list(gc.stored().distances)
+            ds[d['index']] = nd
+            gc.set(_merge=True, distances=sorted(ds))
+            d['index'] = sorted(ds).index(nd)
+            d['readout'] = f'marker {d["d0"]:g} m → {nd:g} m  ({nd - d["d0"]:+.2f} m)'
+        self.changed.emit()
+
+    # ------------------------------------------------------------------ the camera picture-in-picture
+    PIP_W, PIP_H = 256, 205
+
+    def _pip_uid(self):
+        """The camera the picture-in-picture shows: the pinned one, else the one under the pointer."""
+        return getattr(self, 'pip_pinned', None) or getattr(self, 'pip_hover', None)
+
+    def _label_at(self, pos):
+        for r, uid in getattr(self, '_label_rects', []):
+            if r.contains(pos):
+                return uid
+        return None
+
+    def pip_image(self, cam):
+        """(QImage, intrinsics) of a camera's simulated view (camview.render_camera: the real lens, the body, the
+        ground grid, the ROI and seams), cached per camera and analysis."""
+        from .camview import render_camera
+        res = self.result
+        key = (cam.uid, id(res), cam.x, cam.y, cam.z, cam.yaw, cam.pitch, cam.roll, cam.lens_id, THEME.name)
+        cache = getattr(self, '_pip_cache', None)
+        if cache is not None and cache[0] == key:
+            return cache[1], cache[2]
+        m = self.project.module_for(cam)
+        w = self.PIP_W
+        h = int(round(w * m.height_px / max(m.width_px, 1)))
+        img, _ = render_camera(self.project, self.ctx.analysis.engine, cam, w, h, res)
+        intr = resolve(m, self.project.lens_for(cam))
+        self._pip_cache = (key, img, intr)
+        return img, intr
+
+    def pip_point(self, cam, intr, world, w, h):
+        """Where a world point lands in the camera's image, scaled to a w × h thumbnail; None outside the lens."""
+        d = np.asarray(world, float) - cam.pos()
+        R, W2O = camera_frames(cam)
+        opt = (W2O @ d)[None]
+        u, v, _, ok = intr.project_dirs(opt)
+        if not ok[0]:
+            return None
+        m = self.project.module_for(cam)
+        x, y = float(u[0]) * w / m.width_px, float(v[0]) * h / m.height_px
+        return (x, y) if 0 <= x <= w and 0 <= y <= h else None
+
+    def _paint_pip(self, p, vp):
+        self._pip_close = self._pip_pin = None
+        uid = self._pip_uid()
+        if uid is None or self.mode != 'scene' or self.label_prefix:
+            return
+        cam = self.ctx.store.cam(uid)
+        if cam is None:
+            self.pip_pinned = self.pip_hover = None
+            return
+        try:
+            img, intr = self.pip_image(cam)
+        except Exception as e:                              # a camera without a lens model: nothing to show
+            print('picture-in-picture:', e)
+            return
+        w, h = img.width(), img.height()
+        pinned = getattr(self, 'pip_pinned', None) == uid
+        x0, y0 = vp.width() - w - 64.0, 44.0                 # top right, clear of the navigation controls
+        p.save()
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        frame = QRectF(x0 - 1, y0 - 21, w + 2, h + 22)
+        p.setPen(QPen(THEME.cam(cam.slot), 1.5))
+        p.setBrush(THEME.color('panel', 0.92))
+        p.drawRoundedRect(frame, 5, 5)
+        p.drawImage(QRectF(x0, y0, w, h), img)
+        p.setFont(sans(10, QFont.Weight.DemiBold))
+        p.setPen(THEME.color('ink'))
+        lens = self.project.lens_for(cam)
+        p.drawText(QPointF(x0 + 6, y0 - 6), f'{cam.tag} · through the lens' + (f' · {lens.name}' if lens else ''))
+        # pin and close
+        p.setFont(sans(10))
+        self._pip_pin = QRectF(x0 + w - 40, y0 - 19, 18, 16)
+        self._pip_close = QRectF(x0 + w - 20, y0 - 19, 18, 16)
+        p.setPen(THEME.color('ink') if pinned else THEME.color('ink2'))
+        p.drawText(self._pip_pin, Qt.AlignmentFlag.AlignCenter, '●' if pinned else '○')
+        p.setPen(THEME.color('ink2'))
+        p.drawText(self._pip_close, Qt.AlignmentFlag.AlignCenter, '×')
+        # the 3D cursor's ground point (or the probe) as a crosshair in the image
+        g = getattr(self, '_cursor_g', None)
+        pts = [g] if g is not None else []
+        pts += [pr['point'] for pr in getattr(self, 'probes', [])]
+        for k, wp in enumerate(pts):
+            q = self.pip_point(cam, intr, wp, w, h)
+            if q is None:
+                continue
+            cx, cy = x0 + q[0], y0 + q[1]
+            p.setPen(QPen(QColor('#ffffff') if k == 0 and g is not None else QColor('#e8a33d'), 1.3))
+            p.drawLine(QPointF(cx - 9, cy), QPointF(cx - 3, cy))
+            p.drawLine(QPointF(cx + 3, cy), QPointF(cx + 9, cy))
+            p.drawLine(QPointF(cx, cy - 9), QPointF(cx, cy - 3))
+            p.drawLine(QPointF(cx, cy + 3), QPointF(cx, cy + 9))
+        if not pinned:
+            p.setFont(sans(9))
+            p.setPen(THEME.color('muted'))
+            p.drawText(QPointF(x0 + 4, y0 + h + 14), 'click the label to pin')
+        p.restore()
+
+    def pip_click(self, pos) -> bool:
+        """Pin, unpin or close the picture-in-picture; a click on a camera's label pins that camera."""
+        if getattr(self, '_pip_close', None) is not None and self._pip_close.contains(pos):
+            self.pip_pinned = self.pip_hover = None
+            self.changed.emit()
+            return True
+        if getattr(self, '_pip_pin', None) is not None and self._pip_pin.contains(pos):
+            uid = self._pip_uid()
+            self.pip_pinned = None if getattr(self, 'pip_pinned', None) == uid else uid
+            self.changed.emit()
+            return True
+        uid = self._label_at(pos)
+        if uid is not None:
+            self.pip_pinned = uid
+            self.ctx.store.select_cams([uid])
+            self.changed.emit()
+            return True
+        return False
+
+    # ------------------------------------------------------------------ the legend and live metrics card
+    def hud_metrics(self):
+        """The card's live figures from the current analysis: blind ROI (m², %), covered %, seen by 2+ cameras %,
+        minimum / median best-camera density (px/cm), the analysis time (ms). None without a result."""
+        res = self.result
+        if res is None:
+            return None
+        g, m = res.grid, res.metrics
+        cov = g.roi & (res.count > 0)
+        d = res.best_dens[cov]
+        roi_a = max(float(m.get('roi_area', 0.0)), 1e-9)
+        return {'blind_m2': float(m['blind_m2']), 'blind_pct': 100.0 * float(m['blind_m2']) / roi_a,
+                'covered_pct': float(m['covered_pct']), 'multi_pct': float(m['multi_pct']),
+                'min_density': float(m['min_density']), 'median_density': float(np.median(d)) if d.size else 0.0,
+                'ms': float(getattr(res, 'ms', 0.0))}
+
+    def hud_legend(self):
+        """[(kind, colour or colours, text)] for the overlays that are on: what each mark on the scene means."""
+        ov, out = self.ctx.overlays, []
+        res = self.result
+        cams = [c for c in self.cameras() if c.visible] if res is not None else []
+        heat = self.ctx.heatmap if self.mode == 'scene' else 'none'
+        if heat == 'none' and ov.get('footprints', True) and cams:
+            out.append(('swatches', [(THEME.cam(c.slot), c.tag) for c in cams], 'ground each camera sees (tint)'))
+        if heat == 'density':
+            a = self.project.analysis
+            out.append(('ramp', 'density', f'best-camera density, px/cm (min {a.min_density:g}, '
+                                           f'target {a.target_density:g}; grey: below the minimum)'))
+        elif heat == 'redundancy':
+            out.append(('ramp', 'redundancy', 'cameras seeing the ground: 1, 2, 3+'))
+        elif heat == 'coverage':
+            out.append(('swatches', [(THEME.cam(c.slot), c.tag) for c in cams], 'best camera at each cell'))
+        elif heat in getattr(self, 'RESEARCH_HEAT', {}):
+            out.append(('ramp', heat, self.RESEARCH_HEAT[heat][1]))
+        if res is not None:
+            out.append(('hatch', QColor(STATUS['critical']), 'blind: no camera sees the ground'))
+        if ov.get('frustums', True) and cams:
+            out.append(('fill', THEME.color('ink2', 0.35), 'camera fields on the ground (overlaps add up)'))
+        if ov.get('roi', True):
+            roi = self.project.roi
+            out.append(('dash', THEME.color('ink', 0.9), f'ROI, {roi.distance:g} m from the body'
+                        if roi.mode == 'offset' else 'ROI (your polygon)'))
+        if ov.get('seams', True) and res is not None and res.seams:
+            out.append(('dash', THEME.color('ink2', 0.9), 'stitch seams between cameras'))
+        if ov.get('guidelines'):
+            out.append(('swatches', [(QColor('#d33a2c'), 'near'), (QColor('#e0b429'), 'mid'),
+                                     (QColor('#3aa655'), 'far')], 'parking guidelines (distance boxes)'))
+        if ov.get('rings'):
+            out.append(('dash', THEME.color('ink2', 0.75), 'range rings 1, 2, 5, 10 m from the body'))
+        if ov.get('sensors', True) and self.project.variant.sensors:
+            out.append(('line', THEME.color('ink2'), 'lidar rings on the ground · radar fields'))
+        if ov.get('dimensions'):
+            out.append(('line', THEME.color('ink'), 'vehicle and camera dimensions'))
+        if ov.get('fusion') and self.project.variant.sensors:
+            out.append(('ramp', 'bevfeat', 'lidar rings by camera px per lidar point (log2 1…256; red: no camera)'))
+        if ov.get('wedges') and self.project.variant.sensors:
+            out.append(('fill', THEME.color('ink2', 0.3), 'lidar azimuths sampled > 10 ms from each camera\'s exposure'))
+        mo = self.ctx.motion
+        if abs(mo['speed']) > 1e-6 or abs(mo['yaw']) > 1e-6:
+            out.append(('dash', THEME.color('ink2'), f'where each camera samples at {mo["speed"]:g} m/s, '
+                                                     f'{mo["yaw"]:g}°/s (trigger + rolling shutter)'))
+        if getattr(self, 'probes', None):
+            out.append(('line', QColor('#e8a33d'), 'probe rays to the cameras that see it'))
+        return out
+
+    def _hud_open(self):
+        st = getattr(self.ctx, 'settings', None)
+        try:
+            return bool(st.value('view/hud_open', True, type=bool)) if st is not None else True
+        except Exception:
+            return True
+
+    def _paint_hud(self, p, vp):
+        """The bottom-left card: live metrics (with the change since a drag began) and the legend of what is on."""
+        self._hud_head = None
+        if self.mode != 'scene' or not self.ctx.overlays.get('hud', True) or self.label_prefix:
+            return
+        mt = self.hud_metrics()
+        if mt is None:
+            return
+        if self.drag is not None:
+            self.drag.setdefault('hud0', mt)
+        base = self.drag.get('hud0') if self.drag is not None else None
+        is_open = self._hud_open()
+        W = 300
+        pad, lh = 9, 16
+        rows = []
+        if is_open:
+            def delta(k, fmt, unit=''):
+                if base is None or abs(mt[k] - base[k]) < 1e-9:
+                    return ''
+                return f'  ({mt[k] - base[k]:+{fmt}}{unit})'
+            rows = [('Blind ROI', f'{mt["blind_m2"]:.3f} m² · {mt["blind_pct"]:.2f} %' + delta('blind_m2', '.3f', ' m²'),
+                     mt['blind_m2'] > 0.0005),
+                    ('Covered · 2+ cams', f'{mt["covered_pct"]:.1f} % · {mt["multi_pct"]:.1f} %', False),
+                    ('Min / median px/cm', f'{mt["min_density"]:.1f} / {mt["median_density"]:.1f}'
+                     + delta('median_density', '.1f'), mt['min_density'] < self.project.analysis.min_density),
+                    ('Analysis', f'{mt["ms"]:.0f} ms' + (' · live while dragging' if base is not None else ''), False)]
+        legend = self.hud_legend() if is_open else []
+        h = pad * 2 + lh + (len(rows) * lh + 6 if rows else 0) + (len(legend) * lh + 8 if legend else 0)
+        x0, y0 = 10.0, vp.height() - h - 48.0                # above the axis triad
+        p.save()
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(QPen(THEME.color('strong'), 1))
+        bg = THEME.color('panel')
+        bg.setAlphaF(0.88)
+        p.setBrush(bg)
+        p.drawRoundedRect(QRectF(x0, y0, W, h), 6, 6)
+        y = y0 + pad + 11
+        p.setFont(sans(11, QFont.Weight.DemiBold))
+        p.setPen(THEME.color('ink'))
+        p.drawText(QPointF(x0 + pad, y), 'Legend and live metrics')
+        p.setPen(THEME.color('ink2'))
+        p.drawText(QPointF(x0 + W - pad - 12, y), '▾' if is_open else '▸')
+        self._hud_head = QRectF(x0, y0, W, pad + lh + 4)
+        y += 6
+        p.setFont(mono(10))
+        for name, val, bad in rows:
+            y += lh
+            p.setPen(THEME.color('ink2'))
+            p.drawText(QPointF(x0 + pad, y), name)
+            p.setPen(QColor(STATUS['critical']) if bad else THEME.color('ink'))
+            p.drawText(QPointF(x0 + pad + 128, y), val)
+        if legend:
+            y += 8
+            p.setFont(sans(10))
+            for kind, col, text in legend:
+                y += lh
+                sx = x0 + pad
+                if kind == 'swatches':
+                    for c, tag in col[:8]:
+                        p.setPen(Qt.PenStyle.NoPen)
+                        p.setBrush(c)
+                        p.drawRect(QRectF(sx, y - 9, 9, 9))
+                        sx += 11
+                    tx = x0 + pad + max(11 * min(len(col), 8), 40) + 4
+                elif kind == 'ramp':
+                    grad = [QColor(h_) for h_ in self._ramp_hex(col)]
+                    for i, c in enumerate(grad):
+                        p.setPen(Qt.PenStyle.NoPen)
+                        p.setBrush(c)
+                        p.drawRect(QRectF(sx + i * 40 / len(grad), y - 9, 40 / len(grad) + 0.5, 9))
+                    tx = sx + 44
+                elif kind == 'hatch':
+                    p.setPen(Qt.PenStyle.NoPen)
+                    p.setBrush(QBrush(col, Qt.BrushStyle.BDiagPattern))
+                    p.drawRect(QRectF(sx, y - 9, 26, 9))
+                    tx = sx + 30
+                elif kind == 'fill':
+                    p.setPen(Qt.PenStyle.NoPen)
+                    p.setBrush(col)
+                    p.drawRect(QRectF(sx, y - 9, 26, 9))
+                    tx = sx + 30
+                else:                                          # dash, line
+                    pen = QPen(col, 1.5)
+                    if kind == 'dash':
+                        pen.setStyle(Qt.PenStyle.DashLine)
+                    p.setPen(pen)
+                    p.drawLine(QPointF(sx, y - 4), QPointF(sx + 26, y - 4))
+                    tx = sx + 30
+                p.setPen(THEME.color('ink2'))
+                fm = p.fontMetrics()
+                p.drawText(QPointF(tx, y), fm.elidedText(text, Qt.TextElideMode.ElideRight, int(x0 + W - pad - tx)))
+        p.restore()
+
+    @staticmethod
+    def _ramp_hex(kind):
+        from . import colormaps as CM
+        th = 'dark' if THEME.name != 'light' else 'light'
+        if kind in ('bevfeat', 'stereo'):
+            from .research_overlays import RESEARCH_RAMP
+            return list(RESEARCH_RAMP)
+        if kind == 'density':
+            stops = CM.DENSITY[th]
+        elif kind == 'redundancy':
+            stops = CM.REDUNDANCY[th]
+        else:
+            stops = getattr(CM, 'BLUE', CM.DENSITY[th])
+        return [s if isinstance(s, str) else CM.rgb_hex(s) if hasattr(CM, 'rgb_hex') else '#888888' for s in stops][:10]
+
+    def hud_click(self, pos) -> bool:
+        """A click on the card's header folds or unfolds it (remembered)."""
+        r = getattr(self, '_hud_head', None)
+        if r is None or not r.contains(pos):
+            return False
+        st = getattr(self.ctx, 'settings', None)
+        if st is not None:
+            st.setValue('view/hud_open', not self._hud_open())
+        self.changed.emit()
+        return True
 
     def overlay(self, p: QPainter, vp):
         if self.project.vehicle.mesh is None and self.mode == 'scene':
@@ -917,8 +1444,11 @@ class MainScene(QObject):
                     p.setPen(QColor(240, 239, 236))
                     p.drawText(QPointF(x + 30, y - 9), txt)
         # camera tags: selected cameras first, then the nearer ones; a tag that would cover another is left out
+        self._label_rects = []
         for _, x, y, c in sorted(tags, key=lambda t: (t[3].uid not in sel, t[0])):
-            self._chip(p, x, y, c.tag, accent=THEME.cam(c.slot), placed=placed, strong=c.uid in sel)
+            r = self._chip(p, x, y, c.tag, accent=THEME.cam(c.slot), placed=placed, strong=c.uid in sel)
+            if r is not None:
+                self._label_rects.append((r, c.uid))
         # gizmo
         tg = self._gizmo_target()
         if tg is not None:
@@ -968,6 +1498,9 @@ class MainScene(QObject):
         if self.measure:
             self._paint_measure(p, vp)
         self._paint_ov3d(p, vp)
+        self._paint_probes(p, vp)
+        self._paint_hud(p, vp)
+        self._paint_pip(p, vp)
         if self.show_tooltip and self.hover_info and self.ctx.tool in ('select', 'move') and self.drag is None:
             self._paint_tooltip(p, vp)
         if self.drag and self.drag.get('readout') and self.drag.get('at') is not None:
@@ -1406,6 +1939,15 @@ class MainScene(QObject):
         if e.button() != Qt.MouseButton.LeftButton or self.mode != 'scene' or self.cameras_override is not None:
             return False
         pos = e.position()
+        if self.hud_click(pos) or self.pip_click(pos):
+            return True
+        if e.modifiers() & Qt.KeyboardModifier.AltModifier:
+            d = self._alt_pick(vp, pos)
+            if d is not None:
+                d['hud0'] = self.hud_metrics()
+                self.drag = d
+                self.ctx.store.dragging = True
+                return True
         tool = self.ctx.tool
         st = self.ctx.store
         c = st.selected
@@ -1470,6 +2012,9 @@ class MainScene(QObject):
     def mouse_move(self, vp, e):
         d = self.drag
         if not d:
+            return
+        if d.get('kind') in ('seam', 'guide'):
+            self._alt_move(vp, d, e.position())
             return
         st = self.ctx.store
         kind = d.get('kind', 'cam')
@@ -1587,6 +2132,14 @@ class MainScene(QObject):
         if self.mode != 'scene' or self.cameras_override is not None:
             return
         pos = e.position()
+        if self.ctx.tool == 'probe':
+            g = vp.ground_at(pos.x(), pos.y())
+            if g is not None and self.result is not None:
+                try:
+                    self.add_probe((g[0], g[1]))
+                except Exception as ex:
+                    print('probe:', ex)
+            return
         st = self.ctx.store
         add = bool(e.modifiers() & (Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.ControlModifier))
         c = self._pick_camera(vp, pos)
@@ -1653,6 +2206,13 @@ class MainScene(QObject):
             self.changed.emit()
             return
         g = vp.ground_at(pos.x(), pos.y())
+        under = self._pick_camera(vp, pos)
+        hov = under.uid if under is not None else self._label_at(pos)
+        moved_pip = hov != getattr(self, 'pip_hover', None)
+        self.pip_hover = hov
+        self._cursor_g = (float(g[0]), float(g[1]), 0.0) if g is not None else None
+        if self._pip_uid() is not None or moved_pip:
+            self.changed.emit()
         res = self.result
         info = None
         if g is not None:

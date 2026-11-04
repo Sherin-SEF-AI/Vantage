@@ -98,8 +98,30 @@ templates give way to a library of real vehicles.
   in the design log. None of these models ships with Vantage.
 - **COLLADA (.dae)** models import: triangles, polylists and polygons, node transforms, units and up axis.
 
+**Research tools in the 3D view**
+
+- **Legend and live metrics:** a card with the blind ROI, coverage, minimum and median density and the change during
+  a drag, plus a legend of the overlays that are on.
+- **Through-the-lens picture-in-picture** of the camera under the pointer, with the cursor as a crosshair; pinnable.
+- **Alt-drag** of stitch seams (a badge with Δangle, Δblind and Δvanishing child area) and of guideline distance
+  markers.
+- **Heat maps:**
+  - **BEV features:** backbone feature cells per 0.5 m BEV pillar to 50 m at stride 16, with starved cells hatched;
+  - **Stereo σ:** the triangulation depth σ of the best camera pair.
+- **Overlays:**
+  - **Lidar–camera fusion density:** camera pixels per lidar point on each ring;
+  - **Lidar timing wedges:** the azimuths swept more than 10 ms from each camera's exposure.
+- **Motion:** a speed and yaw rate on the toolbar warp the footprints and lidar rings to where they are sampled
+  (trigger, rolling shutter, sweep).
+- **Probe tool (P):** a pedestrian, car or ChArUco board with rays to every camera that sees it. Per camera it gives
+  the box in pixels, the incidence, dr/dθ and the shift a 0.2° extrinsic drift makes.
+
 **Known limits**
 
+- **Research tools:**
+  - The BEV map counts a cell for a camera when its centre is visible.
+  - The motion warp keeps the body level (no pitch or roll) and uses one readout figure for every camera.
+  - A free-running camera's wedge is taken at half a frame.
 - **Vehicles:**
   - A template body has the vehicle's dimensions, not its shape. For the real shape, import its 3D model or a scan.
   - The Autoware RX 450h model is 1.58 m high against Lexus's 1.685 m; the spec check shows it.

@@ -285,6 +285,21 @@ A library vehicle (`vantage --template lincoln_mkz_2017`) gives a body at that v
 
 Each entry gives where to find the feature, what it answers and an example. *Reference* links to its full section in the docs.
 
+### Research tools in the 3D view
+
+**Where:** the 3D view; **View ▸ Overlays**; **Heat map**; the toolbar; the **Probe** tool (<kbd>P</kbd>). The view has these tools:
+
+- a bottom-left card of live metrics and a legend of what is on;
+- a through-the-lens picture of the camera under the pointer, with the cursor as a crosshair;
+- <kbd>Alt</kbd>-drag of seams and guideline markers, with a badge showing the effect;
+- the **BEV features** heat map (feature cells per 0.5 m pillar to 50 m: where BEV grids starve);
+- the **Stereo σ** heat map (triangulation depth σ of the best camera pair);
+- lidar rings coloured by camera pixels per lidar point, and the lidar's timing wedges against each camera;
+- footprints warped by a speed and yaw rate typed into the toolbar;
+- probes that read every camera.
+
+> **Example.** On the data rig, set **Heat map ▸ BEV features**: at stride 16, 0.8 % of the grid within 10 m is starved, but 78 % within 25 m. Press <kbd>P</kbd> and click 5 m ahead. F's card gives the pedestrian's box in pixels and how far it would move if F drifted 0.2°. Type 15 m/s in the toolbar to see where each camera really samples the ground. [Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#research-tools)
+
 ### Vehicle library
 
 **Where:** the Library panel's **Vehicles** list; **File ▸ New from template**; the start window. There are 13 real vehicles with the dimensions their makers state and their sources: the nuScenes Renault ZOE, the KITTI Passat B6 Variant, the Lincoln MKZ, Toyota Prius and Sienna, Chrysler Pacifica Hybrid, Hyundai IONIQ 5, Kia e-Niro, Lexus RX 450h, Tesla Model 3, a Sprinter van, the Tata Nexon.ev and a Cascadia tractor with a 53 ft trailer. A new project gets its family's body at the stated length, width, height, wheelbase, overhangs, track and wheel size. The body is shaped, with glass, alloy rims, lamps, black trim and mirror pods. A figure not stated is drawn and named in the design log. **View ▸ Overlays ▸ Range rings** (<kbd>Alt</kbd>+<kbd>R</kbd>) marks 1, 2, 5 and 10 m from the body on the ground. Three vehicles (MKZ, Prius, RX 450h) have freely licensed 3D models that Vantage downloads from their publishers and opens in the import wizard, with the stated figures for the spec check.

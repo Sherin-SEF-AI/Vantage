@@ -650,6 +650,26 @@ menu:
 
 ---
 
+### 8.9 Research tools in the 3D view
+
+Everything here is computed by `core/research_maps.py` and `core/motion_footprint.py` and drawn by
+`ui/research_overlays.py`.
+
+- **Legend and live metrics:** the bottom-left card.
+- **Picture-in-picture:** a through-the-lens view of the camera under the pointer (`camview.render_camera`), with
+  the cursor as a crosshair.
+- **Alt-drag:** moves a seam (one undo step, with a badge of Δangle, Δblind and Δvanishing child area) or a guideline
+  distance marker.
+- **BEV features heat map:** a 200 × 200 grid of 0.5 m cells. The value is the cell's footprint in pixels through
+  each seeing camera's lens ÷ stride² (16), summed; cells below 1 are starved.
+- **Stereo σ heat map:** σ = √((σθ₁r₁)² + (σθ₂r₂)²) / sin γ for the best camera pair at 0.5 px.
+- **Fusion density:** camera pixels per lidar point along each lidar ring.
+- **Timing wedges:** the lidar azimuths sampled more than 10 ms from each camera's exposure, from the sync plan.
+- **Motion:** the footprints and lidar rings carried by a constant speed and yaw rate over each point's own sample
+  time (trigger, rolling-shutter row, mid-exposure, sweep azimuth).
+- **Probe tool:** a pedestrian, car box or ChArUco board. For each camera it gives the box in pixels, the incidence,
+  dr/dθ and the worst ground shift for a 0.2° extrinsic drift.
+
 ## 9. Surround view: bird's-eye, bowl and parking guidelines
 
 ### 9.1 Bird's-eye stitching and remap tables

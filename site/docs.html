@@ -312,6 +312,46 @@ vantage project.vantage            # open a project</code></pre>
       <code>hatchback</code> the ZOE, <code>suv</code> the RX 450h, <code>van</code> the Sprinter and
       <code>truck</code> the Cascadia.</p>
 
+    <h3 id="research-tools">Research tools in the 3D view</h3>
+    <ul>
+      <li><b>Legend and live metrics</b> (View ▸ Overlays, on by default): a card at the bottom left with the blind ROI
+        (m² and %), covered and 2+ camera shares, the minimum and median best-camera density and the analysis time,
+        with the change since a drag began while you drag a camera or sensor. Below it is a legend of exactly the
+        overlays that are on. Click its header to fold it.</li>
+      <li><b>Through-the-lens picture-in-picture</b>: hover a camera's marker or label for its simulated view (its real
+        lens, the body, the ground grid, the ROI and seams) at the top right. The 3D cursor's ground point and any probes
+        appear as crosshairs in the image. Click the label to pin it; the dot unpins it and the cross closes it.</li>
+      <li><b>Alt-drag on the ground</b>: an <i>Alt</i>-drag on a stitch seam turns it about the stitch centre. A badge
+        shows the shift and its effect, for example <code>seam F|ML +0.4° | blind +0.002 m² | vanishing child area
+        −12 %</code>. An <i>Alt</i>-drag on a parking-guideline distance box moves that marker
+        (<code>marker 2 m → 2.35 m</code>). Each drag is one undo step, and <kbd>Esc</kbd> cancels it.</li>
+      <li><b>Heat map ▸ BEV features</b>: a 200 × 200 grid of 0.5 m pillars out to 50 m, as Lift-Splat-Shoot,
+        BEVFormer and OccNet build it. Each cell is coloured by the backbone feature cells it covers, summed over the
+        cameras that see it: the cell's footprint in pixels through the real lens, divided by the stride² (16 by
+        default). Cells that some camera sees with less than one feature cell are <i>starved</i>, shown grey and
+        hatched; cells no camera sees are red. On the sample, 0.8 % of the grid within 10 m is starved and 78 % within
+        25 m.</li>
+      <li><b>Heat map ▸ Stereo σ</b>: in the overlaps, the triangulation depth σ of the best camera pair at 0.5 px.
+        σ = √((σθ₁r₁)² + (σθ₂r₂)²) / sin γ, with each lens's own pixels per radian at the point. Two cameras 3 cm apart
+        and two 1.8 m apart look the same on a binary overlap map but differ by more than 10× here.</li>
+      <li><b>Lidar–camera fusion density</b> (View ▸ Overlays): each lidar ring on the ground coloured by the best
+        camera's pixels per lidar point there (log2 from 1 to 256; red where no camera sees it). On the data rig the
+        median is about 26.</li>
+      <li><b>Lidar timing wedges</b> (View ▸ Overlays): from each spinning lidar, the azimuths it samples more than
+        10 ms away from each camera's exposure, in that camera's colour. These are the unobserved wedges where moving
+        objects ghost in late or early fusion. The times come from the sync plan's triggers, the readout and the lidar
+        phase.</li>
+      <li><b>Motion</b> (the speed and yaw-rate boxes on the toolbar): above zero, each camera footprint and lidar ring
+        is redrawn dashed where it is really sampled. Each point is carried by the ego motion over its own time offset:
+        the camera's trigger, the rolling-shutter row and mid-exposure, or the lidar azimuth. Speed and yaw rate are
+        constant; the body does not pitch.</li>
+      <li><b>Probe tool</b> (<kbd>P</kbd>; right-click the ground ▸ <i>Pin a probe here</i> for a car or a ChArUco
+        board): click the ground to pin a pedestrian (0.5 × 1.75 m), a car box (4.5 × 1.8 × 1.5 m) or an upright
+        0.8 × 0.6 m board. Rays go to every camera that sees it, and a card lists each camera's box in pixels
+        (W × H), the incidence to the ground, the lens's dr/dθ at the image point, and the worst-case shift in cm
+        when that camera's extrinsics drift 0.2°. Up to four probes stay; they update when a camera moves.</li>
+    </ul>
+
     <h2 id="placement">Placing cameras</h2>
     <ul>
       <li><b>Place on surface</b> (<kbd>C</kbd>): click the body; <kbd>Alt</kbd>-click places a mirrored left/right pair. Cameras sit on the surface with their housing standoff.</li>
@@ -543,7 +583,8 @@ vantage project.vantage            # open a project</code></pre>
 
     <h2 id="overlays">Heatmaps and overlays</h2>
     <p><b>View ▸ Overlays ▸ Heatmap</b> colours the ground by <b>Coverage</b> (which camera is best), <b>Density</b>,
-      <b>Redundancy</b> or <b>Objects</b> (how much of a standing object the stitched view shows). Density is drawn
+      <b>Redundancy</b>, <b>Objects</b> (how much of a standing object the stitched view shows), <b>BEV features</b> or
+      <b>Stereo σ</b> (see <a href="#research-tools">research tools</a>). Density is drawn
       smooth on one blue scale that starts at the project's minimum (more pixels, more contrast, in both themes), with
       the ground below the minimum grey and hatched and iso-lines at the minimum and target; redundancy has three
       ordered steps (1, 2, 3+ cameras); blind ground is red and hatched. Every mode has a legend in the corner of the top
@@ -562,6 +603,9 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td>Calibration targets</td><td><kbd>Alt</kbd>+<kbd>7</kbd></td><td>The floor boards for calibration.</td></tr>
       <tr><td>Dimensions</td><td><kbd>Alt</kbd>+<kbd>8</kbd></td><td>Vehicle and camera dimensions.</td></tr>
       <tr><td>Grid</td><td><kbd>Alt</kbd>+<kbd>9</kbd></td><td>The ground grid.</td></tr>
+      <tr><td>Legend and live metrics</td><td></td><td>The <a href="#research-tools">bottom-left card</a>: live blind, coverage and density figures, and what every mark on the scene means.</td></tr>
+      <tr><td>Lidar–camera fusion density</td><td></td><td>Lidar rings coloured by camera pixels per lidar point.</td></tr>
+      <tr><td>Lidar timing wedges</td><td></td><td>Where each lidar's sweep is more than 10 ms from each camera's exposure.</td></tr>
       <tr><td>Range rings</td><td><kbd>Alt</kbd>+<kbd>R</kbd></td><td>Rings on the ground 1, 2, 5 and 10 m out from the body's footprint (mirrors included), labelled, for reading near-field coverage off the ground.</td></tr>
       <tr><td>Shadows and lighting</td><td><kbd>Alt</kbd>+<kbd>0</kbd></td><td>The shader renderer's materials, soft shadows, sky occlusion and studio backdrop. Lighting is in linear space; heatmap and camera-light colours keep their exact legend colours.</td></tr>
       <tr><td>Parking guidelines</td><td><kbd>Alt</kbd>+<kbd>G</kbd></td><td>Trajectory lines and the swept path on the ground.</td></tr>
@@ -2246,6 +2290,7 @@ vantage project.vantage --run-plan P3F9A21C plan-run/  # a Copilot plan approved
       <tr><td><kbd>C</kbd></td><td>Place camera on surface</td><td><kbd>Ctrl</kbd>+<kbd>J</kbd></td><td>Assistant</td></tr>
       <tr><td><kbd>G</kbd> / <kbd>R</kbd></td><td>Move / rotate</td><td><kbd>Ctrl</kbd>+<kbd>E</kbd></td><td>Export</td></tr>
       <tr><td><kbd>M</kbd></td><td>Measure</td><td><kbd>Ctrl</kbd>+<kbd>I</kbd></td><td>Import a vehicle model</td></tr>
+      <tr><td><kbd>P</kbd></td><td>Probe</td><td><kbd>Alt</kbd>+drag</td><td>Move a seam or a guideline marker</td></tr>
       <tr><td><kbd>F</kbd> / <kbd>Home</kbd></td><td>Frame selection / frame all</td><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd></td><td>Camera views, bird's-eye, bowl</td></tr>
       <tr><td><kbd>Ctrl</kbd>+<kbd>0</kbd></td><td>Look through the camera</td><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd></td><td>Installation check</td></tr>
       <tr><td><kbd>H</kbd> / <kbd>Alt</kbd>+<kbd>H</kbd></td><td>Hide / show all</td><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd></td><td>Lens calibration</td></tr>
