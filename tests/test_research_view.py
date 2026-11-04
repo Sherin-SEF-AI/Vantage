@@ -101,6 +101,9 @@ def test_alt_drag_moves_a_seam_and_a_guideline_marker(app, win):  # noqa: F811
                  QPointF(5, 5))
     assert win.store.variant.seams[d['uid']] == pytest.approx(round(a1, 1), abs=0.11)
     assert d['readout'].startswith(f'seam {d["tags"]} +4.0°')
+    # a slow analysis waits for the release, and the badge says so rather than showing a stale +0
+    live = win.ctx.analysis.drag_live_ms() is not None
+    assert ('update on release' in d['readout']) is (not live) and ('blind' in d['readout'])
     sc.mouse_release(None, None)
     win.store.undo.undo()
     settle(app, win)
@@ -122,6 +125,27 @@ def test_alt_drag_moves_a_seam_and_a_guideline_marker(app, win):  # noqa: F811
     sc.mouse_release(None, None)
     win.store.undo.undo()
     win.ctx.set_overlay('guidelines', False)
+    settle(app, win)
+
+
+def test_a_quick_analysis_keeps_up_during_a_drag(app, win, monkeypatch):  # noqa: F811
+    _data_rig(win, app)
+    an = win.ctx.analysis
+    monkeypatch.setattr(an.result, 'ms', 40.0)
+    assert an.drag_live_ms() == 40.0
+    win.store.dragging = True
+    try:
+        an.timer.stop()
+        an.request()
+        assert an.timer.isActive() and an.timer.interval() == 120          # throttled: 2 × 40 ms, at least 120
+        monkeypatch.setattr(an.result, 'ms', 900.0)
+        an.timer.stop()
+        an.request()
+        assert an.drag_live_ms() is None and not an.timer.isActive() and an.stale
+    finally:
+        win.store.dragging = False
+    an.request()
+    assert an.timer.interval() == 30
     settle(app, win)
 
 

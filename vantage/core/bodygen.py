@@ -303,7 +303,8 @@ def loft_shaped(spec: BodySpec, x_offset: float, nx=160, nz=30):
     # stations: denser at the ends, where the shape turns
     t = np.linspace(0, 1, nx)
     us = 0.6 * (0.5 - 0.5 * np.cos(math.pi * t)) + 0.4 * t
-    rings = []
+    rings, lab_glass, lab_trim = [], [], []
+    dtop = top_f.derivative()
     for u in us:
         x = x_offset + u * L
         top = float(top_f(u))
@@ -318,6 +319,19 @@ def loft_shaped(spec: BodySpec, x_offset: float, nx=160, nz=30):
         half = _section(w, bot, top, spec.belt_z, cabin, nz)
         ring = [(x, -yy, zz) for yy, zz in half] + [(x, yy, zz) for yy, zz in half[::-1]]
         rings.append(ring)
+        # each vertex's role, from where it sits in the loft (station, section row): faces whose three vertices
+        # agree are glass or trim, so the edges follow the mesh lines instead of tearing across them
+        slope = abs(float(dtop(u))) / L                   # the roof line's slope here (rise per metre)
+        g_side, g_top, trim = [], [], []
+        for k, (yy, zz) in enumerate(half):
+            cap = k >= nz - 6
+            above = zz > spec.belt_z + 0.015
+            g_side.append(above and not cap and cabin and spec.glass_u[0] < u < spec.glass_u[1])
+            g_top.append(above and slope > 0.35 and spec.glass_u[0] - 0.06 < u < spec.glass_u[1] + 0.05
+                         and yy < 0.80 * w and (cap or not cabin))
+            trim.append(zz < spec.ground_clearance + 0.075)       # the sills (the rows line up along the sides)
+        lab_glass.append([a or b for a, b in zip(g_side, g_top)])
+        lab_trim.append(trim)
     R = np.array(rings)
     nxs, n = R.shape[0], R.shape[1]
     verts = R.reshape(-1, 3)
@@ -333,7 +347,12 @@ def loft_shaped(spec: BodySpec, x_offset: float, nx=160, nz=30):
         k = (j + 1) % n
         faces.append([base, j, k])
         faces.append([base + 1, (nxs - 1) * n + k, (nxs - 1) * n + j])
-    info = {'hood_z': float(top_f(0.97)), 'deck_z': float(top_f(0.03)), 'x0': x0, 'x1': x1}
+    def per_vertex(lab):
+        a = np.array([row + row[::-1] for row in lab], bool).reshape(-1)     # the ring mirrors its half
+        return np.concatenate([a, [False, False]])                          # the two end-cap centres
+
+    info = {'hood_z': float(top_f(0.97)), 'deck_z': float(top_f(0.03)), 'x0': x0, 'x1': x1,
+            'v_glass': per_vertex(lab_glass), 'v_trim': per_vertex(lab_trim)}
     return verts, np.array(faces, np.int64), info
 
 
@@ -388,6 +407,8 @@ def _lens_decal(shell, x_from, d, yc, zc, ay, az, nu=20, nv=8, lift=0.006):
     D = np.tile([d, 0.0, 0.0], (len(O), 1))
     t, fi = shell.raycast(O, D)
     ok = fi >= 0
+    if ok.any():                   # a ray past the nose's edge hits the body's side far behind: not part of the lens
+        ok &= t < float(np.min(t[ok])) + 0.30
     nrm_hit = shell.normals[np.maximum(fi, 0)]
     nrm_hit = np.where((nrm_hit @ np.array([-d, 0.0, 0.0]))[:, None] < 0, -nrm_hit, nrm_hit)   # towards the viewer
     V = O + D * np.where(ok, t, 0.0)[:, None] + nrm_hit * lift
@@ -478,17 +499,9 @@ def build_body(spec: BodySpec) -> tuple[Mesh, dict]:
         sz = bs.height / max(bs.top) if bs.key == 'tigor' else 1.0
         top_c = (_smooth(bs.u, bs.top)(u) if shaped else np.interp(u, bs.u, bs.top)) * sz
         if shaped:
-            # side windows: above the belt, below the roof rail; windscreen and backlight: the sloped faces of the
-            # cabin's top facing forward or back, inside the pillars
-            above = (tri[:, :, 2].min(axis=1) > bs.belt_z + 0.015) & (u > bs.glass_u[0] - 0.06) & \
-                (u < bs.glass_u[1] + 0.05)
-            roof_z = float(np.max(bs.top))
-            side = (np.abs(n[:, 1]) > 0.45) & (tri[:, :, 2].max(axis=1) < top_c - 0.06) & \
-                (u > bs.glass_u[0]) & (u < bs.glass_u[1])
-            w_here = np.array([bs.width / 2 * _plan_round(x, xr, xr + bs.length, 1.0, 1.0) for x in c[:, 0]])
-            slope = (np.abs(n[:, 0]) > 0.30) & (np.abs(n[:, 2]) < 0.90) & (np.abs(n[:, 2]) > 0.15) & \
-                (c[:, 2] < roof_z - 0.05) & (np.abs(c[:, 1]) < 0.78 * w_here)
-            glass = above & (side | slope)
+            # the loft's vertex roles: a face is glass when its three vertices are (side windows above the belt,
+            # windscreen and backlight where the roof line slopes, inside the pillars)
+            glass = li['v_glass'][f].all(axis=1)
         else:
             glass = (u > bs.glass_u[0]) & (u < bs.glass_u[1]) & (tri[:, :, 2].min(axis=1) > bs.belt_z - 1e-6) & \
                 (tri[:, :, 2].max(axis=1) < top_c - 0.05) & (np.abs(n[:, 2]) < 0.93)
@@ -499,11 +512,7 @@ def build_body(spec: BodySpec) -> tuple[Mesh, dict]:
             ay = np.abs(c[:, 1])
             z = c[:, 2]
             # black trim: the sills and the lower bumpers (below the camera bands), not on the glass
-            gc = bs.ground_clearance
-            sill = (z < gc + 0.075) & (np.abs(n[:, 1]) > 0.35)
-            lower_f = (c[:, 0] > xf_ - 0.35) & (z < bs.plate_front_z - 0.10) & (n[:, 0] > 0.2)
-            lower_r = (c[:, 0] < xr_ + 0.35) & (z < min(0.40, bs.plate_rear_z - 0.30)) & (n[:, 0] < -0.2)
-            trim = (sill | lower_f | lower_r) & (part == P_BODY)
+            trim = li['v_trim'][f].all(axis=1) & (part == P_BODY)
             part = np.where(trim & (part == P_BODY), P_TRIM, part)
         add(v, f, part)
         if shaped and bs.key != 'trailer':

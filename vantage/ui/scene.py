@@ -1068,13 +1068,16 @@ class MainScene(QObject):
                 pj.variant.seams[key] = ang
             st.edit('variant', fn, f'Moved seam {d["tags"]}', merge_key=('seam', key))
             parts = [f'seam {d["tags"]} {wrap180(ang - d["a0"]):+.1f}°']
-            base = d.get('hud0')
-            mt = self.hud_metrics()
-            if base and mt:
-                parts.append(f'blind {mt["blind_m2"] - base["blind_m2"]:+.3f} m²')
-            v0, v1 = d.get('vanish0'), self._vanish_m2()
-            if v0 and v1 is not None:
-                parts.append(f'vanishing child area {100 * (v1 - v0) / v0:+.0f} %')
+            if self.ctx.analysis.drag_live_ms() is None:
+                parts.append('blind and vanishing area update on release')      # never a stale +0 figure
+            else:
+                base = d.get('hud0')
+                mt = self.hud_metrics()
+                if base and mt:
+                    parts.append(f'blind {mt["blind_m2"] - base["blind_m2"]:+.3f} m²')
+                v0, v1 = d.get('vanish0'), self._vanish_m2()
+                if v0 and v1 is not None:
+                    parts.append(f'vanishing child area {100 * (v1 - v0) / v0:+.0f} %')
             d['readout'] = '  |  '.join(parts)
         else:
             from . import guides
@@ -1302,7 +1305,10 @@ class MainScene(QObject):
                     ('Covered · 2+ cams', f'{mt["covered_pct"]:.1f} % · {mt["multi_pct"]:.1f} %', False),
                     ('Min / median px/cm', f'{mt["min_density"]:.1f} / {mt["median_density"]:.1f}'
                      + delta('median_density', '.1f'), mt['min_density'] < self.project.analysis.min_density),
-                    ('Analysis', f'{mt["ms"]:.0f} ms' + (' · live while dragging' if base is not None else ''), False)]
+                    ('Analysis', f'{mt["ms"]:.0f} ms' + ((' · live while dragging'
+                                                          if self.ctx.analysis.drag_live_ms() is not None else
+                                                          ' · updates on release') if base is not None else ''),
+                     False)]
         legend = self.hud_legend() if is_open else []
         h = pad * 2 + lh + (len(rows) * lh + 6 if rows else 0) + (len(legend) * lh + 8 if legend else 0)
         x0, y0 = 10.0, vp.height() - h - 48.0                # above the axis triad

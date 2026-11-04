@@ -245,8 +245,19 @@ class AnalysisController(QObject):
             return
         if self.store.dragging and not force:
             self.set_stale(True)
+            ms = self.drag_live_ms()
+            if ms is not None and not self.timer.isActive():
+                self.timer.start(max(120, int(2 * ms)))    # a fast analysis keeps up during a drag, throttled
             return
-        self.timer.start()
+        self.timer.start(30)
+
+    DRAG_LIVE_MS = 300.0
+
+    def drag_live_ms(self):
+        """The last analysis's time (ms) when it is quick enough to rerun during a drag (the legend's live metrics
+        and the seam badge follow the drag), else None: a slow one waits for the release."""
+        ms = getattr(self.result, 'ms', None)
+        return float(ms) if ms is not None and ms < self.DRAG_LIVE_MS else None
 
     def set_stale(self, s):
         if s != self.stale:
