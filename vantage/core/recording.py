@@ -196,11 +196,13 @@ def budget(project, variant=None, settings: RecordingSettings | None = None) -> 
         elif m.kind == 'imu':
             recorded = True
             mbps = wire
-            fmt = f'Stated output · {_num(m.data_mbps):g} Mbit/s · {_num(m.rate_hz):g} Hz'
+            fmt = (f'Stated output · {_num(m.data_mbps):g} Mbit/s' if _num(m.data_mbps) > 0
+                   else 'Output rate not stated (0 counted)') + f' · {_num(m.rate_hz):g} Hz'
         else:
             recorded = st.include_radars
             mbps = wire if recorded else 0.0
-            fmt = f'Stated output · {_num(m.data_mbps):g} Mbit/s' if recorded else 'Not recorded'
+            fmt = ('Not recorded' if not recorded else f'Stated output · {_num(m.data_mbps):g} Mbit/s'
+                   if _num(m.data_mbps) > 0 else 'Output rate not stated (0 counted)')
         cap = link_capacity_mbps(m.interface)
         load = wire / cap if cap else None
         kind = m.kind if m.kind in count else 'radar'

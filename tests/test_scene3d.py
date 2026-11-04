@@ -32,7 +32,7 @@ def test_housings_have_their_model_size_and_pose(O3):
         T, N, C = O3.sensor_model(s, m, rgb).arrays()
         P = T.reshape(-1, 3) @ S.rotation(s).T + s.pos()          # posed as the view poses it
         q = _local(s, P)
-        dx, dy, h = (v / 1000.0 for v in m.size_mm)
+        dx, dy, h = (max(v, 1.0) / 1000.0 for v in m.size_mm)        # drawn at least 1 mm (a BMI088 is 0.95 mm)
         oz = m.optical_z_mm / 1000.0
         assert np.allclose(np.linalg.norm(N, axis=-1), 1.0, atol=1e-6)
         if m.kind == 'imu':                                         # the box, then the axis arrows beyond it
@@ -61,7 +61,11 @@ def test_housings_have_their_model_size_and_pose(O3):
             dark = np.abs(C - O3.WINDOW_RGB).sum(1) < 1e-9
             zw = q.reshape(-1, 3, 3)[dark][..., 2]
             assert zw.min() == pytest.approx(w0) and zw.max() == pytest.approx(w1)
-            assert w0 <= half[0] * math.tan(math.radians(lo)) and w1 >= half[0] * math.tan(math.radians(hi))
+            need_lo, need_hi = half[0] * math.tan(math.radians(lo)), half[0] * math.tan(math.radians(hi))
+            # beams that leave a cylinder above or below it (OS0-128, ±45.4°: a dome on the real one) take the
+            # window to the housing's ends
+            assert w0 <= need_lo or w0 >= -oz + 0.1 * h - 1e-9, m.id
+            assert w1 >= need_hi or w1 <= h - oz - 0.1 * h + 1e-9, m.id
 
 
 def test_camera_module_model(O3):
@@ -85,7 +89,7 @@ def test_camera_module_model(O3):
 
 
 def test_radar_volume_lies_inside_its_zone(O3):
-    m = next(x for x in S.builtin_sensor_models() if x.id == 'radar_long')
+    m = next(x for x in S.builtin_sensor_models() if x.id == 'conti_ars408_21')
     s = Sensor(kind='radar', model_id=m.id, x=3.3, y=0.2, z=0.5, yaw=10.0, pitch=3.0, roll=1.0)
     vols = O3.radar_volume(s, m, far=15.0)
     assert len(vols) == len(m.zones)
@@ -180,7 +184,7 @@ def test_lidar_sweep_flags_a_pole_and_the_roof(O3):
 def test_lidar_sweep_sees_a_nearby_housing(O3):
     p = _bare_project()
     lid = Sensor(kind='lidar', model_id='ouster_os1_128', tag='L1', x=0.0, y=0.0, z=2.0)
-    ant = Sensor(kind='gnss', model_id='gnss_survey', tag='GN1', x=0.4, y=0.0, z=2.03)
+    ant = Sensor(kind='gnss', model_id='novatel_gnss850', tag='GN1', x=0.4, y=0.0, z=2.03)
     p.variant.sensors = [lid, ant]
     sw = O3.lidar_sweep(p, None, lid)
     hit = sw.self_points[sw.self_hit == O3.HIT_HOUSING]
@@ -193,8 +197,8 @@ def test_gnss_dome_cells_match_the_sky_view(O3):
     from vantage.core import gnss as G
     from vantage.core.analysis import Engine
     p = _bare_project()
-    ant = Sensor(kind='gnss', model_id='gnss_survey', tag='GN1', **S.default_pose(
-        'gnss', p.sensor_models['gnss_survey'], p.vehicle.mesh, p.rig, []))
+    ant = Sensor(kind='gnss', model_id='novatel_gnss850', tag='GN1', **S.default_pose(
+        'gnss', p.sensor_models['novatel_gnss850'], p.vehicle.mesh, p.rig, []))
     p.variant.sensors = [ant]
     p.rig = [RigPart(name='Mast', kind='cylinder', x=ant.x + 0.35, y=ant.y, z=ant.z + 0.3, radius=0.06, height=1.0)]
     vg = Engine().vehicle_geom(p)

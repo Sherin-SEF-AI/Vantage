@@ -103,8 +103,8 @@ def rig(qapp):
     its axes are not the vehicle's), a GNSS antenna, one unit-calibrated camera (fx != fy, offset principal point) and
     one rectilinear camera, exported in a custom frame."""
     p, v = _data_rig()
-    _add(p, v, 'imu', 'imu_mems', yaw=90.0, pitch=-3.0, roll=2.0)
-    _add(p, v, 'gnss', 'gnss_survey')
+    _add(p, v, 'imu', 'xsens_mti630', yaw=90.0, pitch=-3.0, roll=2.0)
+    _add(p, v, 'gnss', 'novatel_gnss850')
     cams = v.cameras
     base = ex.camera_model(p, cams[1])
     cams[1].calib = calib.make_record(1920, 1536, base.fx * 1.004, base.fx * 1.011, 963.2, 761.7,
@@ -159,7 +159,7 @@ def stereo(qapp, tmp_path_factory):
     for c, dy, lid in zip(v.cameras, (0.0, -0.54, 0.06, 0.06 - 0.54), ('h03r2', 'h03r2', 'h05r2', 'h05r2')):
         c.x, c.y, c.z, c.yaw, c.pitch, c.roll, c.lens_id = 1.6, y0 + dy, 1.65, 0.0, 4.0, 0.0, lid
     v.sensors = [s for s in v.sensors if s.kind == 'lidar']
-    _add(p, v, 'imu', 'ins_dual', yaw=1.5)
+    _add(p, v, 'imu', 'oxts_rt3000_v4', yaw=1.5)
     out = tmp_path_factory.mktemp('stereo')
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(ex, '_now', lambda: FIXED_NOW)
@@ -618,9 +618,12 @@ def test_kalibr_passes_the_config_reader_checks(rig, exported):
     for k in ('accelerometer_noise_density', 'accelerometer_random_walk', 'gyroscope_noise_density',
               'gyroscope_random_walk'):
         assert isinstance(imu[k], float) and imu[k] > 0, k
-    # the library IMU has no noise figures: Kalibr's documented example (github.com/ethz-asl/kalibr/wiki/yaml-formats)
-    assert (imu['accelerometer_noise_density'], imu['accelerometer_random_walk'], imu['gyroscope_noise_density'],
-            imu['gyroscope_random_walk']) == (1.86e-03, 4.33e-04, 1.87e-04, 2.66e-05)
+    # the library IMU's stated noise densities; its maker states no bias random walk: those are Kalibr's documented
+    # example (github.com/ethz-asl/kalibr/wiki/yaml-formats)
+    m = rig.sensor_model_for(next(s for s in rig.variant.sensors if s.kind == 'imu' and s.visible))
+    assert (imu['accelerometer_noise_density'], imu['gyroscope_noise_density']) == (m.accel_noise_density,
+                                                                                    m.gyro_noise_density)
+    assert (imu['accelerometer_random_walk'], imu['gyroscope_random_walk']) == (4.33e-04, 2.66e-05)
 
 
 def test_kalibr_chain_and_imu_transforms(rig, exported):
@@ -917,7 +920,7 @@ def test_hidden_and_odd_tags(qapp, tmp_path):
     p, v = _data_rig()
     v.cameras[2].visible = False
     v.cameras[3].tag = '3-B'
-    _add(p, v, 'imu', 'ins_fog')
+    _add(p, v, 'imu', 'novatel_span_cpt7')
     ex.export(['kalibr_camchain', 'ros_camera_info'], p, None, ex.ExportOptions(out_dir=str(tmp_path)))
     doc = yaml.safe_load((tmp_path / 'kalibr/camchain.yaml').read_text())
     assert len(doc) == 6 and doc['cam3']['rostopic'] == '/s_3_b/image_raw'
@@ -925,7 +928,7 @@ def test_hidden_and_odd_tags(qapp, tmp_path):
     # two IMUs, the first switched off: the files describe the visible one
     first = next(s for s in v.sensors if s.kind == 'imu')
     first.visible = False
-    on = _add(p, v, 'imu', 'imu_mems', yaw=45.0)
+    on = _add(p, v, 'imu', 'xsens_mti630', yaw=45.0)
     ex.export(['kalibr_camchain', 'kitti_calib'], p, None, ex.ExportOptions(out_dir=str(tmp_path / 'h')))
     doc = yaml.safe_load((tmp_path / 'h/kalibr/camchain.yaml').read_text())
     assert np.allclose(doc['cam0']['T_cam_imu'], np.linalg.inv(cam_T(v.cameras[0])) @ sensor_T(on), atol=1e-9)
@@ -933,14 +936,14 @@ def test_hidden_and_odd_tags(qapp, tmp_path):
     v.cameras = []
     ex.export(['kalibr_camchain', 'kitti_calib'], p, None, ex.ExportOptions(out_dir=str(tmp_path / 'e')))
     assert yaml.safe_load((tmp_path / 'e/kalibr/camchain.yaml').read_text()) == {}
-    assert yaml.safe_load((tmp_path / 'e/kalibr/imu.yaml').read_text())['update_rate'] == 200.0     # the MEMS IMU's
+    assert yaml.safe_load((tmp_path / 'e/kalibr/imu.yaml').read_text())['update_rate'] == 400.0     # the MTi-630's
 
 
 def test_imu_noise_from_the_model_when_given(qapp, tmp_path, monkeypatch):
     """When the IMU model carries all four noise figures, imu.yaml writes them (Kalibr's units) instead of Kalibr's
     example values."""
     p, v = _data_rig()
-    imu = _add(p, v, 'imu', 'imu_mems')
+    imu = _add(p, v, 'imu', 'xsens_mti630')
     m = p.sensor_models[imu.model_id]
     own = {'accel_noise_density': 1.2e-3, 'accel_random_walk': 3.0e-4, 'gyro_noise_density': 8.7e-5,
            'gyro_random_walk': 4.0e-6}
@@ -951,10 +954,19 @@ def test_imu_noise_from_the_model_when_given(qapp, tmp_path, monkeypatch):
     doc = yaml.safe_load(text)
     assert doc['gyroscope_noise_density'] == 8.7e-5 and doc['accelerometer_random_walk'] == 3.0e-4
     assert "NOT this IMU's" not in text and "the IMU model's own figures" in text
+    # the makers state noise densities, not bias random walks: those two are Kalibr's example, and said so
+    monkeypatch.setattr(m, 'gyro_random_walk', 0.0)
+    monkeypatch.setattr(m, 'accel_random_walk', 0.0)
+    ex.export(['kalibr_camchain'], p, None, ex.ExportOptions(out_dir=str(tmp_path / 'b')))
+    text = (tmp_path / 'b/kalibr/imu.yaml').read_text()
+    doc = yaml.safe_load(text)
+    assert doc['gyroscope_noise_density'] == 8.7e-5 and doc['gyroscope_random_walk'] == ex.KALIBR_EXAMPLE_IMU[
+        'gyroscope_random_walk']
+    assert "NOT this IMU's" in text and 'states no bias random walk' in text and text.count('Kalibr example') == 2
     # the figures are the sensor model's own fields: saved with the project, negatives cleared
     from vantage.core.sensors import SensorModel
     back = SensorModel.from_dict(m.to_dict())
-    assert {k: getattr(back, k) for k in own} == own
+    assert {k: getattr(back, k) for k in own} == dict(own, accel_random_walk=0.0, gyro_random_walk=0.0)
     assert SensorModel.from_dict(dict(m.to_dict(), gyro_random_walk=-1.0)).gyro_random_walk == 0.0
 
 

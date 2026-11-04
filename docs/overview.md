@@ -172,7 +172,11 @@ narrow lenses.
 | 6-cam front-heavy | An extra pair on the front bumper corners |
 | Data rig · 6-cam + lidar + radars | Six cameras, a 128-channel roof lidar (Ouster OS1-128) and five radars (one long-range, four corner) |
 
-**Other templates** (`--template`): sedan, hatchback, SUV, van, truck and the Tigor.
+**Other templates** (`--template`): the vehicle library's 13 real vehicles (core/vehicles.py), by id. Each has its
+maker's stated dimensions and sources, and a body that lofts its family's profile to them. Three (Lincoln MKZ, Toyota
+Prius, Lexus RX 450h) have freely licensed 3D models that Vantage downloads on request and imports with the stated
+figures. The old names sedan, hatchback, suv, van and truck open the MKZ, ZOE, RX 450h, Sprinter and Cascadia; `tigor`
+is the sample.
 
 **The studio photos** are not in the repository. With them supplied (via `data/` or `VANTAGE_TIGOR_PHOTOS`), the
 photo-matching features work. Without them, the sample opens normally with the photo poses but no images.
@@ -228,16 +232,28 @@ Rig parts are exported:
 
 ### 5.3 Camera modules and lenses
 
-**The library** holds 17 e-con Systems camera modules and 20 lenses:
+**The library** holds 36 camera modules and 52 lenses, every one a real product:
 
-- **STURDeCAM** automotive cameras: 20, 21, 25, 29, 31, 31FSH (with a heated fisheye), 34, 39, 57, 81 and 88;
-- **NileCAM** GMSL2 board cameras: 81, 85, 130 and 210;
-- **NeduCAM25** and **Nedu4CAM57** (FPD-Link).
+- **e-con Systems** (22 modules):
+  - **STURDeCAM** automotive cameras: 20, 21, 25, 29, 31, 31FSH (with a heated fisheye), 34, 39, 57, 81, 84 and 88;
+  - **NileCAM** GMSL2 board cameras: 21, 56, 81, 85, 130 and 210;
+  - **NeduCAM25**, **NeduCAM81**, **Nedu4CAM57** and **Nedu4CAM88** (FPD-Link).
+- **Other makers** (14 modules):
+  - **GMSL cameras:** Leopard Imaging LI-IMX390, LI-IMX490 and LI-IMX728; D3 Embedded Discovery PRO IMX390 and
+    IMX728; Sekonix SF3324 and SF3325 (NVIDIA DRIVE's AR0231 cameras).
+  - **The datasets' cameras:** nuScenes' Basler acA1600-60gc with its 5.5 mm lens, and KITTI's FLIR Flea2 colour and
+    greyscale cameras with their 4 mm lens.
+  - **Machine-vision cameras:** Teledyne FLIR Blackfly S (GigE and USB 3) and LUCID Triton (IP67 GigE), with a real
+    C-mount lens each (Computar M0814-MP2, Fujinon HF6XA-5M).
 
 **What each module records:**
 
-- the vendor's stated figures: sensor, resolution, pixel pitch, frame rate, shutter, dynamic range, IP rating,
-  temperature, power, size and cables;
+- the maker's stated figures: sensor, resolution, pixel pitch, frame rate, shutter, dynamic range, IP rating,
+  temperature, power, size and cables, with the page and the date it was read;
+- a figure the maker does not state is left out and listed as not given, never filled in. The power budget counts
+  such a camera 0 W and lists it.
+- a lens keeps its maker's stated focal length and aperture, and its distortion terms are fitted to the stated field
+  of view. A C-mount lens known only by its focal length is modelled as rectilinear at that focal length;
 - the source page and the date it was read;
 - the figures the vendor does not give.
 
@@ -266,16 +282,41 @@ You can import modules from JSON, CSV or OpenCV YAML.
 
 ### 5.4 Lidars and radars (Vehicle ▸ Add lidar / Add radar)
 
-**The lidar library** uses nominal datasheet figures, each with its source:
+**The sensor library** holds real products only, with the figures their makers state in public datasheets, user
+manuals and product pages (read 2026-11-04). Each model's note names its source, says what the maker does not state
+and how any modelled figure was read or converted.
+
+**Lidars:**
 
 | Model | Channels and field | Range |
 |---|---|---|
-| Ouster OS1-128 Rev 7 | 128 channels, ±22.5° | 90 m (10 % target) |
-| Hesai OT128 | 128 channels, −25° to +15° | 200 m |
-| Hesai AT128 | fixed 120° × 25.4° field | 200 m |
-| Hesai XT32 | 32 channels, 1° spacing | 80 m |
-| Velodyne VLP-16 | 16 channels, ±15° | 100 m |
-| Livox Mid-360 | non-repetitive 360° × 59° | 40 m |
+| Ouster OS1-128 Rev 7 | 128 channels, ±21.2° | 90 m (10 % target) |
+| Ouster OS0-128 Rev 7 | 128 channels, ±45.4° | 35 m (10 %) |
+| Ouster OS2-128 Rev 7 | 128 channels, ±11.25° | 200 m (10 %) |
+| Hesai OT128 | 128 channels, −25° to +15° | 200 m (10 %) |
+| Hesai AT128 | fixed 120° × 25.4° field | 210 m (10 %) |
+| Hesai XT32 | 32 channels, 1° spacing | 80 m (10 %) |
+| Velodyne VLP-16 | 16 channels, ±15° | up to 100 m |
+| Velodyne HDL-32E (nuScenes) | 32 channels, −30.67° to +10.67° | up to 100 m |
+| Velodyne HDL-64E S2 and S3 (KITTI) | 64 channels, −24.33° to +2° | 50 m (pavement), 120 m (cars) |
+| RoboSense RS-Ruby Plus | 128 channels, −25.1° to +15.04° | 240 m (10 %, on 32 channels) |
+| Livox Mid-360 | non-repetitive 360° × 59° | 40 m (10 %) |
+| Livox HAP | non-repetitive 120° × 25° | 150 m (10 %) |
+
+**Radars** (77 GHz unless noted; ranges on a 10 m² car):
+
+| Model | Zones | Interface |
+|---|---|---|
+| Continental ARS 408-21 (nuScenes) | ±9° to 250 m, ±45° to 70 m, ±60° to 20 m | CAN |
+| Continental ARS 548 RDI (4D) | ±50° × ±4° to 301 m, ±50° × ±14° to 100 m | 100BASE-T1 |
+| Continental SRR 308-21 (24 GHz corner) | ±75° × ±12° to 120 m | CAN |
+| smartmicro DRVEGRD 152 (4D) | ±50° × ±10° to 178 m | 100BASE-T1 |
+| smartmicro DRVEGRD 171 (4D) | ±50° × ±10° to 180 m | 100BASE-T1 |
+| smartmicro DRVEGRD 169 (4D corner) | ±65° × ±7.5° to 95 m | 100BASE-T1 |
+
+No radar datasheet states its time synchronisation, so the sync plan stamps radar data when it reaches the host. No
+Ethernet radar states its output data rate: the recording budget counts it as 0 and says so. A CAN radar counts its
+bus's 500 kbit/s, an upper bound.
 
 **How a lidar is modelled:** as a channel fan, with:
 
@@ -294,9 +335,9 @@ You can import modules from JSON, CSV or OpenCV YAML.
 - a Velodyne ROS calibration YAML;
 - a plain list.
 
-**Radars** come in three typical 77 GHz classes: long-range (a far and a near beam), 4D imaging and corner. These are
-classes, not products. Each radar is one or more zones (range on a car, ±azimuth, ±elevation). Smaller targets are
-reached at the fourth root of their radar cross-section.
+**How a radar is modelled:** as one or more zones (range on a car, ±azimuth, ±elevation). Smaller targets are reached
+at the fourth root of their radar cross-section. A range a datasheet gives on another target is converted the same
+way: the SRR 308's 95 m on 6 dBsm is 120 m on the car.
 
 **Placement and display:**
 
@@ -313,14 +354,21 @@ reached at the fourth root of their radar cross-section.
 
 ### 5.5 GNSS antennas and IMUs
 
-**The library** has typical classes, not products; enter your unit's figures:
+**The library** holds real products (the position is an antenna's phase centre, an IMU's the centre of its axes):
 
-- a survey antenna and a patch antenna (the position is the antenna's phase centre);
-- a dual-antenna MEMS GNSS/INS;
-- a FOG GNSS/INS;
-- a MEMS IMU.
+- **antennas:** NovAtel VEXXIS GNSS-850 (survey, 29 dB LNA, phase centre 51.7 mm up) and u-blox ANN-MB-00 (patch,
+  28 dB, 8.9 mm). The harness's RF budget uses the antenna's stated LNA gain.
+- **dual-antenna GNSS/INS:** OxTS RT3000 v4 (heading 0.04° at 2 m), NovAtel PwrPak7D-E1 (0.08° at 2 m), SBG
+  Ellipse-D (0.2° at 2 m).
+- **high-grade GNSS/INS:** NovAtel SPAN CPT7 (Honeywell HG4930) and SBG Ekinox-D (0.02° at 4 m).
+- **IMUs:** Xsens MTi-630 and the Bosch BMI088 chip.
 
-**The figures each class holds:**
+Gyro and accelerometer noise densities are the stated figures, converted exactly to Kalibr's units (an ARW in °/√h
+× π/180/60, a VRW in m/s/√h ÷ 60). No maker states a bias random walk (they state bias stability, which is not one),
+so Kalibr's `imu.yaml` takes its documented example there and says so. The synthetic sample dataset draws its IMU
+noise from the chosen model's density.
+
+**The figures each model holds:**
 
 - heading error at a stated baseline;
 - RTK position error;
@@ -713,7 +761,7 @@ Each study is a page under **Analysis**. Every study has these in common:
 | **Perception range** | How far out does the rig resolve cars, pedestrians, cyclists and signs, in every direction? | 360 directions × 120 ranges to 250 m, the minimum pixel height through the real lens model, required range per sector with pass/fail, stereo pairs with depth resolution at 10, 20 and 50 m. | `--perception-range` |
 | **Weather and night** | What do rain, fog, snow and night cost each sensor? | Eight conditions. Cameras: Koschmieder contrast, ITU-R P.1814, headlamp beam (UN R112 class B) against a photon budget, lens drops. Lidar: two-way extinction. Radar: ITU-R P.838-3 and P.840. Sample: an unlit night leaves pedestrians resolved to 19 m ahead (66 m by day); heavy rain takes the long-range radar from 250 to 195 m. | `--weather`, `--condition` |
 | **Critical targets** | Does the rig resolve *this* child 2 m in front of the bumper, and how much mounting error can each camera take? | Per target and camera: share seen, pixels across, focus, lidar points, radars. The inverse: the allowed yaw, pitch, roll, x, y and z error before a target is lost (to 0.01° and 0.1 mm), all six together on a 729-pose grid, and `mounting_envelopes.csv` for mechanical design. | `--critical-targets` |
-| **Lidar and radar coverage** | What do the lidars and radars add, and where is perception redundant, single or a gap? | Points on the vehicle per channel and direction, the ground blind zone, ground density, points on objects from the real beam elevations, a redundant / single / gap verdict per sector and class, camera–lidar overlap for labelling. Sample: 35 % of the roof lidar's points land on the roof; raising it 0.6 m loses none. | `--sensor-coverage` |
+| **Lidar and radar coverage** | What do the lidars and radars add, and where is perception redundant, single or a gap? | Points on the vehicle per channel and direction, the ground blind zone, ground density, points on objects from the real beam elevations, a redundant / single / gap verdict per sector and class, camera–lidar overlap for labelling. Sample: 34 % of the roof lidar's points land on the roof; raising it 0.6 m loses none. | `--sensor-coverage` |
 | **Sync and timing** | When should each camera fire against the spinning lidar? | The sweep crossing per camera (parallax included), triggers centring a rolling-shutter exposure, misalignment per hardware trigger line, Suggest groups / Apply, motion blur and rolling-shutter skew. Sample: six cameras on one line are up to 12.4 ms off; four lines bring that under 1 ms. | `--sync-plan` |
 | **Clock tree and time sync** | How far off are the sensors' timestamps when PPS drops out, the grandmaster is lost or an FSYNC pulse is missed, and what does that do to lidar points in the images? | The PPS / gPTP / FSYNC tree with editable oscillators, servos, links and timer ticks (typical values with sources), a fault timeline as a seeded Monte Carlo, every sensor's error against true time and the lidar, and the pixel error through the real lens model. Sample: a 60 s PPS dropout leaves the time server 81 µs off UTC at worst; cameras stay within 25 µs of the lidar (0.04 px at 50 km/h turning 25°/s); one missed FSYNC pulse mislabels one frame by 33 ms (58 px). | `--clock-tree` |
 | **Recording budget** | How much data, and can the recorder keep up? | Rates per sensor (raw, JPEG, H.265, lidar packets or clouds), link loads, uplink, write speed with 30 % headroom, GB/h, TB per shift, hours per disk set. Sample: an 8 TB set holds 2 h of six raw cameras. | `--recording-budget` |
@@ -721,8 +769,8 @@ Each study is a page under **Analysis**. Every study has these in common:
 | **Cable harness** | How long is every cable, and does it fit its link? | Routes on the body's surface graph (avoiding glass, doors and shut lines) to entry grommets, then inside to the compute box; GMSL2, FPD-Link, automotive Ethernet, CAN FD and RS-422 limits; a GNSS coax RF budget; power-pair drop. Sample: 18 cables, 56.2 m. | `--harness` |
 | **GNSS and IMU** | Do the antennas see the sky, and what lever arms does the INS need? | Sky-view ray tracing with each blocker named, multipath near field, heading baseline and error, lever arms (FLU and FRD), a pose error budget per sensor. Sample: 100 % sky, a 1.15 m baseline giving 0.17° heading, sensor positions known to 32 mm horizontally. | `--gnss` |
 | **Sun glare and dirt** | When does the sun shine into each camera over a campaign, and which lens gets dirtiest? | The NOAA solar algorithm (checked to 0.003°), location, dates, driving window, time zone, headings from a GPX or CSV track; the share of time with the sun in or near the image, a month × hour matrix, the sun's path in the image; a dirt and spray heuristic per lens. Sample: the front camera has the sun in its image 7.2 % of the driving time in Munich. | `--exposure` |
-| **Exposure metering and HDR seams** | What should each camera's auto-exposure meter, and how far do neighbouring cameras' exposures drift apart across the bird's-eye seams? | A metering mask per camera through the real lens (no body, rig, housings, sky or the dark beyond the image circle) as PNG, a 0–15 metering grid and weighted AE rectangles (libargus `setAeRegions`); a clear-sky photometric model over the Sun glare campaign and at low sun, a tunnel exit and night: each camera's exposure and the step across each seam before and after the stitcher's gain balancing. Sample: the masks remove 20–35 % of each image; over a year in Munich the seams step by up to 1.5 EV and balancing leaves under 0.1 EV; a tunnel exit spreads the cameras over 3.7 EV. | `--isp` |
-| **Materials, glass and wipers** | What do the bumper paint, the windscreen and the wipers do to the sensors? | 77 GHz multilayer transmission through the fascia and paint (solid, metallic, pearl, repaired), the derated radar range, the fascia's thickness tuning; cameras behind glass (light lost, ray shift, dashboard reflection); a wiper sweep per windscreen camera. Sample: the corner radars lose 2.7 dB (102 → 88 m), and a repaired metallic bumper costs 8.3 dB. | `--materials` |
+| **Exposure metering and HDR seams** | What should each camera's auto-exposure meter, and how far do neighbouring cameras' exposures drift apart across the bird's-eye seams? | A metering mask per camera through the real lens (no body, rig, housings, sky or the dark beyond the image circle) as PNG, a 0–15 metering grid and weighted AE rectangles (libargus `setAeRegions`); a clear-sky photometric model over the Sun glare campaign and at low sun, a tunnel exit and night: each camera's exposure and the step across each seam before and after the stitcher's gain balancing. Sample: the masks remove 20–32 % of each image; over a year in Munich the seams step by up to 1.5 EV and balancing leaves under 0.1 EV; a tunnel exit spreads the cameras over 3.7 EV. | `--isp` |
+| **Materials, glass and wipers** | What do the bumper paint, the windscreen and the wipers do to the sensors? | 77 GHz multilayer transmission through the fascia and paint (solid, metallic, pearl, repaired), the derated radar range, the fascia's thickness tuning; cameras behind glass (light lost, ray shift, dashboard reflection); a wiper sweep per windscreen camera. Sample: the corner radars lose 2.7 dB (95 → 82 m), and a repaired metallic bumper costs 8.2 dB. | `--materials` |
 | **Mount brackets** | Can I print a bracket that holds each camera at exactly its planned pose? | A 3D-printable bracket per camera: hole patterns, a surface-fitted base, VHB or screws, tube clamps for rig bars; checks for image blockage, pose accuracy, wall thickness and stiffness; watertight STL. | `--brackets` |
 | **Calibration observability** | How precisely will the planned calibration pin each sensor? | Fisher information per camera (checkerboard, ChArUco, AprilGrid), 1σ per axis, the weakest direction explained in plain words, suggested board moves with their gain, a Monte Carlo *Verify*, lidar–camera fusion density. | `--observability` |
 
@@ -758,8 +806,7 @@ variants.
 and roll (and optionally the stitch seams' angles) continuously with L-BFGS-B on a smooth surrogate of the coverage
 objective (blind ground, ground below the minimum density, unresolved critical targets, objects on a seam), annealed
 from soft to sharp. Cameras stay on their mount zone, locked cameras stay, mirrored pairs move together; every layout
-is checked with the exact engine and the best exact one kept. On the sample's data rig the blind ground falls from
-0.240 to 0.235 m² (0.190 m² with the seam angles free); on the 4-cam variant the ground below 3 px/cm falls from 2.72
+is checked with the exact engine and the best exact one kept. On the sample's data rig the blind ground falls from 0.183 to 0.145 m² (0.170 m² with the seam angles free); on the 4-cam variant the ground below 3 px/cm falls from 2.72
 to 2.26 m². Batch `--refine-rig` (`--refine-from`).
 
 ### Variant comparison
@@ -1810,7 +1857,7 @@ vantage --self-test                 # check the installation without a window
 - `--theme dark|light|system`;
 - `--scale 1.15`;
 - `--software-3d`;
-- `--template sedan|hatchback|suv|van|truck|tigor`;
+- `--template <vehicle id>|tigor` (or the old sedan, hatchback, suv, van, truck);
 - `--version`.
 
 ### Cameras on a Jetson
@@ -1892,9 +1939,11 @@ Vantage states its limits wherever they apply. The main ones:
 
 **Library figures**
 
-- Lens and module figures, lidar and radar ranges, IMU noise and power draws are **nominal**, from public datasheets or
-  typical classes.
-- Radar and INS entries are classes, not products.
+- Every library model is a real product. Its figures are what its maker states publicly (datasheets, manuals, product
+  pages), not measurements of your unit; what a maker does not state is left out and listed, never filled in.
+- Makers state no radar time synchronisation, no Ethernet radar data rate and no IMU bias random walk: the app says so
+  where it needs one. Hesai's datasheets could not be downloaded, so the OT128's and AT128's beam-origin heights and
+  the XT32's power are estimates, marked in their notes.
 - Replace them with your unit's measured figures.
 
 **Weather model**

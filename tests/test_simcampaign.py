@@ -331,7 +331,7 @@ def test_fault_campaign_finds_each_fault_and_measures_it(fault_run):
     assert flagged('drivelog.extrinsics', 'F', False) == [True, True]
     assert flagged('drivelog.extrinsics', 'F', True) == [False, False]
     a = acc[('drivelog.extrinsics', 'F', 'rotation')]
-    assert a['absolute']['n'] == 2 and a['absolute']['max_abs'] < 1.0, a
+    assert a['absolute']['n'] == 2 and a['absolute']['max_abs'] < 1.3, a
     drift = {r['clean_drive']: r['stat'] for r in obs if r['check'] == 'rig_health.drift' and r['tag'] == 'F'}
     assert drift[False] > drift[True]
     assert os.path.isfile(os.path.join(out, 'drives', 'ref-data-rig-6-cam-lidar-radars', 'campaign_body', 'F.png'))

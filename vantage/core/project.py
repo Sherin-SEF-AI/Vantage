@@ -776,7 +776,9 @@ class Project:
                                              {k: Lens.from_dict(l) for k, l in (data.get('lenses') or {}).items()})
         # the built-in sensors stay available in older projects; a saved model (edited or custom) wins
         p.sensor_models.update({k: SensorModel.from_dict(m) for k, m in (data.get('sensor_models') or {}).items()})
+        refreshed = _refresh_builtin_models(p)
         p.variants = [Variant.from_dict(v) for v in data.get('variants', [])]
+        moved = _retire_generic_models(p)
         p.active_uid = data.get('active', p.variants[0].uid if p.variants else '')
         p.roi = ROI.from_dict(data.get('roi', {}))
         p.analysis = AnalysisSettings.from_dict(data.get('analysis', {}))
@@ -792,8 +794,51 @@ class Project:
         p.custom_origin = data.get('custom_origin', [0, 0, 0])
         p.units = data.get('units', 'm')
         p.log = [LogEntry(*e) for e in data.get('log', [])]
+        if refreshed:
+            p.add_log('library', f'Library figures updated to the makers\' datasheets: {", ".join(refreshed)}.')
+        for old, new, tags in moved:
+            p.add_log('library', f'{old} was a generic placeholder, not a product: {", ".join(tags)} now use'
+                                 f'{"s" if len(tags) == 1 else ""} the {new}. Check its figures against your unit.')
         p.thumb_png = thumb
         return p
+
+
+def _refresh_builtin_models(p) -> list[str]:
+    """A built-in sensor model saved in an older file (unedited: an edit saves a copy under a new id) takes this
+    version's figures, so a corrected datasheet figure reaches older projects. Returns the names that changed."""
+    out = []
+    for m in builtin_sensor_models():
+        saved = p.sensor_models.get(m.id)
+        if saved is not None and saved.builtin and saved.to_dict() != m.to_dict():
+            p.sensor_models[m.id] = m
+            out.append(f'{m.vendor} {m.name}'.strip())
+    return out
+
+
+def _retire_generic_models(p) -> list[tuple[str, str, list]]:
+    """Move a project off the generic library models of earlier versions (sensors.RETIRED): an unedited copy saved
+    in the file is dropped and every sensor that used it takes the real model that replaced it. An edited copy is the
+    user's own model (saved under a new id) and stays. Returns [(old name, new name, tags)] for the design log."""
+    from .sensors import RETIRED
+    out = []
+    for old, new in RETIRED.items():
+        saved = p.sensor_models.get(old)
+        if saved is not None and not saved.builtin:
+            continue                      # the user's own model under the old id: theirs to keep
+        p.sensor_models.pop(old, None)
+        if new not in p.sensor_models:
+            continue
+        tags = []
+        for v in p.variants:
+            for s in v.sensors:
+                if s.model_id == old:
+                    s.model_id = new
+                    tags.append(s.tag)
+        if tags:
+            m = p.sensor_models[new]
+            out.append((saved.name if saved is not None else old, f'{m.vendor} {m.name}'.strip(),
+                        list(dict.fromkeys(tags))))
+    return out
 
 
 def read_thumbnail(path: str) -> tuple[bytes, dict]:

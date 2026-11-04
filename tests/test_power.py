@@ -12,9 +12,10 @@ import pytest
 from vantage.core import power as PW, rules, samples, sensors
 from vantage.core.project import Sensor
 
-# the data rig: 6 cameras (their module's power figure cleared by the fixture, so the typical 1.5 W), an OS1-128 (20 W), a long-range radar (6.6 W) and
-# four corner radars (4 W), plus the INS (12 W) and two survey antennas (0.2 W) the tests add; compute 60 W,
-# recorder 40 W, switch 15 W, time server 5 W
+# the data rig with round figures the fixture sets for the hand calculations (the library's own figures:
+# test_the_module_power_figure): 6 cameras (1.5 W), the OS1-128 (20 W), the long-range radar (6.6 W) and four corner
+# radars (4 W), plus the INS (12 W) and two antennas (0.2 W) the tests add; compute 60 W, recorder 40 W, switch 15 W,
+# time server 5 W
 CAM_W, OS1_W, LONG_W, CORNER_W, INS_W, ANT_W = 1.5, 20.0, 6.6, 4.0, 12.0, 0.2
 FIXED_W = 60.0 + 40.0 + 15.0 + 5.0
 STEADY = 6 * CAM_W + OS1_W + LONG_W + 4 * CORNER_W + INS_W + 2 * ANT_W + FIXED_W             # 184 W
@@ -41,14 +42,18 @@ def _add(p, kind, model_id, tag, **kw):
 
 @pytest.fixture()
 def p(base):
-    """The data rig, active, with an INS and two antennas, its cameras without a power figure (the hand calculations
-    use the typical camera figure; the built-in STURDeCAM31 states 1.324 W: test_the_module_power_figure)."""
+    """The data rig, active, with an INS and two antennas, and the round power figures of the hand calculations set
+    on its library entries (the built-in STURDeCAM31 states 1.324 W: test_the_module_power_figure)."""
     q = copy.deepcopy(base)
     q.active_uid = next(v for v in q.variants if v.sensors).uid
-    q.modules['sturdecam31'].power_w = 0.0
-    _add(q, 'imu', 'ins_dual', 'IMU1')
-    _add(q, 'gnss', 'gnss_survey', 'GN1')
-    _add(q, 'gnss', 'gnss_survey', 'GN2')
+    q.modules['sturdecam31'].power_w = CAM_W
+    for mid, w in (('ouster_os1_128', OS1_W), ('conti_ars408_21', LONG_W), ('smartmicro_drvegrd169', CORNER_W),
+                   ('oxts_rt3000_v4', INS_W), ('novatel_gnss850', ANT_W)):
+        q.sensor_models[mid] = copy.deepcopy(q.sensor_models[mid])
+        q.sensor_models[mid].power_w = w
+    _add(q, 'imu', 'oxts_rt3000_v4', 'IMU1')
+    _add(q, 'gnss', 'novatel_gnss850', 'GN1')
+    _add(q, 'gnss', 'novatel_gnss850', 'GN2')
     return q
 
 
@@ -84,7 +89,7 @@ def test_the_data_rig_by_hand(p):
     assert [r['tag'] for r in res.rows] == ['F', 'R', 'ML', 'MR', 'QL', 'QR', 'L1', 'RD1', 'RD2', 'RD3', 'RD4', 'RD5',
                                            'IMU1', 'GN1', 'GN2', 'Compute', 'Recorder', 'Switch', 'PTP']
     f = res.row('F')
-    assert (f['steady_w'], f['peak_w'], f['source'], f['circuit']) == (1.5, pytest.approx(1.8), 'typical', 'compute')
+    assert (f['steady_w'], f['peak_w'], f['source'], f['circuit']) == (1.5, pytest.approx(1.8), 'module', 'compute')
     l1 = res.row('L1')
     assert (l1['steady_w'], l1['peak_w'], l1['source'], l1['circuit']) == (20.0, 40.0, 'library', 'lidar')
     assert l1['steady_a'] == pytest.approx(20 / 12) and l1['peak_a'] == pytest.approx(40 / 12)
@@ -104,10 +109,18 @@ def test_the_data_rig_by_hand(p):
     # the enclosure: compute, recorder, switch, time server and the converter's loss
     assert t['heat_w'] == pytest.approx(FIXED_W + 16.0) and t['heat_tags'] == ['Compute', 'Recorder', 'Switch', 'PTP']
     assert t['by_kind_w']['radar'] == pytest.approx(22.6) and t['counts']['camera'] == 6
-    # nothing to fix on the sample rig: only notes (no camera power figure, the heat) and good lines
+    # nothing to fix on the sample rig: only a note (the heat) and good lines
     assert res.worst() == 'good' and PW.issues(p) == []
-    assert {f['kind'] for f in res.findings if f['severity'] == 'note'} == {'no_figure', 'heat'}
-    assert next(f for f in res.findings if f['kind'] == 'no_figure')['tags'] == ['F', 'R', 'ML', 'MR', 'QL', 'QR']
+    assert {f['kind'] for f in res.findings if f['severity'] == 'note'} == {'heat'}
+    # a module without a stated figure counts 0 W and is listed (no made-up figure), or your figure for it
+    p.modules['sturdecam31'].power_w = 0.0
+    res = PW.run(p, settings=_short(p))
+    assert res.row('F')['steady_w'] == 0.0 and res.row('F')['source'] == 'missing'
+    note = next(f for f in res.findings if f['kind'] == 'no_figure')
+    assert note['tags'] == ['F', 'R', 'ML', 'MR', 'QL', 'QR'] and 'count 0 W' in note['message']
+    res = PW.run(p, settings=_short(p, camera_w=1.5))
+    assert res.row('F')['steady_w'] == 1.5 and res.row('F')['source'] == 'setting'
+    assert res.totals['steady_w'] == pytest.approx(STEADY)
 
 
 def test_circuits_currents_and_automatic_fuses(p):
@@ -255,8 +268,8 @@ def test_cable_drop_for_a_known_length_and_gauge(p):
 def test_hidden_missing_and_odd_devices(p, base):
     _sensor(p.variant, 'RD2').visible = False
     p.variant.by_tag('F').visible = False
-    p.sensor_models['radar_corner'] = copy.deepcopy(p.sensor_models['radar_corner'])
-    p.sensor_models['radar_corner'].power_w = float('nan')               # a hand-edited library: no figure
+    p.sensor_models['smartmicro_drvegrd169'] = copy.deepcopy(p.sensor_models['smartmicro_drvegrd169'])
+    p.sensor_models['smartmicro_drvegrd169'].power_w = float('nan')               # a hand-edited library: no figure
     p.modules['sturdecam31'].power_w = 2.2
     res = PW.run(p, settings=_short(p))
     assert res.row('RD2') is None and res.row('F') is None
@@ -301,7 +314,7 @@ def test_settings_are_validated():
         'circuit_of': {'abc': 'lidar', 'def': 'nowhere', 3: 'radar'},
         'cables': {'u1': {'m': -2, 'awg': 'x'}, 'u2': {'m': 'far'}, 'u3': 'junk', 'u4': {'awg': 2}},
         'enclosure': ['compute', 3, 'compute', 'u1'], 'dcdc_in_enclosure': 'no'})
-    assert st.bus_v == 12.0 and st.camera_w == 1.5 and st.lidar_peak == 1.0 and st.dcdc_eff == 1.0
+    assert st.bus_v == 12.0 and st.camera_w == 0.0 and st.lidar_peak == 1.0 and st.dcdc_eff == 1.0
     assert st.dcdc_w == PW.LIMITS['dcdc_w'][0] and st.battery_dod == 0.8 and st.alternator_a == 60.0
     assert st.cable_awg == PW.AWG_RANGE[1] and st.max_drop_pct == 0.1 and st.min_input_v == 9.0
     assert 'nonsense' not in st.to_dict() and len(st.other) == PW.MAX_OTHER
@@ -410,9 +423,9 @@ def test_page_edits_undoes_adds_loads_and_exports(app, win, tmp_path):
     store.edit('variants', lambda q: setattr(q, 'active_uid', rig.uid), 'Switched to the data rig')
 
     def add(q):
-        _add(q, 'imu', 'ins_dual', 'IMU1')
-        _add(q, 'gnss', 'gnss_survey', 'GN1')
-        _add(q, 'gnss', 'gnss_survey', 'GN2')
+        _add(q, 'imu', 'oxts_rt3000_v4', 'IMU1')
+        _add(q, 'gnss', 'novatel_gnss850', 'GN1')
+        _add(q, 'gnss', 'novatel_gnss850', 'GN2')
     store.edit('variant', add, 'Added the INS and antennas')
     pg = _open(win, 'power', PowerPage)
     pump(app, 0.2)
@@ -423,7 +436,8 @@ def test_page_edits_undoes_adds_loads_and_exports(app, win, tmp_path):
     assert pg.tiles['load'].value == f'{res.totals["steady_w"]:,.0f}'
     assert pg.tiles['dcdc'].sev == 'good' and pg.tiles['alternator'].sev == 'good' and pg.tiles['circuit'].sev == 'good'
     assert pg.circ.rowCount() == len(res.circuits) and len(pg.findings) == len(res.findings)
-    assert len(pg.bar.segs) == len(res.rows) + 2                      # every device, the cables, the converter
+    drawn = [r for r in res.rows if r['steady_w'] > 0]                # the antennas draw from their receiver: 0 W
+    assert len(pg.bar.segs) == len(drawn) + 2                         # every drawing device, the cables, the converter
     steady = res.totals['steady_w']
     # a bigger compute module, typed into its field: saved, computed again at once, undoable
     _type_into_field(app, pg.fields['compute_w'][0], '400')

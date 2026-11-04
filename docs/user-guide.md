@@ -48,7 +48,7 @@ The downloads are not code-signed. On Windows choose *More info ▸ Run anyway*.
 
 ## Tutorial 1 · Open the sample
 
-Start Vantage. The start window lists recent projects, the **Tata Tigor EV** sample and five templates (sedan, hatchback, SUV, van, truck). Open the sample, or from a terminal:
+Start Vantage. The start window lists recent projects, the **Tata Tigor EV** sample and the vehicle library's 13 real vehicles, from the nuScenes ZOE and the KITTI Passat to a Sprinter van and a Cascadia tractor. Open the sample, or from a terminal:
 
 ```bash
 vantage --sample
@@ -160,7 +160,7 @@ Keep each idea as a **variant** instead of overwriting the last one. The **Layou
 | 4-cam | 4 | 0.073 m² | 6.9 % | 2.1 px/cm | beside the doors, on the left sill |
 | 4-cam, mirror cameras 5° off | 4 | 0.623 m² | 9.9 % | 2.3 px/cm | ahead of the front bumper |
 | 6-cam front-heavy | 6 | 1.948 m² | 35.0 % | 1.9 px/cm | below the rear bumper |
-| Data rig · 6-cam + lidar + radars | 6 | 0.240 m² | 52.8 % | 3.1 px/cm | below the front bumper |
+| Data rig · 6-cam + lidar + radars | 6 | 0.183 m² | 52.8 % | 3.1 px/cm | below the front bumper |
 
 The two quarter cameras take the redundancy from 6.9 % to 53 %, and a mirror camera mounted 5° wrong costs more than half a square metre. **Make … active** switches to the variant you prefer, and **Export comparison…** writes the table.
 
@@ -182,7 +182,7 @@ vantage rig.vantage --refine-rig refined.json --refine-from "6-cam · v3"
 
 Switch to the *Data rig · 6-cam + lidar + radars* variant. **Vehicle ▸ Add lidar**, **Add radar**, **Add GNSS antenna** and **Add IMU** put sensors where they usually go: a lidar on top of the highest mast, a radar mid-bumper, two GNSS antennas as far apart as the roof allows, and the IMU over the rear axle. Move them like cameras. **Vehicle ▸ Add rig part** adds a roof rack, mast, enclosure or bar, sized to the roof. Rig parts block the cameras' view like the body does.
 
-Each sensor's housing and each camera module is a solid that the other cameras cannot see through, so a lidar on a mast shows up as a dark shape in the cameras behind it. On the data rig, the front radar `RD1` sits 12 cm below `F` and hides 13.7 % of its image, so the blind ground grows from 0.010 m² to 0.240 m², mostly below the front bumper. **Analysis ▸ Lidar and radar coverage** says what this costs the lidar itself. On the data rig, 35 % of `L1`'s points land on the vehicle or the rig, and of the sector checks 28 are covered redundantly, 1 by a single sensor and 3 have a gap.
+Each sensor's housing and each camera module is a solid that the other cameras cannot see through, so a lidar on a mast shows up as a dark shape in the cameras behind it. On the data rig, the front radar `RD1` sits 12 cm below `F` and hides 10.7 % of its image, so the blind ground grows from 0.010 m² to 0.183 m², mostly below the front bumper. **Analysis ▸ Lidar and radar coverage** says what this costs the lidar itself. On the data rig, 34 % of `L1`'s points land on the vehicle or the rig, and of the sector checks 27 are covered redundantly, 2 by a single sensor and 3 have a gap.
 
 ![A lidar on a sensor mast and five radars with their fields drawn around the car; the inspector shows the lidar model's figures](https://sherin-sef-ai.github.io/Vantage/media/sensors.jpg)
 
@@ -196,8 +196,8 @@ The **Analysis** menu holds one page per question. Each page has an **Export** b
 |---|---|---|
 | Perception range | Ahead, a car is resolved to 70.1 m, a pedestrian to 66.3 m and a sign to 47.1 m. The front sector asks for 80 m, so it fails by 9.9 m for cars. Front-left asks for 40 m and passes. | `--perception-range` |
 | Sync and timing | The worst camera fires 12.41 ms away from the lidar sweep, which is 17.2 cm of travel at 50 km/h. Suggested trigger lines bring it to 0.94 ms. | `--sync-plan` |
-| Recording budget | The disks need 1,444 of their 1,500 MB/s (96 %). One 8 TB set holds 2.0 h, so a shift needs 5 sets (32 TB). The busiest camera link, `F`, carries 1,557 of 6,000 Mbit/s. | `--recording-budget` |
-| Power budget | 170.5 W steady and 220.7 W peak. The 600 W DC-DC converter runs at 28 %, and the enclosure must shed 135 W of heat. | `--power-budget` |
+| Recording budget | The disks need 1,443 of their 1,500 MB/s (96 %). One 8 TB set holds 2.0 h, so a shift needs 4 sets (32 TB). The busiest camera link, `F`, carries 1,557 of 6,000 Mbit/s. | `--recording-budget` |
+| Power budget | 166.5 W steady and 212.7 W peak. The 600 W DC-DC converter runs at 28 %, and the enclosure must shed 135 W of heat. | `--power-budget` |
 | Blind volume | A 0.9 m child goes undetected on 0.005 m², all within 5 cm of the body. | `--blind-volume` |
 
 ```bash
@@ -277,7 +277,7 @@ That completes the tutorial. The rest of this page goes through each feature.
 1. Paint **mount zones** with the brush: where cameras may go and where they may not (doors that open, the bonnet's shut line).
 1. Drag modules from the **Library** onto the body, or press <kbd>C</kbd> and click. Start with a mirrored pair (<kbd>Alt</kbd>-click), lock what is fixed, and let the analysis guide the rest.
 
-A template (`vantage --template suv`) gives a generated body with a starting layout when there is no model yet. Swap the body later and the rig stays.
+A library vehicle (`vantage --template lincoln_mkz_2017`) gives a body at that vehicle's stated dimensions with a starting layout when there is no model yet. Swap the body later and the rig stays.
 
 > **Conventions to remember.** Metres and degrees. Yaw is positive to the left, and pitch is positive pointing *down*. Pixel density is in px/cm. Exported intrinsics use OpenCV's convention, so the centre of a 1920-wide sensor is cx = 959.5.
 
@@ -285,9 +285,15 @@ A template (`vantage --template suv`) gives a generated body with a starting lay
 
 Each entry gives where to find the feature, what it answers and an example. *Reference* links to its full section in the docs.
 
+### Vehicle library
+
+**Where:** the Library panel's **Vehicles** list; **File ▸ New from template**; the start window. There are 13 real vehicles with the dimensions their makers state and their sources: the nuScenes Renault ZOE, the KITTI Passat B6 Variant, the Lincoln MKZ, Toyota Prius and Sienna, Chrysler Pacifica Hybrid, Hyundai IONIQ 5, Kia e-Niro, Lexus RX 450h, Tesla Model 3, a Sprinter van, the Tata Nexon.ev and a Cascadia tractor with a 53 ft trailer. A new project gets its family's body at the stated length, width, height, wheelbase, overhangs, track and wheel size. The body is shaped, with glass, alloy rims, lamps, black trim and mirror pods. A figure not stated is drawn and named in the design log. **View ▸ Overlays ▸ Range rings** (<kbd>Alt</kbd>+<kbd>R</kbd>) marks 1, 2, 5 and 10 m from the body on the ground. Three vehicles (MKZ, Prius, RX 450h) have freely licensed 3D models that Vantage downloads from their publishers and opens in the import wizard, with the stated figures for the spec check.
+
+> **Example.** Right-click **Toyota Prius** in the Library's Vehicles list and choose **Download its 3D model and import…**. Vantage asks first, downloads the Open Robotics model (CC0, 1.3 MB), and opens the wizard set to centimetres and +Z up, with Toyota's 4.539 × 1.760 × 1.476 m in the spec check. [Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#vehicle-library)
+
 ### Camera library
 
-**Where:** the Library panel; **Camera ▸ Change lens**; **Camera ▸ Edit module…**. There are 17 e-con Systems modules (STURDeCAM, NileCAM, NeduCAM) with 20 lenses, each with the figures from e-con's public product page and the date they were read. You can add your own modules: rectilinear, equidistant, equisolid, stereographic or measured Kannala–Brandt, imported from JSON, CSV or OpenCV YAML.
+**Where:** the Library panel; **Camera ▸ Change lens**; **Camera ▸ Edit module…**. There are 36 real modules with 52 lenses: 22 from e-con Systems (STURDeCAM, NileCAM, NeduCAM), and Leopard Imaging, D3 Embedded and Sekonix GMSL cameras, the nuScenes and KITTI cameras with their lenses, Blackfly S and LUCID Triton. Each has the figures from its maker's public pages and the date they were read; a figure the maker does not state is listed as not given. You can add your own modules: rectilinear, equidistant, equisolid, stereographic or measured Kannala–Brandt, imported from JSON, CSV or OpenCV YAML.
 
 > **Example.** To try a narrow lens ahead, select `F` and use **Camera ▸ Change lens** to switch from the STURDeCAM31 H05R2 (128.7° horizontal) to the H03R2 (54.0°). The perception range ahead grows and the ground near the bumper is lost. Undo, or keep it as a variant. [Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#camera-library)
 
@@ -299,7 +305,7 @@ Each entry gives where to find the feature, what it answers and an example. *Ref
 
 ### Lidars, radars, GNSS and IMU
 
-**Where:** **Vehicle ▸ Add lidar / Add radar / Add GNSS antenna / Add IMU**; **View ▸ Overlays** draws their fields. Each sensor belongs to the variant, like a camera.
+**Where:** **Vehicle ▸ Add lidar / Add radar / Add GNSS antenna / Add IMU**; **View ▸ Overlays** draws their fields. Each sensor belongs to the variant, like a camera. The library holds real products only, with their datasheets' figures: Ouster, Hesai, Velodyne (including KITTI's HDL-64E and nuScenes' HDL-32E), RoboSense and Livox lidars; Continental (nuScenes' ARS 408-21) and smartmicro radars; NovAtel and u-blox antennas; OxTS, NovAtel and SBG GNSS/INS units; Xsens and Bosch IMUs.
 
 > **Example.** Add a second radar and move it to a rear corner. **Analysis ▸ Lidar and radar coverage** shows the gap it closes, sector by sector, against the cameras. [Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#sensors)
 
@@ -307,7 +313,7 @@ Each entry gives where to find the feature, what it answers and an example. *Ref
 
 **Where:** the Inspector's **Mount ▸ Housings** row; **Analysis ▸ Housings block cameras** switches the effect off for comparison. Every sensor housing and camera module is a solid in every other camera's view.
 
-> **Example.** On the data rig, `RD1` hides 13.7 % of `F`'s image and `RD4` and `RD5` 0.1 % of `QL`'s and `QR`'s. With housings the rig is blind on 0.240 m², and without them on 0.010 m². Lowering `RD1` from 0.50 m to 0.40 m brings the blind ground down to 0.055 m², and to 0.028 m² at 0.35 m. Moving it 30 cm to the left of `F` instead gets back to 0.010 m².
+> **Example.** On the data rig, `RD1` hides 10.7 % of `F`'s image and `RD4` and `RD5` 0.1 % of `QL`'s and `QR`'s. With housings the rig is blind on 0.183 m², and without them on 0.010 m². Lowering `RD1` from 0.50 m to 0.40 m brings the blind ground down to 0.035 m², and to 0.028 m² at 0.35 m. Moving it 30 cm to the left of `F` instead gets back to 0.010 m².
 
 ```bash
 vantage rig.vantage --housings housings.json   # exit 2 when a camera sits inside a housing
@@ -402,7 +408,7 @@ vantage rig.vantage --critical-targets critical/   # exit 2 when no camera resol
 
 **Where:** **Analysis ▸ Lidar and radar coverage**. **Answers:** the share of lidar points lost to the vehicle, the ground blind zone, the points on a car 25, 50 and 100 m ahead, the detection range per object and sector against the cameras', and the camera–lidar overlap.
 
-> **Example.** On the data rig 35 % of `L1`'s points hit the vehicle. Raise `L1` 20 cm on a mast (**Vehicle ▸ Add rig part ▸ Sensor mast**) and see what that does to the figure and to the ground blind zone. [Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#sensor-coverage)
+> **Example.** On the data rig 34 % of `L1`'s points hit the vehicle. Raise `L1` 20 cm on a mast (**Vehicle ▸ Add rig part ▸ Sensor mast**) and see what that does to the figure and to the ground blind zone. [Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#sensor-coverage)
 
 ### Sync and timing
 
@@ -424,13 +430,13 @@ vantage rig.vantage --clock-tree clock/   # exit 3 when lidar points land beyond
 
 **Where:** **Analysis ▸ Recording budget**. **Answers:** each sensor's data rate (raw, JPEG or H.265), the links, the write speed and the hours per disk set.
 
-> **Example.** The data rig needs 96 % of its disks' sustained write and 5 disk sets per 8 h shift. Switching the cameras to H.265 in the page shows how many sets that saves. [Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#recording)
+> **Example.** The data rig needs 96 % of its disks' sustained write and 4 disk sets per 8 h shift. Switching the cameras to H.265 in the page shows how many sets that saves. [Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#recording)
 
 ### Power budget
 
 **Where:** **Analysis ▸ Power budget**. **Answers:** the steady and peak draw, the DC-DC converter's load, the fuses and power cables, the alternator margin and how long the rig runs with the engine off.
 
-> **Example.** The data rig draws 170.5 W steady and 220.7 W peak, and the 600 W converter runs at 28 %. [Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#power)
+> **Example.** The data rig draws 166.5 W steady and 212.7 W peak, and the 600 W converter runs at 28 %. [Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#power)
 
 ### Cable harness
 

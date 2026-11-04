@@ -18,7 +18,8 @@ from vantage.core.project import Camera, Project
 
 @pytest.fixture(scope='module')
 def rig():
-    """The sample's data rig (6 cameras on deserializers A and B, an OS1-128, five PTP radars)."""
+    """The sample's data rig (6 cameras on deserializers A and B, an OS1-128 on PTP, five radars whose datasheets state
+    no time sync: the computer stamps them as their data arrives)."""
     p = samples.tigor_sample_project()
     p.active_uid = next(v.uid for v in p.variants if v.name.startswith('Data rig'))
     return p
@@ -45,7 +46,8 @@ def test_default_tree_of_the_data_rig(rig):
     assert kinds.count('camera') == 6 and kinds.count('radar') == 5 and kinds.count('lidar') == 1
     assert topo.gm == 'server' and topo.node('server').parent == 'gnss'          # power budget lists a time server
     assert topo.node('compute').parent == 'switch' and topo.node('switch').parent == 'server'
-    assert {n.parent for n in topo.nodes if n.kind in ('lidar', 'radar')} == {'switch'}
+    assert {n.parent for n in topo.nodes if n.kind == 'lidar'} == {'switch'}
+    assert {(n.parent, n.p['stamping']) for n in topo.nodes if n.kind == 'radar'} == {('compute', 'host')}
     assert [n.info['tag'] for n in _cam_nodes(topo, 'deser:A')] == ['F', 'R', 'ML', 'MR']       # GMSL ports 1-4
     assert [n.info['tag'] for n in _cam_nodes(topo, 'deser:B')] == ['QL', 'QR']
     assert topo.lidar.startswith('sensor:') and topo.node(topo.lidar).kind == 'lidar'
@@ -189,8 +191,8 @@ def test_grandmaster_loss_hands_over_after_the_announce_timeout(rig):
 def test_link_asymmetry_offsets_the_clocks_behind_it_by_half(rig):
     topo0 = CT.build_topology(rig)
     lid = topo0.lidar
-    rd = next(n.id for n in topo0.nodes if n.kind == 'radar')
-    st = _st(runs=60, duration_s=60.0, nodes={'gnss': {'pps_ns': 0}},
+    rd = next(n.id for n in topo0.nodes if n.kind == 'radar')        # a radar on PTP, as a user sets one that has it
+    st = _st(runs=60, duration_s=60.0, nodes={'gnss': {'pps_ns': 0}, rd: {'stamping': 'ptp'}},
              events=[{'kind': 'asymmetry', 't_s': 10.0, 'node': lid, 'value': 1000.0}])
     sim = CT.simulate(CT.build_topology(rig, settings=st), st)
     base = (10.0 + 10.0) / 2 * 1e-9                                     # its own and the switch's typical 10 ns
@@ -327,8 +329,12 @@ def test_run_findings_and_determinism(rig):
         CT.holdover_time(0.5, 3.0, 100e-6))
     lid = a.sensor(a.topology.lidar)
     assert lid['vs_lidar'] is None and lid['true']['p95'] > 0
-    # radars on the same switch are within a microsecond of the lidar (802.1AS's goal)
-    assert all(s['vs_lidar']['p95'] < 1e-6 for s in a.sensors if s['kind'] == 'radar')
+    # radars on PTP on the same switch are within a microsecond of the lidar (802.1AS's goal); stamped on arrival
+    # at the computer, as the sample's are, they are off by their transport and the host's stamping
+    rds = [n.id for n in a.topology.nodes if n.kind == 'radar']
+    e = CT.run(rig, settings=CT.ClockTreeSettings.from_dict({'runs': 30, 'nodes': {r: {'stamping': 'ptp'} for r in rds}}))
+    assert all(s['vs_lidar']['p95'] < 1e-6 for s in e.sensors if s['kind'] == 'radar')
+    assert all(s['vs_lidar']['p95'] > 1e-6 for s in a.sensors if s['kind'] == 'radar')
     # a tight holdover budget and a large projection limit: holdover is serious, projection good
     d = CT.run(rig, settings=CT.ClockTreeSettings.from_dict({'runs': 10, 'time_budget_us': 5, 'threshold_px': 500}))
     assert any(f['kind'] == 'holdover' and f['severity'] == 'serious' for f in d.findings)

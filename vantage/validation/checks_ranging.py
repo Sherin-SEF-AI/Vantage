@@ -177,20 +177,21 @@ def _points_tilted(ctx):
 # ============================================================================ radar
 @check('radar.cross_section', 'radar', 'Radar range against the cross-section',
        'largest relative difference of the pedestrian\'s and cyclist\'s radar range from the car\'s scaled by '
-       '(σ / σ_car)^¼, and of the car\'s from the zone\'s 100 m (slant to its centre), a corner radar with nothing '
-       'in the way',
+       '(σ / σ_car)^¼, and of the car\'s from the zone\'s stated range (slant to its centre), a corner radar '
+       '(smartmicro DRVEGRD 169, 95 m) with nothing in the way',
        'the radar equation: received power ∝ σ / R⁴, so the range at a fixed threshold ∝ σ^¼', 1e-4, 'relative',
        refs=('skolnik2001',))
 def _radar_rcs(ctx):
     from ..core import sensor_coverage as SC
     from ..core.project import Sensor
-    s = Sensor(kind='radar', model_id='radar_corner', tag='RD1', x=0.0, y=0.0, z=0.5)
+    s = Sensor(kind='radar', model_id='smartmicro_drvegrd169', tag='RD1', x=0.0, y=0.0, z=0.5)
     p = _empty(s)
     res = SC.run(p, ctx.engine)
     names = [c.name for c in res.classes]
     car = names.index('Car')
     zc = 0.75 - 0.5
-    errs = {'car': abs(res.radar[car, 0] - math.sqrt(100.0 ** 2 - zc ** 2)) / 100.0}
+    rng = p.sensor_model_for(s).zones[0][0]
+    errs = {'car': abs(res.radar[car, 0] - math.sqrt(rng ** 2 - zc ** 2)) / rng}
     for name in ('Pedestrian', 'Cyclist'):
         k = names.index(name)
         rcs = res.classes[k].rcs

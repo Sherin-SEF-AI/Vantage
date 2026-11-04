@@ -208,7 +208,7 @@ class HarnessSettings:
     free_cost: float = 2.0             # across a gap between shells (free air)
     compute: str = 'auto'              # the compute box: auto (from the body) | inside | outside
     gnss_cable: str = 'rf_rg58'        # a GNSS antenna's coax unless set per run
-    gnss_lna_db: float = 28.0          # the antenna's LNA gain (typical active antenna)
+    gnss_lna_db: float = 28.0          # an antenna's LNA gain when its model states none
     gnss_min_db: float = 15.0          # what the receiver needs at its input: LNA gain less the cable's loss (typical)
     connector_db: float = 0.1          # loss of each RF connector (typical)
     warn_share: float = 0.9            # a run longer than this share of its limit is flagged
@@ -272,6 +272,10 @@ def camera_cable(module) -> str:
         return 'usb3' if re.search(r'3', t) else 'usb2'
     if re.search(r'MIPI|CSI', t, re.I):
         return 'mipi'
+    if re.search(r'GigE|1000\s*BASE-?T\b', t, re.I):
+        return '1000base_t'
+    if re.search(r'1394|FireWire', t, re.I):
+        return 'other'
     return 'coax'
 
 
@@ -1196,14 +1200,16 @@ def _check_data(project, dev, base, st) -> dict:
             alt = f'use the {r["option_m"]:g} m cable' if r['option_m'] else 'move the compute box closer'
             r['problems'].append(('serious', 'cable', f'{dev["tag"]}: {L:.2f} m routed, longer than its '
                                   f'{r["fitted_m"]:g} m cable: {alt}.'))
+    lna = _lna_db(st, dev)
     if cab.family == 'rf':
         n_conn = 2
         loss = L * cab.db_per_m + n_conn * st.connector_db
         r['loss_db'] = loss
-        r['margin_db'] = st.gnss_lna_db - loss - st.gnss_min_db
+        r['lna_db'] = lna
+        r['margin_db'] = lna - loss - st.gnss_min_db
         if r['margin_db'] < 0:
             r['problems'].append(('serious', 'rf', f'{dev["tag"]}: {L:.1f} m of {cab.label} loses {loss:.1f} dB at L1; '
-                                  f'the {st.gnss_lna_db:g} dB LNA leaves {st.gnss_lna_db - loss:.1f} dB, under the '
+                                  f'the {lna:g} dB LNA leaves {lna - loss:.1f} dB, under the '
                                   f'{st.gnss_min_db:g} dB the receiver needs: use a lower-loss cable or an inline '
                                   f'amplifier.'))
         elif r['margin_db'] < RF_WARN_DB:
@@ -1219,11 +1225,17 @@ def _check_data(project, dev, base, st) -> dict:
     if r['share'] is not None:
         uses.append((r['share'], f'the {cab.limit_m:g} m {cab.label} allows'))
     if r['loss_db'] is not None:
-        budget = st.gnss_lna_db - st.gnss_min_db
+        budget = lna - st.gnss_min_db
         uses.append((r['loss_db'] / budget if budget > 0 else math.inf, f'the {budget:g} dB RF budget'))
     r['use'], r['use_of'] = max(uses, key=lambda u: u[0]) if uses else (None, '')
     _route_problems(r)
     return r
+
+
+def _lna_db(st, dev) -> float:
+    """The LNA gain of a GNSS antenna: its model's stated figure, else the settings' gnss_lna_db."""
+    g = getattr(dev.get('smodel'), 'lna_gain_db', 0.0) if dev.get('kind') != 'camera' else 0.0
+    return float(g) if _finite(g) and g > 0 else float(st.gnss_lna_db)
 
 
 def _iface(dev):

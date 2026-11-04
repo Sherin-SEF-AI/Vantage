@@ -420,10 +420,10 @@ def _add_gnss_imu(p):
     from ..core.project import Sensor
     models = {m.id: m for m in SS.builtin_sensor_models()}
     mesh = p.vehicle.mesh
-    p.variant.sensors.append(Sensor(tag='G1', name='GNSS antenna', kind='gnss', model_id='gnss_survey',
-                                    **SS.default_pose('gnss', models['gnss_survey'], mesh)))
-    p.variant.sensors.append(Sensor(tag='I1', name='IMU', kind='imu', model_id='imu_mems',
-                                    **SS.default_pose('imu', models['imu_mems'], mesh)))
+    p.variant.sensors.append(Sensor(tag='G1', name='GNSS antenna', kind='gnss', model_id='novatel_gnss850',
+                                    **SS.default_pose('gnss', models['novatel_gnss850'], mesh)))
+    p.variant.sensors.append(Sensor(tag='I1', name='IMU', kind='imu', model_id='xsens_mti630',
+                                    **SS.default_pose('imu', models['xsens_mti630'], mesh)))
 
 
 def _add_critical(p, label):

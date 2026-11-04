@@ -994,7 +994,7 @@ def test_unknown_missing_empty(tmp_path):
     e.write_bytes(b'')
     with pytest.raises(MeshLoadError, match='empty'):
         load_mesh(str(e))
-    assert SUPPORTED_EXTS == ('.glb', '.gltf', '.obj', '.stl', '.ply', '.fbx', '.step', '.stp')
+    assert SUPPORTED_EXTS == ('.glb', '.gltf', '.obj', '.stl', '.ply', '.dae', '.fbx', '.step', '.stp')
 
 
 def test_uppercase_extension(tmp_path):

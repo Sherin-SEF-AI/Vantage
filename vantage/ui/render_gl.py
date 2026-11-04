@@ -353,8 +353,8 @@ void main() {
         alb = min(alb, vec3(0.022)); coat = 0.15; f0 = 0.02; gloss = 10.0; ks = 0.06;
     } else if (m == 3.0) {                            // black trim / plastic
         alb = min(alb, vec3(0.03)); coat = 0.45; gloss = 40.0; ks = 0.18;
-    } else if (m == 4.0) {                            // light lens
-        alb *= 0.55; coat = 1.4; gloss = 600.0; ks = 1.2;
+    } else if (m == 4.0) {                            // light lens: its colour (red, amber, smoked) under a clear cover
+        alb *= 0.85; coat = 0.55; gloss = 600.0; ks = 1.1;
     } else if (m == 5.0) {                            // rig metal: anodised, tinted reflections
         kd = 0.55; f0 = 0.35; tint = alb / max(dot(alb, LUMA), 0.02) * 0.8; gloss = 70.0; ks = 0.5; coat = 0.8;
     }

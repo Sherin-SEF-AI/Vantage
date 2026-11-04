@@ -1288,8 +1288,17 @@ def get_camera_library(tc, module=None, **_):
     p = tc.project
     q = str(module or '').strip().lower()
     out = []
+    if not q:                                   # the whole library, compact: a module filter gives every figure
+        for mid, m in p.modules.items():
+            out.append({'id': mid, 'summary': m.summary(),
+                        'cameras_using': [c.tag for c in p.variant.cameras if c.module_id == mid],
+                        'lenses': {lid: (f'{l.sheet_fov[0]:g}° H' if l.sheet_fov[0] else f'{l.focal_mm:g} mm')
+                                   for lid, l in p.lenses.items() if l.module_id in ('', mid)}})
+        return {'modules': out, 'note': LIBRARY_NOTE,
+                'detail': 'pass module (an id, name, maker, sensor or interface) for every figure of the modules '
+                          'that match: what their source does not give, their lenses\' stated and modelled FOV'}
     for mid, m in p.modules.items():
-        if q and q not in f'{m.id} {m.name} {m.sensor} {m.interface}'.lower():
+        if q not in f'{m.id} {m.name} {m.vendor} {m.sensor} {m.interface}'.lower():
             continue
         lenses = []
         for lid, l in p.lenses.items():

@@ -149,14 +149,16 @@
         "zones": {"type": "array", "items": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}}, "description": "Radar zones: [range m, azimuth half-angle °, elevation half-angle °]."},
         "data_mbps": {"type": "number", "minimum": 0}, "interface": {"type": "string"}, "time_sync": {"type": "string"},
         "size_mm": {"$ref": "#/$defs/vec3"}, "optical_z_mm": {"type": "number"}, "power_w": {"type": "number", "minimum": 0},
-        "mask_deg": {"type": "number"}, "antennas": {"type": "integer", "minimum": 0, "maximum": 2},
+        "mask_deg": {"type": "number"}, "lna_gain_db": {"type": "number", "minimum": 0, "description": "A GNSS antenna's LNA gain (dB; 0: not stated)."},
+        "antennas": {"type": "integer", "minimum": 0, "maximum": 2},
         "heading_sigma_deg": {"type": "number", "minimum": 0}, "heading_baseline_m": {"type": "number", "minimum": 0},
         "pos_sigma_cm": {"type": "number", "minimum": 0}, "attitude_sigma_deg": {"type": "number", "minimum": 0},
         "accel_noise_density": {"type": "number", "minimum": 0, "description": "m/s²/√Hz."},
         "accel_random_walk": {"type": "number", "minimum": 0, "description": "m/s³/√Hz."},
         "gyro_noise_density": {"type": "number", "minimum": 0, "description": "rad/s/√Hz."},
         "gyro_random_walk": {"type": "number", "minimum": 0, "description": "rad/s²/√Hz."},
-        "note": {"type": "string"}, "builtin": {"type": "boolean"}
+        "note": {"type": "string"}, "url": {"type": "string", "description": "The maker's page or datasheet the figures are from."},
+        "builtin": {"type": "boolean"}
       }
     },
     "variant": {

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import re
 
 import numpy as np
 from PyQt6.QtCore import QObject, pyqtSignal, Qt, QPointF, QRectF, QLineF
@@ -39,8 +40,16 @@ def mesh_colors(mesh, shading):
         m = mesh.face_part == i
         if r == ROLE_GLASS or 'glass' in names[i]:
             base[m] = glass
+        elif re.search(r'\brims?\b', names[i]) or 'alloy' in names[i]:     # ('trim' is not a rim)
+            base[m] = (0.70, 0.71, 0.73)
         elif r == ROLE_WHEELS:
             base[m] = tyre
+        elif 'tail lamp' in names[i] or 'brake' in names[i]:
+            base[m] = (0.62, 0.05, 0.04)
+        elif 'head lamp' in names[i] or 'headlight' in names[i]:
+            base[m] = (0.30, 0.32, 0.36)                # a smoked lens over the reflectors
+        elif 'black trim' in names[i]:
+            base[m] = (0.07, 0.07, 0.07)
         elif r == ROLE_IGNORED:
             alpha[m] = 0.0
     if shading == 'xray':
@@ -576,6 +585,31 @@ class MainScene(QObject):
         return None
 
     # ------------------------------------------------------------------ lines
+    RANGE_RINGS = (1.0, 2.0, 5.0, 10.0)
+
+    def _range_rings(self):
+        """[(distance m, (K, 3) ground points)]: rounded rectangles RANGE_RINGS metres out from the body's footprint
+        (its plan-view bounding box, mirrors included), for reading near-field coverage off the ground."""
+        m = self.project.vehicle.mesh
+        key = (id(m), m.n_tris)
+        if getattr(self, '_rings_key', None) == key:
+            return self._rings_cache
+        P = m.vertices
+        x0, y0 = P[:, 0].min(), P[:, 1].min()
+        x1, y1 = P[:, 0].max(), P[:, 1].max()
+        out = []
+        for d in self.RANGE_RINGS:
+            pts = []
+            for cx, cy, a0 in ((x1, y1, 0.0), (x0, y1, 90.0), (x0, y0, 180.0), (x1, y0, 270.0)):
+                for a in np.radians(np.linspace(a0, a0 + 90.0, 13)):
+                    pts.append((cx + d * math.cos(a), cy + d * math.sin(a), 0.006))
+            pts.append(pts[0])
+            out.append((d, np.array(pts)))
+        self._rings_key, self._rings_cache = key, out
+        self._ring_labels = [(x1 + d, 0.0, 0.006, f'{d:g} m') for d in self.RANGE_RINGS] + \
+            [(0.5 * (x0 + x1), y1 + d, 0.006, f'{d:g} m') for d in self.RANGE_RINGS]
+        return out
+
     def lines(self, vp):
         out = []
         p = self.project
@@ -642,6 +676,10 @@ class MainScene(QObject):
                                 1.0))
         if ov.get('dimensions') and p.vehicle.mesh is not None and self.mode == 'scene':
             out += self._dimensions()
+        if ov.get('rings') and p.vehicle.mesh is not None and self.mode == 'scene' and not textured:
+            for d, pts in self._range_rings():
+                out.append(LineDraw(self._drape(road, pts), THEME.color('ink2', 0.75 if d < 5 else 0.5),
+                                    1.2 if d in (1.0, 5.0) else 0.9, dash=d not in (1.0, 5.0), dash_len=0.12))
         if self.measure:
             pts = np.array(self.measure)
             if len(pts) >= 2:
@@ -839,7 +877,7 @@ class MainScene(QObject):
             p.setFont(sans(12))
             p.setPen(THEME.color('ink2'))
             p.drawText(QPointF(12, 64), 'File ▸ Import ▸ Vehicle model…   Ctrl+I')
-            p.drawText(QPointF(12, 82), 'or drop .glb .gltf .obj .stl .fbx .ply .step on this view')
+            p.drawText(QPointF(12, 82), 'or drop .glb .gltf .obj .stl .fbx .ply .dae .step on this view')
             p.drawText(QPointF(12, 100), 'or File ▸ New from template')
         sel = set(self.ctx.store.sel_cams)
         cams = [c for c in self.cameras() if c.visible and not (self.ctx.isolate and c.uid not in self.ctx.isolate)]
@@ -905,6 +943,13 @@ class MainScene(QObject):
                         p.setFont(mono(11))
                         p.setPen(THEME.color('ink') if not bad else QColor(STATUS['critical']))
                         p.drawText(QPointF(q[0][0] + 10, q[0][1] - 10), t.name)
+        if self.ctx.overlays.get('rings') and getattr(self, '_ring_labels', None) and self.mode == 'scene':
+            p.setFont(mono(10))
+            for x, y, z, txt in self._ring_labels:
+                q, _, ok = vp.project([[x, y, z]])
+                if ok[0]:
+                    p.setPen(THEME.color('ink2'))
+                    p.drawText(QPointF(q[0][0] + 3, q[0][1] - 3), txt)
         if self.ctx.overlays.get('dimensions') and hasattr(self, '_dim_labels') and self.mode == 'scene':
             p.setFont(mono(11))
             p.setPen(THEME.color('ink'))

@@ -6,6 +6,7 @@ workspace, the bowl view and the import wizard preview.
 from __future__ import annotations
 
 import math
+import re
 import os
 from dataclasses import dataclass, field
 
@@ -169,6 +170,8 @@ def mesh_materials(mesh) -> np.ndarray:
         m = mesh.face_part == i
         if part.role == ROLE_GLASS or any(k in name for k in ('glass', 'window', 'windscreen', 'windshield')):
             out[m] = MAT_GLASS
+        elif re.search(r'\brims?\b', name) or 'alloy' in name:             # ('trim' is not a rim)
+            out[m] = MAT_METAL
         elif part.role == ROLE_WHEELS or any(k in name for k in ('tyre', 'tire', 'wheel', 'rubber')):
             out[m] = MAT_TYRE
         elif any(k in name for k in ('light', 'lamp', 'lens', 'indicator')):

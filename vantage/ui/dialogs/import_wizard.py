@@ -298,9 +298,10 @@ class StepDelegate(QStyledItemDelegate):
 
 
 class ImportWizard(VDialog):
-    def __init__(self, ctx, parent=None, path=None, step=0, reuse=False, paint=None):
+    def __init__(self, ctx, parent=None, path=None, step=0, reuse=False, paint=None, library=None):
         super().__init__(parent, 'Import vehicle model', 'Step 1 of 5', (980, 680))
         self.ctx = ctx
+        self.library = library      # a core.vehicles.VehicleModel whose downloaded 3D model this is
         self.lm: loaders.LoadedMesh | None = None
         self.path = path or ''
         self.units = 'm'
@@ -794,6 +795,24 @@ class ImportWizard(VDialog):
         self._fill_parts()
         self._world = None
         self.spec = dict(self.ctx.store.project.vehicle.spec) if self.ctx.store.project.vehicle.spec else {}
+        lv = self.library
+        if lv is not None:                      # a library vehicle's model: its stated figures and its file's axes
+            self.spec = lv.stated()
+            m3 = lv.model3d
+            if m3 is not None:
+                if m3.units in [x[0] for x in UNITS]:
+                    self.units = m3.units
+                    self.u_combo.setCurrentIndex([x[0] for x in UNITS].index(m3.units))
+                    self.err.hide()
+                if m3.up in AXES:
+                    self.up = m3.up
+                    if self.fwd[1] == self.up[1]:
+                        self.fwd = '+X' if self.up[1] != 'X' else '+Y'
+                if m3.forward in AXES:
+                    self.fwd = m3.forward
+                self.up_seg.set_value(self.up)
+                self.fw_seg.set_value(self.fwd)
+                self.f_note.setText(f'{lv.title}: {m3.attribution}. {m3.note}')
         self.go(0)
 
     def _guess_up(self, lo, hi):
@@ -1271,8 +1290,14 @@ class ImportWizard(VDialog):
             landmarks = {k: tuple(float(x) - float(o) for x, o in zip(v, off)) for k, v in old.landmarks.items()
                          if not k.startswith('Wheel centre ')}
         landmarks.update({f'Wheel centre {k}': tuple(c) for k, c in wc.items()})
-        veh = Vehicle(name=name if not self.reuse else old.name, spec_name=old.spec_name if self.reuse else '',
-                      source=self.path or old.source, template='' if not self.reuse else old.template,
+        lv = self.library
+        if lv is not None:
+            name = lv.title
+        veh = Vehicle(name=name if not self.reuse else old.name,
+                      spec_name=(f'{lv.title} {lv.generation} (downloaded 3D model)' if lv is not None else
+                                 old.spec_name if self.reuse else ''),
+                      source=self.path or old.source,
+                      template=(lv.id if lv is not None else '' if not self.reuse else old.template),
                       import_units=self.units, import_up=self.up, import_forward=self.fwd, occluder_target=self.occ_target,
                       wheel_centres=wc, spec=dict(self.spec), mesh=mesh, imported_tris=mesh.n_tris,
                       landmarks=landmarks)
@@ -1288,6 +1313,9 @@ class ImportWizard(VDialog):
         self.ctx.store.edit(['vehicle', 'variant', 'photos'], fn,
                             f'Imported {os.path.basename(self.path) or name} · {mesh.n_tris:,} tris · units {self.units} · up {self.up} · forward {self.fwd}'.replace(',', ' '))
         self.ctx.store.project.add_log('import', f'{os.path.basename(self.path) or name} · {mesh.n_tris} tris · units {self.units} · up {self.up} · forward {self.fwd}')
+        if lv is not None and lv.model3d is not None:
+            from ...core.vehicles import credit
+            self.ctx.store.project.add_log('library', credit(lv))
         self.ctx.analysis.request(force=True)
         self.ctx.window.viewarea.frame_all()
         self.accept()

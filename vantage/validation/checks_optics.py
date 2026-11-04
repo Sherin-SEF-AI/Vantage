@@ -16,10 +16,13 @@ PROJ_REACH = {'rectilinear': 85.0, 'equidistant': 175.0, 'equisolid': 175.0, 'st
 
 
 # ============================================================================ helpers
-def _library():
+def _library(fisheye=False):
+    """(lens, its module) for every built-in lens; with fisheye, only the lenses OpenCV's fisheye model describes
+    (Kannala–Brandt, and equidistant: Kannala–Brandt with no terms). The rectilinear ones are pinhole lenses."""
     from ..core.lens import builtin_lenses, builtin_modules
     mods = {m.id: m for m in builtin_modules()}
-    return [(ln, mods.get(ln.module_id) or next(iter(mods.values()))) for ln in builtin_lenses()]
+    return [(ln, mods.get(ln.module_id) or next(iter(mods.values()))) for ln in builtin_lenses()
+            if not fisheye or ln.projection in ('kannala_brandt', 'equidistant')]
 
 
 def _cone_dirs(rng, n, max_deg, min_deg=0.0):
@@ -105,7 +108,7 @@ class RayCaster:
 # ============================================================================ lens
 @check('lens.inverse', 'lens', 'Image height inverts back to the angle',
        'largest |θ − θ(r(θ))| over each projection\'s field, every base projection and every built-in lens\'s '
-       'Kannala–Brandt curve',
+       'curve',
        'the identity: θ(r) is the inverse of r(θ) (closed form, or Newton\'s method for Kannala–Brandt)',
        1e-6, 'degrees', refs=('kannala2006', 'miyamoto1964'))
 def _lens_inverse(ctx):
@@ -119,8 +122,8 @@ def _lens_inverse(ctx):
     for ln, m in _library():
         it = resolve(m, ln)
         th = np.linspace(1e-4, it.max_theta, 2000)
-        e = float(np.degrees(np.max(np.abs(theta_of_r(r_of_theta(th, it.f_mm, 'kannala_brandt', it.kb), it.f_mm,
-                                                       'kannala_brandt', it.kb) - th))))
+        e = float(np.degrees(np.max(np.abs(theta_of_r(r_of_theta(th, it.f_mm, it.projection, it.kb), it.f_mm,
+                                                       it.projection, it.kb) - th))))
         rows.append((ln.id, e))
         worst = max(worst, e)
     return Outcome(worst, {'per_model_deg': {k: v for k, v in rows}, 'samples': 2000})
@@ -137,7 +140,7 @@ def _lens_derivative(ctx):
     cases = [(p, 3.0, p, (0, 0, 0, 0), math.radians(PROJ_REACH[p] - 1)) for p in PROJ]
     for ln, m in _library():
         it = resolve(m, ln)
-        cases.append((ln.id, it.f_mm, 'kannala_brandt', it.kb, it.max_theta))
+        cases.append((ln.id, it.f_mm, it.projection, it.kb, it.max_theta))
     for name, f, proj, kb, top in cases:
         th = np.linspace(0.01, top, 500)
         num = (r_of_theta(th + h, f, proj, kb) - r_of_theta(th - h, f, proj, kb)) / (2 * h)
@@ -147,31 +150,37 @@ def _lens_derivative(ctx):
     return Outcome(worst, {'per_model': rows})
 
 
-@check('lens.opencv_pinhole', 'lens', 'Rectilinear lens against OpenCV\'s pinhole projection',
-       'largest pixel distance between Intrinsics.project_dirs and cv2.projectPoints for directions over the image, '
-       'with a pixel aspect of 1.004 and an offset principal point',
+@check('lens.opencv_pinhole', 'lens', 'Rectilinear lenses against OpenCV\'s pinhole projection',
+       'largest pixel distance between Intrinsics.project_dirs and cv2.projectPoints for directions over the image: a '
+       'lens with a pixel aspect of 1.004 and an offset principal point, and every built-in rectilinear lens',
        'OpenCV cv2.projectPoints (no distortion); OpenCV pixel centres are at integers, Vantage\'s at i + ½',
        1e-6, 'px', refs=('opencv', 'hartley2004'))
 def _lens_opencv_pinhole(ctx):
     import cv2
     from ..core.lens import Lens, Module, resolve
+    rng = ctx.rng('lens.opencv_pinhole')
     m = Module(id='m', width_px=1920, height_px=1536, pixel_um=3.0)
-    ln = Lens(id='p', focal_mm=4.0, projection='rectilinear', pp_offset_px=(12.3, -7.9), aspect=1.004)
-    it = resolve(m, ln)
-    d = _cone_dirs(ctx.rng('lens.opencv_pinhole'), 4000, 40.0)
-    u, v, _, ok = it.project_dirs(d)
-    d, u, v = d[ok], u[ok], v[ok]
-    fx = it.f_px
-    K = np.array([[fx, 0, it.cx - 0.5], [0, fx * it.aspect, it.cy - 0.5], [0, 0, 1]], float)
-    uv, _ = cv2.projectPoints(d.reshape(-1, 1, 3), np.zeros(3), np.zeros(3), K, np.zeros(5))
-    err = np.hypot(uv[:, 0, 0] - (u - 0.5), uv[:, 0, 1] - (v - 0.5))
-    return Outcome(float(err.max()), {'points': int(len(d)), 'f_px': fx, 'aspect': it.aspect,
-                                      'principal_point_px': [it.cx, it.cy]})
+    cases = [('offset', m, Lens(id='p', focal_mm=4.0, projection='rectilinear', pp_offset_px=(12.3, -7.9),
+                                aspect=1.004))]
+    cases += [(ln.id, mm, ln) for ln, mm in _library() if ln.projection == 'rectilinear']
+    worst, rows, n = 0.0, {}, 0
+    for name, mm, ln in cases:
+        it = resolve(mm, ln)
+        d = _cone_dirs(rng, 4000, min(40.0, math.degrees(it.max_theta)))
+        u, v, _, ok = it.project_dirs(d)
+        d, u, v = d[ok], u[ok], v[ok]
+        fx = it.f_px
+        K = np.array([[fx, 0, it.cx - 0.5], [0, fx * it.aspect, it.cy - 0.5], [0, 0, 1]], float)
+        uv, _ = cv2.projectPoints(d.reshape(-1, 1, 3), np.zeros(3), np.zeros(3), K, np.zeros(5))
+        rows[name] = float(np.hypot(uv[:, 0, 0] - (u - 0.5), uv[:, 0, 1] - (v - 0.5)).max())
+        worst, n = max(worst, rows[name]), n + int(len(d))
+    return Outcome(worst, {'points': n, 'per_lens_px': rows})
 
 
 @check('lens.opencv_fisheye', 'lens', 'Kannala–Brandt lenses against OpenCV\'s fisheye model',
        'largest pixel distance between Intrinsics.project_dirs and cv2.fisheye.projectPoints (D = k1…k4) for every '
-       'built-in lens, directions up to 88° off the axis',
+       'built-in fisheye lens (Kannala–Brandt or equidistant; the rectilinear ones are lens.opencv_pinhole\'s), '
+       'directions up to 88° off the axis',
        'OpenCV cv2.fisheye.projectPoints: θ_d = θ(1 + k1θ² + k2θ⁴ + k3θ⁶ + k4θ⁸), the same model',
        1e-6, 'px', refs=('opencv', 'kannala2006'))
 def _lens_opencv_fisheye(ctx):
@@ -179,7 +188,7 @@ def _lens_opencv_fisheye(ctx):
     from ..core.lens import resolve
     rng = ctx.rng('lens.opencv_fisheye')
     worst, rows = 0.0, {}
-    for ln, m in _library():
+    for ln, m in _library(fisheye=True):
         it = resolve(m, ln)
         d = _cone_dirs(rng, 1500, min(88.0, math.degrees(it.max_theta)))
         u, v, _, ok = it.project_dirs(d)
@@ -195,7 +204,7 @@ def _lens_opencv_fisheye(ctx):
 
 @check('lens.opencv_undistort', 'lens', 'Pixel to ray against OpenCV\'s fisheye undistortion',
        'largest angle between Intrinsics.unproject\'s ray and the ray cv2.fisheye.undistortPoints gives for the same '
-       'pixel, every built-in lens, pixels up to 75° off the axis',
+       'pixel, every built-in fisheye lens, pixels up to 75° off the axis',
        'OpenCV cv2.fisheye.undistortPoints (iterated to 10⁻¹⁴)', 1e-4, 'degrees', refs=('opencv', 'kannala2006'))
 def _lens_opencv_undistort(ctx):
     import cv2
@@ -203,7 +212,7 @@ def _lens_opencv_undistort(ctx):
     rng = ctx.rng('lens.opencv_undistort')
     worst, rows = 0.0, {}
     crit = (cv2.TERM_CRITERIA_COUNT + cv2.TERM_CRITERIA_EPS, 100, 1e-14)
-    for ln, m in _library():
+    for ln, m in _library(fisheye=True):
         it = resolve(m, ln)
         d = _cone_dirs(rng, 800, min(75.0, math.degrees(it.max_theta) - 0.5))
         u, v, _, ok = it.project_dirs(d)
@@ -223,10 +232,11 @@ def _lens_opencv_undistort(ctx):
     return Outcome(worst, {'per_lens_deg': rows})
 
 
-@check('lens.builtin_fov', 'lens', 'Built-in lenses reproduce e-con\'s stated field of view',
+@check('lens.builtin_fov', 'lens', 'Built-in lenses reproduce their makers\' stated field of view',
        'largest difference between a built-in lens model\'s horizontal, vertical and diagonal field (limited by its '
-       'image circle) and the field e-con states for it',
-       'the FOV e-con Systems publishes for each lens (H, V, D)', 0.5, 'degrees', refs=('econ',))
+       'image circle) and the field its maker states for it',
+       'the FOV each maker publishes for its lens (H, V, D: e-con Systems, Leopard Imaging, D3 Embedded, Sekonix)',
+       0.5, 'degrees', refs=('econ',))
 def _lens_builtin_fov(ctx):
     from ..core.lens import model_fov
     rows, worst, names, vals = {}, 0.0, [], []

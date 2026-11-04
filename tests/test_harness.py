@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 from vantage.core import harness as HN
-from vantage.core import samples, sensors, timing as TM
+from vantage.core import lens, samples, sensors, timing as TM
 from vantage.core.mesh import Mesh, Part, Zone, ROLE_GLASS, ROLE_MOUNTABLE
 from vantage.core.project import Camera, Project, Sensor, Variant
 
@@ -222,7 +222,7 @@ def test_a_run_is_its_parts_and_the_inside_is_manhattan():
 
 def test_devices_inside_and_a_compute_box_outside():
     p = box_project(harness={'entries': [ENTRY]})
-    imu = sensor(p, 'imu', 'imu_mems', 'IMU1', 0.2, 0.1, 0.5)
+    imu = sensor(p, 'imu', 'xsens_mti630', 'IMU1', 0.2, 0.1, 0.5)
     lid = sensor(p, 'lidar', 'hesai_xt32', 'L1', 2.0, 0.0, 1.55)
     res = HN.run(p)
     r = res.data_run(imu.uid)
@@ -325,7 +325,8 @@ def test_sample_rig_routes_every_device(rig):
     assert by['L1']['entry'] == 'roof' and by['ML']['entry'] == 'door_fl' and by['MR']['entry'] == 'door_fr'
     assert by['QL']['entry'] == 'door_rl' and by['R']['entry'] == 'rear_panel' and by['F']['entry'] == 'bulkhead'
     assert by['RD2']['device_inside'] and by['RD2']['mode'] == 'in_in'          # behind the bumper fascia
-    assert by['L1']['cable'] == '1000base_t' and by['RD1']['cable'] == '100base_t1' and by['F']['cable'] == 'gmsl2'
+    assert by['L1']['cable'] == '1000base_t' and by['RD1']['cable'] == 'can_fd' and by['F']['cable'] == 'gmsl2'
+    assert by['RD2']['cable'] == '100base_t1'                                  # the DRVEGRD 169's Ethernet
     # ML and MR mirror each other
     assert by['ML']['length_m'] == pytest.approx(by['MR']['length_m'], rel=0.02)
     # the front camera's 3 m cable does not reach along the body (the Manhattan estimate said it did)
@@ -364,15 +365,19 @@ def test_link_limits_by_interface():
     lib = {m.id: m for m in sensors.builtin_sensor_models()}
     assert HN.sensor_cable(lib['ouster_os1_128']) == '1000base_t'
     assert HN.sensor_cable(lib['hesai_ot128']) == '1000base_t1'
-    assert HN.sensor_cable(lib['radar_long']) == '100base_t1'            # 'CAN-FD / 100BASE-T1': the Ethernet
-    assert HN.sensor_cable(lib['imu_mems']) == 'can_fd'
+    assert HN.sensor_cable(lib['conti_ars408_21']) == 'can_fd'                # 'CAN (500 kbit/s)': a CAN bus
+    assert HN.sensor_cable(lib['conti_ars548_rdi']) == '100base_t1'
+    assert HN.sensor_cable(lib['xsens_mti630']) == 'can_fd'
     assert HN.sensor_cable(lib['velodyne_vlp16']) == '100base_tx'
-    assert HN.sensor_cable(lib['gnss_patch'], 'rf_lmr240') == 'rf_lmr240'
+    assert HN.sensor_cable(lib['ublox_ann_mb_00'], 'rf_lmr240') == 'rf_lmr240'
     assert HN.CABLES['1000base_t1'].limit_m == 15.0 and HN.CABLES['1000base_t'].limit_m == 100.0
 
     class Mod:
         interface = 'FPD-Link IV'
     assert HN.camera_cable(Mod) == 'fpdlink4'
+    mods = {m.id: m for m in lens.builtin_modules()}
+    assert HN.camera_cable(mods['basler_aca1600_60gc']) == '1000base_t'           # GigE: an Ethernet camera
+    assert HN.camera_cable(mods['flir_fl2_14s3c']) == 'other'                     # FireWire: no limit known
     Mod.interface = 'GMSL2'
     assert HN.camera_cable(Mod) == 'gmsl2'
 
@@ -400,16 +405,17 @@ def test_a_long_t1_run_breaks_its_limit():
 
 def test_gnss_rf_budget_and_the_ins_destination():
     p = box_project(harness={'entries': [ENTRY]})
-    ant = sensor(p, 'gnss', 'gnss_survey', 'GN1', 2.5, 0.0, 1.55)
+    ant = sensor(p, 'gnss', 'novatel_gnss850', 'GN1', 2.5, 0.0, 1.55)
     res = HN.run(p)
     r = res.data_run(ant.uid)
     st = res.settings
     assert r['what'] == 'rf' and r['cable'] == 'rf_rg58' and r['to'].endswith('GNSS receiver')
     loss = r['length_m'] * 0.7 + 2 * st.connector_db
     assert r['loss_db'] == pytest.approx(loss)
-    assert r['margin_db'] == pytest.approx(st.gnss_lna_db - loss - st.gnss_min_db)
+    assert r['lna_db'] == 29.0                                   # the GNSS-850's stated LNA, not the setting's
+    assert r['margin_db'] == pytest.approx(29.0 - loss - st.gnss_min_db)
     # an INS with antenna inputs takes the antenna's coax
-    ins = sensor(p, 'imu', 'ins_dual', 'INS', 0.3, 0.0, 0.5)
+    ins = sensor(p, 'imu', 'oxts_rt3000_v4', 'INS', 0.3, 0.0, 0.5)
     r = HN.run(p).data_run(ant.uid)
     assert r['to_uid'] == ins.uid and np.allclose(r['path'][-1], ins.pos())
     q = box_project(harness={'entries': [ENTRY], 'enabled': True})
@@ -417,8 +423,15 @@ def test_gnss_rf_budget_and_the_ins_destination():
     assert HN.route_text(q, ant) == 'GN1 → Roof grommet → INS (GNSS/INS)'
     assert HN.routed_length(q, ant) == pytest.approx(HN.run(q).data_run(ant.uid)['length_m'])
     # a weak LNA: no margin left (serious); the low-loss cable for this run fixes it
+    # a weak LNA: an antenna model that states none takes the setting's
+    import copy
+    weak = copy.deepcopy(p.sensor_models['novatel_gnss850'])
+    weak.id, weak.builtin, weak.lna_gain_db = 'weak_antenna', False, 0.0
+    p.sensor_models[weak.id] = weak
+    ant.model_id = weak.id
     p.analysis.harness = {'entries': [ENTRY], 'gnss_lna_db': 17.0}
     r = HN.run(p).data_run(ant.uid)
+    assert r['lna_db'] == 17.0
     assert r['margin_db'] < 0 and r['severity'] == 'serious' and any(k == 'rf' for _, k, _ in r['problems'])
     assert r['use'] == pytest.approx(r['loss_db'] / (17.0 - 15.0)) and r['use'] > 1
     p.analysis.harness = {'entries': [ENTRY], 'gnss_lna_db': 17.0, 'cables': {ant.uid: 'rf_lmr400'}}

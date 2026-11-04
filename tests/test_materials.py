@@ -235,7 +235,7 @@ def test_sample_radars_against_the_mesh_ray_caster(p):
         assert z['factor'] == pytest.approx(10 ** (-z['loss_db'] / 40), rel=1e-9)
         assert z['derated_m'] == pytest.approx(z['range_m'] * z['factor'])
         assert M.radar_range_factors(p, s) == pytest.approx([z['factor']])
-    assert M.radar_range_factors(p, next(x for x in p.variant.sensors if x.tag == 'RD1')) == [1.0, 1.0]
+    assert M.radar_range_factors(p, next(x for x in p.variant.sensors if x.tag == 'RD1')) == [1.0, 1.0, 1.0]
     assert M.issues(p, Engine().vehicle_geom(p)) == []          # the sample's corner radars pass at 2.7 dB
 
 
@@ -519,7 +519,7 @@ def test_export(p, tmp_path):
     assert doc['cameras_behind_glass'][0]['tag'] == 'FW' and doc['wipers']['cameras'][0]['tag'] == 'FW'
     assert {c['id'] for c in doc['library']['classes']} == set(M.CLASSES) and doc['library']['sources']['glass']
     rows = (tmp_path / 'materials_radars.csv').read_text().strip().splitlines()
-    assert len(rows) == 1 + 2 + 4                                                       # RD1 has two zones
+    assert len(rows) == 1 + 3 + 4                                                       # RD1 (ARS 408) has three zones
     g = (tmp_path / 'materials_glass.csv').read_text().strip().splitlines()
     assert len(g) == 2 and g[1].startswith('FW,')
     img = cv2.imdecode(np.frombuffer((tmp_path / 'materials.png').read_bytes(), np.uint8), cv2.IMREAD_COLOR)

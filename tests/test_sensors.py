@@ -31,8 +31,20 @@ def test_library_figures_are_consistent():
     for m in ms.values():
         assert m.note and m.builtin
         if m.kind == 'radar':
-            assert m.zones and m.data_bps() > 0 and m.max_range() > 0
+            assert m.zones and m.max_range() > 0
+            assert m.data_bps() > 0 or 'data rate' in m.note             # a rate the maker does not state is said so
         assert S.SensorModel.from_dict(json.loads(json.dumps(m.to_dict()))) == m
+
+
+def test_every_library_model_is_a_real_product_with_its_source():
+    """No generic placeholders: each built-in sensor names its maker, links its source and dates the reading."""
+    for m in S.builtin_sensor_models():
+        assert m.vendor and m.url.startswith('https://'), m.id
+        assert S.CHECKED in m.note and 'typical' not in m.name.lower(), m.id
+        assert m.id not in S.RETIRED
+    ids = {m.id for m in S.builtin_sensor_models()}
+    assert set(S.RETIRED.values()) <= ids
+    assert {S.default_model_id(k) for k in S.KINDS} <= ids
 
 
 def test_ground_ring_radius_is_height_over_tan_of_the_beam():
@@ -53,7 +65,7 @@ def test_ground_ring_radius_is_height_over_tan_of_the_beam():
 
 
 def test_angles_and_field_follow_the_pose():
-    m = S.builtin_sensor_models()[2]                         # AT128: 120° wide, fixed field
+    m = next(x for x in S.builtin_sensor_models() if x.id == 'hesai_at128')   # AT128: 120° wide, fixed field
     s = Sensor(kind='lidar', model_id=m.id, x=1.0, y=0.0, z=1.5, yaw=90.0)
     P = np.array([[1.0, 20.0, 1.5], [21.0, 0.0, 1.5], [1.0, 20.0, 1.5 + 20 * math.tan(math.radians(20))]])
     r, az, el = S.angles(s, P)
@@ -64,7 +76,7 @@ def test_angles_and_field_follow_the_pose():
 
 
 def test_radar_range_scales_with_the_fourth_root_of_the_cross_section():
-    m = next(m for m in S.builtin_sensor_models() if m.id == 'radar_long')
+    m = next(m for m in S.builtin_sensor_models() if m.id == 'conti_ars408_21')
     s = Sensor(kind='radar', model_id=m.id, x=0.0, z=0.5)
     far = 250.0 * (0.5 / 10.0) ** 0.25
     assert S.radar_scale(0.5) == pytest.approx((0.05) ** 0.25)
@@ -74,7 +86,7 @@ def test_radar_range_scales_with_the_fourth_root_of_the_cross_section():
     assert list(S.in_field(s, m, [[60 * math.cos(a), 60 * math.sin(a), 0.5],
                                   [100 * math.cos(a), 100 * math.sin(a), 0.5]])) == [True, False]
     w = S.radar_wedges(s, m)
-    assert len(w) == 2 and np.hypot(*w[0][1:].T).max() == pytest.approx(250.0)
+    assert len(w) == 3 and np.hypot(*w[0][1:].T).max() == pytest.approx(250.0)       # far, near, wide near
 
 
 def test_beam_angle_files():
@@ -100,7 +112,7 @@ def test_tags_poses_and_persistence(tmp_path):
     pose = S.default_pose('lidar', lid, p.vehicle.mesh, p.rig)
     top = p.vehicle.mesh.bbox[1][2]
     assert pose['z'] == pytest.approx(top + lid.optical_z_mm / 1000, abs=0.01)
-    rad = p.sensor_models['radar_long']
+    rad = p.sensor_models['conti_ars408_21']
     rp = S.default_pose('radar', rad, p.vehicle.mesh)
     assert rp['x'] > p.vehicle.measured()['front_x'] - 0.1 and rp['z'] == 0.5
     v.sensors += [Sensor(kind='lidar', model_id=lid.id, tag='L1', **pose),
@@ -131,7 +143,7 @@ def test_footprint_and_housing():
     m = S.builtin_sensor_models()[0]
     s = _lidar(m.id, x=1.0, y=0.5, z=2.0)
     c, half, R, rnd = S.body_box(s, m)
-    assert rnd and half[2] == pytest.approx(0.037) and c[2] == pytest.approx(2.0 + 0.037 - 0.03618)
+    assert rnd and half[2] == pytest.approx(0.0371) and c[2] == pytest.approx(2.0 + 0.0371 - 0.038195)
     fp = S.footprint(s, m)
     assert np.allclose(np.hypot(fp[:, 0] - 1.0, fp[:, 1] - 0.5), 0.0435)
     r = next(m for m in S.builtin_sensor_models() if m.kind == 'radar')
@@ -147,17 +159,17 @@ def test_issues_for_misplaced_sensors():
     vg = Engine().vehicle_geom(p)
     lid = p.sensor_models['ouster_os1_128']
     roof = S.default_pose('lidar', lid, p.vehicle.mesh, p.rig)
-    front = S.default_pose('radar', p.sensor_models['radar_long'], p.vehicle.mesh)
+    front = S.default_pose('radar', p.sensor_models['conti_ars408_21'], p.vehicle.mesh)
     v = p.variant
     v.sensors = [Sensor(kind='lidar', model_id=lid.id, tag='L1', **roof),
-                 Sensor(kind='radar', model_id='radar_long', tag='RD1', **front)]
+                 Sensor(kind='radar', model_id='conti_ars408_21', tag='RD1', **front)]
     assert sensor_issues(p, vg) == []
     v.sensors[0].z = 0.9                                  # in the cabin
     v.sensors[1].x -= 0.08                                # just behind the fascia: fine
     iss = sensor_issues(p, vg)
     assert [(i.severity, i.objects) for i in iss] == [('critical', 'L1')]
     v.sensors[1].x = 2.93                                 # deep in the engine bay
-    v.sensors.append(Sensor(kind='radar', model_id='radar_corner', tag='F', x=5.0, z=-0.2))
+    v.sensors.append(Sensor(kind='radar', model_id='smartmicro_drvegrd169', tag='F', x=5.0, z=-0.2))
     iss = sensor_issues(p, vg)
     kinds = sorted((i.severity, i.objects) for i in iss)
     assert kinds == [('critical', 'F'), ('critical', 'L1'), ('warning', 'F'), ('warning', 'RD1')]
@@ -172,7 +184,7 @@ def rigged():
     v = p.variant
     v.sensors += [Sensor(kind='lidar', model_id='ouster_os1_128', tag='L1', x=1.2, y=0.1, z=1.9, yaw=10.0, pitch=2.0,
                          phase_deg=45.0, port='eth1'),
-                  Sensor(kind='radar', model_id='radar_long', tag='RD1', x=3.3, y=0.0, z=0.5),
+                  Sensor(kind='radar', model_id='conti_ars408_21', tag='RD1', x=3.3, y=0.0, z=0.5),
                   Sensor(kind='lidar', model_id='hesai_at128', tag='F', x=3.0, y=0.0, z=0.8)]   # a tag like a camera's
     return p
 
@@ -260,13 +272,14 @@ def test_gnss_and_imu_models_and_placement(tmp_path):
     from vantage.core.samples import tigor_sample_project
     ms = {m.id: m for m in S.builtin_sensor_models()}
     assert {m.kind for m in ms.values()} == set(S.KINDS)
-    ins = ms['ins_dual']
-    assert ins.kind == 'imu' and ins.antennas == 2 and not ins.has_field and ins.data_bps() == pytest.approx(0.5e6)
-    assert ins.heading_sigma(2.0) == pytest.approx(0.1) and ins.heading_sigma(1.0) == pytest.approx(0.2)
-    assert math.isnan(ms['imu_mems'].heading_sigma(2.0)) and math.isnan(ins.heading_sigma(0.0))
-    ant = ms['gnss_survey']
+    ins = ms['oxts_rt3000_v4']
+    assert ins.kind == 'imu' and ins.antennas == 2 and not ins.has_field and ins.data_bps() == 0.0
+    assert 'output data rate is not stated' in ins.note                    # OxTS states none: not made up
+    assert ins.heading_sigma(2.0) == pytest.approx(0.04) and ins.heading_sigma(1.0) == pytest.approx(0.08)
+    assert math.isnan(ms['xsens_mti630'].heading_sigma(2.0)) and math.isnan(ins.heading_sigma(0.0))
+    ant = ms['novatel_gnss850']
     assert ant.kind == 'gnss' and ant.data_bps() == 0 and ant.v_fov() == (10.0, 90.0)
-    s = Sensor(kind='gnss', model_id='gnss_survey', tag='GN1', z=1.5)
+    s = Sensor(kind='gnss', model_id='novatel_gnss850', tag='GN1', z=1.5)
     assert not S.in_field(s, ant, np.array([[0.0, 0.0, 5.0], [10.0, 0.0, 1.5]])).any()   # no field to be in
     assert S.body_box(s, ant)[3]                                                           # drawn as a puck
     assert S.next_tag('gnss', {'GN1', 'F'}) == 'GN2' and S.next_tag('imu', set()) == 'IMU1'
@@ -311,8 +324,8 @@ def test_gnss_and_imu_in_rules_recording_and_exports(tmp_path):
     g1.z = 1.55
     # the INS records its stated output; an antenna records nothing itself
     rb = RB.budget(p)
-    assert rb.row('IMU1')['mbps'] == pytest.approx(0.5) and rb.row('GN1') is None
-    assert rb.totals['counts']['imu'] == 1 and rb.totals['by_kind_mbps']['imu'] == pytest.approx(0.5)
+    assert rb.row('IMU1')['mbps'] == 0.0 and rb.row('GN1') is None         # the RT3000 states no output rate
+    assert rb.totals['counts']['imu'] == 1 and rb.totals['by_kind_mbps']['imu'] == 0.0
     out = tmp_path / 'x'
     ex.export(['extrinsics_json', 'nuscenes_calib', 'kitti_calib', 'ros2'], p, None, ex.ExportOptions(out_dir=str(out)))
     doc = json.loads((out / 'extrinsics.json').read_text())
@@ -350,7 +363,7 @@ def test_add_edit_pick_drag_and_delete_sensors(app, win, tmp_path):
     insp = win.inspector
     assert insp.current == 'sensor'
     page = insp.pages['sensor']
-    assert page.zones.isVisible() and page.zones.rowCount() == 2 and not page.b_beams.isVisible()
+    assert page.zones.isVisible() and page.zones.rowCount() == 3 and not page.b_beams.isVisible()
     # the outliner lists them and selects with the store
     items = win.outliner.findItems('RD1', Qt.MatchFlag.MatchContains | Qt.MatchFlag.MatchRecursive)
     assert items and items[0].isSelected()

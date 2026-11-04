@@ -75,8 +75,8 @@ def test_compressed_cameras_and_the_ecu_pixel_format(p):
 
 def test_lidar_packets_points_and_radars(p):
     _add(p, 'lidar', 'ouster_os1_128', 'L1', port='eth1')
-    _add(p, 'radar', 'radar_long', 'RD1')
-    _add(p, 'radar', 'radar_imaging', 'RD2')
+    _add(p, 'radar', 'conti_ars408_21', 'RD1')
+    _add(p, 'radar', 'smartmicro_drvegrd152', 'RD2')
     res = RB.budget(p)
     l1 = res.row('L1')
     assert l1['kind'] == 'lidar' and l1['model'] == 'Ouster OS1-128 (Rev 7)' and l1['port'] == 'eth1'
@@ -84,12 +84,13 @@ def test_lidar_packets_points_and_radars(p):
     assert l1['link'] == '1000BASE-T' and l1['link_capacity_mbps'] == 1000.0
     assert l1['load'] == pytest.approx(OS1_MBPS / 1000) and l1['link_severity'] == 'good'
     rd1, rd2 = res.row('RD1'), res.row('RD2')
-    assert rd1['mbps'] == pytest.approx(1.0) and rd1['link_capacity_mbps'] == 100.0      # CAN-FD / 100BASE-T1: fastest
-    assert rd2['mbps'] == pytest.approx(30.0) and (rd1['slot'], rd2['slot']) == (0, 1)
+    assert rd1['mbps'] == pytest.approx(0.5) and rd1['link_capacity_mbps'] == 1.0         # its 500 kbit/s CAN bus
+    assert rd2['mbps'] == 0.0 and (rd1['slot'], rd2['slot']) == (0, 1)                 # smartmicro states no rate
+    assert 'not stated' in rd2['format']
     t = res.totals
-    assert t['uplink_mbps'] == pytest.approx(OS1_MBPS + 31.0)
+    assert t['uplink_mbps'] == pytest.approx(OS1_MBPS + 0.5)
     assert t['uplink_load'] == pytest.approx(t['uplink_mbps'] / 1e4)
-    assert t['mbps'] == pytest.approx((6 * RAW_MBPS + OS1_MBPS + 31.0 + 2.0) * 1.03)
+    assert t['mbps'] == pytest.approx((6 * RAW_MBPS + OS1_MBPS + 0.5 + 2.0) * 1.03)
     # decoded clouds: 32 bytes a point; the link still carries the packets
     pts = RB.budget(p, settings=_settings(lidar_format='points')).row('L1')
     assert pts['mbps'] == pytest.approx(1_310_720 * 32 * 8 / 1e6) and pts['link_mbps'] == pytest.approx(OS1_MBPS)
@@ -124,7 +125,9 @@ def test_link_capacity_from_the_interface():
     assert cap('CAN-FD / 100BASE-T1') == 100 and cap('CAN / CAN-FD') == 5 and cap('1000BASE-T1 / 10GBASE-T') == 10000
     assert cap('') is None and cap('USB 3') is None and cap(None) is None
     # every built-in sensor's data interface is known (a GNSS antenna's coax carries RF to its receiver)
-    assert all(cap(m.interface) for m in sensors.builtin_sensor_models() if m.kind != 'gnss')
+    # (the BMI088 is a chip on SPI: it goes on a board, not a cable)
+    assert [m.id for m in sensors.builtin_sensor_models() if m.kind != 'gnss' and not cap(m.interface)] == \
+        ['bosch_bmi088']
 
 
 # ----------------------------------------------------------------------------- findings and the Issues list
@@ -202,14 +205,14 @@ def test_the_sample_gains_no_critical_issue(p):
         assert not any(f['severity'] in ('critical', 'serious') for f in RB.budget(p, v).findings)
     # with a lidar and two radars still nothing critical
     _add(p, 'lidar', 'ouster_os1_128', 'L1')
-    _add(p, 'radar', 'radar_long', 'RD1')
-    _add(p, 'radar', 'radar_corner', 'RD2')
+    _add(p, 'radar', 'conti_ars408_21', 'RD1')
+    _add(p, 'radar', 'smartmicro_drvegrd169', 'RD2')
     assert not any(i.severity in ('critical', 'serious') for i in RB.issues(p))
 
 
 def test_issues_are_cheap(p):
     _add(p, 'lidar', 'ouster_os1_128', 'L1')
-    _add(p, 'radar', 'radar_long', 'RD1')
+    _add(p, 'radar', 'conti_ars408_21', 'RD1')
     RB.issues(p)
     t0 = time.perf_counter()
     for _ in range(200):
@@ -251,7 +254,7 @@ def test_settings_are_validated():
 # ----------------------------------------------------------------------------- output
 def test_summary_doc_and_export(p, tmp_path):
     _add(p, 'lidar', 'ouster_os1_128', 'L1', port='2')
-    _add(p, 'radar', 'radar_long', 'RD1')
+    _add(p, 'radar', 'conti_ars408_21', 'RD1')
     res = RB.budget(p)
     s = RB.summary(res)
     json.dumps(s)
@@ -277,7 +280,7 @@ def test_summary_doc_and_export(p, tmp_path):
     assert [r['tag'] for r in rows] == ['F', 'R', 'ML', 'MR', 'QL', 'QR', 'L1', 'RD1', 'total']
     assert float(rows[0]['data_mbit_s']) == pytest.approx(RAW_MBPS, abs=1e-3) and rows[0]['link'] == 'GMSL2'
     assert float(rows[-1]['data_mbit_s']) == pytest.approx(res.totals['mbps'], abs=1e-3)
-    assert float(rows[-1]['link_mbit_s']) == pytest.approx(OS1_MBPS + 1.0, abs=1e-3) and rows[-1]['link'] == 'uplink'
+    assert float(rows[-1]['link_mbit_s']) == pytest.approx(OS1_MBPS + 0.5, abs=1e-3) and rows[-1]['link'] == 'uplink'
     assert [n for n, _ in RB.files(res, p)] == ['recording_budget.json', 'recording_budget.csv']
 
 

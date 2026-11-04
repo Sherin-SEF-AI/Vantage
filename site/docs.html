@@ -203,10 +203,11 @@ python packaging/build.py --smoke   # dist/: the bundle, its archive and on Wind
 
     <h2 id="first-run">First run</h2>
     <p>The start window lists recent projects and templates. The <b>Tata Tigor EV</b> sample has a measured body, six
-      fisheye cameras and five layout variants (the fifth, <i>Data rig</i>, adds a roof lidar and five radars); the templates (sedan, hatchback, SUV, van, truck) are generated bodies
-      with a starting layout. You can also start from the command line:</p>
+      fisheye cameras and five layout variants (the fifth, <i>Data rig</i>, adds a roof lidar and five radars). The templates are the
+      <a href="#vehicle-library">vehicle library</a>'s real vehicles at their stated dimensions, each with a starting
+      layout. You can also start from the command line:</p>
 <pre><code>vantage --sample                   # the sample project
-vantage --template suv             # a template
+vantage --template lexus_rx450h_2020   # a library vehicle (or the old name: suv)
 vantage car.glb                    # import a model
 vantage project.vantage            # open a project</code></pre>
     <p>A project is a single <code>.vantage</code> file holding the vehicle, its variants, the analysis settings and
@@ -263,12 +264,53 @@ vantage project.vantage            # open a project</code></pre>
     <h2 id="import">Importing a vehicle</h2>
     <p><b>File ▸ Import ▸ Vehicle model</b> (<kbd>Ctrl</kbd>+<kbd>I</kbd>) reads <code>.glb</code>, <code>.gltf</code>,
       <code>.obj</code>, <code>.stl</code>, <code>.ply</code>, <code>.fbx</code> (binary and ASCII) and <code>.step</code>
-      (with the optional gmsh package). The wizard then asks for:</p>
+      (with the optional gmsh package) and <code>.dae</code> (COLLADA). The wizard then asks for:</p>
     <ul>
       <li><b>Units</b>, guessed from the bounding box, and the <b>up and forward axes</b>, with mirroring; inside-out meshes are flipped automatically.</li>
       <li><b>Wheel centres</b>, found from wheel parts or picked on the mesh, which set the ground plane and the origin.</li>
       <li>A <b>spec check</b> against datasheet dimensions, the occluder simplification, glass (from materials and transparency) and <b>mount zones</b> painted with a brush: where cameras may and may not go.</li>
     </ul>
+
+    <h3 id="vehicle-library">Vehicle library</h3>
+    <p>The Library panel's <b>Vehicles</b> list, <b>File ▸ New from template</b> and the start window hold the measured
+      Tata Tigor EV and 13 real vehicles with the dimensions their makers state. Each entry gives length, width with and
+      without mirrors, height, wheelbase, track, overhangs, ground clearance, tyre and kerb mass, with its sources (spec
+      sheets, press kits, brochures, owner's manuals; Internet Archive copies where the page is gone) and the date they
+      were read, 2026-11-04. Its tooltip lists them.</p>
+    <table>
+      <tr><th>Vehicle</th><th>Generation</th><th>L × W × H (m)</th><th>Wheelbase</th><th>Used by</th><th>3D model</th></tr>
+      <tr><td>Renault ZOE</td><td>Phase 1</td><td>4.084 × 1.730 × 1.562</td><td>2.588</td><td>nuScenes</td><td>–</td></tr>
+      <tr><td>VW Passat Variant</td><td>B6</td><td>4.774 × 1.820 × 1.517</td><td>2.709</td><td>KITTI</td><td>–</td></tr>
+      <tr><td>Lincoln MKZ</td><td>2017</td><td>4.925 × 1.864 × 1.476</td><td>2.850</td><td>Apollo, Autoware, Dataspeed</td><td>Dataspeed, BSD 3-Clause</td></tr>
+      <tr><td>Toyota Prius</td><td>XW50</td><td>4.539 × 1.760 × 1.476</td><td>2.700</td><td>Gazebo, ROS</td><td>Open Robotics, CC0</td></tr>
+      <tr><td>Chrysler Pacifica Hybrid</td><td>2017</td><td>5.176 × 2.022 × 1.777</td><td>3.089</td><td>Waymo</td><td>–</td></tr>
+      <tr><td>Hyundai IONIQ 5</td><td>NE (2021)</td><td>4.635 × 1.890 × 1.605</td><td>3.000</td><td>Motional</td><td>–</td></tr>
+      <tr><td>Kia e-Niro</td><td>DE</td><td>4.375 × 1.805 × 1.560</td><td>2.700</td><td></td><td>–</td></tr>
+      <tr><td>Lexus RX 450h</td><td>AL20 facelift</td><td>4.890 × 1.895 × 1.685</td><td>2.790</td><td>Autoware, Tier IV</td><td>Autoware, Apache 2.0</td></tr>
+      <tr><td>Toyota Sienna</td><td>XL40 (2021)</td><td>5.169 × 1.994 × 1.740</td><td>3.061</td><td>Pony.ai, May Mobility</td><td>–</td></tr>
+      <tr><td>Tesla Model 3</td><td>2024</td><td>4.720 × 1.850 × 1.440</td><td>2.875</td><td></td><td>–</td></tr>
+      <tr><td>Mercedes-Benz Sprinter 2500</td><td>VS30, 170″ high roof</td><td>6.967 × 2.019 × 2.725</td><td>4.318</td><td>mapping vans</td><td>–</td></tr>
+      <tr><td>Tata Nexon.ev</td><td>2023</td><td>3.994 × 1.811 × 1.616</td><td>2.498</td><td></td><td>–</td></tr>
+      <tr><td>Freightliner Cascadia 126 + Wabash 53 ft van</td><td>2024 day cab, 6×4</td><td>height 3.030; trailer 16.154 × 2.600 × 4.115</td><td>4.425</td><td>autonomous trucking</td><td>–</td></tr>
+    </table>
+    <p>A new project from a library vehicle lofts its family's side profile (sedan, hatchback, SUV, one-piece van or a
+      tractor's cab and box) to the stated length, width, height, wheelbase, overhangs, track, ground clearance and
+      wheel size. The shell has a smoothed profile and a nose and tail rounded in plan. Its sections are tucked in at
+      the sills and lean in above the belt line. It has a windscreen, backlight and side glass, tyres with alloy rims,
+      smoked head lamps and red tail lamps, black lower bumpers and sills, and mirror pods. The material shader gives
+      each its own finish. The body has the vehicle's dimensions, but its shape between them is the family's. A figure the maker does not state is drawn from
+      the family and named in the design log, and only stated figures go into the spec check. The Cascadia is the
+      extreme case: Freightliner states no width, length or overhangs for it.</p>
+    <p>For the real shape, right-click a vehicle with a 3D model and choose <b>Download its 3D model and import…</b>.
+      Vantage shows the file, its licence and its credit and asks first. It then downloads the file from its
+      publisher, keeps it in <code>~/.cache/Vantage/vehicles</code> with its licence and SHA-256, and opens it in the
+      import wizard. The wizard comes with the units and up axis the file uses and the vehicle's stated figures for the
+      spec check, and the credit goes into the design log. Only models whose licence allows reuse are listed; none ships
+      with Vantage, and no licence grants a right to the makers' trademarks. The Autoware RX 450h model is 1.58 m high
+      against Lexus's 1.685 m, and the spec check shows that. The MKZ body comes without its wheels, so you set the
+      wheel centres in the wizard. The old template names still work: <code>--template sedan</code> opens the MKZ,
+      <code>hatchback</code> the ZOE, <code>suv</code> the RX 450h, <code>van</code> the Sprinter and
+      <code>truck</code> the Cascadia.</p>
 
     <h2 id="placement">Placing cameras</h2>
     <ul>
@@ -289,13 +331,18 @@ vantage project.vantage            # open a project</code></pre>
       or OpenCV YAML.</p>
 
     <h3 id="camera-library">Camera library</h3>
-    <p>The built-in library holds 17 e-con Systems camera modules with 20 lenses: the enclosed STURDeCAM automotive
-      cameras (STURDeCAM20, 21, 25, 29, 31, the heated-lens 31FSH, 34, 39, 57, 81 and 88), the NileCAM81, 85, 130 and
-      210 GMSL2 board cameras, and the FPD-Link NeduCAM25 and Nedu4CAM57. Each module carries the figures e-con states
-      on its public product page (sensor, resolution, pixel pitch, frame rate, shutter, dynamic range, IP rating,
-      operating temperature, power, size and cable lengths), with the page and the date it was read (24 October 2026).
-      A figure e-con does not give is left blank and listed as not given; where the app needs one (a camera's power,
-      the length of its body), it uses its typical figure.</p>
+    <p>The built-in library holds 36 camera modules with 52 lenses, every one a real product. There are 22 from
+      e-con Systems: the enclosed STURDeCAM automotive cameras (STURDeCAM20, 21, 25, 29, 31, the heated-lens 31FSH, 34,
+      39, 57, 81, 84 and 88), the NileCAM21, 56, 81, 85, 130 and 210 GMSL2 board cameras, and the FPD-Link NeduCAM25,
+      NeduCAM81, Nedu4CAM57 and Nedu4CAM88. The other 14 come from other makers (the second table): Leopard Imaging, D3
+      Embedded and Sekonix GMSL cameras (Sony IMX390, IMX490 and IMX728, onsemi AR0231: NVIDIA DRIVE's cameras), the
+      cameras of the public datasets (nuScenes' Basler acA1600-60gc, KITTI's FLIR Flea2 colour and greyscale), and
+      Blackfly S and LUCID Triton machine-vision cameras. Each module carries the figures its maker states on its
+      public pages (sensor, resolution, pixel pitch, frame rate, shutter, dynamic range, IP rating, operating
+      temperature, power, size and cable lengths), with the page and the date it was read (24 October 2026 for the
+      first e-con modules, 4 November 2026 for the rest). A figure the maker does not give is left blank and listed as
+      not given. The power budget counts such a camera 0 W and lists it until you enter its figure; a body length not
+      given is drawn with the STURDeCAM31's (43.8 mm) and listed.</p>
     <table>
       <tr><th>Module</th><th>Sensor</th><th>Image</th><th>Shutter · interface</th><th>Lenses (H × V × D field of view)</th></tr>
       <tr><td>STURDeCAM31</td><td>Sony ISX031</td><td>1920 × 1536, 30 fps</td><td>rolling · GMSL2</td><td>H05R2 wide 128.7° × 98.7° × 170.1°; H03R2 narrow 54.0° × 42.9° × 70.2°</td></tr>
@@ -315,7 +362,37 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td>NileCAM210</td><td>Sony IMX462</td><td>1920 × 1080, 60 fps</td><td>rolling · GMSL2</td><td>113° × 61° × 132°</td></tr>
       <tr><td>NeduCAM25</td><td>onsemi AR0234CS</td><td>1920 × 1200, 60 fps</td><td>global · FPD-Link III</td><td>104.6° × 61.6° × 128.2°</td></tr>
       <tr><td>Nedu4CAM57</td><td>OmniVision OX05B1S (RGB-IR)</td><td>2592 × 1944, 50 fps</td><td>global · FPD-Link IV</td><td>114.8° × 85.9° × 148.3°</td></tr>
+      <tr><td>STURDeCAM84</td><td>onsemi AR0823AT</td><td>3840 × 2160, 30 fps</td><td>rolling · GMSL2</td><td>121.2° × 67.2° × 140.1°</td></tr>
+      <tr><td>NileCAM21</td><td>onsemi AR0233AT</td><td>1920 × 1080, 30 fps</td><td>rolling · GMSL2</td><td>110.7° × 61.2° × 129.7°</td></tr>
+      <tr><td>NileCAM56</td><td>Sony IMX568</td><td>2472 × 2064, 90 fps</td><td>global · GMSL2</td><td>85.6° × 72.3° × 113°</td></tr>
+      <tr><td>NeduCAM81</td><td>onsemi AR0821</td><td>3840 × 2160, 22 fps</td><td>rolling · FPD-Link III</td><td>104.8° × 58.7° × 120°</td></tr>
+      <tr><td>Nedu4CAM88</td><td>OmniVision OX08B40</td><td>3840 × 2160, 30 fps</td><td>rolling · FPD-Link IV</td><td>H02R1 narrow 68.2° × 38.8° × 80.2°; H04R1 wide 120.1° × 67.0° × 137.4°</td></tr>
     </table>
+    <table>
+      <tr><th>Module (other makers)</th><th>Sensor</th><th>Image</th><th>Shutter · interface</th><th>Lenses (stated FOV, or focal length)</th></tr>
+      <tr><td>Leopard Imaging LI-IMX390-GMSL2</td><td>Sony IMX390</td><td>1937 × 1217 · 3 µm · 60 fps</td><td>— · GMSL2</td><td>060H: 60.6 × 36.1 × 74.5°; 120H: 122 × 74 × 148°; 200H fisheye: 200°</td></tr>
+      <tr><td>Leopard Imaging LI-IMX728-GM2B</td><td>Sony IMX728</td><td>3857 × 2177 · 2.1 µm · 45 fps</td><td>— · GMSL2</td><td>030H: 30 × 17 × 34.4°; 070H: 70 × 39.3 × 80.1°; 120H: 120 × 65 × 140°</td></tr>
+      <tr><td>Leopard Imaging LI-IMX490-GMSL2</td><td>Sony IMX490</td><td>2880 × 1860 · 3 µm · 40 fps</td><td>— · GMSL2</td><td>030H: 30 × 19.5 × 35.5°; 065H: 65 × 37 × 74°; 090H: 90°; 120H: 120 × 73.2°; 160H: 160°</td></tr>
+      <tr><td>Sekonix SF3324-101</td><td>onsemi AR0231AT</td><td>1928 × 1208 · 3 µm · 30 fps</td><td>— · GMSL</td><td>NA1262 (120°): 120 × 73 × 146°</td></tr>
+      <tr><td>Sekonix SF3325-101</td><td>onsemi AR0231AT</td><td>1928 × 1208 · 3 µm · 30 fps</td><td>— · GMSL</td><td>NA6062 (60°): 60 × 38 × 70°</td></tr>
+      <tr><td>D3 Embedded Discovery PRO IMX390 (GMSL2, sealed)</td><td>Sony IMX390</td><td>1920 × 1080 · 3 µm · 30 fps</td><td>rolling · GMSL2</td><td>Wide: 180 × 101 × 207°; Medium: 98 × 62 × 107°; Narrow: 65 × 37 × 75°</td></tr>
+      <tr><td>D3 Embedded Discovery PRO IMX728 (GMSL2, sealed)</td><td>Sony IMX728</td><td>3840 × 2160 · 2.1 µm · 30 fps</td><td>rolling · GMSL2</td><td>Medium: 121 × 67 × 140°; Narrow: 55 × 33 × 62°</td></tr>
+      <tr><td>Basler ace acA1600-60gc</td><td>e2v EV76C570</td><td>1600 × 1200 · 4.5 µm · 60 fps</td><td>global · GigE (1000BASE-T)</td><td>nuScenes 5.5 mm: 5.5 mm</td></tr>
+      <tr><td>FLIR (Point Grey) Flea2 FL2-14S3C</td><td>Sony ICX267 CCD</td><td>1384 × 1032 · 4.65 µm · 15 fps</td><td>global · IEEE 1394b</td><td>KITTI 4 mm (Edmund Optics): 4 mm</td></tr>
+      <tr><td>FLIR (Point Grey) Flea2 FL2-14S3M</td><td>Sony ICX267 CCD</td><td>1384 × 1032 · 4.65 µm · 15 fps</td><td>global · IEEE 1394b</td><td>KITTI 4 mm (Edmund Optics): 4 mm</td></tr>
+      <tr><td>Teledyne FLIR Blackfly S BFS-PGE-31S4C</td><td>Sony IMX265</td><td>2048 × 1536 · 3.45 µm · 35 fps</td><td>global · GigE (1000BASE-T)</td><td>Computar M0814-MP2 (8 mm): 8 mm</td></tr>
+      <tr><td>Teledyne FLIR Blackfly S BFS-U3-51S5C</td><td>Sony IMX250</td><td>2448 × 2048 · 3.45 µm · 75 fps</td><td>global · USB 3.1</td><td>Fujinon HF6XA-5M (6 mm): 6 mm</td></tr>
+      <tr><td>LUCID Vision Labs Triton TRI054S (IP67)</td><td>Sony IMX490</td><td>2880 × 1860 · 3 µm · 20.8 fps</td><td>rolling · GigE (1000BASE-T)</td><td>Fujinon HF6XA-5M (6 mm): 6 mm</td></tr>
+      <tr><td>LUCID Vision Labs Triton TRI032S (IP67)</td><td>Sony IMX265</td><td>2048 × 1536 · 3.45 µm · 35.4 fps</td><td>global · GigE (1000BASE-T)</td><td>Computar M0814-MP2 (8 mm): 8 mm</td></tr>
+    </table>
+    <p>A lens sold with a camera keeps its maker's stated focal length and aperture, and the distortion terms are fitted
+      to its stated field of view (a field the maker leaves out follows the base projection). Leopard's 200° fisheye
+      on the IMX390 is an image circle inside the sensor, modelled as an equidistant fisheye cut at that circle. A
+      machine-vision camera sold without a lens carries the lens its dataset used (KITTI's 4 mm Edmund Optics lens,
+      90° across the Flea2's diagonal as the paper says; nuScenes' 5.5 mm front lens) or one real C-mount lens
+      (Computar M0814-MP2, Fujinon HF6XA-5M) modelled as rectilinear at its stated focal length. Where a maker's
+      figures disagree (Leopard's IMX490 040H lens: its stated FOV and focal length do not fit the sensor) the lens is
+      left out rather than guessed.</p>
     <p>e-con states each lens's horizontal, vertical and diagonal field of view but not its focal length or aperture.
       The focal length is derived from that field of view with the projection that fits it best, and the
       Kannala–Brandt distortion terms are fitted so the model reproduces e-con's figures within 0.5° (the new lenses
@@ -350,29 +427,57 @@ vantage project.vantage            # open a project</code></pre>
       (drag it there to move it) and edit it in the inspector: its tag, model, optical centre and yaw, pitch and roll
       (as a camera's: yaw 0 faces forward, pitch positive down).</p>
     <table>
-      <tr><th>Model</th><th>Kind</th><th>Field</th><th>Range</th><th>Points/s</th></tr>
-      <tr><td>Ouster OS1-128 (Rev 7)</td><td>spinning, 128 ch</td><td>360° × 45°</td><td>90 m @ 10 %</td><td>1.31 M</td></tr>
-      <tr><td>Hesai OT128</td><td>spinning, 128 ch</td><td>360° × 40° (−25° to +15°)</td><td>200 m @ 10 %</td><td>3.46 M</td></tr>
-      <tr><td>Hesai AT128</td><td>fixed field, 128 ch</td><td>120° × 25.4°</td><td>200 m @ 10 %</td><td>1.54 M</td></tr>
-      <tr><td>Hesai XT32</td><td>spinning, 32 ch</td><td>360° × 31°</td><td>80 m @ 10 %</td><td>0.64 M</td></tr>
-      <tr><td>Velodyne VLP-16</td><td>spinning, 16 ch</td><td>360° × 30°</td><td>100 m</td><td>0.30 M</td></tr>
-      <tr><td>Livox Mid-360</td><td>non-repetitive</td><td>360° × 59° (−7° to +52°)</td><td>40 m @ 10 %</td><td>0.20 M</td></tr>
-      <tr><td>Long-range radar · typical</td><td>77 GHz, two beams</td><td>±9° to 250 m, ±45° to 70 m</td><td>on a car</td><td>1 Mbit/s</td></tr>
-      <tr><td>4D imaging radar · typical</td><td>77 GHz</td><td>±50° × ±15°</td><td>300 m on a car</td><td>30 Mbit/s</td></tr>
-      <tr><td>Corner radar · typical</td><td>77 GHz</td><td>±75° × ±10°</td><td>100 m on a car</td><td>2 Mbit/s</td></tr>
+      <tr><th>Lidar</th><th>Kind</th><th>Field</th><th>Range</th><th>Points/s</th><th>Power</th></tr>
+      <tr><td>Ouster OS1-128 (Rev 7)</td><td>spinning, 128 ch</td><td>360° × 42.4° (−21.2° to +21.2°)</td><td>90 m @ 10 %</td><td>1.31 M</td><td>16 W</td></tr>
+      <tr><td>Ouster OS0-128 (Rev 7)</td><td>spinning, 128 ch</td><td>360° × 90.8° (−45.4° to +45.4°)</td><td>35 m @ 10 %</td><td>1.31 M</td><td>16 W</td></tr>
+      <tr><td>Ouster OS2-128 (Rev 7)</td><td>spinning, 128 ch</td><td>360° × 22.5° (−11.25° to +11.25°)</td><td>200 m @ 10 %</td><td>1.31 M</td><td>24 W</td></tr>
+      <tr><td>Hesai OT128</td><td>spinning, 128 ch</td><td>360° × 40.0° (−25° to +15°)</td><td>200 m @ 10 %</td><td>3.46 M</td><td>29 W</td></tr>
+      <tr><td>Hesai AT128</td><td>fixed field, 128 ch</td><td>120° × 25.4° (−12.5° to +12.9°)</td><td>210 m @ 10 %</td><td>1.54 M</td><td>13.5 W</td></tr>
+      <tr><td>Hesai XT32</td><td>spinning, 32 ch</td><td>360° × 31.0° (−16° to +15°)</td><td>80 m @ 10 %</td><td>0.64 M</td><td>10 W</td></tr>
+      <tr><td>Velodyne VLP-16 (Puck)</td><td>spinning, 16 ch</td><td>360° × 30.0° (−15° to +15°)</td><td>up to 100 m (reflectivity not given)</td><td>0.30 M</td><td>8 W</td></tr>
+      <tr><td>Velodyne HDL-32E</td><td>spinning, 32 ch</td><td>360° × 41.3° (−30.67° to +10.67°)</td><td>up to 100 m (reflectivity not given)</td><td>0.69 M</td><td>12 W</td></tr>
+      <tr><td>Velodyne HDL-64E S2</td><td>spinning, 64 ch</td><td>360° × 26.3° (−24.33° to +2°)</td><td>50 m on pavement (about 10 %)</td><td>1.33 M</td><td>48 W</td></tr>
+      <tr><td>Velodyne HDL-64E S3</td><td>spinning, 64 ch</td><td>360° × 26.3° (−24.33° to +2°)</td><td>50 m on pavement (about 10 %)</td><td>1.33 M</td><td>48 W</td></tr>
+      <tr><td>RoboSense RS-Ruby Plus</td><td>spinning, 128 ch</td><td>360° × 40.1° (−25.1° to +15.04°)</td><td>240 m @ 10 %</td><td>2.30 M</td><td>27 W</td></tr>
+      <tr><td>Livox Mid-360</td><td>non-repetitive</td><td>360° × 59.0° (−7° to +52°)</td><td>40 m @ 10 %</td><td>0.20 M</td><td>6.5 W</td></tr>
+      <tr><td>Livox HAP</td><td>non-repetitive</td><td>120° × 25.0° (−12.5° to +12.5°)</td><td>150 m @ 10 %</td><td>0.45 M</td><td>12 W</td></tr>
     </table>
     <table>
-      <tr><th>Model</th><th>Kind</th><th>Figures</th></tr>
-      <tr><td>Survey GNSS antenna · typical</td><td>multi-band antenna</td><td>phase centre 50 mm above the base, mask 10°</td></tr>
-      <tr><td>Compact patch antenna · typical</td><td>dual-band antenna</td><td>phase centre 12 mm above the base, mask 10°</td></tr>
-      <tr><td>Dual-antenna GNSS/INS · typical</td><td>MEMS INS, 2 antenna inputs</td><td>100 Hz; heading 0.1° at a 2 m baseline, RTK 2 cm, roll and pitch 0.03°</td></tr>
-      <tr><td>FOG GNSS/INS · typical</td><td>fibre-optic gyro INS, 2 inputs</td><td>200 Hz; heading 0.02° at 2 m, RTK 1 cm, roll and pitch 0.005°</td></tr>
-      <tr><td>MEMS IMU · typical</td><td>IMU only</td><td>200 Hz, no GNSS</td></tr>
+      <tr><th>Radar</th><th>Interface</th><th>Zones (on a 10 m² car)</th><th>Cycle</th><th>Power</th></tr>
+      <tr><td>Continental ARS 408-21</td><td>CAN (500 kbit/s)</td><td>±9° × ±7° to 250 m, ±45° × ±10° to 70 m, ±60° × ±10° to 20 m</td><td>13.9 Hz</td><td>6.6 W</td></tr>
+      <tr><td>Continental ARS 548 RDI</td><td>100BASE-T1</td><td>±50° × ±4° to 301 m, ±50° × ±14° to 100 m</td><td>20 Hz</td><td>18 W</td></tr>
+      <tr><td>Continental SRR 308-21</td><td>CAN (500 kbit/s)</td><td>±75° × ±12° to 120 m</td><td>25 Hz</td><td>3.9 W</td></tr>
+      <tr><td>smartmicro DRVEGRD 152</td><td>100BASE-T1</td><td>±50° × ±10° to 178 m</td><td>18.2 Hz</td><td>6 W</td></tr>
+      <tr><td>smartmicro DRVEGRD 171</td><td>100BASE-T1</td><td>±50° × ±10° to 180 m</td><td>18.2 Hz</td><td>7 W</td></tr>
+      <tr><td>smartmicro DRVEGRD 169</td><td>100BASE-T1</td><td>±65° × ±7.5° to 95 m</td><td>14.3 Hz</td><td>4 W</td></tr>
     </table>
-    <p>The lidar figures are nominal values from the public datasheets; each model notes where they come from. The
-      radars, GNSS antennas and IMUs are typical classes, not products. Check every figure against your unit's datasheet. The inspector edits
-      a model's figures; editing a built-in model makes an edited copy for that sensor, so the library and the other
-      sensors keep theirs.</p>
+    <table>
+      <tr><th>GNSS antenna, GNSS/INS or IMU</th><th>Kind</th><th>Figures</th></tr>
+      <tr><td>NovAtel VEXXIS GNSS-850</td><td>GNSS antenna</td><td>phase centre 51.7 mm above the base, 29 dB LNA, TNC (coax)</td></tr>
+      <tr><td>u-blox ANN-MB-00</td><td>GNSS antenna</td><td>phase centre 8.9 mm above the base, 28 dB LNA, SMA (coax)</td></tr>
+      <tr><td>OxTS RT3000 v4</td><td>GNSS/INS, 2 antennas</td><td>100 Hz; heading 0.04° at 2 m, RTK 1 cm; roll and pitch 0.01°; gyro 3.49e-05 rad/s/√Hz, accel 2.00e-04 m/s²/√Hz</td></tr>
+      <tr><td>NovAtel PwrPak7D-E1 (SPAN)</td><td>GNSS/INS, 2 antennas</td><td>200 Hz; heading 0.08° at 2 m, RTK 1 cm; roll and pitch 0.02°; gyro 2.91e-05 rad/s/√Hz, accel 8.33e-04 m/s²/√Hz</td></tr>
+      <tr><td>NovAtel SPAN CPT7</td><td>GNSS/INS, 2 antennas</td><td>200 Hz; heading 0.08° at 2 m, RTK 1 cm; roll and pitch 0.01°; gyro 1.75e-05 rad/s/√Hz, accel 1.00e-03 m/s²/√Hz</td></tr>
+      <tr><td>SBG Systems Ellipse-D</td><td>GNSS/INS, 2 antennas</td><td>200 Hz; heading 0.2° at 2 m, RTK 1 cm; roll and pitch 0.05°; gyro 5.24e-05 rad/s/√Hz, accel 5.59e-04 m/s²/√Hz</td></tr>
+      <tr><td>SBG Systems Ekinox-D</td><td>GNSS/INS, 2 antennas</td><td>200 Hz; heading 0.02° at 4 m, RTK 1 cm; roll and pitch 0.015°; gyro 4.07e-05 rad/s/√Hz, accel 3.92e-04 m/s²/√Hz</td></tr>
+      <tr><td>Movella (Xsens) MTi-630 AHRS</td><td>IMU</td><td>400 Hz; roll and pitch 0.2°; gyro 1.22e-04 rad/s/√Hz, accel 5.88e-04 m/s²/√Hz</td></tr>
+      <tr><td>Bosch Sensortec BMI088</td><td>IMU</td><td>400 Hz; gyro 2.44e-04 rad/s/√Hz, accel 1.86e-03 m/s²/√Hz</td></tr>
+    </table>
+    <p>Every model is a real product with the figures its maker states in a public datasheet, user manual or product
+      page (read 4 November 2026); each model's note names its source, says what the maker does not state and how any
+      modelled figure was read or converted. Examples: a beam origin read off a dimension drawing; the SRR 308's 95 m on
+      a 6 dBsm target converted to 120 m on the 10 m² car the radar ranges here are given for (range ∝ RCS<sup>¼</sup>);
+      an ARW in °/√h converted to rad/s/√Hz for Kalibr. A figure no maker states stays not given rather than filled
+      in: no radar datasheet states its time synchronisation (so the sync plan stamps radar data on arrival) or an
+      Ethernet radar's output data rate (counted 0 in the recording budget and said so); a GNSS antenna is powered by its
+      receiver through the coax. The lidars include the dataset rigs' sensors: the HDL-64E (KITTI) and HDL-32E
+      (nuScenes); the ARS 408-21 is nuScenes' radar and OxTS's RT3003, KITTI's INS, is the RT3000's predecessor.
+      Check every figure against your unit's datasheet and calibration. The inspector edits a model's figures; editing
+      a built-in model makes an edited copy for that sensor, so the library and the other sensors keep theirs.
+      Projects saved by earlier versions that used the generic models open with the real model that replaced each one
+      (Continental ARS 408-21 for the long-range radar, smartmicro DRVEGRD 152 for the imaging radar, DRVEGRD 169 for
+      the corner radar, NovAtel GNSS-850 and u-blox ANN-MB for the antennas, OxTS RT3000 v4, NovAtel SPAN CPT7 and
+      Xsens MTi-630 for the INS and IMUs); the design log says which sensors moved.</p>
     <ul>
       <li>A lidar is a fan of channels at fixed elevations, swept through its horizontal field at the frame rate in steps of the azimuth step. A non-repetitive scanner is modelled as an even grid with the same points per frame. Ranges are on a dark (10 %) target.</li>
       <li><b>Import beam angles…</b> replaces the even spread with the measured channel elevations from an Ouster metadata JSON (<code>beam_altitude_angles</code>), a Hesai angle-correction CSV, a Velodyne ROS calibration YAML (<code>vert_correction</code>) or a list with one angle per line.</li>
@@ -383,8 +488,9 @@ vantage project.vantage            # open a project</code></pre>
       <li>The Issues list flags a GNSS antenna inside the body or a rig part (it has no sky; an IMU belongs inside), a lidar inside the body or a rig part (its beams would start inside the vehicle), a radar more than 15 cm behind the body's surface (a radar sees through a plastic bumper fascia, not through the body), a sensor below the ground, and a tag used by a camera too.</li>
       <li>Exports: each sensor is a frame with x forward, y left and z up at its optical centre (ROS REP 103). It goes into the extrinsics (pose, field, spin direction and phase), the ROS 2 URDF and static TF launch file, the nuScenes tables (<code>LIDAR_&lt;TAG&gt;</code>, <code>RADAR_&lt;TAG&gt;</code>), KITTI (<code>Tr_&lt;tag&gt;_to_vehicle</code>, and <code>calib_velo_to_cam.txt</code> for the first lidar into camera 00; with an IMU, <code>calib_imu_to_velo.txt</code> from the first IMU into the first lidar) and the report. nuScenes has no GNSS or IMU channels: they make its <code>ego_pose</code>. Drivers use their own frames (an Ouster's lidar frame has x towards the connector): add the driver's fixed rotation if your point clouds are in it.</li>
     </ul>
-    <p>The sample's fifth variant, <i>Data rig</i>, has the six cameras, an OS1-128 on the roof, a long-range radar in
-      the front bumper and a corner radar at each bumper corner.</p>
+    <p>The sample's fifth variant, <i>Data rig</i>, has the six cameras, an Ouster OS1-128 on the roof, a Continental
+      ARS 408-21 long-range radar in the front bumper and a smartmicro DRVEGRD 169 corner radar at each bumper
+      corner.</p>
 
     <h2 id="analysis">Coverage analysis</h2>
     <p>The ground inside the <b>ROI</b> (a true offset around the body, or a polygon) is sampled on a 5, 2 or 1 cm grid.
@@ -413,20 +519,20 @@ vantage project.vantage            # open a project</code></pre>
       the camera light and the installation check all include them. A housing set behind a bumper fascia or into a
       panel stays hidden behind the body, and a sensor's or camera's own housing is never in its own view.</p>
     <p>The Inspector's <b>Mount ▸ Housings</b> row shows the share of the selected camera's image each housing covers
-      and where (for example <i>RD1 13.7 %</i>). The Issues list warns when a housing covers more than 2 % of an image
+      and where (for example <i>RD1 10.7 %</i>). The Issues list warns when a housing covers more than 2 % of an image
       or reaches its centre, flags more than 10 % as serious, and a camera whose lens sits inside another housing as
       critical. <b>Analysis ▸ Housings block cameras</b> switches them off to compare with the body and rig alone (one
       undo step, saved with the project).</p>
     <p>On the sample's <i>Data rig</i>, the front long-range radar RD1 sits just in front of the bumper, below camera F,
-      which looks 40° down through its H05R2 fisheye: the radar's housing covers 13.7 % of F's image, at the bottom centre,
+      which looks 40° down through its H05R2 fisheye: the radar's housing covers 10.7 % of F's image, at the bottom centre,
       and hides ground just ahead of the bumper. Moved 5 cm back behind the fascia, it is out of F's image.</p>
     <table>
       <tr><th>Data rig, ROI 34.46 m², 5 cm cells</th><th>Body and rig only</th><th>Housings block</th></tr>
-      <tr><td>Blind in ROI</td><td>0.010 m²</td><td>0.240 m²</td></tr>
-      <tr><td>Covered</td><td>99.97 %</td><td>99.30 %</td></tr>
-      <tr><td>Seen by ≥ 2 cameras</td><td>53.02 %</td><td>52.81 %</td></tr>
-      <tr><td>Ground camera F sees</td><td>7.20 m²</td><td>6.97 m²</td></tr>
-      <tr><td>Housings in view</td><td></td><td>F: RD1 13.7 %; QL, QR: a corner radar each, 0.08 %; R, ML, MR: none</td></tr>
+      <tr><td>Blind in ROI</td><td>0.010 m²</td><td>0.183 m²</td></tr>
+      <tr><td>Covered</td><td>99.97 %</td><td>99.47 %</td></tr>
+      <tr><td>Seen by ≥ 2 cameras</td><td>53.02 %</td><td>52.83 %</td></tr>
+      <tr><td>Ground camera F sees</td><td>7.20 m²</td><td>7.03 m²</td></tr>
+      <tr><td>Housings in view</td><td></td><td>F: RD1 10.7 %; QL, QR: a corner radar each, 0.08 %; R, ML, MR: none</td></tr>
     </table>
     <p>Export: <b>Housings in view</b> (<code>housings/housings.json</code>, <code>vantage.housings/1</code>, and
       <code>housings.csv</code>) lists every housing, what each camera sees of it, and the coverage with and without
@@ -456,6 +562,7 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td>Calibration targets</td><td><kbd>Alt</kbd>+<kbd>7</kbd></td><td>The floor boards for calibration.</td></tr>
       <tr><td>Dimensions</td><td><kbd>Alt</kbd>+<kbd>8</kbd></td><td>Vehicle and camera dimensions.</td></tr>
       <tr><td>Grid</td><td><kbd>Alt</kbd>+<kbd>9</kbd></td><td>The ground grid.</td></tr>
+      <tr><td>Range rings</td><td><kbd>Alt</kbd>+<kbd>R</kbd></td><td>Rings on the ground 1, 2, 5 and 10 m out from the body's footprint (mirrors included), labelled, for reading near-field coverage off the ground.</td></tr>
       <tr><td>Shadows and lighting</td><td><kbd>Alt</kbd>+<kbd>0</kbd></td><td>The shader renderer's materials, soft shadows, sky occlusion and studio backdrop. Lighting is in linear space; heatmap and camera-light colours keep their exact legend colours.</td></tr>
       <tr><td>Parking guidelines</td><td><kbd>Alt</kbd>+<kbd>G</kbd></td><td>Trajectory lines and the swept path on the ground.</td></tr>
       <tr><td>Blind volume</td><td></td><td>The 3D blind space, cut away at the blind-volume page's height.</td></tr>
@@ -537,7 +644,7 @@ vantage project.vantage            # open a project</code></pre>
       disagree). Anti-dive and anti-squat, kinematic wheel paths, chassis torsion and friction are out of scope; a
       lifted wheel is flagged, not solved.</p>
     <p>On the sample's <i>Data rig</i> with the typical values, calibrated with the rig and no occupants: the driver
-      alone drops the corners 4–22 mm, rolls the body 0.27° and moves the radar RD4 and camera QL 16 mm; four occupants
+      alone drops the corners 4–22 mm, rolls the body 0.26° and moves the radar RD4 and camera QL 16 mm; four occupants
       drop the rear 66 mm onto the rear bump stops, tilting the body 0.95° nose up; fully loaded with luggage, the
       rear camera R moves 85 mm, the stitched ground shifts up to 65 cm and the seams ghost by 35 cm.</p>
     <figure><div class="frame natural"><img src="media/suspension.jpg" alt="The load cases dialog on its Suspension tab: kerb mass, axle shares, tracks and anti-roll bars, and a table of each corner's spring, motion ratio, wheel rate, tyre, kerb load, ride height and bump stop" loading="lazy" width="1600" height="900"></div>
@@ -710,8 +817,7 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td>Cyclist</td><td>10</td><td>1 m²</td></tr>
       <tr><td>Traffic sign</td><td>5</td><td>not detected by radar</td></tr>
     </table>
-    <p>On the sample's data rig, 35 % of the roof lidar's points land on the roof, and its nearest ground point is
-      8.5 to 16 m from the body; raised 0.6 m it loses none and the zone shrinks to about 3.9 m. The objects are flat
+    <p>On the sample's data rig, 34 % of the roof lidar's points land on the roof, and its nearest ground point is 8.3 to 16 m from the body; raised 0.6 m it loses none and the zone shrinks to about 4.2 m. The objects are flat
       upright rectangles facing the sensor; there is no reflectivity fall-off, beam divergence, multiple returns or
       occlusion by other objects, and radar is a zone test on the object's centre. Export:
       <code>vantage.sensor_coverage/1</code> JSON (export frame and units) and the plan as PNG; batch
@@ -781,9 +887,9 @@ vantage project.vantage            # open a project</code></pre>
       whose output, the rig's bus (12, 24 or 48 V), is split into fused circuits.</p>
     <table>
       <tr><th>Load</th><th>Steady</th><th>Peak</th></tr>
-      <tr><td>Camera</td><td>the module's figure (STURDeCAM31: 1.324 W), or 1.5 W typical where the module's page gives none (a GMSL camera powered over its coax by the deserializer, on the compute circuit)</td><td>× 1.2</td></tr>
-      <tr><td>Lidar</td><td>the library figure (nominal)</td><td>× 2.0 while it spins up, plus a cold-start heater if set</td></tr>
-      <tr><td>Radar, GNSS antenna, IMU</td><td>the library figure (an antenna is powered over its coax by the receiver)</td><td>× 1.2</td></tr>
+      <tr><td>Camera</td><td>the module's stated figure (STURDeCAM31: 1.324 W). A module whose maker states none counts 0 W and is listed (or the figure you set for such cameras); a GMSL camera is powered over its coax by the deserializer, on the compute circuit</td><td>× 1.2</td></tr>
+      <tr><td>Lidar</td><td>the maker's stated figure</td><td>× 2.0 while it spins up, plus a cold-start heater if set</td></tr>
+      <tr><td>Radar, GNSS antenna, IMU</td><td>the maker's stated figure (an antenna is powered over its coax by the receiver: counted in the receiver's)</td><td>× 1.2</td></tr>
       <tr><td>Compute, recorder, switch, time server</td><td>60, 40, 15 and 5 W</td><td>× 1.2</td></tr>
       <tr><td>Other loads</td><td>yours (fans, displays, a laptop)</td><td>yours</td></tr>
     </table>
@@ -807,10 +913,9 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td>A power cable's drop over the limit, or under the minimum input at the peak / its peak drop over the limit</td><td>serious / warning</td></tr>
       <tr><td>Engine-off runtime under the target</td><td>warning</td></tr>
     </table>
-    <p>The sample's data rig (six STURDeCAM31 at e-con's 1.324 W each) draws 171 W (186 W from the vehicle); with an
-      INS and two GNSS antennas added, 183 W and 199 W: 31 % of a 600 W converter, 491 W spare on the alternator and
-      4 hours on the battery. Library power figures are nominal and the
-      peak factors typical: replace them with your units' datasheets. Export: <code>vantage.power_budget/1</code>
+    <p>The sample's data rig (six STURDeCAM31 at e-con's 1.324 W each) draws 167 W (181 W from the vehicle); with an INS and two GNSS antennas added, 173 W and 188 W: 29 % of a 600 W converter, 502 W spare on the alternator and
+      4 hours on the battery. Library power figures are the makers'
+      stated figures and the peak factors typical: check them against your units. Export: <code>vantage.power_budget/1</code>
       JSON and device and circuit CSVs; batch <code>--power-budget</code>, which exits with 2 when the converter or a
       fuse is over its rating.</p>
 
@@ -944,10 +1049,8 @@ vantage project.vantage            # open a project</code></pre>
       16 %), the fascia's thickness in half wavelengths and the thickness nearby that reflects least, the reflection back
       into the radar and whether the gap between radar and fascia is near a resonance, and metal in or beside the beam,
       summed up as a multipath risk. The map shows the loss over the field. Metallic paint over a radar costs dB (on the
-      sample's corner radars 3.9 dB against 2.7 dB with a solid paint, 80 m instead of 86 m on a car); a repainted
-      metallic bumper 8.3 dB. The <a href="#sensor-coverage">lidar and radar coverage</a> and the
-      <a href="#critical">critical targets</a> use the derated ranges: the sample's corner radars reach a car at 88 m
-      instead of the datasheet's 102 m.</p>
+      sample's corner radars 3.8 dB against 2.7 dB with a solid paint, 76 m instead of 82 m on a car); a repainted metallic bumper 8.2 dB. The <a href="#sensor-coverage">lidar and radar coverage</a> and the
+      <a href="#critical">critical targets</a> use the derated ranges: the sample's corner radars reach a car at 82 m instead of the datasheet's 95 m.</p>
     <p><b>Cameras behind glass.</b> For a camera behind the windscreen: the light it loses at its angle through the
       glass, where its centre appears (the glass slides every ray sideways a few millimetres), the pixel error that leaves
       for near objects, and how much of the dashboard the glass reflects into the image. Tick <b>Glare shield</b> when a
@@ -1556,8 +1659,8 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td>Radar</td><td>One detection per car, pedestrian, cyclist, pole or sign in a zone at the range its
     cross-section allows, unless the body (beyond the fascia) or a nearer object is in the way. Range, angle, Doppler
     and RCS carry noise, and a few clutter points come from building faces.</td></tr>
-      <tr><td>IMU, GNSS</td><td>Specific force with the lever arm's centripetal and Euler terms, angular rate, typical
-    noise and bias. WGS84 fixes of each antenna's phase centre with RTK-like noise.</td></tr>
+      <tr><td>IMU, GNSS</td><td>Specific force with the lever arm's centripetal and Euler terms, angular rate, white
+    noise from the IMU model's stated noise density (× √rate) and a small synthetic bias. WGS84 fixes of each antenna's phase centre with RTK-like noise.</td></tr>
     </table>
     <p>The nuScenes folder <code>v1.0-vantage</code> loads with
       <code>NuScenes(version='v1.0-vantage', dataroot='…/nuscenes')</code>. Its calibration is the nuScenes calibration

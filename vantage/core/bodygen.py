@@ -1,8 +1,9 @@
 """Procedural vehicle bodies.
 
 The Tata Tigor EV body is lofted from the side profile and front-view half widths
-measured on 19 studio photos (wheel-centre calibration, 1.6 px RMS). Templates use
-generic profiles with the same lofting code. All bodies are returned in ISO 8855
+measured on 19 studio photos (wheel-centre calibration, 1.6 px RMS). The vehicle library's
+templates (core/vehicles.py) loft their family's profile, scaled to each vehicle's stated
+dimensions, with the same code. All bodies are returned in ISO 8855
 coordinates with the origin at the rear-axle centre on the ground.
 """
 from __future__ import annotations
@@ -58,6 +59,7 @@ class BodySpec:
     second_body: 'BodySpec | None' = None
     second_gap: float = 0.0
     spec: dict = field(default_factory=dict)   # datasheet dimensions for the spec check
+    drawn: list = field(default_factory=list)  # figures the maker does not state, drawn from the family's profile
 
     @property
     def front_overhang(self):
@@ -90,7 +92,12 @@ def _generic(key, name, L, W, H, wb, gc, ro, wr, kind, cams):
         t = [.50, .60, .90, .99, 1.0, 1.0, .93, .74, .70, .66, .56, .45]
         glass = (0.05, 0.71)
         belt = 0.62
-    elif kind == 'van':
+    elif kind == 'van':                  # a one-piece van: the high roof runs over the cab to the windscreen
+        u = [0, .02, .05, .76, .81, .88, .94, .98, 1]
+        t = [.55, .97, 1.0, 1.0, .96, .62, .50, .44, .36]
+        glass = (0.74, 0.90)
+        belt = 0.50
+    elif kind == 'box':                  # a cab with a taller box behind it (a tractor, a box truck)
         u = [0, .02, .05, .70, .78, .84, .92, .97, 1]
         t = [.55, .97, 1.0, 1.0, .96, .70, .62, .52, .42]
         glass = (0.70, 0.86)
@@ -105,25 +112,24 @@ def _generic(key, name, L, W, H, wb, gc, ro, wr, kind, cams):
                     rear_overhang=ro, wheel_r=wr, track_half=W / 2 - 0.02,
                     u=u, top=[x * H for x in t], bottom=[x * H for x in bottom],
                     hw_z=[z * H for z in hz], hw=[h * W for h in hwv],
-                    mirror_u=glass[1] - 0.04 if kind != 'van' else 0.86, mirror_z=belt * H + 0.08, belt_z=belt * H,
+                    mirror_u=glass[1] - 0.04 if kind not in ('van', 'box') else glass[1], mirror_z=belt * H + 0.08,
+                    belt_z=belt * H,
                     glass_u=glass, plate_front_z=0.5, plate_rear_z=0.8, cameras=cams,
                     spec={'Length': L, 'Width': W, 'Height': H, 'Wheelbase': wb, 'Ground clearance': gc})
 
 
 def template_specs() -> dict[str, BodySpec]:
-    truck = _generic('truck', 'Truck + trailer', 6.0, 2.45, 3.2, 3.8, 0.30, 1.2, 0.50, 'van', '8-cam')
-    trailer = _generic('trailer', 'Trailer', 7.5, 2.50, 3.6, 5.0, 0.35, 1.3, 0.45, 'van', '8-cam')
-    trailer.top = [3.6 * 0.98] * len(trailer.u)
-    trailer.glass_u = (2.0, 2.0)
-    truck.second_body = trailer
-    truck.second_gap = 0.5
-    return {
-        'sedan': _generic('sedan', 'Sedan', 4.0, 1.7, 1.5, 2.55, 0.17, 0.80, 0.30, 'sedan', '6-cam'),
-        'hatchback': _generic('hatchback', 'Hatchback', 3.8, 1.7, 1.5, 2.45, 0.17, 0.62, 0.29, 'hatch', '4-cam'),
-        'suv': _generic('suv', 'SUV', 4.4, 1.8, 1.7, 2.70, 0.20, 0.90, 0.34, 'suv', '6-cam'),
-        'van': _generic('van', 'Van', 5.3, 2.0, 2.3, 3.30, 0.18, 1.00, 0.33, 'van', '8-cam'),
-        'truck': truck,
-    }
+    """The template bodies of the vehicle library (core/vehicles.py), by vehicle id: each family's profile scaled to
+    the vehicle's stated dimensions."""
+    from .vehicles import library, body_spec
+    return {v.id: body_spec(v) for v in library()}
+
+
+def template_spec(key: str) -> BodySpec | None:
+    """The template body of a library vehicle id or an old template key ('sedan', 'suv', ...)."""
+    from .vehicles import resolve, body_spec
+    v = resolve(key)
+    return body_spec(v) if v is not None else None
 
 
 # ------------------------------------------------------------------ lofting
@@ -219,13 +225,231 @@ def loft_body(spec: BodySpec, x_offset: float, nx=88, nz=16):
     return verts, np.array(faces, np.int64)
 
 
+
+# ------------------------------------------------------------------ the library's bodies (shaped)
+def _smooth(us, ys):
+    """A shape-preserving cubic (PCHIP) through the profile's stations: no overshoot, no kinks between them."""
+    from scipy.interpolate import PchipInterpolator
+    return PchipInterpolator(np.asarray(us, float), np.asarray(ys, float), extrapolate=True)
+
+
+def _plan_round(x, x0, x1, rf, rr):
+    """The plan-view width factor at x of a body from x0 (rear) to x1 (front): 1 along the sides, closing over a
+    rounded corner of radius rf at the nose and rr at the tail (a superellipse, so the ends stay full)."""
+    if x > x1 - rf:
+        s = (x - (x1 - rf)) / rf
+    elif x < x0 + rr:
+        s = ((x0 + rr) - x) / rr
+    else:
+        return 1.0
+    s = min(max(s, 0.0), 1.0)
+    return max((1.0 - s ** 2.6) ** (1 / 2.6), 0.035)
+
+
+def _section(w, bot, top, belt, cabin, nz, tumble=0.22, tuck=0.05):
+    """One cross-section's (y >= 0) half outline from the bottom centre over the side to the top centre, nz points:
+    the sill tucked under, the side bulging slightly to the belt, the greenhouse leaning in by `tumble` where the
+    station has one (cabin > 0), and the top rounded over to the centre (crown)."""
+    h = max(top - bot, 0.02)
+    r_top = min(0.16 if cabin else 0.07, 0.45 * h)
+    r_bot = min(0.06, 0.3 * h)
+    pts = []
+    # bottom: the floor from the centre to the sill corner
+    nb = 3
+    for k in range(nb):
+        t = k / nb
+        pts.append((w * (1 - tuck) * (0.25 + 0.75 * t) - r_bot * t, bot))
+    nside = nz - nb - 6
+    zb = bot + r_bot
+    z_belt = min(max(belt, zb + 0.02), top - r_top - 0.01)
+    gh_top = top - r_top
+    # a row exactly on the belt line (a clean window edge), the rest spread below and above it
+    n_lo = max(2, int(round(nside * 0.55)))
+    zs = list(zb + (z_belt - zb) * np.linspace(0, 1, n_lo))
+    zs += list(z_belt + (gh_top - z_belt) * np.linspace(0, 1, nside - n_lo + 1)[1:])
+    for z in zs:
+        if z <= z_belt + 1e-9:
+            f = (z - zb) / max(z_belt - zb, 1e-6)                  # 0 at the sill, 1 at the belt
+            ww = w * (1 - tuck * (1 - f) ** 2.2) * (1 + 0.012 * math.sin(math.pi * f))
+        else:
+            g = (z - z_belt) / max(gh_top - z_belt, 1e-6)
+            ww = w * (1 - (tumble if cabin else 0.04) * g ** 1.15)
+        pts.append((ww, z))
+    widest = max(x for x, _ in pts)                       # the section is exactly w at its widest
+    if widest > 0:
+        pts = [(x * w / widest, z) for x, z in pts]
+    # round over the top: a quarter ellipse from the side to the centre, with a slight crown
+    w_edge = pts[-1][0]
+    for k in range(1, 7):
+        a = k / 6 * math.pi / 2
+        pts.append((w_edge * math.cos(a) ** 0.9 if k < 6 else 0.0, gh_top + r_top * math.sin(a)))
+    return pts[:nz]
+
+
+def loft_shaped(spec: BodySpec, x_offset: float, nx=160, nz=30):
+    """A library vehicle's body shell (spec.key != 'tigor'): its family's side profile smoothed, the nose and tail
+    rounded in plan, each section tucked at the sill and leaning in above the belt, wheel arches cut over the hubs.
+    Returns (verts, faces, info) with the hood and deck heights for the lights."""
+    L = spec.length
+    top_f = _smooth(spec.u, spec.top)
+    bot_f = _smooth(spec.u, spec.bottom)
+    van = spec.key in ('trailer',) or spec.glass_u[0] >= 0.6 or spec.height > 2.2
+    rf = min(0.10 * L, 0.42) if not van else min(0.05 * L, 0.22)
+    rr = min(0.07 * L, 0.30) if not van else 0.12
+    x0, x1 = x_offset, x_offset + L
+    rear_axle = x_offset + spec.rear_overhang
+    hubs = [rear_axle, rear_axle + spec.wheelbase]
+    arch_r = spec.wheel_r + 0.065
+    # stations: denser at the ends, where the shape turns
+    t = np.linspace(0, 1, nx)
+    us = 0.6 * (0.5 - 0.5 * np.cos(math.pi * t)) + 0.4 * t
+    rings = []
+    for u in us:
+        x = x_offset + u * L
+        top = float(top_f(u))
+        bot = max(spec.ground_clearance, float(bot_f(u)))
+        for hx in hubs:
+            dx = abs(x - hx)
+            if dx < arch_r:
+                bot = max(bot, spec.wheel_r + math.sqrt(arch_r ** 2 - dx ** 2) * 0.93)
+        bot = min(bot, top - 0.06)
+        w = spec.width / 2 * _plan_round(x, x0, x1, rf, rr)
+        cabin = spec.glass_u[0] - 0.02 < u < spec.glass_u[1] + 0.02 and top > spec.belt_z + 0.12
+        half = _section(w, bot, top, spec.belt_z, cabin, nz)
+        ring = [(x, -yy, zz) for yy, zz in half] + [(x, yy, zz) for yy, zz in half[::-1]]
+        rings.append(ring)
+    R = np.array(rings)
+    nxs, n = R.shape[0], R.shape[1]
+    verts = R.reshape(-1, 3)
+    faces = []
+    for i in range(nxs - 1):
+        a, b = i * n, (i + 1) * n
+        for j in range(n):
+            k = (j + 1) % n
+            faces += [[a + j, b + j, b + k], [a + j, b + k, a + k]]
+    base = len(verts)
+    verts = np.concatenate([verts, [R[0].mean(axis=0), R[-1].mean(axis=0)]])
+    for j in range(n):
+        k = (j + 1) % n
+        faces.append([base, j, k])
+        faces.append([base + 1, (nxs - 1) * n + k, (nxs - 1) * n + j])
+    info = {'hood_z': float(top_f(0.97)), 'deck_z': float(top_f(0.03)), 'x0': x0, 'x1': x1}
+    return verts, np.array(faces, np.int64), info
+
+
+def _wheel(cx, cz, y_out, y_in, r, seg=40):
+    """A tyre (tread with rounded shoulders and a sidewall down to the rim) and its rim (a dished disc with a hub),
+    as two (verts, faces) pairs. y_out is the outer face."""
+    sgn = 1.0 if y_out > y_in else -1.0
+    wdt = abs(y_out - y_in)
+    a = np.linspace(0, 2 * math.pi, seg, endpoint=False)
+    ca, sa = np.cos(a), np.sin(a)
+    r_rim = 0.66 * r
+    # tyre profile from the inner rim edge round the tread to the outer rim edge: (radius, y)
+    prof = [(r_rim, y_in), (0.93 * r, y_in), (0.985 * r, y_in + sgn * 0.12 * wdt), (r, y_in + sgn * 0.3 * wdt),
+            (r, y_out - sgn * 0.3 * wdt), (0.985 * r, y_out - sgn * 0.12 * wdt), (0.93 * r, y_out),
+            (r_rim, y_out)]
+    tv = np.concatenate([np.stack([cx + rr * ca, np.full(seg, yy), cz + rr * sa], 1) for rr, yy in prof])
+    tf = []
+    for p in range(len(prof) - 1):
+        for i in range(seg):
+            j = (i + 1) % seg
+            q0, q1 = p * seg, (p + 1) * seg
+            tf += [[q0 + i, q1 + i, q1 + j], [q0 + i, q1 + j, q0 + j]]
+    # rim: a disc recessed into the tyre with spokes suggested by a smaller hub
+    y_face = y_out - sgn * 0.02
+    rings = [(r_rim, y_out - sgn * 0.004), (0.92 * r_rim, y_face), (0.30 * r_rim, y_face - sgn * 0.01),
+             (0.18 * r_rim, y_face + sgn * 0.006)]
+    rv = np.concatenate([np.stack([cx + rr * ca, np.full(seg, yy), cz + rr * sa], 1) for rr, yy in rings]
+                        + [np.array([[cx, y_face + sgn * 0.008, cz]])])
+    rf = []
+    for p in range(len(rings) - 1):
+        for i in range(seg):
+            j = (i + 1) % seg
+            q0, q1 = p * seg, (p + 1) * seg
+            rf += [[q0 + i, q1 + i, q1 + j], [q0 + i, q1 + j, q0 + j]]
+    c = len(rings) * seg
+    last = (len(rings) - 1) * seg
+    for i in range(seg):
+        rf.append([last + i, c, last + (i + 1) % seg])
+    tf, rf = np.array(tf), np.array(rf)
+    if sgn < 0:                                   # keep the outward winding on the right-hand wheels
+        tf, rf = tf[:, ::-1], rf[:, ::-1]
+    return (tv, tf), (rv, rf)
+
+
+def _lens_decal(shell, x_from, d, yc, zc, ay, az, nu=20, nv=8, lift=0.006):
+    """A lamp lens: an elliptical grid (half-axes ay, az about y=yc, z=zc) cast along x (direction d) onto the shell,
+    lifted `lift` towards the viewer; cells whose rays miss are left out."""
+    th = np.linspace(0, 2 * math.pi, nu, endpoint=False)
+    rs = np.linspace(0, 1, nv)
+    pts = [(yc, zc)] + [(yc + ay * r * math.cos(t), zc + az * r * math.sin(t)) for r in rs[1:] for t in th]
+    O = np.array([[x_from, y, z] for y, z in pts])
+    D = np.tile([d, 0.0, 0.0], (len(O), 1))
+    t, fi = shell.raycast(O, D)
+    ok = fi >= 0
+    nrm_hit = shell.normals[np.maximum(fi, 0)]
+    nrm_hit = np.where((nrm_hit @ np.array([-d, 0.0, 0.0]))[:, None] < 0, -nrm_hit, nrm_hit)   # towards the viewer
+    V = O + D * np.where(ok, t, 0.0)[:, None] + nrm_hit * lift
+    F = []
+    for i in range(nu):                                   # the centre fan
+        a, b = 1 + i, 1 + (i + 1) % nu
+        F.append([0, a, b])
+    for k in range(nv - 2):
+        r0, r1 = 1 + k * nu, 1 + (k + 1) * nu
+        for i in range(nu):
+            j = (i + 1) % nu
+            F += [[r0 + i, r1 + i, r1 + j], [r0 + i, r1 + j, r0 + j]]
+    F = np.array(F, np.int64)
+    F = F[ok[F].all(axis=1)]
+    if d > 0:                                             # face the viewer at the tail
+        F = F[:, ::-1]
+    tri = V[F]
+    nrm = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    if len(F) and (nrm[:, 0] * -d).mean() < 0:
+        F = F[:, ::-1]
+    return V, F
+
+
+def _ellipsoid(c, half, seg=14, ring=8):
+    """A closed ellipsoid about c with half-axes half (x, y, z)."""
+    v = [[c[0], c[1], c[2] - half[2]]]
+    for k in range(1, ring):
+        th = math.pi * k / ring
+        for i in range(seg):
+            ph = 2 * math.pi * i / seg
+            v.append([c[0] + half[0] * math.sin(th) * math.cos(ph), c[1] + half[1] * math.sin(th) * math.sin(ph),
+                      c[2] - half[2] * math.cos(th)])
+    v.append([c[0], c[1], c[2] + half[2]])
+    f = []
+    for i in range(seg):
+        f.append([0, 1 + (i + 1) % seg, 1 + i])
+    for k in range(ring - 2):
+        a, b = 1 + k * seg, 1 + (k + 1) * seg
+        for i in range(seg):
+            j = (i + 1) % seg
+            f += [[a + i, a + j, b + j], [a + i, b + j, b + i]]
+    top = len(v) - 1
+    a = 1 + (ring - 2) * seg
+    for i in range(seg):
+        f.append([a + i, a + (i + 1) % seg, top])
+    return np.array(v, float), np.array(f, np.int64)
+
 def build_body(spec: BodySpec) -> tuple[Mesh, dict]:
     """Build body + wheels + mirrors as a Mesh in ISO 8855 rear-axle coordinates.
-    Returns (mesh, info) where info has landmark positions."""
+    Returns (mesh, info) where info has landmark positions. The measured Tigor keeps its lofted rings; a library
+    vehicle's body is shaped (loft_shaped) with tyres and rims, lamps, black trim and mirror pods."""
+    shaped = spec.key != 'tigor'
     parts = [Part('Body', 'paint_matte', 1.0, (0.78, 0.78, 0.76), ROLE_MOUNTABLE),
              Part('Glass', 'glass_tint', 0.35, (0.18, 0.19, 0.2), ROLE_GLASS),
              Part('Wheels', 'tyre, rim', 1.0, (0.13, 0.13, 0.13), ROLE_WHEELS),
              Part('Mirrors', 'paint_matte', 1.0, (0.78, 0.78, 0.76), ROLE_MOUNTABLE)]
+    if shaped:
+        parts += [Part('Wheel rims', 'alloy', 1.0, (0.72, 0.73, 0.75), ROLE_WHEELS),
+                  Part('Head lamps', 'lamp lens, smoked', 1.0, (0.30, 0.32, 0.36), ROLE_MOUNTABLE),
+                  Part('Tail lamps', 'lamp lens, red', 1.0, (0.62, 0.05, 0.04), ROLE_MOUNTABLE),
+                  Part('Black trim', 'plastic, black', 1.0, (0.06, 0.06, 0.06), ROLE_MOUNTABLE)]
+    P_BODY, P_GLASS, P_TYRE, P_MIRROR, P_RIM, P_HEAD, P_TAIL, P_TRIM = range(8)
     V, F, FP = [], [], []
 
     def add(v, f, part):
@@ -241,7 +465,10 @@ def build_body(spec: BodySpec) -> tuple[Mesh, dict]:
         bodies.append((tb, x_rear - spec.second_gap - tb.length))
     landmarks = {}
     for bi, (bs, xr) in enumerate(bodies):
-        v, f = loft_body(bs, xr)
+        if shaped:
+            v, f, li = loft_shaped(bs, xr)
+        else:
+            v, f = loft_body(bs, xr)
         # glass faces: above the belt line inside the cabin span, not the roof strip
         tri = v[f]
         c = tri.mean(axis=1)
@@ -249,9 +476,49 @@ def build_body(spec: BodySpec) -> tuple[Mesh, dict]:
         n = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
         n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
         sz = bs.height / max(bs.top) if bs.key == 'tigor' else 1.0
-        top_c = np.interp(u, bs.u, bs.top) * sz
-        glass = (u > bs.glass_u[0]) & (u < bs.glass_u[1]) & (tri[:, :, 2].min(axis=1) > bs.belt_z - 1e-6) & (tri[:, :, 2].max(axis=1) < top_c - 0.05) & (np.abs(n[:, 2]) < 0.93)
-        add(v, f, np.where(glass, 1, 0))
+        top_c = (_smooth(bs.u, bs.top)(u) if shaped else np.interp(u, bs.u, bs.top)) * sz
+        if shaped:
+            # side windows: above the belt, below the roof rail; windscreen and backlight: the sloped faces of the
+            # cabin's top facing forward or back, inside the pillars
+            above = (tri[:, :, 2].min(axis=1) > bs.belt_z + 0.015) & (u > bs.glass_u[0] - 0.06) & \
+                (u < bs.glass_u[1] + 0.05)
+            roof_z = float(np.max(bs.top))
+            side = (np.abs(n[:, 1]) > 0.45) & (tri[:, :, 2].max(axis=1) < top_c - 0.06) & \
+                (u > bs.glass_u[0]) & (u < bs.glass_u[1])
+            w_here = np.array([bs.width / 2 * _plan_round(x, xr, xr + bs.length, 1.0, 1.0) for x in c[:, 0]])
+            slope = (np.abs(n[:, 0]) > 0.30) & (np.abs(n[:, 2]) < 0.90) & (np.abs(n[:, 2]) > 0.15) & \
+                (c[:, 2] < roof_z - 0.05) & (np.abs(c[:, 1]) < 0.78 * w_here)
+            glass = above & (side | slope)
+        else:
+            glass = (u > bs.glass_u[0]) & (u < bs.glass_u[1]) & (tri[:, :, 2].min(axis=1) > bs.belt_z - 1e-6) & \
+                (tri[:, :, 2].max(axis=1) < top_c - 0.05) & (np.abs(n[:, 2]) < 0.93)
+        part = np.where(glass, P_GLASS, P_BODY)
+        if shaped and bs.key != 'trailer':
+            W = bs.width
+            xf_, xr_ = li['x1'], li['x0']
+            ay = np.abs(c[:, 1])
+            z = c[:, 2]
+            # black trim: the sills and the lower bumpers (below the camera bands), not on the glass
+            gc = bs.ground_clearance
+            sill = (z < gc + 0.075) & (np.abs(n[:, 1]) > 0.35)
+            lower_f = (c[:, 0] > xf_ - 0.35) & (z < bs.plate_front_z - 0.10) & (n[:, 0] > 0.2)
+            lower_r = (c[:, 0] < xr_ + 0.35) & (z < min(0.40, bs.plate_rear_z - 0.30)) & (n[:, 0] < -0.2)
+            trim = (sill | lower_f | lower_r) & (part == P_BODY)
+            part = np.where(trim & (part == P_BODY), P_TRIM, part)
+        add(v, f, part)
+        if shaped and bs.key != 'trailer':
+            # lamps: a lens surface projected onto the nose (tail) along x, 2 mm proud of the paint
+            hz = li['hood_z']
+            tz = min(li['deck_z'], bs.height * 0.75)
+            shell = Mesh(v, f)
+            for (yc, zc, ay_, az_), x_from, d, pidx in (((0.34 * bs.width, hz - 0.13, 0.13 * bs.width, 0.06),
+                                                         li['x1'] + 1.0, -1.0, P_HEAD),
+                                                        ((0.36 * bs.width, tz - 0.14, 0.12 * bs.width, 0.065),
+                                                         li['x0'] - 1.0, 1.0, P_TAIL)):
+                for sgn in (1, -1):
+                    lv, lf = _lens_decal(shell, x_from, d, sgn * yc, zc, ay_, az_)
+                    if len(lf):
+                        add(lv, lf, pidx)
         # wheels
         ra = xr + bs.rear_overhang
         hubs_x = [ra, ra + bs.wheelbase]
@@ -261,22 +528,37 @@ def build_body(spec: BodySpec) -> tuple[Mesh, dict]:
             for sgn in (1, -1):
                 y_out = sgn * (bs.track_half + 0.015)
                 y_in = sgn * (bs.track_half + 0.015 - 0.185 * (bs.wheel_r / 0.29))
-                wv, wf = _cylinder_y(hx, bs.wheel_r, min(y_in, y_out), max(y_in, y_out), bs.wheel_r)
-                add(wv, wf, 2)
+                if shaped:
+                    (tv, tf), (rv, rf_) = _wheel(hx, bs.wheel_r, y_out, y_in, bs.wheel_r)
+                    add(tv, tf, P_TYRE)
+                    add(rv, rf_, P_RIM)
+                else:
+                    wv, wf = _cylinder_y(hx, bs.wheel_r, min(y_in, y_out), max(y_in, y_out), bs.wheel_r)
+                    add(wv, wf, P_TYRE)
                 if bi == 0:
                     tag = ('R' if hx == hubs_x[0] else 'F') + ('L' if sgn > 0 else 'R')
                     landmarks[f'Wheel centre {tag}'] = (hx, sgn * (bs.track_half + 0.015), bs.wheel_r)
         if bi == 0 and bs.key != 'trailer':
-            # mirrors: wedge boxes at the A-pillar base
+            # mirrors at the A-pillar base: a wedge (the Tigor), or a pod on a short arm (the library's bodies)
             mx = xr + bs.mirror_u * bs.length
             w_at = np.interp(bs.mirror_z / sz, bs.hw_z, bs.hw) * (bs.width / 1.677 if bs.key == 'tigor' else 1.0)
+            if shaped:
+                w_at = min(w_at, bs.width / 2 * 0.93)
             for sgn in (1, -1):
                 y0, y1 = w_at - 0.04, w_at + 0.18
-                bv, bf = _box(mx - 0.11, mx + 0.09, y0, y1, bs.mirror_z - 0.055, bs.mirror_z + 0.085, taper=0.15)
+                if shaped:
+                    pv, pf_ = _ellipsoid((mx - 0.01, (y0 + 0.06 + y1) / 2, bs.mirror_z + 0.015),
+                                         (0.10, (y1 - y0 - 0.06) / 2, 0.07))
+                    av, af = _box(mx - 0.05, mx + 0.04, y0, y0 + 0.08, bs.mirror_z - 0.03, bs.mirror_z + 0.02)
+                    bv = np.concatenate([pv, av])
+                    bf = np.concatenate([pf_, af + len(pv)])
+                else:
+                    bv, bf = _box(mx - 0.11, mx + 0.09, y0, y1, bs.mirror_z - 0.055, bs.mirror_z + 0.085, taper=0.15)
                 if sgn < 0:
+                    bv = bv.copy()
                     bv[:, 1] *= -1
                     bf = bf[:, ::-1]
-                add(bv, bf, 3)
+                add(bv, bf, P_MIRROR)
                 landmarks['Mirror tip ' + ('L' if sgn > 0 else 'R')] = (mx, sgn * y1, bs.mirror_z)
     verts = np.concatenate(V)
     faces = np.concatenate(F)
@@ -298,7 +580,7 @@ def _auto_zones(mesh: Mesh, spec: BodySpec):
     zones = [Zone('Grille band above plate'), Zone('Rear bumper top edge'), Zone('Mirror housings (2)'),
              Zone('Rear quarters'), Zone('Glass (auto)', 'forbidden', auto=True), Zone('Door shut lines', 'forbidden')]
     fz = np.full(len(c), -1, np.int16)
-    body = fp == 0
+    body = (fp == 0) | (fp == 7)                      # paint, and the library bodies' black trim
     pf = spec.plate_front_z
     fz[body & (c[:, 0] > xf - 0.14) & (c[:, 2] > pf - 0.02) & (c[:, 2] < pf + 0.16) & (np.abs(c[:, 1]) < 0.45 * W / 1.677 * 1.0) & (n[:, 0] > 0.2)] = 0
     pr = 0.56 if spec.key == 'tigor' else 0.55

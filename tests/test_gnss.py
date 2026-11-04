@@ -33,11 +33,11 @@ def _car():
     return p
 
 
-def _ant(tag='GN1', x=1.0, y=0.0, z=TOP + OZ, model='gnss_survey', **kw):
+def _ant(tag='GN1', x=1.0, y=0.0, z=TOP + OZ, model='novatel_gnss850', **kw):
     return Sensor(kind='gnss', model_id=model, tag=tag, x=x, y=y, z=z, **kw)
 
 
-def _imu(tag='IMU1', model='ins_dual', **pose):
+def _imu(tag='IMU1', model='oxts_rt3000_v4', **pose):
     pose = {'x': 0.0, 'y': 0.0, 'z': 0.45, **pose}
     return Sensor(kind='imu', model_id=model, tag=tag, **pose)
 
@@ -229,7 +229,7 @@ def test_heading_baseline_length_direction_and_sigma():
     assert b['length_m'] == pytest.approx(L) and b['horizontal_m'] == pytest.approx(Lh)
     assert b['azimuth_deg'] == pytest.approx(math.degrees(math.atan2(0.3, 1.2)))
     assert b['vertical_deg'] == pytest.approx(math.degrees(math.atan2(0.1, Lh)))
-    assert b['heading_sigma_deg'] == pytest.approx(0.1 * 2.0 / Lh)                    # ins_dual: 0.1° at 2 m
+    assert b['heading_sigma_deg'] == pytest.approx(0.04 * 2.0 / Lh)                   # OxTS RT3000 v4: 0.04° at 2 m
     assert next(f for f in res.findings if f['kind'] == 'baseline')['severity'] == 'good'
     assert [r['role'] for r in res.lever_arms if r['kind'] == 'gnss'] == ['primary', 'secondary']
     # the chosen primary and secondary turn the baseline round
@@ -258,7 +258,7 @@ def test_antenna_and_receiver_counts():
     _, res = kinds(_imu(), _ant('GN1'), _ant('GN2', x=2.2), _ant('GN3', x=1.6, y=0.5))
     f = next(f for f in res.findings if f['kind'] == 'antenna_count')
     assert f['severity'] == 'note' and f['tags'] == ['GN3']
-    _, res = kinds(_imu(model='imu_mems'), _ant('GN1'))                        # a plain IMU takes no antenna
+    _, res = kinds(_imu(model='xsens_mti630'), _ant('GN1'))                        # a plain IMU takes no antenna
     assert any(f['kind'] == 'no_receiver' for f in res.findings)
     assert any(f['kind'] == 'model_figures' for f in res.findings)             # and gives no accuracy figures
     p = _car()
@@ -267,7 +267,7 @@ def test_antenna_and_receiver_counts():
 
 def test_reference_imu_is_the_first_ins_or_the_chosen_one():
     p = _car()
-    p.variant.sensors += [_imu('IMU1', model='imu_mems', x=1.0), _imu('IMU2', x=2.0), _ant()]
+    p.variant.sensors += [_imu('IMU1', model='xsens_mti630', x=1.0), _imu('IMU2', x=2.0), _ant()]
     res = G.run(p, Engine())
     assert res.imu['tag'] == 'IMU2'                                            # the one with antenna inputs
     assert G.run(p, Engine(), _st(imu='IMU1')).imu['tag'] == 'IMU1'
@@ -333,8 +333,8 @@ def test_pose_error_budget_against_a_hand_calculation():
     np.testing.assert_allclose(r['rotation_mm'], mc, rtol=0.01)
     # the budget's own heading: from the baseline when not set; the INS model's position and attitude when not set
     r2 = G.run(p, Engine()).budget
-    assert r2['inputs']['heading_source'] == 'baseline' and r2['inputs']['pos_sigma_cm'] == 2.0
-    assert r2['inputs']['heading_sigma_deg'] == pytest.approx(0.1 * 2.0 / 2.0)
+    assert r2['inputs']['heading_source'] == 'baseline' and r2['inputs']['pos_sigma_cm'] == 1.0
+    assert r2['inputs']['heading_sigma_deg'] == pytest.approx(0.04 * 2.0 / 2.0)
     assert {x['kind'] for x in r2['rows']} == {'origin', 'camera'}              # antennas are not budget rows
 
 
@@ -415,7 +415,7 @@ def test_the_sample_rig_with_default_antennas_and_an_ins():
     p = samples.tigor_sample_project()
     v = next(v for v in p.variants if v.sensors)
     p.active_uid = v.uid
-    for kind, mid in (('gnss', 'gnss_survey'), ('gnss', 'gnss_survey'), ('imu', 'ins_dual')):
+    for kind, mid in (('gnss', 'novatel_gnss850'), ('gnss', 'novatel_gnss850'), ('imu', 'oxts_rt3000_v4')):
         m = p.sensor_models[mid]
         v.sensors.append(Sensor(kind=kind, model_id=mid, tag=sensors.next_tag(kind, v.tags()),
                                 **sensors.default_pose(kind, m, p.vehicle.mesh, p.rig, v.sensors)))
@@ -448,7 +448,7 @@ def test_summary_doc_text_png_and_export(tmp_path):
     assert len(a['horizon_profile']['skyline_deg']) == 180
     assert a['blockers'][0]['name'] == 'Wall' and a['blocked_sectors'][0]['blockers'] == ['Wall']
     assert a['sky_visible_pct'] == pytest.approx(res.antennas[0].visible * 100, abs=0.01)
-    assert doc['baseline']['heading_sigma_deg'] == pytest.approx(0.1)
+    assert doc['baseline']['heading_sigma_deg'] == pytest.approx(0.04)
     lv = {r['target']: r for r in doc['lever_arms']}
     assert lv['GN2']['vehicle_frame_mm'] == [2500.0, 0.0, 1100.0] and lv['GN2']['imu_frame_mm'] == [2500.0, 0.0, 1100.0]
     assert doc['pose_error_budget']['rows'][0]['target'] == 'Vehicle origin'
@@ -504,7 +504,7 @@ def test_page_picks_an_antenna_edits_the_mask_undoes_and_exports(app, win, tmp_p
 
     def add(p):
         v = p.variant
-        for kind, mid in (('gnss', 'gnss_survey'), ('gnss', 'gnss_survey'), ('imu', 'ins_dual')):
+        for kind, mid in (('gnss', 'novatel_gnss850'), ('gnss', 'novatel_gnss850'), ('imu', 'oxts_rt3000_v4')):
             m = p.sensor_models[mid]
             v.sensors.append(Sensor(kind=kind, model_id=mid, tag=sensors.next_tag(kind, v.tags()),
                                     **sensors.default_pose(kind, m, p.vehicle.mesh, p.rig, v.sensors)))
@@ -563,8 +563,8 @@ def test_page_picks_an_antenna_edits_the_mask_undoes_and_exports(app, win, tmp_p
     assert pg.result is None
     # another project while the page shows: its antenna, picked
     q = samples.tigor_sample_project()
-    m = q.sensor_models['gnss_patch']
-    q.variant.sensors.append(Sensor(kind='gnss', model_id='gnss_patch', tag='GN7',
+    m = q.sensor_models['ublox_ann_mb_00']
+    q.variant.sensors.append(Sensor(kind='gnss', model_id='ublox_ann_mb_00', tag='GN7',
                                     **sensors.default_pose('gnss', m, q.vehicle.mesh, q.rig, [])))
     store.set_project(q)
     _wait(app, lambda: pg.result is not None and [a.tag for a in pg.result.antennas] == ['GN7'])

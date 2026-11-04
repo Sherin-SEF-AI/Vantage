@@ -41,9 +41,9 @@ def _project(lidar_z=None, extra=True):
     if lidar_z is not None:
         next(s for s in v.sensors if s.kind == 'lidar').z = lidar_z
     if extra:
-        v.sensors.append(Sensor(tag='IMU1', name='INS', kind='imu', model_id='ins_dual', x=1.0, y=0.0, z=0.5))
-        v.sensors.append(Sensor(tag='G1', name='GNSS front', kind='gnss', model_id='gnss_survey', x=1.6, y=0.0, z=1.45))
-        v.sensors.append(Sensor(tag='G2', name='GNSS rear', kind='gnss', model_id='gnss_survey', x=0.2, y=0.0, z=1.45))
+        v.sensors.append(Sensor(tag='IMU1', name='INS', kind='imu', model_id='oxts_rt3000_v4', x=1.0, y=0.0, z=0.5))
+        v.sensors.append(Sensor(tag='G1', name='GNSS front', kind='gnss', model_id='novatel_gnss850', x=1.6, y=0.0, z=1.45))
+        v.sensors.append(Sensor(tag='G2', name='GNSS rear', kind='gnss', model_id='novatel_gnss850', x=0.2, y=0.0, z=1.45))
     return p
 
 
@@ -675,7 +675,12 @@ def test_recording_reads_back_in_the_drive_log_and_as_built_checks(fake_run):
         assert res is not None and res.source == src
         streams = {e['tag']: e for e in res.streams}
         assert streams['F']['topic'] and streams['L1']['topic'] and streams['RD2']['topic']
-        assert streams['F']['status'] == 'ok' and streams['RD2']['status'] == 'ok'
+        assert streams['F']['status'] == 'ok'
+        # the DRVEGRD 169's 14.3 Hz (69.9 ms) is no multiple of the 12.5 ms world step: its stamps jitter by one step,
+        # and the drive-log check says so
+        jit = [f['message'] for f in res.findings if f['tags'] == ['RD2']]
+        assert streams['RD2']['status'] == 'ok' or (streams['RD2']['status'] == 'warning' and len(jit) == 1 and
+                                                    'jitter by up to 12.5 ms' in jit[0]), jit
         assert abs(streams['L1']['rate_hz'] - 10.0) < 0.01
         assert any('Vantage wrote' in f['message'] for f in res.findings)
         assert res.sync['lidar'] is not None and abs(res.sync['lidar']['phase_error_deg']) < 1.0

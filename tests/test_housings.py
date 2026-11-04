@@ -659,10 +659,11 @@ def test_inspector_shows_the_housings_in_view(app, win):  # noqa: F811
     st.select_obj(('sensor', rd1.uid))
     settle(app, win)
     sp = win.inspector.pages['sensor']
-    sp.px.lineEdit().setText(f'{rd1.x - 0.06:.4f}')
+    x0 = rd1.x
+    sp.px.lineEdit().setText(f'{x0 - 0.06:.4f}')
     sp.px._on_finished()
     settle(app, win)
-    assert abs(st.variant.sensor(rd1.uid).x - (3.234 - 0.06)) < 1e-6
+    assert abs(st.variant.sensor(rd1.uid).x - round(x0 - 0.06, 4)) < 1e-6
     st.select_cams([f.uid])
     settle(app, win)
     assert page.house_v.v.text() == 'none'

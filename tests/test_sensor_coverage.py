@@ -19,7 +19,7 @@ def _lidar(model_id='ouster_os1_128', tag='L1', **pose):
     return Sensor(kind='lidar', model_id=model_id, tag=tag, **pose)
 
 
-def _radar(model_id='radar_long', tag='RD1', **pose):
+def _radar(model_id='conti_ars408_21', tag='RD1', **pose):
     return Sensor(kind='radar', model_id=model_id, tag=tag, **pose)
 
 
@@ -27,10 +27,10 @@ def _rig(p):
     """One 128-channel lidar on the roof, a long-range radar in the front bumper, corner radars at the rear corners."""
     m = p.sensor_models['ouster_os1_128']
     p.variant.sensors.append(_lidar(**sensors.default_pose('lidar', m, p.vehicle.mesh, p.rig)))
-    p.variant.sensors.append(_radar(**sensors.default_pose('radar', p.sensor_models['radar_long'], p.vehicle.mesh)))
+    p.variant.sensors.append(_radar(**sensors.default_pose('radar', p.sensor_models['conti_ars408_21'], p.vehicle.mesh)))
     lo, hi = p.vehicle.mesh.bbox
     for tag, y, yaw in (('RD2', hi[1] - 0.2, 135.0), ('RD3', lo[1] + 0.2, -135.0)):
-        p.variant.sensors.append(_radar('radar_corner', tag, x=float(lo[0]) - 0.02, y=float(y), z=0.5, yaw=yaw))
+        p.variant.sensors.append(_radar('smartmicro_drvegrd169', tag, x=float(lo[0]) - 0.02, y=float(y), z=0.5, yaw=yaw))
     return p
 
 
@@ -121,13 +121,13 @@ def test_lidar_range_is_where_the_points_fall_below_the_minimum():
 def test_the_roof_blocks_the_downward_beams_of_a_roof_lidar(sample):
     p, e, res = sample
     li = res.lidars[0]
-    assert li.sensor.z == pytest.approx(float(p.vehicle.mesh.bbox[1][2]) + 0.036, abs=0.03)    # just above the roof
+    assert li.sensor.z == pytest.approx(float(p.vehicle.mesh.bbox[1][2]) + 0.038, abs=0.03)    # just above the roof
     assert li.blocked_channel[0] == 1.0 and li.blocked_channel[-1] == 0.0
     assert 0.2 < li.blocked < 0.6
     assert li.blocked == pytest.approx(float(np.mean(li.blocked_channel)))
     assert all(v is not None and v > 0.2 for v in li.blocked_sectors.values())
-    # its lowest ring would lie 3.8 m out, but the roof hides the near ground: the blind zone is far larger
-    assert li.ring_m == pytest.approx(li.sensor.z / math.tan(math.radians(22.5)), rel=1e-6)
+    # its lowest ring would lie 4.0 m out, but the roof hides the near ground: the blind zone is far larger
+    assert li.ring_m == pytest.approx(li.sensor.z / math.tan(math.radians(21.2)), rel=1e-6)
     assert np.nanmedian(li.blind) > 5.0 and np.isfinite(li.blind).all()
     # the same lidar 0.6 m higher (on a mast) loses fewer beams to the roof and sees the ground nearer the car
     q = p.snapshot()
@@ -142,17 +142,17 @@ def test_the_roof_blocks_the_downward_beams_of_a_roof_lidar(sample):
 
 # ----------------------------------------------------------------------------- radar
 def test_radar_range_scales_with_the_fourth_root_of_the_cross_section():
-    s = _radar('radar_corner', x=0.0, y=0.0, z=0.5)               # one zone: 100 m on a car, ±75°, ±10°
+    s = _radar('smartmicro_drvegrd169', x=0.0, y=0.0, z=0.5)          # one zone: 95 m on a car, ±65°, ±7.5°
     p = _empty(s)
     res = SC.run(p, Engine())
     names = [c.name for c in res.classes]
     car, ped, cyc, sign = (names.index(n) for n in ('Car', 'Pedestrian', 'Cyclist', 'Traffic sign'))
     zc = 0.75 - 0.5                                                  # the car's centre above the radar
-    assert res.radar[car, 0] == pytest.approx(math.sqrt(100.0 ** 2 - zc ** 2), abs=1e-3)
+    assert res.radar[car, 0] == pytest.approx(math.sqrt(95.0 ** 2 - zc ** 2), abs=1e-3)
     for k, rcs in ((ped, 0.5), (cyc, 1.0)):
         assert res.radar[k, 0] / res.radar[car, 0] == pytest.approx((rcs / 10.0) ** 0.25, rel=1e-4)
     a60 = res.az_index(60.0)
-    assert res.radar[car, a60] == pytest.approx(res.radar[car, 0], rel=1e-4)      # inside ±75°
+    assert res.radar[car, a60] == pytest.approx(res.radar[car, 0], rel=1e-4)      # inside ±65°
     assert res.radar[car, res.az_index(90.0)] == 0.0 and res.radar[car, res.az_index(180.0)] == 0.0
     assert np.isnan(res.radar[sign]).all()                          # rcs 0: radars are not relied on
     assert res.sectors[0]['classes']['Traffic sign']['radar_m'] is None

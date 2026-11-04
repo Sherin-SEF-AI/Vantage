@@ -35,7 +35,7 @@ __all__ = [
     'SUPPORTED_EXTS', 'MeshLoadError', 'PartInfo', 'LoadedMesh', 'load_mesh', 'mesh_summary',
 ]
 
-SUPPORTED_EXTS = ('.glb', '.gltf', '.obj', '.stl', '.ply', '.fbx', '.step', '.stp')
+SUPPORTED_EXTS = ('.glb', '.gltf', '.obj', '.stl', '.ply', '.dae', '.fbx', '.step', '.stp')
 
 # Hard limits that protect against hostile / absurd files.
 MAX_VERTICES = 100_000_000
@@ -2129,6 +2129,243 @@ def _load_step_cascadio(cascadio, path: str, prog: _Progress) -> LoadedMesh:
     return mesh
 
 
+
+# ----------------------------------------------------------------------------
+# COLLADA (.dae)
+# ----------------------------------------------------------------------------
+
+def _dae_tag(el) -> str:
+    t = el.tag
+    return t.rsplit('}', 1)[1] if '}' in t else t
+
+
+def _dae_kids(el, name):
+    return [c for c in el if _dae_tag(c) == name]
+
+
+def _dae_kid(el, name):
+    return next((c for c in el if _dae_tag(c) == name), None)
+
+
+def _dae_node_matrix(node) -> np.ndarray:
+    """A COLLADA node's local transform: its <matrix>, <translate>, <rotate>, <scale> in document order."""
+    M = np.eye(4)
+    for c in node:
+        t = _dae_tag(c)
+        v = _floats((c.text or '').split())
+        if t == 'matrix' and len(v) == 16:
+            M = M @ np.array(v, float).reshape(4, 4)
+        elif t == 'translate' and len(v) == 3:
+            T = np.eye(4)
+            T[:3, 3] = v
+            M = M @ T
+        elif t == 'scale' and len(v) == 3:
+            M = M @ np.diag([v[0], v[1], v[2], 1.0])
+        elif t == 'rotate' and len(v) == 4:
+            ax = np.array(v[:3], float)
+            n = np.linalg.norm(ax)
+            if n > 0:
+                x, y, z = ax / n
+                a = math.radians(v[3])
+                c_, s_ = math.cos(a), math.sin(a)
+                C = 1 - c_
+                R = np.eye(4)
+                R[:3, :3] = [[c_ + x * x * C, x * y * C - z * s_, x * z * C + y * s_],
+                             [y * x * C + z * s_, c_ + y * y * C, y * z * C - x * s_],
+                             [z * x * C - y * s_, z * y * C + x * s_, c_ + z * z * C]]
+                M = M @ R
+    return M
+
+
+def _dae_geometry(geom, name: str):
+    """[(vertices (N, 3), triangles (M, 3), material symbol)] of one COLLADA <geometry>'s mesh."""
+    mesh = _dae_kid(geom, 'mesh')
+    if mesh is None:
+        return []
+    sources = {}
+    for src in _dae_kids(mesh, 'source'):
+        fa = _dae_kid(src, 'float_array')
+        if fa is None:
+            continue
+        vals = np.array(_floats((fa.text or '').split()), float)
+        stride = 3
+        tc = _dae_kid(src, 'technique_common')
+        acc = _dae_kid(tc, 'accessor') if tc is not None else None
+        if acc is not None:
+            stride = int(acc.get('stride', '3') or 3)
+        if stride >= 3 and len(vals) >= stride:
+            sources[src.get('id')] = vals[: len(vals) // stride * stride].reshape(-1, stride)[:, :3]
+    verts = {}
+    for v in _dae_kids(mesh, 'vertices'):
+        for inp in _dae_kids(v, 'input'):
+            if inp.get('semantic') == 'POSITION':
+                verts[v.get('id')] = (inp.get('source') or '').lstrip('#')
+    out = []
+    for prim in mesh:
+        kind = _dae_tag(prim)
+        if kind not in ('triangles', 'polylist', 'polygons', 'trifans', 'tristrips'):
+            continue
+        inputs = _dae_kids(prim, 'input')
+        if not inputs:
+            continue
+        stride = max(int(i.get('offset', '0') or 0) for i in inputs) + 1
+        vin = next((i for i in inputs if i.get('semantic') in ('VERTEX', 'POSITION')), None)   # (an Element is falsy)
+        if vin is None:
+            continue
+        sid = (vin.get('source') or '').lstrip('#')
+        P = sources.get(verts.get(sid, sid))
+        if P is None:
+            continue
+        off = int(vin.get('offset', '0') or 0)
+        polys = []
+        if kind == 'triangles':
+            p = _dae_kid(prim, 'p')
+            idx = np.array((p.text or '').split(), dtype=np.int64) if p is not None else np.zeros(0, np.int64)
+            idx = idx[: len(idx) // stride * stride].reshape(-1, stride)[:, off]
+            tris = idx[: len(idx) // 3 * 3].reshape(-1, 3)
+        else:
+            if kind == 'polylist':
+                p = _dae_kid(prim, 'p')
+                vc = _dae_kid(prim, 'vcount')
+                idx = np.array((p.text or '').split(), dtype=np.int64) if p is not None else np.zeros(0, np.int64)
+                counts = np.array((vc.text or '').split(), dtype=np.int64) if vc is not None else np.zeros(0, np.int64)
+                idx = idx[: len(idx) // stride * stride].reshape(-1, stride)[:, off]
+                pos = 0
+                for n in counts:
+                    polys.append(idx[pos:pos + n])
+                    pos += n
+            else:
+                for p in _dae_kids(prim, 'p'):
+                    idx = np.array((p.text or '').split(), dtype=np.int64)
+                    polys.append(idx[: len(idx) // stride * stride].reshape(-1, stride)[:, off])
+            rows = []
+            for poly in polys:
+                if len(poly) < 3:
+                    continue
+                if kind == 'tristrips':
+                    for k in range(len(poly) - 2):
+                        a, b, c = poly[k], poly[k + 1], poly[k + 2]
+                        rows.append((a, b, c) if k % 2 == 0 else (b, a, c))
+                else:                                   # fans (polygons are convex fans, as the other loaders do)
+                    for k in range(1, len(poly) - 1):
+                        rows.append((poly[0], poly[k], poly[k + 1]))
+            tris = np.array(rows, np.int64).reshape(-1, 3)
+        out.append((P, tris, prim.get('material') or ''))
+    return out
+
+
+def _dae_colors(root) -> dict:
+    """material id -> (name, diffuse rgb, alpha) from COLLADA's materials and effects."""
+    effects = {}
+    for lib in _dae_kids(root, 'library_effects'):
+        for fx in _dae_kids(lib, 'effect'):
+            rgb, alpha = _DEFAULT_COLOR, 1.0
+            for el in fx.iter():
+                if _dae_tag(el) == 'diffuse':
+                    col = next((c for c in el if _dae_tag(c) == 'color'), None)
+                    if col is not None:
+                        v = _floats((col.text or '').split())
+                        if len(v) >= 3:
+                            rgb = tuple(v[:3])
+                if _dae_tag(el) == 'transparency':
+                    f = next((c for c in el if _dae_tag(c) == 'float'), None)
+                    if f is not None:
+                        v = _floats((f.text or '').split())
+                        if v and 0.0 < v[0] < 1.0:
+                            alpha = v[0]
+            effects[fx.get('id')] = (rgb, alpha)
+    mats = {}
+    for lib in _dae_kids(root, 'library_materials'):
+        for m in _dae_kids(lib, 'material'):
+            ie = _dae_kid(m, 'instance_effect')
+            rgb, alpha = effects.get((ie.get('url') or '').lstrip('#') if ie is not None else '', (_DEFAULT_COLOR, 1.0))
+            mats[m.get('id')] = (m.get('name') or m.get('id') or '', rgb, alpha)
+    return mats
+
+
+def _load_dae(path: str, data: bytes, prog: _Progress) -> LoadedMesh:
+    """COLLADA 1.4/1.5: the triangles, polylists and polygons of every geometry its visual scene instances (with
+    the nodes' transforms), else of every geometry; metres from <unit meter>, the up axis from <up_axis>; a part per
+    material."""
+    import xml.etree.ElementTree as ET
+    name = os.path.basename(path)
+    if b'<!ENTITY' in data[:65536]:
+        raise MeshLoadError(f'{name} declares XML entities, which Vantage does not read.')
+    root = ET.fromstring(data)
+    if _dae_tag(root) != 'COLLADA':
+        raise MeshLoadError(f'{name} is not a COLLADA file.')
+    prog(0.1)
+    asset = _dae_kid(root, 'asset')
+    meter, up = 1.0, '+Y'
+    if asset is not None:
+        u = _dae_kid(asset, 'unit')
+        if u is not None:
+            try:
+                meter = float(u.get('meter', '1') or 1.0)
+            except ValueError:
+                meter = 1.0
+        ua = _dae_kid(asset, 'up_axis')
+        if ua is not None and ua.text:
+            up = {'X_UP': '+X', 'Y_UP': '+Y', 'Z_UP': '+Z'}.get(ua.text.strip().upper(), '+Y')
+    geoms = {}
+    for lib in _dae_kids(root, 'library_geometries'):
+        for g in _dae_kids(lib, 'geometry'):
+            geoms[g.get('id')] = g
+    nodes_lib = {}
+    for lib in _dae_kids(root, 'library_nodes'):
+        for n in lib.iter():
+            if _dae_tag(n) == 'node' and n.get('id'):
+                nodes_lib[n.get('id')] = n
+    mats = _dae_colors(root)
+    b = _Builder(name)
+    cache = {}
+
+    def emit(gid, M, binding):
+        g = geoms.get(gid)
+        if g is None:
+            return
+        if gid not in cache:
+            cache[gid] = _dae_geometry(g, name)
+        for P, tris, sym in cache[gid]:
+            mid = binding.get(sym, sym)
+            mname, rgb, alpha = mats.get(mid, (mid, _DEFAULT_COLOR, 1.0))
+            part = b.part(mid or g.get('id'), name=mname or g.get('name') or g.get('id'), material=mname,
+                          alpha=alpha, color=rgb)
+            V = (P @ M[:3, :3].T + M[:3, 3]) * meter
+            b.add(V, tris, part)
+
+    def walk(node, M, depth=0):
+        if depth > 64:
+            return
+        M = M @ _dae_node_matrix(node)
+        for c in node:
+            t = _dae_tag(c)
+            if t in ('instance_geometry', 'instance_controller'):
+                url = (c.get('url') or c.get('source') or '').lstrip('#')
+                if t == 'instance_controller':
+                    continue
+                binding = {}
+                for im in c.iter():
+                    if _dae_tag(im) == 'instance_material':
+                        binding[im.get('symbol')] = (im.get('target') or '').lstrip('#')
+                emit(url, M, binding)
+            elif t == 'node':
+                walk(c, M, depth + 1)
+            elif t == 'instance_node':
+                n = nodes_lib.get((c.get('url') or '').lstrip('#'))
+                if n is not None:
+                    walk(n, M, depth + 1)
+
+    scenes = [vs for lib in _dae_kids(root, 'library_visual_scenes') for vs in _dae_kids(lib, 'visual_scene')]
+    if scenes:
+        for n in _dae_kids(scenes[0], 'node'):
+            walk(n, np.eye(4))
+    if not b._f:                                        # no scene, or one that instances nothing: every geometry
+        for gid in geoms:
+            emit(gid, np.eye(4), {})
+    prog(0.9)
+    return b.build('dae', unit='m', up=up, forward=None)
+
 # ----------------------------------------------------------------------------
 # public API
 # ----------------------------------------------------------------------------
@@ -2140,9 +2377,11 @@ _LOADERS = {
     '.gltf': _load_gltf,
     '.glb': _load_gltf,
     '.fbx': _load_fbx,
+    '.dae': _load_dae,
 }
 
 _FMT_LABEL = {'.obj': 'OBJ', '.stl': 'STL', '.ply': 'PLY', '.gltf': 'glTF', '.glb': 'GLB', '.fbx': 'FBX',
+              '.dae': 'COLLADA',
               '.step': 'STEP', '.stp': 'STEP'}
 
 

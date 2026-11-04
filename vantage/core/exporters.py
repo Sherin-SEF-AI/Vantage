@@ -1652,12 +1652,18 @@ def _overlaps(ctx: _Ctx) -> tuple[dict, str]:
     return {i: sorted(s) for i, s in out.items()}, how
 
 
-def _imu_noise(m) -> tuple[dict, bool]:
-    """The imu.yaml noise figures: the IMU model's own when it gives all four, else Kalibr's documented example."""
-    own = {k: float(getattr(m, f, 0.0) or 0.0) for k, f in IMU_NOISE_FIELDS.items()}
-    if all(math.isfinite(v) and v > 0 for v in own.values()):
-        return own, True
-    return dict(KALIBR_EXAMPLE_IMU), False
+def _imu_noise(m) -> tuple[dict, set]:
+    """The imu.yaml noise figures: each the IMU model's own where it gives one (the makers state noise densities, not
+    bias random walks), else Kalibr's documented example; and the keys that are the model's own."""
+    out, own = {}, set()
+    for k, f in IMU_NOISE_FIELDS.items():
+        v = float(getattr(m, f, 0.0) or 0.0)
+        if math.isfinite(v) and v > 0:
+            out[k] = v
+            own.add(k)
+        else:
+            out[k] = KALIBR_EXAMPLE_IMU[k]
+    return out, own
 
 
 def _kalibr(ctx: _Ctx) -> list:
@@ -1712,15 +1718,23 @@ def _kalibr(ctx: _Ctx) -> list:
         t, s = imu
         m = ctx.project.sensor_model_for(s)
         noise, own = _imu_noise(m)
-        src = (f'the IMU model\'s own figures ({(m.vendor + " " + m.name).strip()})' if own else
-               "NOT this IMU's: Kalibr's documented example values (its YAML formats page).\n# Replace them with your "
-               "unit's datasheet or Allan-deviation figures (Kalibr wiki: IMU Noise Model) before calibrating")
+        name = (m.vendor + " " + m.name).strip()
+        example = [k for k in noise if k not in own]
+        fix = ("\n# Replace them with your unit's datasheet or Allan-deviation figures (Kalibr wiki: IMU Noise Model) "
+               "before calibrating")
+        if not example:
+            src = f'the IMU model\'s own figures ({name})'
+        elif not own:
+            src = "NOT this IMU's: Kalibr's documented example values (its YAML formats page)." + fix
+        else:
+            src = (f'{" and ".join(sorted(own))} the IMU model\'s own ({name}, stated); {" and ".join(example)} '
+                   f"NOT this IMU's: Kalibr's documented example values (the maker states no bias random walk)." + fix)
         text = (f'# Kalibr IMU configuration · Vantage {ctx.project.name} / {ctx.variant.name}, exported {ctx.stamp}\n'
                 f'# IMU {s.tag} ({(m.vendor + " " + m.name).strip()}): rostopic as the sample dataset bag names it, '
                 f'update_rate the model\'s output rate.\n'
                 f'# Noise (continuous time): {src}.\n')
         for k, v in noise.items():
-            text += f'{k}: {_sig(v, 6)!r}   # {IMU_NOISE_UNITS[k]}\n'
+            text += f'{k}: {_sig(v, 6)!r}   # {IMU_NOISE_UNITS[k]}{"" if k in own else ", Kalibr example"}\n'
         text += f'rostopic: /{_ros_name(t)}/imu\nupdate_rate: {float(m.rate_hz)!r}   # Hz\n'
         out.append(('kalibr/imu.yaml', text.encode('utf-8')))
     return out

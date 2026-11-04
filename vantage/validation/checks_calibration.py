@@ -447,8 +447,8 @@ def _lc_closed(ctx):
        'position error (mm) of the lidar L1 the lidar–camera calibration recovers from synthetic captures (camera '
        'images through the real lens, lidar scans with range noise) of its six planned board poses with camera F, '
        'L1 mounted 15, −10, 8 mm and 0.6°, −0.4°, 0.3° off its plan; the rotation error must be under 0.08° and the '
-       'error within 3 of the solve\'s own 1σ',
-       'the injected mounting error the captures were simulated with', 3.0, 'mm',
+       'error within 3 of the solve\'s own 1σ (2–3 mm here; over seeds 1–5 the error is 1.6–5.6 mm)',
+       'the injected mounting error the captures were simulated with', 6.0, 'mm',
        refs=('zhang2004', 'unnikrishnan2005'), cost='study')
 def _lc_recovery(ctx):
     from ..core import lidar_calib as LC

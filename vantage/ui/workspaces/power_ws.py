@@ -41,8 +41,8 @@ FIELDS = (
      'The share of the battery you may use (about 50 % for lead-acid, 80–90 % for LiFePO4)'),
     ('Vehicle', 'runtime_target_min', 'Engine-off target', 'min', 0, 5.0, 1.0,
      'How long the rig must run with the engine off: a parked calibration session'),
-    ('Loads', 'camera_w', 'Camera, typical', 'W', 2, 0.1, 1.0,
-     'A camera whose module gives no power figure: a GMSL camera powered over its coax by the deserializer'),
+    ('Loads', 'camera_w', 'Camera without a figure', 'W', 2, 0.1, 1.0,
+     'Your figure for a camera whose module states no power figure; 0 = it counts 0 W and is listed'),
     ('Loads', 'compute_w', 'Compute', 'W', 0, 5.0, 1.0,
      'The ECU (Jetson AGX Orin: 60 W in its top power mode); 0 = left out'),
     ('Loads', 'recorder_w', 'Recorder', 'W', 0, 5.0, 1.0, 'The data recorder with its disks; 0 = left out'),
@@ -715,14 +715,13 @@ class PowerPage(QWidget):
         muted = THEME.color('muted')
         for i, r in enumerate(res.rows):
             key = r['key']
-            src = {'typical': f'typical camera figure ({st.camera_w:g} W): the module gives none',
-                   'missing': 'the model gives no power figure: 0 W', 'library': 'library figure (nominal)',
+            src = {'missing': 'no stated power figure: 0 W', 'library': 'the maker\'s stated figure',
                    'module': 'the module\'s figure', 'setting': 'the setting on the left',
                    'user': 'your figure (Other loads)'}[r['source']]
             cell(i, 0, r['tag'], swatch=row_color(r), tip=f'{r["tag"]}: {r["supply"]}')
             cell(i, 1, PW.KIND_LABEL[r['kind']])
             cell(i, 2, r['model'])
-            cell(i, 3, f'{r["steady_w"]:,.1f}', True, muted if r['source'] in ('typical', 'missing') else None,
+            cell(i, 3, f'{r["steady_w"]:,.1f}', True, muted if r['source'] == 'missing' else None,
                  tip=src)
             cell(i, 4, f'{r["peak_w"]:,.1f}', True,
                  tip='Spin-up' + (f' and {st.lidar_heater_w:g} W heater' if st.lidar_heater_w else '')

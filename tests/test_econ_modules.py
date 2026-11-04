@@ -57,6 +57,14 @@ SHEET = {
                   'FPD-Link III'),
     'nedu4cam57': ('OmniVision OX05B1S', 2592, 1944, 2.2, '1/2.53"', 50, 'global', 71, (-40, 85), 3.48, 100, 'IP67',
                    'FPD-Link IV'),
+    # read 2026-11-04
+    'sturdecam84': ('onsemi AR0823AT', 3840, 2160, 2.1, '1/1.8"', 30, 'rolling', 150, (-40, 80), 0.0, 25, 'IP69K',
+                    'GMSL2'),
+    'nedu4cam88': ('OmniVision OX08B40', 3840, 2160, 2.1, '1/1.73"', 30, 'rolling', 140, (-40, 85), 2.4, 0, 'IP67',
+                   'FPD-Link IV'),
+    'neducam81': ('onsemi AR0821', 3840, 2160, 2.1, '1/1.7"', 22, 'rolling', 0, (-30, 70), 0.0, 0, '', 'FPD-Link III'),
+    'nilecam21': ('onsemi AR0233AT', 1920, 1080, 3.0, '1/2.5"', 30, 'rolling', 140, (-40, 85), 2.196, 0, '', 'GMSL2'),
+    'nilecam56': ('Sony IMX568', 2472, 2064, 2.74, '1/1.8"', 90, 'global', 0, (-30, 70), 0.0, 0, '', 'GMSL2'),
 }
 # lens: (module, H, V, D, near focus m) as e-con states them; D of a 'circle' lens is the image circle's field
 LENSES = {
@@ -80,13 +88,24 @@ LENSES = {
     'nilecam210_std': ('nilecam210', 113.0, 61.0, 132.0, 0.0),
     'neducam25_std': ('neducam25', 104.6, 61.6, 128.2, 0.0),
     'nedu4cam57_std': ('nedu4cam57', 114.76, 85.92, 148.32, 0.5),
+    'sturdecam84_std': ('sturdecam84', 121.2, 67.2, 140.1, 0.0),
+    'nedu4cam88_h02r1': ('nedu4cam88', 68.23, 38.83, 80.22, 0.0),
+    'nedu4cam88_h04r1': ('nedu4cam88', 120.12, 67.04, 137.36, 0.0),
+    'neducam81_std': ('neducam81', 104.8, 58.7, 120.0, 0.0),
+    'nilecam21_std': ('nilecam21', 110.65, 61.16, 129.7, 0.0),
+    'nilecam56_std': ('nilecam56', 85.64, 72.25, 113.0, 0.0),
 }
 CIRCLE = {'sturdecam31fsh_heated', 'sturdecam39_option1'}     # the stated D is the image circle (corners dark)
-MODS = {m.id: m for m in builtin_modules()}
+ECON = 'e-con Systems'                                       # the other makers' modules: test_vendor_cameras.py
+MODS = {m.id: m for m in builtin_modules() if m.vendor == ECON}
 
 
 def _lenses():
-    return {l.id: l for l in builtin_lenses()}
+    return {l.id: l for l in builtin_lenses() if l.module_id in MODS}
+
+
+def _read(note):
+    return L.CHECKED in note or L.VENDOR_CHECKED in note
 
 
 def _ray(theta, phi):
@@ -177,7 +196,10 @@ def test_the_focal_length_comes_from_the_stated_fov_with_the_best_base():
 
 # ----------------------------------------------------------------------------- the library hangs together
 def test_library_ids_modules_and_order():
-    mods, lenses = builtin_modules(), builtin_lenses()
+    assert builtin_modules()[0].id == 'sturdecam31'
+    assert len({m.id for m in builtin_modules()}) == len(builtin_modules())
+    assert len({l.id for l in builtin_lenses()}) == len(builtin_lenses())
+    mods, lenses = list(MODS.values()), list(_lenses().values())
     assert len({m.id for m in mods}) == len(mods) == len(SHEET)
     assert len({l.id for l in lenses}) == len(lenses) == len(LENSES)
     assert not {m.id for m in mods} & {l.id for l in lenses}
@@ -197,23 +219,26 @@ def test_every_figure_matches_the_pages():
         assert (m.sensor, m.width_px, m.height_px, m.pixel_um, m.optical_format) == (sensor, w, h, pix, fmt), mid
         assert (m.fps, m.shutter, m.dynamic_range_db, m.temp_c) == (fps, shutter, dr, tuple(float(t) for t in temp))
         assert (m.power_w, m.weight_g, m.ip_rating, m.interface) == (power, weight, ip, iface), mid
-        assert m.url.startswith(E) and m.url in m.note and L.CHECKED in m.note
+        assert m.url.startswith(E) and m.url in m.note and _read(m.note)
     # enclosure / board size (width, height, length; 0 = not stated), cable lengths and stated hardware frame sync
     size = {'sturdecam31': (25, 25, 43.8), 'sturdecam31fsh': (35, 35, 36.8), 'sturdecam34': (25, 25, 0),
             'sturdecam39': (25, 25, 48.53), 'sturdecam25': (42, 42, 45.22), 'sturdecam29': (59.02, 52.52, 42.75),
             'sturdecam57': (70, 35, 30), 'sturdecam81': (42, 42, 0), 'sturdecam88': (42, 42, 0),
             'sturdecam20': (42, 42, 0), 'sturdecam21': (42, 42, 0), 'nilecam81': (30, 30, 0), 'nilecam85': (30, 30, 0),
-            'nilecam130': (30, 30, 0), 'nilecam210': (30, 30, 0), 'neducam25': (30, 30, 0), 'nedu4cam57': (70, 35, 30)}
+            'nilecam130': (30, 30, 0), 'nilecam210': (30, 30, 0), 'neducam25': (30, 30, 0), 'nedu4cam57': (70, 35, 30),
+            'sturdecam84': (20.8, 20.8, 0), 'nedu4cam88': (42, 42, 0), 'neducam81': (30, 30, 0),
+            'nilecam21': (30, 30, 0), 'nilecam56': (30, 30, 0)}
     short = {'sturdecam31', 'sturdecam31fsh', 'sturdecam34', 'sturdecam57', 'sturdecam88', 'nilecam81', 'nilecam85',
-             'nilecam210'}                                       # 3 m kit cable as well as 15 m
+             'nilecam210', 'sturdecam84'}                         # 3 m kit cable as well as 15 m
     sync = {'sturdecam31', 'sturdecam34', 'sturdecam39', 'sturdecam25', 'sturdecam81', 'sturdecam88', 'sturdecam20',
-            'sturdecam21', 'neducam25'}
+            'sturdecam21', 'neducam25', 'nilecam21'}
     for mid, m in MODS.items():
         assert m.size_mm == tuple(float(v) for v in size[mid]) and m.hw_sync == (mid in sync), mid
-        assert m.cables_m == ((10.0,) if mid == 'nedu4cam57' else (3.0, 15.0) if mid in short else (15.0,)), mid
+        assert m.cables_m == ((10.0,) if mid in ('nedu4cam57', 'nedu4cam88') else (3.0, 15.0) if mid in short
+                              else (15.0,)), mid
     for lid, (mid, H, V, D, near) in LENSES.items():
         l = _lenses()[lid]
-        assert l.focus_near_m == near and L.CHECKED in l.note, lid
+        assert l.focus_near_m == near and _read(l.note), lid
     assert _lenses()['sturdecam57_std'].focus_far_m == 2.0 and math.isinf(_lenses()['h05r2'].focus_far_m)
 
 
@@ -221,8 +246,8 @@ def test_the_optical_format_matches_the_pixel_array():
     """The stated optical format (type 1/x": a diagonal of about 2/3 × 25.4 / x mm) agrees with resolution × pixel
     pitch within 15 %: catches a pitch or a resolution typed wrong."""
     for m in builtin_modules():
-        x = float(m.optical_format.strip('"').split('/')[1])
-        nominal = 25.4 / x * 2 / 3
+        a, b = m.optical_format.strip('"').split('/')               # 1/2.7" or 2/3": the type in inches
+        nominal = 25.4 * float(a) / float(b) * 2 / 3
         diag = math.hypot(m.sensor_w_mm, m.sensor_h_mm)
         assert abs(diag / nominal - 1) < 0.15, (m.id, diag, nominal)
 
@@ -297,7 +322,7 @@ def _mixed(p):
     """Every built-in lens on a camera of the active variant (cycling over its cameras)."""
     cams = p.variant.cameras
     out = {}
-    for i, l in enumerate(builtin_lenses()):
+    for i, l in enumerate(_lenses().values()):
         c = cams[i % len(cams)]
         c.module_id, c.lens_id = l.module_id, l.id
         out[c.uid] = (l.module_id, l.id)
@@ -360,7 +385,7 @@ def test_an_old_project_file_without_the_new_fields_loads(tmp_path):
     assert Engine().analyse(q) is not None
     mods, lenses = L.merge_builtins(q.modules, q.lenses)
     assert list(mods)[0] == 'sturdecam31' and mods['sturdecam31'] is q.modules['sturdecam31']     # saved wins
-    assert set(mods) == {m.id for m in builtin_modules()} and set(lenses) == set(LENSES)
+    assert set(mods) == {m.id for m in builtin_modules()} and set(lenses) == {l.id for l in builtin_lenses()}
     assert lenses['h03r2'].kb == old_kb and lenses['sturdecam88_h04r1'].module_id == 'sturdecam88'
     # a hand-edited file with junk in the newer fields still loads
     junk = dict(OLD_MODULE, temp_c='hot', dynamic_range_db='lots', note=None, shutter='slow', size_mm=None,
@@ -391,7 +416,8 @@ def test_loading_an_old_project_offers_every_builtin(tmp_path):
         z.writestr('project.json', json.dumps(data))
         z.writestr('mesh.npz', mesh)
     q = Project.load(path)
-    assert list(q.modules)[0] == 'sturdecam31' and set(q.modules) == set(SHEET) and set(q.lenses) == set(LENSES)
+    assert list(q.modules)[0] == 'sturdecam31' and set(q.modules) == {m.id for m in builtin_modules()}
+    assert set(q.lenses) == {l.id for l in builtin_lenses()}
     assert q.modules['sturdecam31'].weight_g == 45.0 and q.lenses['h05r2'].kb == (0.1, 0, 0, 0)     # saved wins
     assert q.lenses['h03r2'].to_dict() == _lenses()['h03r2'].to_dict()
 
@@ -456,12 +482,13 @@ def test_module_editor_lists_the_library_and_switches_cameras_to_a_preset(app, w
     p = st.project
     dlg = _editor(win)
     keys = dlg.preset.keys()
-    assert keys == [l.id for l in builtin_lenses()] + ['manual'] and dlg.preset.value() == 'h05r2'
+    grouped = [l.id for m in builtin_modules() for l in builtin_lenses() if l.module_id == m.id]
+    assert keys == grouped + ['manual'] and dlg.preset.value() == 'h05r2'
     # each module is a heading (not selectable) above its own lenses
     heads = [dlg.preset.itemText(i) for i in range(dlg.preset.count()) if dlg.preset.itemData(i) is None]
-    assert heads == [f'{m.name} · {m.sensor}' for m in builtin_modules()]
+    assert heads == [f'{m.vendor} {m.name} · {m.sensor}' for m in builtin_modules()]
     i88 = dlg.preset.findData('sturdecam88_h04r1')
-    assert not dlg.preset.model().item(i88 - 2).isEnabled() and dlg.preset.itemText(i88 - 2).startswith('STURDeCAM88')
+    assert not dlg.preset.model().item(i88 - 2).isEnabled() and dlg.preset.itemText(i88 - 2).startswith('e-con Systems STURDeCAM88')
     assert 'e-consystems.com' in dlg.source.text() and 'Not given' not in dlg.source.text()
     users = [c.uid for v in p.variants for c in v.cameras if (c.module_id, c.lens_id) == ('sturdecam31', 'h05r2')]
     n = len(dlg.users)
@@ -639,7 +666,10 @@ def test_library_tool_and_lens_changes():
     tc = T.ToolContext(project=p.snapshot(), result=None, engine=Engine())
     out, ok = T.run(tc, 'get_camera_library', {})
     d = json.loads(out)
-    assert ok and len(d['modules']) == 17 and d['modules'][0]['id'] == 'sturdecam31'
+    assert ok and len(d['modules']) == len(builtin_modules()) and d['modules'][0]['id'] == 'sturdecam31'
+    assert len(out) <= T.MAX_CHARS and 'module' in d['detail']           # the whole library fits, compact
+    out, ok = T.run(tc, 'get_camera_library', {'module': 'sturdecam88'})
+    d = json.loads(out)
     m88 = next(m for m in d['modules'] if m['id'] == 'sturdecam88')
     assert [l['id'] for l in m88['lenses']] == ['sturdecam88_h02r1', 'sturdecam88_h04r1'] and m88['not_given'] == ['length (depth)']
     out, ok = T.run(tc, 'get_camera_library', {'module': 'zzz'})

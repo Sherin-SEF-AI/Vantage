@@ -84,8 +84,8 @@ ASSUMPTIONS = ('Synthetic geometry (boxes, cylinders, spheres), simple materials
                'road, '
                'no suspension motion; actors at constant speeds. Lidar: one return per beam, typical material '
                'reflectivities, R_max(ρ) = range_m·√(ρ/0.10) with ρ scaled by the incidence cosine, Gaussian range '
-               'noise. Radar: one detection per object at its nearest point, typical noise. IMU: typical MEMS '
-               'noise and bias. GNSS: white RTK-like noise. The scene is for testing a pipeline (ingestion, labelling '
+               'noise. Radar: one detection per object at its nearest point, typical noise. IMU: white noise from '
+               'the model\'s stated noise density, a small synthetic constant bias. GNSS: white RTK-like noise. The scene is for testing a pipeline (ingestion, labelling '
                'tools, loaders), not for training.')
 # estimate() figures, measured on the sample data rig at the defaults (the real numbers depend on the scene, the
 # settings and the machine)
@@ -859,7 +859,7 @@ def _generate(p, v, engine, st, plan, scene, ctx, models, RB, out_dir, nus, bag_
     imu_err = {}
     for ci, c in enumerate(chans):
         if c.kind == 'imu':
-            imu_err[ci] = DS.imu_errors(st.seed * 1000 + ci, len(c.stamps))
+            imu_err[ci] = DS.imu_errors(st.seed * 1000 + ci, len(c.stamps), p.sensor_model_for(c.sensor))
     ins = next((p.sensor_model_for(s) for s in v.sensors if s.visible and s.kind == 'imu'
                 and p.sensor_model_for(s).pos_sigma_cm > 0), None)
     sig_h = (ins.pos_sigma_cm / 100.0) if ins is not None else 0.02
@@ -1103,7 +1103,7 @@ def _imu_msg(RB, scene, c, k, ts, t_ns, err, p, v, seed) -> dict:
     f = f[0] + ba + na[k]
     w = w[0] + bg + ng[k]
     m = p.sensor_model_for(c.sensor)
-    sa, sg = DS.IMU_NOISE['accel_sigma'], DS.IMU_NOISE['gyro_sigma']
+    sa, sg = DS.imu_sigmas(m)
     msg = {'header': RB.header(t_ns, f'{c.tag}_link'),
            'angular_velocity': {'x': float(w[0]), 'y': float(w[1]), 'z': float(w[2])},
            'angular_velocity_covariance': [sg * sg, 0, 0, 0, sg * sg, 0, 0, 0, sg * sg],

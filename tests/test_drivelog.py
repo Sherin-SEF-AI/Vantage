@@ -63,7 +63,7 @@ def make_project():
         c.module_id = 'test_cam'
         c.pitch = 15.0
     taken = v.tags()
-    for kind, mid in (('imu', 'ins_dual'), ('gnss', 'gnss_survey')):
+    for kind, mid in (('imu', 'oxts_rt3000_v4'), ('gnss', 'novatel_gnss850')):
         tag = SN.next_tag(kind, taken)
         taken.add(tag)
         v.sensors.append(Sensor(kind=kind, model_id=mid, tag=tag, name=tag,
@@ -499,7 +499,7 @@ def test_every_topic_is_mapped_to_its_sensor(drive):
     assert '/odom' not in res.mapping and '/tf_static' not in res.mapping
     assert res.stream('F')['status'] == 'ok' and res.stream('F')['rate_hz'] == pytest.approx(30.0, rel=1e-3)
     assert res.stream('L1')['rate_hz'] == pytest.approx(10.0, rel=1e-3) and res.stream('L1')['status'] == 'ok'
-    assert res.stream('RD1')['expected_hz'] == 15.0 and res.stream('RD1')['status'] == 'ok'
+    assert res.stream('RD1')['expected_hz'] == 13.9 and res.stream('RD1')['status'] == 'ok'
 
 
 def test_the_camera_dropping_frames_is_found_with_its_count(drive):

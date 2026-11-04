@@ -34,7 +34,7 @@ def rig_project(extra=True):
     v = next(x for x in p.variants if x.sensors)
     p.active_uid = v.uid
     if extra:
-        for kind, mid in (('gnss', 'gnss_survey'), ('imu', 'imu_mems')):
+        for kind, mid in (('gnss', 'novatel_gnss850'), ('imu', 'xsens_mti630')):
             m = p.sensor_models[mid]
             pose = SN.default_pose(kind, m, p.vehicle.mesh, p.rig, v.sensors)
             v.sensors.append(Sensor(kind=kind, model_id=mid, tag=SN.next_tag(kind, v.tags()), name=kind, **pose))

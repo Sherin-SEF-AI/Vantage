@@ -77,8 +77,9 @@ SEVERITIES = ('critical', 'serious', 'warning', 'note', 'good')
 ISSUE_SEVERITIES = ('critical', 'serious', 'warning')
 DEFAULT_ENCLOSURE = ('compute', 'recorder', 'switch', 'ptp')
 MAX_OTHER = 40
-ASSUMPTIONS = ('Library power figures are nominal (public datasheets, or a typical class), not measured on your '
-               'units; a camera module without a figure uses the typical camera power. The peak factors (lidar '
+ASSUMPTIONS = ('Library power figures are the makers\' stated figures (datasheets and product pages), not '
+               'measured on your units; a camera module or sensor without a stated figure counts 0 W and is listed '
+               'until you enter it (or set a figure for cameras without one). The peak factors (lidar '
                'spin-up, switch-on of everything else) are typical, the peak assumes everything switches on at once, '
                'and a lidar\'s cold-start heater counts in its peak only. The alternator\'s spare current is your '
                'figure: what the vehicle\'s own loads leave. Cable resistance is copper at 20 °C (about 0.4 % more '
@@ -135,7 +136,7 @@ def _awg(v):
 @dataclass
 class PowerSettings:
     bus_v: float = 12.0                # the rig's bus: the DC-DC converter's output (12 / 24 / 48 V)
-    camera_w: float = 1.5              # a camera whose module gives no figure (GMSL, powered over its coax)
+    camera_w: float = 0.0              # your figure for a camera whose module states none (0: it counts 0 W)
     lidar_peak: float = 2.0            # a lidar's spin-up × its steady power, for a few seconds
     peak_factor: float = 1.2           # everything else at switch-on × its steady power
     lidar_heater_w: float = 0.0        # a lidar's cold-start heater on top of its peak (0 = none)
@@ -350,7 +351,7 @@ def run(project, engine=None, settings: PowerSettings | None = None, variant=Non
         cancel=None) -> PowerResult:
     """The power budget of a variant (default the active one). Rows: every visible camera, lidar, radar, GNSS antenna
     and IMU, then compute, recorder, switch and time server (when not 0 W) and the other loads, each with key (uid or
-    fixed key), tag, kind, model, source (module | typical | library | missing | setting | user), steady_w, peak_w,
+    fixed key), tag, kind, model, source (module | library | missing | setting | user), steady_w, peak_w,
     circuit, steady_a and peak_a (at the device), enclosure, and for a cabled device cable_m, awg, cable_ohm, v_steady,
     v_peak, drop_v/drop_pct, peak_drop_v/peak_drop_pct, loss_w and cable_severity. Cheap; engine, progress and cancel
     are accepted for the module contract and not needed."""
@@ -363,8 +364,9 @@ def run(project, engine=None, settings: PowerSettings | None = None, variant=Non
         m = project.module_for(c)
         w = _num(m.power_w)
         steady = w if w > 0 else st.camera_w
-        rows.append(_device(st, c.uid, c.uid, c.tag, 'camera', m.name, 'module' if w > 0 else 'typical', steady,
-                            st.peak_of('camera', steady), c.slot))
+        src = 'module' if w > 0 else 'setting' if st.camera_w > 0 else 'missing'
+        rows.append(_device(st, c.uid, c.uid, c.tag, 'camera', m.name, src, steady, st.peak_of('camera', steady),
+                            c.slot))
     count = {}
     for s in v.sensors:
         if not s.visible:
@@ -581,15 +583,19 @@ def _findings(res: PowerResult) -> list:
                  f'{b["drop_pct"]:.1f} % ({b["cable_m"]:.1f} m of {b["awg"]} AWG) and keeps {b["v_peak"]:.1f} V at '
                  'switch-on.')
     # ---- devices without a power figure
-    typical = [r for r in rows if r['source'] == 'typical']
-    for model in dict.fromkeys(r['model'] for r in typical):
-        rs = [r for r in typical if r['model'] == model]
-        _finding(out, 'note', 'no_figure',
-                 f'The {model} module gives no power figure, so {", ".join(r["tag"] for r in rs)} count'
-                 f'{"s" if len(rs) == 1 else ""} the typical {st.camera_w:g} W of a GMSL camera powered over its coax. '
-                 'Enter the module\'s figure in the camera library.', rs)
+    for src, what in (('setting', f'your {st.camera_w:g} W for a camera without a figure'), ('missing', '0 W')):
+        cams = [r for r in rows if r['kind'] == 'camera' and r['source'] == src]
+        for model in dict.fromkeys(r['model'] for r in cams):
+            rs = [r for r in cams if r['model'] == model]
+            _finding(out, 'note', 'no_figure',
+                     f'The {model} module states no power figure, so {", ".join(r["tag"] for r in rs)} count'
+                     f'{"s" if len(rs) == 1 else ""} {what}. Enter the module\'s figure in the camera library.', rs)
     for r in rows:
-        if r['source'] == 'missing':
+        if r['source'] == 'missing' and r['kind'] == 'gnss':
+            _finding(out, 'note', 'no_figure',
+                     f'{r["tag"]} ({r["model"]}): an active antenna powered by its receiver through the coax (its '
+                     'current is in the library note), counted 0 W here: the receiver\'s figure includes it.', [r])
+        elif r['source'] == 'missing' and r['kind'] != 'camera':
             _finding(out, 'note', 'no_figure',
                      f'{r["tag"]} ({r["model"]}): its model gives no power figure, so it counts 0 W. Enter it in the '
                      'sensor library.', [r])

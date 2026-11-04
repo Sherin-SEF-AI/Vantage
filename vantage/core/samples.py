@@ -7,7 +7,7 @@ import uuid
 
 import numpy as np
 
-from .bodygen import build_body, tigor_spec, template_specs, BodySpec
+from .bodygen import build_body, tigor_spec, template_specs, BodySpec  # noqa: F401
 from .mathutil import look_rotation, euler_zyx
 from .project import (Project, Vehicle, Variant, Camera, Target, Obstacle, PhotoSet, PhotoFrame, Sensor, new_uid)
 
@@ -39,7 +39,8 @@ def vehicle_from_spec(spec: BodySpec) -> Vehicle:
     for k, v in info['landmarks'].items():
         if k.startswith('Wheel centre '):
             wc[k[-2:]] = list(v)
-    veh = Vehicle(name=spec.name, spec_name=f'{spec.name}' + (' sedan' if spec.key == 'tigor' else ' (template body)'),
+    veh = Vehicle(name=spec.name, spec_name=f'{spec.name}' + (' sedan' if spec.key == 'tigor' else
+                                                              ' (library dimensions, template body)'),
                   source=f'template:{spec.key}', template=spec.key, mesh=mesh, wheel_centres=wc, spec=dict(spec.spec),
                   landmarks={k: tuple(v) for k, v in info['landmarks'].items()}, imported_tris=mesh.n_tris,
                   occluder_target=min(8000, mesh.n_tris))
@@ -124,14 +125,15 @@ def tigor_variants(mesh) -> list[Variant]:
 
 
 def data_rig_sensors(mesh) -> list[Sensor]:
-    """A roof lidar (Ouster OS1-128), a long-range radar in the front bumper and a corner radar at each bumper corner,
-    placed on the body's surface (the radars just behind the fascia)."""
+    """A roof lidar (Ouster OS1-128), a long-range radar in the front bumper (Continental ARS 408-21, nuScenes' radar)
+    and a corner radar at each bumper corner (smartmicro DRVEGRD 169), placed on the body's surface (the radars just
+    behind the fascia)."""
     from .sensors import builtin_sensor_models, default_pose
     models = {m.id: m for m in builtin_sensor_models()}
     out = [Sensor(tag='L1', name='Roof lidar', kind='lidar', model_id='ouster_os1_128',
                   **default_pose('lidar', models['ouster_os1_128'], mesh))]
-    front = default_pose('radar', models['radar_long'], mesh)
-    out.append(Sensor(tag='RD1', name='Front radar', kind='radar', model_id='radar_long', **front))
+    front = default_pose('radar', models['conti_ars408_21'], mesh)
+    out.append(Sensor(tag='RD1', name='Front radar', kind='radar', model_id='conti_ars408_21', **front))
     lo, hi = mesh.bbox
     for i, (name, x, side, yaw) in enumerate((('Front left corner', hi[0] - 0.25, 1, 45.0),
                                                ('Front right corner', hi[0] - 0.25, -1, -45.0),
@@ -139,7 +141,7 @@ def data_rig_sensors(mesh) -> list[Sensor]:
                                                ('Rear right corner', lo[0] + 0.25, -1, -135.0))):
         d = np.array([math.cos(math.radians(yaw)), math.sin(math.radians(yaw)), 0.0])
         p, _ = snap_point(mesh, np.array([x, side * (hi[1] - 0.2), 0.5]), d, -0.01)
-        out.append(Sensor(tag=f'RD{i + 2}', name=f'{name} radar', kind='radar', model_id='radar_corner',
+        out.append(Sensor(tag=f'RD{i + 2}', name=f'{name} radar', kind='radar', model_id='smartmicro_drvegrd169',
                           x=round(float(p[0]), 3), y=round(float(p[1]), 3), z=0.5, yaw=yaw))
     return out
 
@@ -243,7 +245,7 @@ def template_layout(mesh, spec: BodySpec, n: int) -> list[Camera]:
         cams[2].yaw, cams[2].pitch, cams[3].yaw, cams[3].pitch = 105.0, 55.0, -105.0, 55.0
         cams[1].pitch = 60.0
     if n >= 6:
-        zq = min(spec.belt_z, spec.height * 0.62)
+        zq = min(spec.belt_z - 0.10, spec.height * 0.62)       # on the body below the side glass, not on it
         cams += [make_camera(mesh, 'QL', 'Quarter left', 'Left rear quarter', (0.0, hw, zq), (0, 1, 0), 90.0, 50.0, 4, 5),
                  make_camera(mesh, 'QR', 'Quarter right', 'Right rear quarter', (0.0, -hw, zq), (0, -1, 0), -90.0, 50.0, 5, 6)]
     if n >= 8:
@@ -253,13 +255,30 @@ def template_layout(mesh, spec: BodySpec, n: int) -> list[Camera]:
     return cams
 
 
+def fit_cables(p: Project) -> None:
+    """Give each camera of the active variant the shortest of its module's cables that reaches the deserializer along
+    the routed path (a longer body needs the longer cable; the rule would otherwise say so for every camera)."""
+    from .rules import route_length
+    for c in p.variant.cameras:
+        rl = route_length(p, c)
+        if rl > c.cable_m + 1e-6:
+            alt = sorted(x for x in p.module_for(c).cables_m if x >= rl)
+            if alt:
+                c.cable_m = float(alt[0])
+
+
 def template_project(key: str) -> Project:
-    specs = template_specs()
+    """A new project on a library vehicle's template body (core/vehicles.py), by its id or an old template key
+    ('sedan', 'hatchback', 'suv', 'van', 'truck'); 'tigor' is the sample."""
+    from .vehicles import resolve, body_spec
     if key == 'tigor':
         return tigor_sample_project()
-    spec = specs[key]
+    lv = resolve(key)
+    if lv is None:
+        raise KeyError(key)
+    spec = body_spec(lv)
     p = Project()
-    p.name = f'{key}-template'
+    p.name = f'{lv.id}-template'
     p.vehicle = vehicle_from_spec(spec)
     n = int(spec.cameras.split('-')[0])
     v = Variant(name=f'{n}-cam · v1')
@@ -267,7 +286,10 @@ def template_project(key: str) -> Project:
     link_pairs(v)
     p.variants = [v]
     p.active_uid = v.uid
-    p.add_log('import', f'{spec.name} template body · {p.vehicle.mesh.n_tris} tris')
+    fit_cables(p)
+    p.add_log('import', f'{spec.name} template body · {p.vehicle.mesh.n_tris} tris · its family\'s profile scaled to '
+                        f'the stated dimensions ({lv.sources[0][0]})' +
+              (f'; drawn, not stated: {", ".join(spec.drawn)}' if spec.drawn else ''))
     return stable_uids(p)
 
 

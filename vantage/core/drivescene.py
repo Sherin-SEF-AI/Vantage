@@ -1884,12 +1884,25 @@ def imu_truth(drive: EgoDrive, sensor, t):
     return f_v @ R_vi, om_v @ R_vi
 
 
-def imu_errors(seed, n):
-    """Constant biases (accel (3,), gyro (3,)) and white noise (n, 3) each, IMU_NOISE figures."""
+def imu_sigmas(model=None) -> tuple[float, float]:
+    """Per-sample white noise (accel m/s², gyro rad/s) of an IMU model: its stated noise density × √(output rate)
+    (the discrete-time equivalent, as Kalibr converts it), else IMU_NOISE's for a figure the model does not give."""
+    rate = float(getattr(model, 'rate_hz', 0.0) or 0.0)
+    out = []
+    for field, key in (('accel_noise_density', 'accel_sigma'), ('gyro_noise_density', 'gyro_sigma')):
+        nd = float(getattr(model, field, 0.0) or 0.0)
+        out.append(nd * math.sqrt(rate) if nd > 0 and rate > 0 else IMU_NOISE[key])
+    return out[0], out[1]
+
+
+def imu_errors(seed, n, model=None):
+    """Constant biases (accel (3,), gyro (3,)) and white noise (n, 3) each: the noise from the model's stated
+    density (imu_sigmas), the biases IMU_NOISE's (synthetic: datasheets state bias stability, not a turn-on bias)."""
     rng = np.random.default_rng([int(seed), 991])
+    sa, sg = imu_sigmas(model)
     ba = rng.normal(0, IMU_NOISE['accel_bias'], 3)
     bg = rng.normal(0, IMU_NOISE['gyro_bias'], 3)
-    return ba, bg, rng.normal(0, IMU_NOISE['accel_sigma'], (n, 3)), rng.normal(0, IMU_NOISE['gyro_sigma'], (n, 3))
+    return ba, bg, rng.normal(0, sa, (n, 3)), rng.normal(0, sg, (n, 3))
 
 
 def antenna_world(drive: EgoDrive, sensor, t):

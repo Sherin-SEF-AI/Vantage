@@ -47,7 +47,7 @@ def _rig():
     v = next(v for v in p.variants if v.sensors)
     p.active_uid = v.uid
     models = {m.id: m for m in SN.builtin_sensor_models()}
-    for kind, mid in (('imu', 'ins_dual'), ('gnss', 'gnss_survey'), ('gnss', 'gnss_survey')):
+    for kind, mid in (('imu', 'oxts_rt3000_v4'), ('gnss', 'novatel_gnss850'), ('gnss', 'novatel_gnss850')):
         pose = SN.default_pose(kind, models[mid], p.vehicle.mesh, p.rig, v.sensors)
         v.sensors.append(Sensor(kind=kind, model_id=mid, tag=SN.next_tag(kind, v.tags()), **pose))
     return p
@@ -243,7 +243,7 @@ def test_lidar_self_hits_flagged_and_dropped(engine):
 def test_imu_lever_arm_against_finite_differences():
     sc = DS.build_scene('urban', 30, 8, 1)
     dr = sc.drive
-    imu = Sensor(kind='imu', model_id='imu_mems', tag='IMU9', x=1.5, y=0.4, z=0.8, yaw=30.0, pitch=5.0, roll=-3.0)
+    imu = Sensor(kind='imu', model_id='xsens_mti630', tag='IMU9', x=1.5, y=0.4, z=0.8, yaw=30.0, pitch=5.0, roll=-3.0)
     R_vi = SN.rotation(imu)
     t = np.array([0.5, 1.4, 2.0, 2.6, 2.9, 3.4, 5.0, 7.5])
     f, w = DS.imu_truth(dr, imu, t)
@@ -261,7 +261,7 @@ def test_imu_lever_arm_against_finite_differences():
 
 
 def test_imu_at_rest_and_in_a_steady_turn():
-    imu = Sensor(kind='imu', model_id='ins_dual', tag='IMU1', x=0.0, y=0.0, z=0.45)
+    imu = Sensor(kind='imu', model_id='oxts_rt3000_v4', tag='IMU1', x=0.0, y=0.0, z=0.45)
     road = DS.Road(0.0, 0.0, 0.3, 0.0, 30.0, 1, math.pi, DS.URBAN)               # the bend from the start
     rest = DS.EgoDrive(road, 0.0, 2.0, -1.75)
     f, w = DS.imu_truth(rest, imu, np.linspace(0, 2, 21))
@@ -289,10 +289,14 @@ def test_imu_bag_at_rest(at_rest):
     acc, gyr = np.array(acc), np.array(gyr)
     n = len(acc)
     assert n == int(0.6 * 100) + 1
+    p = at_rest['p']
+    imu = next(s for s in p.variant.sensors if s.kind == 'imu')
+    sa, sg = DS.imu_sigmas(p.sensor_model_for(imu))          # the model's stated noise density × √(rate)
+    assert sa < DS.IMU_NOISE['accel_sigma']                  # a real INS is quieter than the old generic figure
     bias_a, bias_g = 5 * DS.IMU_NOISE['accel_bias'], 5 * DS.IMU_NOISE['gyro_bias']
-    assert np.all(np.abs(acc.mean(0) - [0, 0, DS.G]) < bias_a + 4 * DS.IMU_NOISE['accel_sigma'] / math.sqrt(n))
-    assert np.all(np.abs(gyr.mean(0)) < bias_g + 4 * DS.IMU_NOISE['gyro_sigma'] / math.sqrt(n))
-    assert 0.5 < acc[:, 2].std() / DS.IMU_NOISE['accel_sigma'] < 1.6
+    assert np.all(np.abs(acc.mean(0) - [0, 0, DS.G]) < bias_a + 4 * sa / math.sqrt(n))
+    assert np.all(np.abs(gyr.mean(0)) < bias_g + 4 * sg / math.sqrt(n))
+    assert 0.5 < acc[:, 2].std() / sa < 1.6
 
 
 def test_render_matches_the_exported_lens(engine):

@@ -2,6 +2,126 @@
 
 Versions follow [semantic versioning](https://semver.org). The top entry is what the release notes on GitHub show.
 
+## Unreleased
+
+**Every library model is a real product.** The generic "typical" radars, GNSS antennas and INS/IMUs are gone. In
+their place are products whose figures come from their makers' public datasheets, manuals and product pages, each
+with its source and the date it was read. The camera library grows from 17 to 36 modules, and the generic vehicle
+templates give way to a library of real vehicles.
+
+**Sensors**
+
+- **Radars:**
+  - Continental ARS 408-21 (nuScenes' radar), ARS 548 RDI and SRR 308-21;
+  - smartmicro DRVEGRD 152, 169 and 171 (4D).
+- **Lidars:** new are the Velodyne HDL-32E (nuScenes' lidar) and HDL-64E S2 and S3 (KITTI's, with their beam
+  tables), Ouster OS0-128 and OS2-128, RoboSense RS-Ruby Plus (its 128 beam angles) and Livox HAP. Corrected against
+  the datasheets:
+  - OS1-128: its field is ±21.2°, not ±22.5°; its beam origin is 38.2 mm above the base; it draws 16 W nominal.
+  - Hesai OT128: 29 W, 118 × 132 mm.
+  - Hesai AT128: 210 m, 13.5 W.
+- **GNSS antennas:** NovAtel VEXXIS GNSS-850 and u-blox ANN-MB-00. The cable study's RF budget now uses the
+  antenna's stated LNA gain.
+- **GNSS/INS:** OxTS RT3000 v4, NovAtel PwrPak7D-E1 and SPAN CPT7, SBG Ellipse-D and Ekinox-D.
+- **IMUs:** Xsens MTi-630 and Bosch BMI088.
+- **IMU noise:** gyro and accelerometer noise densities are the stated figures, converted exactly to Kalibr's units.
+  Kalibr's `imu.yaml` now writes each figure the model gives and Kalibr's example only for the bias random walks
+  (no maker states one), saying which is which. The synthetic sample dataset draws its IMU noise from the model's
+  stated density.
+- **A figure no maker states is not made up:**
+  - A radar's time synchronisation: the sync plan stamps radar data when it reaches the host.
+  - An Ethernet radar's or INS's data rate: the recording budget counts it as 0 and says so. A CAN radar counts its
+    bus's 500 kbit/s.
+  - A GNSS antenna's power: the receiver powers it through the coax.
+- **The sample's data rig** uses an ARS 408-21 at the front and a DRVEGRD 169 at each corner.
+- **Older projects:** a project that used a generic model opens with the real model that replaced it, and the design
+  log names the sensors that moved. Built-in models saved unedited in older files take the corrected figures.
+
+**Cameras**
+
+- **More e-con Systems modules:** STURDeCAM84, NileCAM21, NileCAM56, NeduCAM81 and Nedu4CAM88.
+- **Cameras from other makers:**
+  - Leopard Imaging LI-IMX390, LI-IMX490 and LI-IMX728;
+  - D3 Embedded Discovery PRO IMX390 and IMX728;
+  - Sekonix SF3324 and SF3325 (NVIDIA DRIVE);
+  - the public datasets' cameras: nuScenes' Basler acA1600-60gc with its 5.5 mm lens, and KITTI's FLIR Flea2 colour
+    and greyscale cameras with their 4 mm lens;
+  - Teledyne FLIR Blackfly S (GigE and USB 3) and LUCID Triton TRI054S and TRI032S, with real C-mount lenses
+    (Computar M0814-MP2, Fujinon HF6XA-5M).
+- **Lenses:**
+  - A lens keeps its maker's stated focal length and aperture, and its distortion terms are fitted to the stated
+    field of view.
+  - A C-mount lens known only by its focal length is a rectilinear lens at that focal length.
+  - Leopard's 200° fisheye is an image circle inside the sensor.
+  - A GigE camera's cable is checked as 1000BASE-T.
+  - The OpenCV lens checks treat the rectilinear lenses as pinhole lenses and the others as fisheye lenses.
+- **No made-up camera power:** a camera whose maker states no power figure counts 0 W in the power budget and is
+  listed. The "typical camera" figure is gone; you can still set your own figure for such cameras.
+- **The assistant:** the camera library tool lists the whole library compactly. Pass a module, maker or sensor to get
+  every figure.
+
+**Vehicles**
+
+- **A vehicle library of real vehicles** replaces the generic Sedan, Hatchback, SUV, Van and Truck templates. Each
+  vehicle carries its maker's stated dimensions with sources: length, width with and without mirrors, height,
+  wheelbase, track, overhangs, ground clearance, tyre and kerb mass. The vehicles are:
+  - Renault ZOE (nuScenes) and VW Passat B6 Variant (KITTI);
+  - Lincoln MKZ 2017 (Apollo, Autoware, Dataspeed), Toyota Prius XW50, Chrysler Pacifica Hybrid, Hyundai IONIQ 5,
+    Kia e-Niro, Lexus RX 450h, Toyota Sienna and Tesla Model 3;
+  - Mercedes-Benz Sprinter 170″ high roof, Tata Nexon.ev, and a Freightliner Cascadia 126 day cab with a Wabash
+    53 ft dry van.
+- **Template bodies** take their family's profile, scaled to the stated length, width, height, wheelbase, overhangs,
+  track, ground clearance and wheel size. A figure the maker does not state is drawn from the family and named in the
+  design log; only stated figures go into the spec check. The old template names open the library vehicles that
+  replace them: sedan → MKZ, hatchback → ZOE, suv → RX 450h, van → Sprinter, truck → Cascadia.
+- **Template bodies are shaped:**
+  - the profile is smoothed, and the nose and tail are rounded in plan;
+  - the sides tuck in at the sills, and the glass leans in above the belt line;
+  - the body has a windscreen, backlight and side windows;
+  - the wheels are tyres with alloy rims, and the mirrors are pods;
+  - smoked head lamps and red tail lamps are lenses projected onto the nose and tail;
+  - the lower bumpers and sills are black;
+  - the material shader draws each part with its own finish;
+  - vans get a one-piece profile.
+  The measured Tigor keeps its own body.
+- **Range rings** (View ▸ Overlays ▸ Range rings, Alt+R) are drawn on the ground at 1, 2, 5 and 10 m from the body,
+  labelled.
+- **A light lens** in the shader shows its colour (red, amber, smoked) under a lighter clear coat.
+- **Template camera layouts** put the quarter cameras on the body below the side glass, not on it, and give each
+  camera the shortest module cable that reaches its deserializer. The cars' templates now open without serious
+  issues. The 8-camera Sprinter and Cascadia still exceed one disk set's sustained write, and a car's layout leaves
+  much of a tractor-trailer's sides blind; both are findings to design against.
+- **3D models:** where a model is published under a licence that allows reuse, the Library's Vehicles list offers
+  to download it from its publisher and open it in the import wizard, with the vehicle's stated figures for the spec
+  check. The models are the MKZ (Dataspeed, BSD 3-Clause), the Prius (Open Robotics, CC0) and the RX 450h (Autoware,
+  Apache 2.0). Vantage asks first, keeps the file in its cache with its licence and checksum, and records the credit
+  in the design log. None of these models ships with Vantage.
+- **COLLADA (.dae)** models import: triangles, polylists and polygons, node transforms, units and up axis.
+
+**Known limits**
+
+- **Vehicles:**
+  - A template body has the vehicle's dimensions, not its shape. For the real shape, import its 3D model or a scan.
+  - The Autoware RX 450h model is 1.58 m high against Lexus's 1.685 m; the spec check shows it.
+  - Freightliner states no width, length or overhangs for the Cascadia, so those are drawn.
+  - No freely licensed model was found for the other vehicles (only Sketchfab's manual downloads, or game rips).
+  - Jaguar states no body width for the I-PACE and Ford no tyre size for the Fusion, so neither is in the library.
+- **Hesai figures:** Hesai's datasheets could not be downloaded. The OT128's and AT128's beam-origin heights and the
+  XT32's power are estimates, marked in their notes.
+- **Sekonix:** no frame rate is stated. 30 fps is onsemi's figure for the AR0231AT sensor.
+- **Leopard's IMX728 sheet** is a draft, and its power line repeats the IMX390's.
+- **Figures from distributor copies:** the RT3000 v4 figures come from an OxTS datasheet hosted by a distributor;
+  SBG's come from its product pages and public manual.
+- **The OS1-128's corrected field covers less near the car.** With its 42.4° field (not 45°), the sample's mirror
+  cameras see too little of the lidar for a confident drive-log rotation estimate, though it still agrees with the
+  outline fit. On the synthetic flex drive, online calibration also reports a small yaw flex (±0.12°) on the right
+  mirror camera, which does not flex.
+- **Lidar–camera calibration:** the synthetic recovery check's limit is now 6 mm. The solve's own 1σ is 2–3 mm,
+  and across seeds the sample's error is 1.6–5.6 mm; the earlier 3 mm limit passed on one seed.
+- **A radar's rate in CARLA:** a radar whose period is no multiple of the world step (the DRVEGRD 169's 69.9 ms at
+  12.5 ms) has its stamps jitter by one step, and the drive-log check says so.
+- **Library figures** are the makers' stated values, not measurements of your units.
+
 ## 0.8.1 — 2026-11-03
 
 A fix release: the assistant's **Claude provider works**. Every request with Claude through the API was refused

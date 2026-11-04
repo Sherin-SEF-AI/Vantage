@@ -639,7 +639,7 @@ class Stage:
         r.menu('Vehicle', 'Add radar', 'Long-range radar')
         self.settle(2)
         for s in data_rig_sensors(st.project.vehicle.mesh)[2:]:          # the four corner radars
-            q = add_sensor(w.ctx, 'radar', 'radar_corner')
+            q = add_sensor(w.ctx, 'radar', 'smartmicro_drvegrd169')
             set_props(w.ctx, q.uid, f'Placed {q.tag}', x=s.x, y=s.y, z=s.z, yaw=s.yaw)
         lid = next(s for s in st.variant.sensors if s.kind == 'lidar')
         st.select_obj(('sensor', lid.uid))

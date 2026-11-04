@@ -194,15 +194,17 @@
     <article class="feature" id="library">
       <div class="text">
         <div class="eyebrow">Camera library</div>
-        <h3>Seventeen e-con Systems camera modules, every figure with its source</h3>
-        <p>The library holds e-con Systems' automotive cameras: the enclosed STURDeCAM range, the NileCAM GMSL2 board
-          cameras and the FPD-Link NeduCAM modules, 17 modules with 20 lenses. Each carries the figures e-con's product
-          page states, the page and the date it was read, and a list of what the page does not give.</p>
+        <h3>36 real camera modules, every figure with its source</h3>
+        <p>The library holds 36 modules with 52 lenses, all real products. There are 22 e-con Systems automotive
+          cameras, plus Leopard Imaging, D3 Embedded and Sekonix GMSL cameras, the cameras of the nuScenes and KITTI
+          rigs, and Blackfly S and LUCID Triton machine-vision cameras. Each carries the figures its maker's pages
+          state, the page and the date it was read, and a list of what the page does not give.</p>
         <ul>
-          <li>STURDeCAM20, 21, 25, 29, 31, 31FSH (heated fisheye), 34, 39, 57, 81 and 88; NileCAM81, 85, 130 and 210; NeduCAM25 (FPD-Link III) and Nedu4CAM57 (FPD-Link IV). Rolling and global shutter, colour, mono and RGB-IR, from 1920 × 1080 to 4208 × 3120.</li>
-          <li>e-con gives each lens's horizontal, vertical and diagonal field of view, not its focal length: the focal length is derived from it and the Kannala–Brandt model fitted to reproduce e-con's figures within 0.5° (the new lenses within 0.03°). Between those angles the lens is modelled, not measured; a unit calibration replaces it.</li>
-          <li>A figure the page does not state is left blank, never guessed; where the app needs one, such as a camera's power, it uses its typical figure.</li>
+          <li>e-con: STURDeCAM20, 21, 25, 29, 31, 31FSH (heated fisheye), 34, 39, 57, 81, 84 and 88; NileCAM21, 56, 81, 85, 130 and 210; NeduCAM25, NeduCAM81, Nedu4CAM57 and Nedu4CAM88. Other makers: Leopard LI-IMX390, IMX490 and IMX728; D3 Discovery PRO IMX390 and IMX728; Sekonix SF3324 and SF3325; Basler acA1600-60gc (nuScenes) and FLIR Flea2 (KITTI) with their datasets' lenses; Blackfly S; LUCID Triton TRI054S and TRI032S.</li>
+          <li>Each lens reproduces its maker's stated field of view within 0.6°, keeping a stated focal length and aperture. e-con states no focal length, so for its lenses one is derived from the field of view. Between the stated angles the lens is modelled, not measured; a unit calibration replaces it.</li>
+          <li>A figure the page does not state is left blank, never guessed. A camera without a stated power counts 0 W in the power budget and is listed, so you know to enter it.</li>
           <li>The module editor shows the datasheet fields, the sources and the stated against the modelled field of view; its Preset list moves the cameras to any module and lens in one undo step.</li>
+          <li>Vehicles: 13 real vehicles with their makers' stated dimensions and sources, from the nuScenes Renault ZOE and the KITTI Passat to the MKZ, Prius, Pacifica, IONIQ 5, RX 450h, Sienna, Model 3, a Sprinter van, the Tata Nexon.ev and a Cascadia tractor with a 53 ft trailer. A template body has the stated dimensions; the MKZ, Prius and RX 450h 3D models (BSD, CC0, Apache) download from their publishers on request and import with those figures for the spec check.</li>
         </ul>
       </div>
       <div class="media">
@@ -381,7 +383,7 @@
           bumper; move them in the inspector or drag them in the top view. The 3D view draws where each lidar channel
           meets the ground and each radar's field.</p>
         <ul>
-          <li>Ouster OS1-128, Hesai OT128, AT128 and XT32, Velodyne VLP-16, Livox Mid-360, and typical long-range, imaging and corner radars. Figures are nominal datasheet values, each with its source; edit them to match your unit.</li>
+          <li>Real products only, each figure from the maker's datasheet with its source. Lidars: Ouster OS0, OS1 and OS2-128; Hesai OT128, AT128 and XT32; Velodyne VLP-16, HDL-32E (nuScenes) and HDL-64E (KITTI); RoboSense Ruby Plus; Livox Mid-360 and HAP. Radars: Continental ARS 408-21 (nuScenes), ARS 548 and SRR 308; smartmicro DRVEGRD 152, 169 and 171. Edit them to match your unit.</li>
           <li>Import the measured beam angles from an Ouster metadata file, a Hesai angle-correction CSV or a Velodyne calibration.</li>
           <li>The Issues list flags a lidar inside the body and a radar set deeper than a bumper fascia.</li>
           <li>Every sensor frame goes into the URDF and TF launch file, the extrinsics, the nuScenes tables and KITTI, including the lidar-to-camera file KITTI tools expect.</li>
@@ -405,7 +407,7 @@
           and pose that blocks each camera exactly like the body and the rig: in the ground coverage, the blind volume,
           the perception range, the simulated images, the camera light and the installation check.</p>
         <ul>
-          <li>On the sample's data rig the front radar RD1 sits just in front of the bumper, below camera F: its housing covers 13.7 % of F's image, and the blind ground in the ROI goes from 0.010 m² with the body and rig alone to 0.240 m². Moved 5 cm back behind the fascia, it is out of the image.</li>
+          <li>On the sample's data rig the front radar RD1 sits just in front of the bumper, below camera F: its housing covers 10.7 % of F's image, and the blind ground in the ROI goes from 0.010 m² with the body and rig alone to 0.183 m². Moved 5 cm back behind the fascia, it is out of the image.</li>
           <li>The Inspector shows the share of the selected camera's image each housing covers, and where. The Issues list warns above 2 % or at the image centre, is serious above 10 % and critical for a lens inside another housing.</li>
           <li><b>Analysis ▸ Housings block cameras</b> switches them off to compare with the body and rig alone. A housing set behind the bumper fascia or into a panel stays hidden by the body.</li>
           <li>Exported as JSON and CSV with the coverage both ways; in batch mode with <code class="nowrap">--housings</code>.</li>
@@ -430,8 +432,8 @@
         <p>For every direction and object class, how far the cameras, the lidars and the radars detect it, against the
           range your dataset needs. A sector two or more of them cover is redundant, one is single, none is a gap.</p>
         <ul>
-          <li>Lidar points counted on each object from the real beam elevations, around the body and the rig; radar ranges scaled by each object's cross-section and by what the radar looks through: on the sample the corner radars lose 2.67 dB through the painted bumper fascia (<a href="#materials">below</a>).</li>
-          <li>What the vehicle blocks: on the sample, 35 % of a lidar sitting on the roof hits the roof, and its nearest ground point is 8.5 m or more from the body. Raised 0.6 m, it loses none.</li>
+          <li>Lidar points counted on each object from the real beam elevations, around the body and the rig; radar ranges scaled by each object's cross-section and by what the radar looks through: on the sample the corner radars lose 2.66 dB through the painted bumper fascia (<a href="#materials">below</a>).</li>
+          <li>What the vehicle blocks: on the sample, 34 % of a lidar sitting on the roof hits the roof, and its nearest ground point is 8.3 m or more from the body. Raised 0.6 m, it loses none.</li>
           <li>How much of each camera image the lidar covers, for projecting points into images.</li>
           <li>Exported as JSON and a PNG plan; in batch mode with <code class="nowrap">--sensor-coverage</code>.</li>
         </ul>
@@ -513,7 +515,7 @@
           voltage drop, the alternator's margin while driving and how long an auxiliary battery runs the rig with the
           engine off.</p>
         <ul>
-          <li>On the sample's data rig with an INS and two antennas: 183 W steady and 236 W at switch-on, 199 W from the vehicle. That is 31 % of a 600 W converter, 491 W spare on the alternator and 4 hours on a 1 kWh battery.</li>
+          <li>On the sample's data rig with an INS and two antennas: 173 W steady and 220 W at switch-on, 188 W from the vehicle. That is 29 % of a 600 W converter, 502 W spare on the alternator and 4 hours on a 1 kWh battery.</li>
           <li>Fuses sized for you (steady current within 80 %, the switch-on peak within the rating) or typed in: the compute circuit draws 5.7 A, so a 5 A fuse blows; on a 24 V bus the same circuit draws 2.8 A.</li>
           <li>Power cables routed from the ECU, with the voltage drop at constant power against a 5 % limit and the device's minimum input, and the wire gauge that would fix it.</li>
           <li>Library power figures are nominal and the peak factors typical: replace them with your units' datasheets. Exported as JSON and CSV; in batch mode with <code class="nowrap">--power-budget</code>.</li>
@@ -619,7 +621,7 @@
           each radar's field to what lies in front of it and works out the loss layer by layer (plastic, primer,
           basecoat, clear coat) at every ray's angle. The coverage and the critical targets use the shortened ranges.</p>
         <ul>
-          <li>On the sample's data rig the corner radars RD2–RD5 sit 12 mm behind the fascia: 2.67 dB lost there and back with a solid paint, so their range on a car drops from 100 to 86 m. Metallic paint costs 3.9 dB (80 m), a repainted metallic bumper 8.3 dB (62 m). RD1, in front of the bumper, loses nothing.</li>
+          <li>On the sample's data rig the corner radars RD2–RD5 sit 12 mm behind the fascia: 2.66 dB lost there and back with a solid paint, so their range on a car drops from 95 to 82 m. Metallic paint costs 3.8 dB (76 m), a repainted metallic bumper 8.2 dB (59 m). RD1, in front of the bumper, loses nothing.</li>
           <li>The fascia's thickness in half wavelengths and the nearby thickness that reflects least (3.6 mm here), the radar–fascia gap against its resonances, and metal in or beside the beam, summed up as a multipath risk.</li>
           <li>A camera behind the windscreen: added to the sample, it keeps 73 % of the light at 67° to the glass, its centre appears 3.8 mm off (0.25 px left at 3 m), and the glass reflects a third of the dashboard's brightness into its image, a warning until a glare shield is ticked.</li>
           <li>Wipers sized from the windscreen, or your own arms, with each windscreen camera's footprint on the glass, red where no blade passes: typical tandem wipers clear all of that camera's view. Exported as JSON, CSV and PNG; in batch mode with <code class="nowrap">--materials</code>, which exits with 2 when a radar looks into metal.</li>
@@ -818,7 +820,7 @@
           and sensor's move against the calibration load.</p>
         <ul>
           <li>Seats, boot, roof, the recording equipment and the rig's own cameras, sensors and parts as masses at points, estimated or entered. An off-centre load rolls the body.</li>
-          <li>On the sample's data rig with typical values: the driver alone rolls the body 0.27° and moves a quarter camera and a corner radar 16 mm; fully loaded, the rear sits on its bump stops and the rear camera moves 85 mm. Run adds the ground figures: the stitched ground shifts up to 65 cm, and the seams ghost by 35 cm.</li>
+          <li>On the sample's data rig with typical values: the driver alone rolls the body 0.26° and moves a quarter camera and a corner radar 16 mm; fully loaded, the rear sits on its bump stops and the rear camera moves 85 mm. Run adds the ground figures: the stitched ground shifts up to 65 cm, and the seams ghost by 35 cm.</li>
           <li>Suspension data from JSON, YAML, or a CSV parameter sheet or ride-height table, units converted (N/mm, lbf/in; kg, lb; mm, in). Typed axle drops still work.</li>
           <li>Exported as JSON and CSV; in batch mode with <code class="nowrap">--suspension</code> and <code class="nowrap">--suspension-data</code>.</li>
         </ul>

@@ -48,15 +48,16 @@ class PresetCombo(QComboBox):
             mine = [l for l in lenses if l.module_id == m.id]
             if not mine:
                 continue
-            self.addItem(f'{m.name} · {m.sensor}', None)
+            self.addItem(f'{m.vendor} {m.name} · {m.sensor}'.strip(), None)
             head = self.model().item(self.count() - 1)
             head.setEnabled(False)
             head.setFont(mono(11))
             for l in mine:
-                h, v, d = l.sheet_fov
-                self.addItem(f'    {m.name} · {l.name} · {l.label} · {h:g}° H', l.id)
-                self.setItemData(self.count() - 1, f'{m.name} + {l.name}: {h:g}° H × {v:g}° V × {d:g}° D (e-con)',
-                                 Qt.ItemDataRole.ToolTipRole)
+                fov = ' × '.join(f'{x:g}° {a}' for x, a in zip(l.sheet_fov, 'HVD') if x)
+                short = f'{l.sheet_fov[0]:g}° H' if l.sheet_fov[0] else f'{l.focal_mm:g} mm'
+                self.addItem(f'    {m.name} · {l.name} · {l.label} · {short}', l.id)
+                self.setItemData(self.count() - 1, f'{m.name} + {l.name}: {fov or f"{l.focal_mm:g} mm"} '
+                                                   f'({m.vendor or "as stated"})', Qt.ItemDataRole.ToolTipRole)
         self.addItem('Manual', 'manual')
         self.setMaxVisibleItems(24)
         self.setMinimumWidth(320)

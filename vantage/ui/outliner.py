@@ -457,6 +457,16 @@ class LibraryTree(QTreeWidget):
             if not self.ctx.store.project.lenses[lid].builtin:
                 m.addSeparator()
                 m.addAction('Delete lens', lambda: self.ctx.window.delete_lens(lid))
+        if it is not None and it.data(0, ROLE_KIND) == 'template':
+            from ..core.vehicles import resolve
+            key = it.data(0, ROLE_ID)
+            m.addAction('New project from this body', lambda: self.ctx.window.new_from_template(key))
+            lv = resolve(key)
+            if lv is not None and lv.model3d is not None:
+                m.addAction(f'Download its 3D model ({lv.model3d.licence}, {lv.model3d.size_mb:.0f} MB) and import…',
+                            lambda: self.ctx.window.download_vehicle_model(key))
+            m.exec(self.viewport().mapToGlobal(pos))
+            return
         m.addSeparator()
         m.addAction('Import camera module…', lambda: self.ctx.window.import_module())
         m.exec(self.viewport().mapToGlobal(pos))
@@ -530,19 +540,27 @@ class LibraryPanel(QWidget):
             proj.setData(0, ROLE_KIND, 'group2')
             proj.setFlags(Qt.ItemFlag.ItemIsEnabled)
         elif kind == 2:
-            from ..core.bodygen import template_specs
-            items = [('tigor', 'Tata Tigor EV', 'measured from photos', 'sedan')] + \
-                    [(k, s.name, f'{s.length:.1f} × {s.width:.1f} × {s.height:.1f} m', k if k != 'truck' else 'truck')
-                     for k, s in template_specs().items()]
-            for key, name, meta, ic in items:
-                if q and q not in name.lower():
+            from ..core import vehicles as VL
+            items = [('tigor', 'Tata Tigor EV', 'measured from photos · 3.993 × 1.677 × 1.532 m', 'sedan', '')]
+            for v in VL.library():
+                dims = ' × '.join(f'{x:.3f}' for x in (v.length, v.width, v.height) if x) or 'tractor + trailer'
+                tip = (f'{v.title} · {v.generation}\n{dims} m' + (f' · wheelbase {v.wheelbase:.3f} m' if v.wheelbase
+                                                                  else '') +
+                       (f'\nUsed by {v.used_by}' if v.used_by else '') + f'\n\n{v.note}\n\nSources:\n' +
+                       '\n'.join(f'· {w}: {u}' for w, u in v.sources) +
+                       (f'\n\n3D model: {v.model3d.licence}, {v.model3d.page} (right-click to download)'
+                        if v.model3d else '\n\nNo freely licensed 3D model to download: the body is its family\'s '
+                                          'profile at these dimensions.'))
+                items.append((v.id, v.title, dims + (' · 3D model' if v.model3d else ''), VL.ICON[v.family], tip))
+            for key, name, meta, ic, tip in items:
+                if q and q not in name.lower() and q not in meta.lower():
                     continue
                 it = QTreeWidgetItem(t, [name])
                 it.setData(0, ROLE_KIND, 'template')
                 it.setData(0, ROLE_ID, key)
-                it.setData(0, ROLE_ICON, {'sedan': 'sedan', 'hatchback': 'hatchback', 'suv': 'suv', 'van': 'van', 'truck': 'truck', 'tigor': 'sedan'}.get(key, 'car-side'))
+                it.setData(0, ROLE_ICON, ic)
                 it.setData(0, ROLE_META, meta)
-                it.setToolTip(0, 'Double-click to start a new project from this body')
+                it.setToolTip(0, (tip + '\n\n' if tip else '') + 'Double-click to start a new project from this body')
         else:
             for name, meta in (('Flat plate · 25 mm', 'bumper, grille'), ('Mirror underside clip', 'mirror housing'),
                                ('Quarter-panel pod · 40 mm', 'body side'), ('Boot-lid wedge 10°', 'boot lid')):

@@ -353,7 +353,7 @@ class MainWindow(QMainWindow):
         for i, (key, text, ic, _) in enumerate(OVERLAYS):
             sc = {'frustums': 'Alt+1', 'footprints': 'Alt+2', 'camlight': 'Alt+3', 'shadows': 'Alt+0', 'occlusion': 'Alt+4',
                   'seams': 'Alt+5', 'roi': 'Alt+6', 'targets': 'Alt+7', 'dimensions': 'Alt+8', 'grid': 'Alt+9',
-                  'guidelines': 'Alt+G'}.get(key)
+                  'guidelines': 'Alt+G', 'rings': 'Alt+R'}.get(key)
             A(f'ov_{key}', text, lambda on, k=key: c.set_overlay(k, on), sc, ic, True, 'View ▸ Overlays', checked=c.overlays[key])
         for key, text in HEATMAPS:
             A(f'heat_{key}', text, None, None, None, True, 'View ▸ Overlays ▸ Heatmap', checked=key == 'none')
@@ -668,9 +668,11 @@ class MainWindow(QMainWindow):
         f = menu('File')
         f.addActions([a['new']])
         self.tpl_menu = f.addMenu('New from template')
-        for key, name in (('tigor', 'Tata Tigor EV (photo-measured)'), ('sedan', 'Sedan'), ('hatchback', 'Hatchback'), ('suv', 'SUV'),
-                          ('van', 'Van'), ('truck', 'Truck + trailer')):
-            self.tpl_menu.addAction(name, lambda k=key: self.new_from_template(k))
+        from ..core import vehicles as VL
+        self.tpl_menu.addAction('Tata Tigor EV (photo-measured)', lambda: self.new_from_template('tigor'))
+        self.tpl_menu.addSeparator()
+        for lv in VL.library():                    # the vehicle library: stated dimensions on the family's body
+            self.tpl_menu.addAction(f'{lv.title} · {lv.generation}', lambda k=lv.id: self.new_from_template(k))
         f.addAction(a['open'])
         self.recent_menu = f.addMenu('Open recent')
         self.recent_menu.aboutToShow.connect(self._fill_recent)
@@ -1888,13 +1890,13 @@ class MainWindow(QMainWindow):
         if m is None:
             self.msg('Import a vehicle first.')
             return
-        from ..core.bodygen import template_specs, tigor_spec
+        from ..core.bodygen import template_spec
         if p.vehicle.template == 'tigor' and n in (4, 6, '6f'):
             vs = samples.tigor_variants(m)
             v = {6: vs[0], 4: vs[1], '6f': vs[3]}[n]
             cams = v.cameras
         else:
-            spec = template_specs().get(p.vehicle.template) or _spec_from_vehicle(p.vehicle)
+            spec = template_spec(p.vehicle.template) or _spec_from_vehicle(p.vehicle)
             nn = 6 if n == '6f' else n
             cams = samples.template_layout(m, spec, nn)
         vv = Variant(name=f'{len(cams)}-cam preset')
@@ -2083,10 +2085,57 @@ class MainWindow(QMainWindow):
                 self.import_vehicle(path=val)
 
     # ------------------------------------------------------------------ vehicle / modules / dialogs
-    def import_vehicle(self, path=None, step=0, reuse=False, paint=None):
+    def import_vehicle(self, path=None, step=0, reuse=False, paint=None, library=None):
         from .dialogs.import_wizard import ImportWizard
-        wiz = ImportWizard(self.ctx, self, path=path, step=step, reuse=reuse, paint=paint)
+        wiz = ImportWizard(self.ctx, self, path=path, step=step, reuse=reuse, paint=paint, library=library)
         wiz.exec()
+
+    def download_vehicle_model(self, key, ask=True, done=None):
+        """Download a library vehicle's 3D model from its publisher (after the user agrees to its licence and the
+        download), then open it in the import wizard with the vehicle's stated dimensions for the spec check."""
+        import threading
+        from ..core import vehicles as VL
+        lv = VL.resolve(key)
+        if lv is None or lv.model3d is None:
+            self.msg('That vehicle has no 3D model Vantage may download.')
+            return
+        m3 = lv.model3d
+        if ask:
+            r = QMessageBox.question(
+                self, 'Download 3D model',
+                f'Download the {lv.title} model ({m3.size_mb:.0f} MB) from\n{m3.url}?\n\nLicence: {m3.licence}\n'
+                f'{m3.attribution}\n\n{m3.note}\n\nThe licence grants no trademark right. The file is kept in '
+                f'{VL.cache_dir()} and opened in the import wizard.')
+            if r != QMessageBox.StandardButton.Yes:
+                return
+        box = {}
+
+        def run():
+            try:
+                box['path'] = VL.download_model(lv)
+            except Exception as e:                      # DownloadError, OSError: shown, nothing changed
+                box['error'] = str(e)
+
+        th = threading.Thread(target=run, daemon=True)
+        th.start()
+        self.msg(f'Downloading the {lv.title} model…', 120000)
+
+        def poll():
+            if th.is_alive():
+                QTimer.singleShot(150, poll)
+                return
+            if 'error' in box:
+                self.msg(f'Could not download the {lv.title} model: {box["error"]}', 8000)
+                QMessageBox.warning(self, 'Download 3D model', f'Could not download the {lv.title} model:\n'
+                                                               f'{box["error"]}')
+            else:
+                self.msg(f'Downloaded the {lv.title} model.', 4000)
+                if done is not None:
+                    done(box['path'])
+                else:
+                    self.import_vehicle(box['path'], library=lv)
+
+        QTimer.singleShot(150, poll)
 
     def spec_check(self):
         from .dialogs.misc import SpecDialog
@@ -2576,8 +2625,8 @@ def _dot_icon(color):
 
 
 def _spec_from_vehicle(v):
-    from ..core.bodygen import template_specs
-    s = template_specs()['sedan']
+    from ..core.bodygen import template_spec
+    s = template_spec('sedan')
     m = v.measured()
     s.length = m.get('Length', s.length)
     s.width = m.get('Width', s.width)

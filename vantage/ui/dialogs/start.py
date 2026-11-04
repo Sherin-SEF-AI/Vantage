@@ -15,12 +15,18 @@ from .. import icons
 from ..theme import THEME, sans, mono
 from ..widgets import label, hline, vline, fix_height
 
-TEMPLATES = [('tigor', 'Tata Tigor EV', 'measured from 360° photos · 3.993 × 1.677 × 1.532 m', '6-cam', 'sedan'),
-             ('sedan', 'Sedan', '4.0 × 1.7 × 1.5 m placeholder body', '6-cam', 'sedan'),
-             ('hatchback', 'Hatchback', '3.8 × 1.7 × 1.5 m', '4-cam', 'hatchback'),
-             ('suv', 'SUV', '4.4 × 1.8 × 1.7 m', '6-cam', 'suv'),
-             ('van', 'Van', '5.3 × 2.0 × 2.3 m', '8-cam', 'van'),
-             ('truck', 'Truck + trailer', 'articulated, two bodies', '8-cam', 'truck')]
+def _templates():
+    """The start window's templates: the measured Tigor, then the vehicle library's real vehicles."""
+    from ...core import vehicles as VL
+    out = [('tigor', 'Tata Tigor EV', 'measured from 360° photos · 3.993 × 1.677 × 1.532 m', '6-cam', 'sedan')]
+    for v in VL.library():
+        dims = ' × '.join(f'{x:.2f}' for x in (v.length, v.width, v.height) if x)
+        out.append((v.id, v.title, f'{v.generation} · {dims} m' if dims else v.generation, v.cameras,
+                    VL.ICON[v.family]))
+    return out
+
+
+TEMPLATES = _templates()
 
 
 class RecentDelegate(QStyledItemDelegate):
@@ -159,8 +165,9 @@ class StartWindow(QDialog):
             row.clicked.connect(lambda _=False, k=key: self._done('template', k))
             rl.addWidget(row)
             rl.addWidget(hline())
-        rl.addWidget(label('Templates bring a placeholder body, mount zones and a camera preset. Replace the body with '
-                           'Vehicle ▸ Replace model.', muted=True, wrap=True))
+        rl.addWidget(label('Templates bring the vehicle\'s stated dimensions on its family\'s body, mount zones and a '
+                           'camera preset. For its real shape, download its 3D model from the Library\'s Vehicles (where '
+                           'one is listed) or use Vehicle ▸ Replace model.', muted=True, wrap=True))
         rl.addStretch(1)
         body.addWidget(right, 35)
         lay.addLayout(body, 1)
@@ -172,7 +179,7 @@ class StartWindow(QDialog):
         ic2 = QLabel()
         ic2.setPixmap(icons.pixmap('export', THEME.tok['muted'], 12))
         fl.addWidget(ic2)
-        fl.addWidget(label('Drop a .vantage project or a vehicle model (.glb .gltf .obj .stl .fbx .ply .step) anywhere on this window.', muted=True))
+        fl.addWidget(label('Drop a .vantage project or a vehicle model (.glb .gltf .obj .stl .fbx .ply .dae .step) anywhere on this window.', muted=True))
         fl.addStretch(1)
         lay.addWidget(foot)
         from PyQt6.QtGui import QShortcut, QKeySequence

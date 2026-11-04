@@ -2,15 +2,15 @@
  "schema": "vantage.validation/1",
  "project": "sample (built in)",
  "variant": "6-cam · v3",
- "created_utc": "2026-10-30T20:02:08Z",
- "seconds": 64.49,
+ "created_utc": "2026-11-04T06:21:24Z",
+ "seconds": 61.31,
  "settings": {
   "models": [],
   "quick": false,
   "seed": 20261027
  },
  "environment": {
-  "vantage": "0.7.0",
+  "vantage": "0.8.1",
   "python": "3.14.4",
   "numpy": "2.3.5",
   "scipy": "1.16.3",
@@ -39,7 +39,7 @@
      "id": "lens.inverse",
      "model": "lens",
      "title": "Image height inverts back to the angle",
-     "quantity": "largest |θ − θ(r(θ))| over each projection's field, every base projection and every built-in lens's Kannala–Brandt curve",
+     "quantity": "largest |θ − θ(r(θ))| over each projection's field, every base projection and every built-in lens's curve",
      "reference": "the identity: θ(r) is the inverse of r(θ) (closed form, or Newton's method for Kannala–Brandt)",
      "references": [
       "kannala2006",
@@ -49,7 +49,7 @@
      "tolerance": 1e-06,
      "unit": "degrees",
      "passed": true,
-     "seconds": 0.006,
+     "seconds": 0.014,
      "note": "",
      "exception": "",
      "detail": {
@@ -78,7 +78,38 @@
        "nilecam130_std": 3.180554681463517e-14,
        "nilecam210_std": 2.5444437451708134e-14,
        "neducam25_std": 2.5444437451708134e-14,
-       "nedu4cam57_std": 3.81666561775622e-14
+       "nedu4cam57_std": 3.81666561775622e-14,
+       "sturdecam84_std": 2.5444437451708134e-14,
+       "nedu4cam88_h02r1": 2.5444437451708134e-14,
+       "nedu4cam88_h04r1": 2.5444437451708134e-14,
+       "neducam81_std": 1.2722218725854067e-14,
+       "nilecam21_std": 2.5444437451708134e-14,
+       "nilecam56_std": 3.81666561775622e-14,
+       "leopard_imx390_060h": 1.2722218725854067e-14,
+       "leopard_imx390_120h": 2.5444437451708134e-14,
+       "leopard_imx390_200h": 1.2722218725854067e-14,
+       "leopard_imx728_030h": 3.1805546814635168e-15,
+       "leopard_imx728_070h": 1.2722218725854067e-14,
+       "leopard_imx728_120h": 3.81666561775622e-14,
+       "leopard_imx490_030h": 3.1805546814635168e-15,
+       "leopard_imx490_065h": 2.5444437451708134e-14,
+       "leopard_imx490_090h": 3.180554681463517e-14,
+       "leopard_imx490_120h": 1.90833280887811e-14,
+       "leopard_imx490_160h": 3.81666561775622e-14,
+       "sekonix_na1262": 3.81666561775622e-14,
+       "sekonix_na6062": 6.3611093629270335e-15,
+       "d3_imx390_wide": 2.5444437451708134e-14,
+       "d3_imx390_medium": 1.2722218725854067e-14,
+       "d3_imx390_narrow": 1.2722218725854067e-14,
+       "d3_imx728_medium": 2.5444437451708134e-14,
+       "d3_imx728_narrow": 6.3611093629270335e-15,
+       "nuscenes_5_5mm": 6.3611093629270335e-15,
+       "kitti_4mm": 3.1805546814635168e-15,
+       "kitti_4mm_mono": 3.1805546814635168e-15,
+       "computar_m0814_mp2_bfs": 3.1805546814635168e-15,
+       "computar_m0814_mp2_tri032": 3.1805546814635168e-15,
+       "fujinon_hf6xa_5m_bfs": 6.3611093629270335e-15,
+       "fujinon_hf6xa_5m_tri054": 6.3611093629270335e-15
       },
       "samples": 2000
      },
@@ -97,7 +128,7 @@
      "tolerance": 1e-06,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.002,
+     "seconds": 0.005,
      "note": "",
      "exception": "",
      "detail": {
@@ -126,7 +157,38 @@
        "nilecam130_std": 1.7857118290591645e-10,
        "nilecam210_std": 2.3169524980690363e-10,
        "neducam25_std": 2.37694262306297e-10,
-       "nedu4cam57_std": 2.483753808472148e-10
+       "nedu4cam57_std": 2.483753808472148e-10,
+       "sturdecam84_std": 3.242276297520147e-10,
+       "nedu4cam88_h02r1": 1.823118319332761e-10,
+       "nedu4cam88_h04r1": 2.9746737430313326e-10,
+       "neducam81_std": 1.9755965053387726e-10,
+       "nilecam21_std": 1.951872499554921e-10,
+       "nilecam56_std": 3.299336318505452e-10,
+       "leopard_imx390_060h": 1.4229814265008873e-10,
+       "leopard_imx390_120h": 2.7266711273740307e-10,
+       "leopard_imx390_200h": 1.173262656756843e-10,
+       "leopard_imx728_030h": 7.290607834446526e-11,
+       "leopard_imx728_070h": 1.2983405995781583e-10,
+       "leopard_imx728_120h": 2.4288725070219525e-10,
+       "leopard_imx490_030h": 7.146441234283858e-11,
+       "leopard_imx490_065h": 1.8542847715680663e-10,
+       "leopard_imx490_090h": 2.3826675787958804e-10,
+       "leopard_imx490_120h": 2.7346672924582697e-10,
+       "leopard_imx490_160h": 3.5160115037309957e-10,
+       "sekonix_na1262": 2.3167097739647692e-10,
+       "sekonix_na6062": 1.1149028403024575e-10,
+       "d3_imx390_wide": 3.262277734076631e-10,
+       "d3_imx390_medium": 1.0397506891243833e-10,
+       "d3_imx390_narrow": 1.1724714610953174e-10,
+       "d3_imx728_medium": 2.3156556481394457e-10,
+       "d3_imx728_narrow": 9.596685199935261e-11,
+       "nuscenes_5_5mm": 9.285361271093054e-11,
+       "kitti_4mm": 6.458009315950192e-11,
+       "kitti_4mm_mono": 6.458009315950192e-11,
+       "computar_m0814_mp2_bfs": 6.657851104491648e-11,
+       "computar_m0814_mp2_tri032": 6.657851104491648e-11,
+       "fujinon_hf6xa_5m_bfs": 8.963274658973937e-11,
+       "fujinon_hf6xa_5m_tri054": 8.811325654442983e-11
       }
      },
      "figure": null
@@ -134,28 +196,32 @@
     {
      "id": "lens.opencv_pinhole",
      "model": "lens",
-     "title": "Rectilinear lens against OpenCV's pinhole projection",
-     "quantity": "largest pixel distance between Intrinsics.project_dirs and cv2.projectPoints for directions over the image, with a pixel aspect of 1.004 and an offset principal point",
+     "title": "Rectilinear lenses against OpenCV's pinhole projection",
+     "quantity": "largest pixel distance between Intrinsics.project_dirs and cv2.projectPoints for directions over the image: a lens with a pixel aspect of 1.004 and an offset principal point, and every built-in rectilinear lens",
      "reference": "OpenCV cv2.projectPoints (no distortion); OpenCV pixel centres are at integers, Vantage's at i + ½",
      "references": [
       "opencv",
       "hartley2004"
      ],
-     "error": 5.084229945850415e-13,
+     "error": 1.016845989170083e-12,
      "tolerance": 1e-06,
      "unit": "px",
      "passed": true,
-     "seconds": 0.06,
+     "seconds": 0.037,
      "note": "",
      "exception": "",
      "detail": {
-      "points": 3176,
-      "f_px": 1333.3333333333333,
-      "aspect": 1.004,
-      "principal_point_px": [
-       972.3,
-       760.1
-      ]
+      "points": 23455,
+      "per_lens_px": {
+       "offset": 5.084229945850415e-13,
+       "nuscenes_5_5mm": 5.084229945850415e-13,
+       "kitti_4mm": 4.582862941503293e-13,
+       "kitti_4mm_mono": 5.084229945850415e-13,
+       "computar_m0814_mp2_bfs": 5.084229945850415e-13,
+       "computar_m0814_mp2_tri032": 5.084229945850415e-13,
+       "fujinon_hf6xa_5m_bfs": 1.016845989170083e-12,
+       "fujinon_hf6xa_5m_tri054": 9.374856803373542e-13
+      }
      },
      "figure": null
     },
@@ -163,17 +229,17 @@
      "id": "lens.opencv_fisheye",
      "model": "lens",
      "title": "Kannala–Brandt lenses against OpenCV's fisheye model",
-     "quantity": "largest pixel distance between Intrinsics.project_dirs and cv2.fisheye.projectPoints (D = k1…k4) for every built-in lens, directions up to 88° off the axis",
+     "quantity": "largest pixel distance between Intrinsics.project_dirs and cv2.fisheye.projectPoints (D = k1…k4) for every built-in fisheye lens (Kannala–Brandt or equidistant; the rectilinear ones are lens.opencv_pinhole's), directions up to 88° off the axis",
      "reference": "OpenCV cv2.fisheye.projectPoints: θ_d = θ(1 + k1θ² + k2θ⁴ + k3θ⁶ + k4θ⁸), the same model",
      "references": [
       "opencv",
       "kannala2006"
      ],
-     "error": 1.2862197421537486e-12,
+     "error": 1.3830600733622803e-12,
      "tolerance": 1e-06,
      "unit": "px",
      "passed": true,
-     "seconds": 0.007,
+     "seconds": 0.016,
      "note": "",
      "exception": "",
      "detail": {
@@ -197,7 +263,31 @@
        "nilecam130_std": 1.2862197421537486e-12,
        "nilecam210_std": 5.084229945850415e-13,
        "neducam25_std": 5.084229945850415e-13,
-       "nedu4cam57_std": 1.1368683772161603e-12
+       "nedu4cam57_std": 1.1368683772161603e-12,
+       "sturdecam84_std": 1.016845989170083e-12,
+       "nedu4cam88_h02r1": 1.016845989170083e-12,
+       "nedu4cam88_h04r1": 1.016845989170083e-12,
+       "neducam81_std": 1.224444715065716e-12,
+       "nilecam21_std": 6.431098710768743e-13,
+       "nilecam56_std": 9.374856803373542e-13,
+       "leopard_imx390_060h": 5.084229945850415e-13,
+       "leopard_imx390_120h": 6.821210263296962e-13,
+       "leopard_imx390_200h": 3.2155493553843715e-13,
+       "leopard_imx728_030h": 1.0725194820289065e-12,
+       "leopard_imx728_070h": 1.224444715065716e-12,
+       "leopard_imx728_120h": 1.3830600733622803e-12,
+       "leopard_imx490_030h": 9.713407672867936e-13,
+       "leopard_imx490_065h": 1.016845989170083e-12,
+       "leopard_imx490_090h": 1.016845989170083e-12,
+       "leopard_imx490_120h": 1.016845989170083e-12,
+       "leopard_imx490_160h": 1.1593828079623528e-12,
+       "sekonix_na1262": 5.684341886080801e-13,
+       "sekonix_na6062": 6.821210263296962e-13,
+       "d3_imx390_wide": 5.084229945850415e-13,
+       "d3_imx390_medium": 5.084229945850415e-13,
+       "d3_imx390_narrow": 5.084229945850415e-13,
+       "d3_imx728_medium": 1.0725194820289065e-12,
+       "d3_imx728_narrow": 1.016845989170083e-12
       }
      },
      "figure": null
@@ -206,7 +296,7 @@
      "id": "lens.opencv_undistort",
      "model": "lens",
      "title": "Pixel to ray against OpenCV's fisheye undistortion",
-     "quantity": "largest angle between Intrinsics.unproject's ray and the ray cv2.fisheye.undistortPoints gives for the same pixel, every built-in lens, pixels up to 75° off the axis",
+     "quantity": "largest angle between Intrinsics.unproject's ray and the ray cv2.fisheye.undistortPoints gives for the same pixel, every built-in fisheye lens, pixels up to 75° off the axis",
      "reference": "OpenCV cv2.fisheye.undistortPoints (iterated to 10⁻¹⁴)",
      "references": [
       "opencv",
@@ -216,7 +306,7 @@
      "tolerance": 0.0001,
      "unit": "degrees",
      "passed": true,
-     "seconds": 0.011,
+     "seconds": 0.024,
      "note": "",
      "exception": "",
      "detail": {
@@ -240,7 +330,31 @@
        "nilecam130_std": 1.2074182697257333e-06,
        "nilecam210_std": 1.2074182697257333e-06,
        "neducam25_std": 1.2074182697257333e-06,
-       "nedu4cam57_std": 1.4787793334710982e-06
+       "nedu4cam57_std": 1.4787793334710982e-06,
+       "sturdecam84_std": 1.2074182697257333e-06,
+       "nedu4cam88_h02r1": 1.2074182697257333e-06,
+       "nedu4cam88_h04r1": 1.2074182697257333e-06,
+       "neducam81_std": 1.2074182697257333e-06,
+       "nilecam21_std": 1.2074182697257333e-06,
+       "nilecam56_std": 1.2074182697257333e-06,
+       "leopard_imx390_060h": 1.2074182697257333e-06,
+       "leopard_imx390_120h": 1.2074182697257333e-06,
+       "leopard_imx390_200h": 1.4787793334710982e-06,
+       "leopard_imx728_030h": 1.2074182697257333e-06,
+       "leopard_imx728_070h": 1.2074182697257333e-06,
+       "leopard_imx728_120h": 1.2074182697257333e-06,
+       "leopard_imx490_030h": 1.2074182697257333e-06,
+       "leopard_imx490_065h": 1.2074182697257333e-06,
+       "leopard_imx490_090h": 1.2074182697257333e-06,
+       "leopard_imx490_120h": 1.2074182697257333e-06,
+       "leopard_imx490_160h": 1.2074182697257333e-06,
+       "sekonix_na1262": 1.2074182697257333e-06,
+       "sekonix_na6062": 1.2074182697257333e-06,
+       "d3_imx390_wide": 1.2074182697257333e-06,
+       "d3_imx390_medium": 1.2074182697257333e-06,
+       "d3_imx390_narrow": 1.2074182697257333e-06,
+       "d3_imx728_medium": 1.2074182697257333e-06,
+       "d3_imx728_narrow": 1.2074182697257333e-06
       }
      },
      "figure": null
@@ -248,9 +362,9 @@
     {
      "id": "lens.builtin_fov",
      "model": "lens",
-     "title": "Built-in lenses reproduce e-con's stated field of view",
-     "quantity": "largest difference between a built-in lens model's horizontal, vertical and diagonal field (limited by its image circle) and the field e-con states for it",
-     "reference": "the FOV e-con Systems publishes for each lens (H, V, D)",
+     "title": "Built-in lenses reproduce their makers' stated field of view",
+     "quantity": "largest difference between a built-in lens model's horizontal, vertical and diagonal field (limited by its image circle) and the field its maker states for it",
+     "reference": "the FOV each maker publishes for its lens (H, V, D: e-con Systems, Leopard Imaging, D3 Embedded, Sekonix)",
      "references": [
       "econ"
      ],
@@ -258,7 +372,7 @@
      "tolerance": 0.5,
      "unit": "degrees",
      "passed": true,
-     "seconds": 0.007,
+     "seconds": 0.011,
      "note": "",
      "exception": "",
      "detail": {
@@ -602,6 +716,498 @@
          "V": -0.0038,
          "D": 0.0006
         }
+       },
+       "sturdecam84_std": {
+        "model_deg": [
+         121.2,
+         67.203,
+         140.099
+        ],
+        "stated_deg": [
+         121.2,
+         67.2,
+         140.1
+        ],
+        "diff_deg": {
+         "H": -0.0003,
+         "V": 0.0029,
+         "D": -0.0009
+        }
+       },
+       "nedu4cam88_h02r1": {
+        "model_deg": [
+         68.242,
+         38.805,
+         80.214
+        ],
+        "stated_deg": [
+         68.23,
+         38.83,
+         80.22
+        ],
+        "diff_deg": {
+         "H": 0.0123,
+         "V": -0.0255,
+         "D": -0.0064
+        }
+       },
+       "nedu4cam88_h04r1": {
+        "model_deg": [
+         120.119,
+         67.041,
+         137.36
+        ],
+        "stated_deg": [
+         120.12,
+         67.04,
+         137.36
+        ],
+        "diff_deg": {
+         "H": -0.0006,
+         "V": 0.0008,
+         "D": -0.0001
+        }
+       },
+       "neducam81_std": {
+        "model_deg": [
+         104.8,
+         58.7,
+         120.0
+        ],
+        "stated_deg": [
+         104.8,
+         58.7,
+         120.0
+        ],
+        "diff_deg": {
+         "H": -0.0003,
+         "V": 0.0004,
+         "D": -0.0
+        }
+       },
+       "nilecam21_std": {
+        "model_deg": [
+         110.651,
+         61.159,
+         129.7
+        ],
+        "stated_deg": [
+         110.65,
+         61.16,
+         129.7
+        ],
+        "diff_deg": {
+         "H": 0.001,
+         "V": -0.0009,
+         "D": 0.0001
+        }
+       },
+       "nilecam56_std": {
+        "model_deg": [
+         85.645,
+         72.246,
+         113.0
+        ],
+        "stated_deg": [
+         85.64,
+         72.25,
+         113.0
+        ],
+        "diff_deg": {
+         "H": 0.0048,
+         "V": -0.0043,
+         "D": 0.0003
+        }
+       },
+       "leopard_imx390_060h": {
+        "model_deg": [
+         60.589,
+         36.085,
+         74.49
+        ],
+        "stated_deg": [
+         60.6,
+         36.1,
+         74.5
+        ],
+        "diff_deg": {
+         "H": -0.0107,
+         "V": -0.0146,
+         "D": -0.0099
+        }
+       },
+       "leopard_imx390_120h": {
+        "model_deg": [
+         122.008,
+         74.007,
+         148.002
+        ],
+        "stated_deg": [
+         122.0,
+         74.0,
+         148.0
+        ],
+        "diff_deg": {
+         "H": 0.0078,
+         "V": 0.007,
+         "D": 0.0021
+        }
+       },
+       "leopard_imx390_200h": {
+        "model_deg": [
+         200.0,
+         200.0,
+         200.0
+        ],
+        "stated_deg": [
+         200.0,
+         0.0,
+         0.0
+        ],
+        "diff_deg": {
+         "H": 0.0
+        }
+       },
+       "leopard_imx728_030h": {
+        "model_deg": [
+         30.011,
+         17.028,
+         34.39
+        ],
+        "stated_deg": [
+         30.0,
+         17.0,
+         34.4
+        ],
+        "diff_deg": {
+         "H": 0.011,
+         "V": 0.0276,
+         "D": -0.0101
+        }
+       },
+       "leopard_imx728_070h": {
+        "model_deg": [
+         69.996,
+         39.312,
+         80.102
+        ],
+        "stated_deg": [
+         70.0,
+         39.3,
+         80.1
+        ],
+        "diff_deg": {
+         "H": -0.0037,
+         "V": 0.0116,
+         "D": 0.002
+        }
+       },
+       "leopard_imx728_120h": {
+        "model_deg": [
+         120.003,
+         65.005,
+         140.001
+        ],
+        "stated_deg": [
+         120.0,
+         65.0,
+         140.0
+        ],
+        "diff_deg": {
+         "H": 0.0032,
+         "V": 0.0051,
+         "D": 0.0012
+        }
+       },
+       "leopard_imx490_030h": {
+        "model_deg": [
+         29.979,
+         19.469,
+         35.518
+        ],
+        "stated_deg": [
+         30.0,
+         19.5,
+         35.5
+        ],
+        "diff_deg": {
+         "H": -0.0213,
+         "V": -0.0308,
+         "D": 0.0179
+        }
+       },
+       "leopard_imx490_065h": {
+        "model_deg": [
+         64.773,
+         37.313,
+         74.035
+        ],
+        "stated_deg": [
+         65.0,
+         37.0,
+         74.0
+        ],
+        "diff_deg": {
+         "H": -0.2268,
+         "V": 0.3127,
+         "D": 0.0352
+        }
+       },
+       "leopard_imx490_090h": {
+        "model_deg": [
+         90.004,
+         59.315,
+         109.333
+        ],
+        "stated_deg": [
+         90.0,
+         0.0,
+         0.0
+        ],
+        "diff_deg": {
+         "H": 0.004
+        }
+       },
+       "leopard_imx490_120h": {
+        "model_deg": [
+         119.99,
+         73.196,
+         139.747
+        ],
+        "stated_deg": [
+         120.0,
+         73.2,
+         0.0
+        ],
+        "diff_deg": {
+         "H": -0.0101,
+         "V": -0.0045
+        }
+       },
+       "leopard_imx490_160h": {
+        "model_deg": [
+         160.01,
+         106.571,
+         190.0
+        ],
+        "stated_deg": [
+         160.0,
+         0.0,
+         0.0
+        ],
+        "diff_deg": {
+         "H": 0.0104
+        }
+       },
+       "sekonix_na1262": {
+        "model_deg": [
+         120.001,
+         73.001,
+         146.0
+        ],
+        "stated_deg": [
+         120.0,
+         73.0,
+         146.0
+        ],
+        "diff_deg": {
+         "H": 0.0006,
+         "V": 0.0008,
+         "D": -0.0005
+        }
+       },
+       "sekonix_na6062": {
+        "model_deg": [
+         59.99,
+         38.017,
+         70.003
+        ],
+        "stated_deg": [
+         60.0,
+         38.0,
+         70.0
+        ],
+        "diff_deg": {
+         "H": -0.0102,
+         "V": 0.017,
+         "D": 0.0035
+        }
+       },
+       "d3_imx390_wide": {
+        "model_deg": [
+         180.001,
+         101.001,
+         207.0
+        ],
+        "stated_deg": [
+         180.0,
+         101.0,
+         207.0
+        ],
+        "diff_deg": {
+         "H": 0.0006,
+         "V": 0.0012,
+         "D": 0.0
+        }
+       },
+       "d3_imx390_medium": {
+        "model_deg": [
+         97.987,
+         61.988,
+         106.997
+        ],
+        "stated_deg": [
+         98.0,
+         62.0,
+         107.0
+        ],
+        "diff_deg": {
+         "H": -0.0132,
+         "V": -0.0116,
+         "D": -0.0032
+        }
+       },
+       "d3_imx390_narrow": {
+        "model_deg": [
+         65.013,
+         36.973,
+         74.994
+        ],
+        "stated_deg": [
+         65.0,
+         37.0,
+         75.0
+        ],
+        "diff_deg": {
+         "H": 0.0132,
+         "V": -0.0274,
+         "D": -0.006
+        }
+       },
+       "d3_imx728_medium": {
+        "model_deg": [
+         120.994,
+         66.998,
+         139.998
+        ],
+        "stated_deg": [
+         121.0,
+         67.0,
+         140.0
+        ],
+        "diff_deg": {
+         "H": -0.0057,
+         "V": -0.0022,
+         "D": -0.0025
+        }
+       },
+       "d3_imx728_narrow": {
+        "model_deg": [
+         55.11,
+         32.801,
+         61.947
+        ],
+        "stated_deg": [
+         55.0,
+         33.0,
+         62.0
+        ],
+        "diff_deg": {
+         "H": 0.1105,
+         "V": -0.1987,
+         "D": -0.0525
+        }
+       },
+       "nuscenes_5_5mm": {
+        "model_deg": [
+         66.413,
+         52.294,
+         78.579
+        ],
+        "stated_deg": [
+         0.0,
+         0.0,
+         0.0
+        ],
+        "diff_deg": {}
+       },
+       "kitti_4mm": {
+        "model_deg": [
+         77.63,
+         61.915,
+         90.199
+        ],
+        "stated_deg": [
+         0.0,
+         0.0,
+         0.0
+        ],
+        "diff_deg": {}
+       },
+       "kitti_4mm_mono": {
+        "model_deg": [
+         77.63,
+         61.915,
+         90.199
+        ],
+        "stated_deg": [
+         0.0,
+         0.0,
+         0.0
+        ],
+        "diff_deg": {}
+       },
+       "computar_m0814_mp2_bfs": {
+        "model_deg": [
+         47.653,
+         36.65,
+         57.797
+        ],
+        "stated_deg": [
+         0.0,
+         0.0,
+         0.0
+        ],
+        "diff_deg": {}
+       },
+       "computar_m0814_mp2_tri032": {
+        "model_deg": [
+         47.653,
+         36.65,
+         57.797
+        ],
+        "stated_deg": [
+         0.0,
+         0.0,
+         0.0
+        ],
+        "diff_deg": {}
+       },
+       "fujinon_hf6xa_5m_bfs": {
+        "model_deg": [
+         70.276,
+         60.979,
+         85.08
+        ],
+        "stated_deg": [
+         0.0,
+         0.0,
+         0.0
+        ],
+        "diff_deg": {}
+       },
+       "fujinon_hf6xa_5m_tri054": {
+        "model_deg": [
+         71.508,
+         49.877,
+         81.2
+        ],
+        "stated_deg": [
+         0.0,
+         0.0,
+         0.0
+        ],
+        "diff_deg": {}
        }
       }
      },
@@ -634,7 +1240,38 @@
          16.0,
          17.0,
          18.0,
-         19.0
+         19.0,
+         20.0,
+         21.0,
+         22.0,
+         23.0,
+         24.0,
+         25.0,
+         26.0,
+         27.0,
+         28.0,
+         29.0,
+         30.0,
+         31.0,
+         32.0,
+         33.0,
+         34.0,
+         35.0,
+         36.0,
+         37.0,
+         38.0,
+         39.0,
+         40.0,
+         41.0,
+         42.0,
+         43.0,
+         44.0,
+         45.0,
+         46.0,
+         47.0,
+         48.0,
+         49.0,
+         50.0
         ],
         "y": [
          0.4342,
@@ -656,7 +1293,38 @@
          0.0031,
          0.0024,
          0.0089,
-         0.0038
+         0.0038,
+         0.0029,
+         0.0255,
+         0.0008,
+         0.0004,
+         0.001,
+         0.0048,
+         0.0146,
+         0.0078,
+         0.0,
+         0.0276,
+         0.0116,
+         0.0051,
+         0.0308,
+         0.3127,
+         0.004,
+         0.0101,
+         0.0104,
+         0.0008,
+         0.017,
+         0.0012,
+         0.0132,
+         0.0274,
+         0.0057,
+         0.1987,
+         0.0,
+         0.0,
+         0.0,
+         0.0,
+         0.0,
+         0.0,
+         0.0
         ]
        }
       ],
@@ -684,7 +1352,38 @@
        "110° DFOV",
        "132° DFOV",
        "128° DFOV",
-       "nedu4cam57_std"
+       "nedu4cam57_std",
+       "140° DFOV",
+       "nedu4cam88_h02r1",
+       "nedu4cam88_h04r1",
+       "neducam81_std",
+       "130° DFOV",
+       "113° DFOV",
+       "060H",
+       "120H",
+       "200H fisheye",
+       "030H",
+       "070H",
+       "leopard_imx728_120h",
+       "leopard_imx490_030h",
+       "065H",
+       "090H",
+       "leopard_imx490_120h",
+       "160H",
+       "NA1262 (120°)",
+       "NA6062 (60°)",
+       "Wide",
+       "Medium",
+       "Narrow",
+       "d3_imx728_medium",
+       "d3_imx728_narrow",
+       "nuScenes 5.5 mm",
+       "KITTI 4 mm (Edmund Optics)",
+       "kitti_4mm_mono",
+       "Computar M0814-MP2 (8 mm)",
+       "computar_m0814_mp2_tri032",
+       "Fujinon HF6XA-5M (6 mm)",
+       "fujinon_hf6xa_5m_tri054"
       ]
      }
     },
@@ -983,7 +1682,7 @@
      "tolerance": 0.001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.122,
+     "seconds": 0.127,
      "note": "",
      "exception": "",
      "detail": {
@@ -1040,7 +1739,7 @@
      "tolerance": 0.001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.224,
+     "seconds": 0.818,
      "note": "",
      "exception": "",
      "detail": {
@@ -1095,7 +1794,7 @@
      "tolerance": 0.001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.056,
+     "seconds": 0.064,
      "note": "",
      "exception": "",
      "detail": {
@@ -1134,7 +1833,7 @@
      "tolerance": 0.005,
      "unit": "share of directions",
      "passed": true,
-     "seconds": 3.059,
+     "seconds": 6.897,
      "note": "A cube map texel stores the exact distance along its centre ray to the plane of the triangle drawn there (painted far to near by each triangle's nearest point): the depth error left is the texel's size (a random direction lies up to half a texel off the centre ray; most at grazing angles and silhouettes), see the median and 95th percentile here. Until 0.2.0 it stored the triangle centroid's distance: 15 % off in the median, over 3× at the 95th percentile. What the analysis decides from it is checked in occlusion.ground_visibility.",
      "exception": "",
      "detail": {
@@ -1252,7 +1951,7 @@
      "tolerance": 0.005,
      "unit": "share of texels",
      "passed": true,
-     "seconds": 2.839,
+     "seconds": 5.974,
      "note": "The texels off by more than 0.1 % lie at a silhouette or a crease: the triangle drawn there covers part of the texel but not its centre (a polygon's one-pixel outline), so the depth is of a surface within one texel of the centre ray.",
      "exception": "",
      "detail": {
@@ -1351,7 +2050,7 @@
      "tolerance": 0.005,
      "unit": "share of points",
      "passed": true,
-     "seconds": 6.274,
+     "seconds": 5.808,
      "note": "",
      "exception": "",
      "detail": {
@@ -1475,7 +2174,7 @@
      "tolerance": 1e-09,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.003,
+     "seconds": 0.002,
      "note": "",
      "exception": "",
      "detail": {
@@ -1508,7 +2207,7 @@
      "tolerance": 0.02,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.002,
+     "seconds": 0.004,
      "note": "",
      "exception": "",
      "detail": {
@@ -1541,7 +2240,7 @@
      "tolerance": 0.001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.113,
+     "seconds": 0.099,
      "note": "",
      "exception": "",
      "detail": {
@@ -1578,7 +2277,7 @@
      "tolerance": 1e-06,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.013,
+     "seconds": 0.011,
      "note": "",
      "exception": "",
      "detail": {
@@ -1650,19 +2349,19 @@
      "references": [
       "rep103"
      ],
-     "error": 4.668412692674904e-16,
+     "error": 4.122452202392706e-16,
      "tolerance": 1e-09,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.006,
+     "seconds": 0.008,
      "note": "",
      "exception": "",
      "detail": {
       "channels_on_the_ground": 60,
       "height_m": 2.0,
-      "tilted_front_m": 7.413139644989869,
-      "tilted_closed_form_m": 7.41313964498987,
-      "tilted_rel_error": 1.1981137038210198e-16
+      "tilted_front_m": 7.543664643297295,
+      "tilted_closed_form_m": 7.543664643297296,
+      "tilted_rel_error": 1.1773832238012997e-16
      },
      "figure": {
       "kind": "xy",
@@ -1674,256 +2373,256 @@
         "label": "h / tan|ε|",
         "kind": "line",
         "x": [
-         -22.5,
-         -22.145669,
-         -21.791339,
-         -21.437008,
-         -21.082677,
-         -20.728346,
-         -20.374016,
-         -20.019685,
-         -19.665354,
-         -19.311024,
-         -18.956693,
-         -18.602362,
-         -18.248031,
-         -17.893701,
-         -17.53937,
-         -17.185039,
-         -16.830709,
-         -16.476378,
-         -16.122047,
-         -15.767717,
-         -15.413386,
-         -15.059055,
-         -14.704724,
-         -14.350394,
-         -13.996063,
-         -13.641732,
-         -13.287402,
-         -12.933071,
-         -12.57874,
-         -12.224409,
-         -11.870079,
-         -11.515748,
-         -11.161417,
-         -10.807087,
-         -10.452756,
-         -10.098425,
-         -9.7440945,
-         -9.3897638,
-         -9.0354331,
-         -8.6811024,
-         -8.3267717,
-         -7.9724409,
-         -7.6181102,
-         -7.2637795,
-         -6.9094488,
-         -6.5551181,
-         -6.2007874,
-         -5.8464567,
-         -5.492126,
-         -5.1377953,
-         -4.7834646,
-         -4.4291339,
-         -4.0748031,
-         -3.7204724,
-         -3.3661417,
-         -3.011811,
-         -2.6574803,
-         -2.3031496,
-         -1.9488189,
-         -1.5944882
+         -21.2,
+         -20.866142,
+         -20.532283,
+         -20.198425,
+         -19.864567,
+         -19.530709,
+         -19.19685,
+         -18.862992,
+         -18.529134,
+         -18.195276,
+         -17.861417,
+         -17.527559,
+         -17.193701,
+         -16.859843,
+         -16.525984,
+         -16.192126,
+         -15.858268,
+         -15.524409,
+         -15.190551,
+         -14.856693,
+         -14.522835,
+         -14.188976,
+         -13.855118,
+         -13.52126,
+         -13.187402,
+         -12.853543,
+         -12.519685,
+         -12.185827,
+         -11.851969,
+         -11.51811,
+         -11.184252,
+         -10.850394,
+         -10.516535,
+         -10.182677,
+         -9.8488189,
+         -9.5149606,
+         -9.1811024,
+         -8.8472441,
+         -8.5133858,
+         -8.1795276,
+         -7.8456693,
+         -7.511811,
+         -7.1779528,
+         -6.8440945,
+         -6.5102362,
+         -6.176378,
+         -5.8425197,
+         -5.5086614,
+         -5.1748031,
+         -4.8409449,
+         -4.5070866,
+         -4.1732283,
+         -3.8393701,
+         -3.5055118,
+         -3.1716535,
+         -2.8377953,
+         -2.503937,
+         -2.1700787,
+         -1.8362205,
+         -1.5023622
         ],
         "y": [
-         4.8284271,
-         4.9141655,
-         5.0025498,
-         5.0937114,
-         5.1877906,
-         5.2849374,
-         5.3853121,
-         5.4890863,
-         5.5964441,
-         5.7075829,
-         5.8227152,
-         5.9420693,
-         6.0658916,
-         6.1944476,
-         6.3280245,
-         6.4669333,
-         6.6115108,
-         6.7621232,
-         6.9191686,
-         7.0830809,
-         7.254334,
-         7.4334463,
-         7.6209863,
-         7.8175785,
-         8.0239107,
-         8.240742,
-         8.4689127,
-         8.7093551,
-         8.9631065,
-         9.2313245,
-         9.5153048,
-         9.8165027,
-         10.136558,
-         10.477327,
-         10.840914,
-         11.229724,
-         11.646507,
-         12.09443,
-         12.577158,
-         13.098952,
-         13.6648,
-         14.280576,
-         14.953247,
-         15.69114,
-         16.504288,
-         17.404896,
-         18.407957,
-         19.532099,
-         20.800757,
-         22.243831,
-         23.900082,
-         25.820672,
-         28.074558,
-         30.756969,
-         34.003229,
-         38.012343,
-         43.089454,
-         49.727482,
-         58.77784,
-         71.848745
+         5.1563078,
+         5.2467836,
+         5.3400685,
+         5.4363019,
+         5.5356328,
+         5.6382202,
+         5.7442344,
+         5.8538574,
+         5.9672845,
+         6.0847255,
+         6.2064055,
+         6.3325671,
+         6.4634716,
+         6.5994008,
+         6.7406597,
+         6.887578,
+         7.0405135,
+         7.1998546,
+         7.3660238,
+         7.5394817,
+         7.7207312,
+         7.9103225,
+         8.1088588,
+         8.3170031,
+         8.5354851,
+         8.7651108,
+         9.0067717,
+         9.2614574,
+         9.5302687,
+         9.8144342,
+         10.115329,
+         10.434498,
+         10.773681,
+         11.134848,
+         11.520233,
+         11.932388,
+         12.374232,
+         12.849126,
+         13.360959,
+         13.914254,
+         14.514306,
+         15.167347,
+         15.880772,
+         16.663419,
+         17.525936,
+         18.481276,
+         19.545352,
+         20.737934,
+         22.083894,
+         23.614967,
+         25.372288,
+         27.410157,
+         29.801761,
+         32.648168,
+         36.092999,
+         40.347464,
+         45.735415,
+         52.780002,
+         62.384842,
+         76.256774
         ]
        },
        {
         "label": "sensors.ground_rings",
         "kind": "points",
         "x": [
-         -22.5,
-         -22.145669,
-         -21.791339,
-         -21.437008,
-         -21.082677,
-         -20.728346,
-         -20.374016,
-         -20.019685,
-         -19.665354,
-         -19.311024,
-         -18.956693,
-         -18.602362,
-         -18.248031,
-         -17.893701,
-         -17.53937,
-         -17.185039,
-         -16.830709,
-         -16.476378,
-         -16.122047,
-         -15.767717,
-         -15.413386,
-         -15.059055,
-         -14.704724,
-         -14.350394,
-         -13.996063,
-         -13.641732,
-         -13.287402,
-         -12.933071,
-         -12.57874,
-         -12.224409,
-         -11.870079,
-         -11.515748,
-         -11.161417,
-         -10.807087,
-         -10.452756,
-         -10.098425,
-         -9.7440945,
-         -9.3897638,
-         -9.0354331,
-         -8.6811024,
-         -8.3267717,
-         -7.9724409,
-         -7.6181102,
-         -7.2637795,
-         -6.9094488,
-         -6.5551181,
-         -6.2007874,
-         -5.8464567,
-         -5.492126,
-         -5.1377953,
-         -4.7834646,
-         -4.4291339,
-         -4.0748031,
-         -3.7204724,
-         -3.3661417,
-         -3.011811,
-         -2.6574803,
-         -2.3031496,
-         -1.9488189,
-         -1.5944882
+         -21.2,
+         -20.866142,
+         -20.532283,
+         -20.198425,
+         -19.864567,
+         -19.530709,
+         -19.19685,
+         -18.862992,
+         -18.529134,
+         -18.195276,
+         -17.861417,
+         -17.527559,
+         -17.193701,
+         -16.859843,
+         -16.525984,
+         -16.192126,
+         -15.858268,
+         -15.524409,
+         -15.190551,
+         -14.856693,
+         -14.522835,
+         -14.188976,
+         -13.855118,
+         -13.52126,
+         -13.187402,
+         -12.853543,
+         -12.519685,
+         -12.185827,
+         -11.851969,
+         -11.51811,
+         -11.184252,
+         -10.850394,
+         -10.516535,
+         -10.182677,
+         -9.8488189,
+         -9.5149606,
+         -9.1811024,
+         -8.8472441,
+         -8.5133858,
+         -8.1795276,
+         -7.8456693,
+         -7.511811,
+         -7.1779528,
+         -6.8440945,
+         -6.5102362,
+         -6.176378,
+         -5.8425197,
+         -5.5086614,
+         -5.1748031,
+         -4.8409449,
+         -4.5070866,
+         -4.1732283,
+         -3.8393701,
+         -3.5055118,
+         -3.1716535,
+         -2.8377953,
+         -2.503937,
+         -2.1700787,
+         -1.8362205,
+         -1.5023622
         ],
         "y": [
-         4.8284271,
-         4.9141655,
-         5.0025498,
-         5.0937114,
-         5.1877906,
-         5.2849374,
-         5.3853121,
-         5.4890863,
-         5.5964441,
-         5.7075829,
-         5.8227152,
-         5.9420693,
-         6.0658916,
-         6.1944476,
-         6.3280245,
-         6.4669333,
-         6.6115108,
-         6.7621232,
-         6.9191686,
-         7.0830809,
-         7.254334,
-         7.4334463,
-         7.6209863,
-         7.8175785,
-         8.0239107,
-         8.240742,
-         8.4689127,
-         8.7093551,
-         8.9631065,
-         9.2313245,
-         9.5153048,
-         9.8165027,
-         10.136558,
-         10.477327,
-         10.840914,
-         11.229724,
-         11.646507,
-         12.09443,
-         12.577158,
-         13.098952,
-         13.6648,
-         14.280576,
-         14.953247,
-         15.69114,
-         16.504288,
-         17.404896,
-         18.407957,
-         19.532099,
-         20.800757,
-         22.243831,
-         23.900082,
-         25.820672,
-         28.074558,
-         30.756969,
-         34.003229,
-         38.012343,
-         43.089454,
-         49.727482,
-         58.77784,
-         71.848745
+         5.1563078,
+         5.2467836,
+         5.3400685,
+         5.4363019,
+         5.5356328,
+         5.6382202,
+         5.7442344,
+         5.8538574,
+         5.9672845,
+         6.0847255,
+         6.2064055,
+         6.3325671,
+         6.4634716,
+         6.5994008,
+         6.7406597,
+         6.887578,
+         7.0405135,
+         7.1998546,
+         7.3660238,
+         7.5394817,
+         7.7207312,
+         7.9103225,
+         8.1088588,
+         8.3170031,
+         8.5354851,
+         8.7651108,
+         9.0067717,
+         9.2614574,
+         9.5302687,
+         9.8144342,
+         10.115329,
+         10.434498,
+         10.773681,
+         11.134848,
+         11.520233,
+         11.932388,
+         12.374232,
+         12.849126,
+         13.360959,
+         13.914254,
+         14.514306,
+         15.167347,
+         15.880772,
+         16.663419,
+         17.525936,
+         18.481276,
+         19.545352,
+         20.737934,
+         22.083894,
+         23.614967,
+         25.372288,
+         27.410157,
+         29.801761,
+         32.648168,
+         36.092999,
+         40.347464,
+         45.735415,
+         52.780002,
+         62.384842,
+         76.256774
         ]
        }
       ],
@@ -1943,20 +2642,20 @@
      "references": [
       "rep103"
      ],
-     "error": 6.357828776041667e-08,
+     "error": 0.0,
      "tolerance": 1e-06,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.034,
+     "seconds": 0.031,
      "note": "",
      "exception": "",
      "detail": {
-      "points_per_frame_on_the_ground": 61440.00390625,
+      "points_per_frame_on_the_ground": 61440.0,
       "beam_count": 61440,
       "rings_in_range": 60,
       "columns": 1024,
-      "nearest_ground_rel_error": 2.3798226482483497e-06,
-      "lowest_ring_m": 4.82842712474619
+      "nearest_ground_rel_error": 2.3798226485545644e-06,
+      "lowest_ring_m": 5.1563078305429615
      },
      "figure": null
     },
@@ -1969,11 +2668,11 @@
      "references": [
       "rep103"
      ],
-     "error": 0.009848464143850051,
+     "error": 0.009848464143850016,
      "tolerance": 0.02,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.45,
+     "seconds": 0.281,
      "note": "",
      "exception": "",
      "detail": {
@@ -1981,120 +2680,120 @@
        {
         "range_m": 8.0,
         "azimuth_deg": 0.0,
-        "counted": 1095.47,
-        "cast_mean": 1085.5,
+        "counted": 1131.99,
+        "cast_mean": 1133.44,
         "cast_range": [
-         1069,
-         1098
+         1116,
+         1147
         ],
-        "channels_counted": 30,
+        "channels_counted": 31,
         "channels_cast": [
-         30
+         31
         ],
-        "rel_difference": 0.0092
+        "rel_difference": 0.0013
        },
        {
         "range_m": 8.0,
         "azimuth_deg": 35.0,
-        "counted": 1095.47,
-        "cast_mean": 1085.5,
+        "counted": 1131.99,
+        "cast_mean": 1133.44,
         "cast_range": [
-         1069,
-         1098
+         1116,
+         1147
         ],
-        "channels_counted": 30,
+        "channels_counted": 31,
         "channels_cast": [
-         30
+         31
         ],
-        "rel_difference": 0.0092
+        "rel_difference": 0.0013
        },
        {
         "range_m": 20.0,
         "azimuth_deg": 0.0,
-        "counted": 175.89,
-        "cast_mean": 176.25,
+        "counted": 190.55,
+        "cast_mean": 190.94,
         "cast_range": [
-         168,
-         180
+         182,
+         195
         ],
-        "channels_counted": 12,
+        "channels_counted": 13,
         "channels_cast": [
-         12
+         13
         ],
         "rel_difference": 0.002
        },
        {
         "range_m": 20.0,
         "azimuth_deg": 35.0,
-        "counted": 175.89,
-        "cast_mean": 176.25,
+        "counted": 190.55,
+        "cast_mean": 190.94,
         "cast_range": [
-         168,
-         180
+         182,
+         195
         ],
-        "channels_counted": 12,
+        "channels_counted": 13,
         "channels_cast": [
-         12
+         13
         ],
         "rel_difference": 0.002
        },
        {
         "range_m": 35.0,
         "azimuth_deg": 0.0,
-        "counted": 58.66,
-        "cast_mean": 59.06,
+        "counted": 67.04,
+        "cast_mean": 67.5,
         "cast_range": [
-         56,
-         63
+         64,
+         72
         ],
-        "channels_counted": 7,
+        "channels_counted": 8,
         "channels_cast": [
-         7
+         8
         ],
         "rel_difference": 0.0068
        },
        {
         "range_m": 35.0,
         "azimuth_deg": 35.0,
-        "counted": 58.66,
-        "cast_mean": 58.62,
+        "counted": 67.04,
+        "cast_mean": 67.0,
         "cast_range": [
-         56,
-         63
+         64,
+         72
         ],
-        "channels_counted": 7,
+        "channels_counted": 8,
         "channels_cast": [
-         7
+         8
         ],
         "rel_difference": 0.0006
        },
        {
         "range_m": 60.0,
         "azimuth_deg": 0.0,
-        "counted": 19.56,
-        "cast_mean": 19.75,
+        "counted": 24.44,
+        "cast_mean": 24.69,
         "cast_range": [
-         16,
-         20
+         20,
+         25
         ],
-        "channels_counted": 4,
+        "channels_counted": 5,
         "channels_cast": [
-         4
+         5
         ],
         "rel_difference": 0.0098
        },
        {
         "range_m": 60.0,
         "azimuth_deg": 35.0,
-        "counted": 19.56,
-        "cast_mean": 19.5,
+        "counted": 24.44,
+        "cast_mean": 24.38,
         "cast_range": [
-         16,
-         20
+         20,
+         25
         ],
-        "channels_counted": 4,
+        "channels_counted": 5,
         "channels_cast": [
-         4
+         5
         ],
         "rel_difference": 0.0028
        }
@@ -2112,11 +2811,11 @@
      "references": [
       "rep103"
      ],
-     "error": 0.0769441251081651,
+     "error": 0.07429619724691307,
      "tolerance": 0.1,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.5,
+     "seconds": 0.304,
      "note": "The study gives every channel that crosses the object its full angular width / h_res. A pitched lidar's channel that crosses the top or bottom edge off its axis meets the face over part of the width only (the edge is tilted in the lidar's frame), so the count runs high there (and the channels it counts can differ by two from those cast): up to about 8 % in these cases, against 1 % for a level lidar.",
      "exception": "",
      "detail": {
@@ -2124,105 +2823,106 @@
        {
         "range_m": 8.0,
         "azimuth_deg": 0.0,
-        "counted": 1095.47,
-        "cast_mean": 1053.5,
+        "counted": 1131.99,
+        "cast_mean": 1121.19,
         "cast_range": [
-         1048,
-         1066
+         1116,
+         1134
         ],
-        "channels_counted": 30,
+        "channels_counted": 31,
         "channels_cast": [
-         30
+         31
         ],
-        "rel_difference": 0.0398
+        "rel_difference": 0.0096
        },
        {
         "range_m": 8.0,
         "azimuth_deg": 35.0,
-        "counted": 1058.96,
-        "cast_mean": 1067.12,
+        "counted": 1168.5,
+        "cast_mean": 1129.31,
         "cast_range": [
-         1066,
-         1070
+         1126,
+         1133
         ],
-        "channels_counted": 29,
+        "channels_counted": 32,
         "channels_cast": [
-         31
+         32,
+         33
         ],
-        "rel_difference": 0.0077
+        "rel_difference": 0.0347
        },
        {
         "range_m": 20.0,
         "azimuth_deg": 0.0,
-        "counted": 175.89,
-        "cast_mean": 175.62,
-        "cast_range": [
-         168,
-         180
-        ],
-        "channels_counted": 12,
-        "channels_cast": [
-         12
-        ],
-        "rel_difference": 0.0015
-       },
-       {
-        "range_m": 20.0,
-        "azimuth_deg": 35.0,
         "counted": 190.55,
-        "cast_mean": 176.94,
+        "cast_mean": 190.31,
         "cast_range": [
-         174,
-         182
+         182,
+         195
         ],
         "channels_counted": 13,
         "channels_cast": [
          13
         ],
-        "rel_difference": 0.0769
+        "rel_difference": 0.0013
+       },
+       {
+        "range_m": 20.0,
+        "azimuth_deg": 35.0,
+        "counted": 190.55,
+        "cast_mean": 189.06,
+        "cast_range": [
+         185,
+         194
+        ],
+        "channels_counted": 13,
+        "channels_cast": [
+         13
+        ],
+        "rel_difference": 0.0079
        },
        {
         "range_m": 35.0,
         "azimuth_deg": 0.0,
-        "counted": 58.66,
-        "cast_mean": 58.94,
+        "counted": 67.04,
+        "cast_mean": 67.38,
         "cast_range": [
-         56,
-         63
+         64,
+         72
         ],
-        "channels_counted": 7,
+        "channels_counted": 8,
         "channels_cast": [
-         7
+         8
         ],
-        "rel_difference": 0.0047
+        "rel_difference": 0.005
        },
        {
         "range_m": 35.0,
         "azimuth_deg": 35.0,
-        "counted": 58.66,
-        "cast_mean": 57.88,
+        "counted": 67.04,
+        "cast_mean": 63.31,
         "cast_range": [
-         55,
-         62
+         60,
+         68
         ],
-        "channels_counted": 7,
+        "channels_counted": 8,
         "channels_cast": [
-         7
+         8
         ],
-        "rel_difference": 0.0135
+        "rel_difference": 0.0588
        },
        {
         "range_m": 60.0,
         "azimuth_deg": 0.0,
-        "counted": 19.56,
-        "cast_mean": 19.75,
+        "counted": 24.44,
+        "cast_mean": 24.69,
         "cast_range": [
-         16,
-         20
+         20,
+         25
         ],
-        "channels_counted": 4,
+        "channels_counted": 5,
         "channels_cast": [
-         4
+         5
         ],
         "rel_difference": 0.0098
        },
@@ -2230,16 +2930,16 @@
         "range_m": 60.0,
         "azimuth_deg": 35.0,
         "counted": 19.56,
-        "cast_mean": 19.62,
+        "cast_mean": 21.12,
         "cast_range": [
-         18,
-         20
+         19,
+         22
         ],
         "channels_counted": 4,
         "channels_cast": [
-         4
+         5
         ],
-        "rel_difference": 0.0035
+        "rel_difference": 0.0743
        }
       ],
       "phases": 16
@@ -2259,28 +2959,28 @@
      "id": "radar.cross_section",
      "model": "radar",
      "title": "Radar range against the cross-section",
-     "quantity": "largest relative difference of the pedestrian's and cyclist's radar range from the car's scaled by (σ / σ_car)^¼, and of the car's from the zone's 100 m (slant to its centre), a corner radar with nothing in the way",
+     "quantity": "largest relative difference of the pedestrian's and cyclist's radar range from the car's scaled by (σ / σ_car)^¼, and of the car's from the zone's stated range (slant to its centre), a corner radar (smartmicro DRVEGRD 169, 95 m) with nothing in the way",
      "reference": "the radar equation: received power ∝ σ / R⁴, so the range at a fixed threshold ∝ σ^¼",
      "references": [
       "skolnik2001"
      ],
-     "error": 1.0455967620448536e-05,
+     "error": 1.205267429937873e-05,
      "tolerance": 0.0001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.014,
+     "seconds": 0.015,
      "note": "",
      "exception": "",
      "detail": {
       "errors": {
-       "car": 2.8628998120439063e-06,
-       "pedestrian": 1.0455967620448536e-05,
-       "cyclist": 8.669564899199678e-06
+       "car": 2.0263284625343657e-06,
+       "pedestrian": 1.205267429937873e-05,
+       "cyclist": 9.377140141930695e-06
       },
       "ranges_m": {
-       "Car": 99.99940120953052,
-       "Pedestrian": 47.28575170912665,
-       "Cyclist": 56.232928843110116,
+       "Car": 94.99947855085813,
+       "Pedestrian": 44.921334851802044,
+       "Cyclist": 53.421241837257924,
        "Traffic sign": null
       }
      },
@@ -2486,19 +3186,19 @@
       "skolnik2001",
       "macleod2010"
      ],
-     "error": 1.881403686874255e-07,
+     "error": 4.6301347096040545e-07,
      "tolerance": 0.001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.746,
+     "seconds": 0.632,
      "note": "",
      "exception": "",
      "detail": {
       "zone_range_m": 250.0,
-      "two_way_loss_db": 2.383289426132987,
-      "factor": 0.8718018059837298,
-      "range_from_centre_m": 219.86676674885047,
-      "radar_equation_m": 219.8668081146728,
+      "two_way_loss_db": 2.3807037500002006,
+      "factor": 0.8719315776585834,
+      "range_from_centre_m": 219.89914923841053,
+      "radar_equation_m": 219.89925105472602,
       "mount": "behind"
      },
      "figure": null
@@ -2516,7 +3216,7 @@
      "tolerance": 1e-09,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.008,
+     "seconds": 0.003,
      "note": "",
      "exception": "",
      "detail": {
@@ -2616,7 +3316,7 @@
      "tolerance": 1.0,
      "unit": "half last digits",
      "passed": true,
-     "seconds": 0.001,
+     "seconds": 0.0,
      "note": "",
      "exception": "",
      "detail": {
@@ -2971,7 +3671,7 @@
      "tolerance": 1e-09,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.082,
+     "seconds": 0.038,
      "note": "",
      "exception": "",
      "detail": {
@@ -3356,7 +4056,7 @@
      "tolerance": 0.0,
      "unit": "share of the requirement",
      "passed": true,
-     "seconds": 0.005,
+     "seconds": 0.008,
      "note": "",
      "exception": "",
      "detail": {
@@ -3917,7 +4617,7 @@
      "tolerance": 1e-09,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.002,
+     "seconds": 0.005,
      "note": "",
      "exception": "",
      "detail": {
@@ -4035,7 +4735,7 @@
      "tolerance": 1e-09,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.005,
+     "seconds": 0.004,
      "note": "",
      "exception": "",
      "detail": {
@@ -4143,7 +4843,7 @@
      "tolerance": 1e-06,
      "unit": "m (height) and m/m (gradient)",
      "passed": true,
-     "seconds": 0.005,
+     "seconds": 0.004,
      "note": "",
      "exception": "",
      "detail": {
@@ -4211,7 +4911,7 @@
      "tolerance": 0.001,
      "unit": "share of points",
      "passed": true,
-     "seconds": 1.711,
+     "seconds": 1.638,
      "note": "A ray that grazes the road within the allowance may land either side of it.",
      "exception": "",
      "detail": {
@@ -4250,7 +4950,7 @@
      "tolerance": 0.3,
      "unit": "m",
      "passed": true,
-     "seconds": 0.443,
+     "seconds": 0.345,
      "note": "The profile samples the road every 0.25 m beyond 10 m.",
      "exception": "",
      "detail": {
@@ -4304,7 +5004,7 @@
      "tolerance": 1e-06,
      "unit": "ms",
      "passed": true,
-     "seconds": 0.015,
+     "seconds": 0.025,
      "note": "",
      "exception": "",
      "detail": {
@@ -4335,7 +5035,7 @@
      "tolerance": 1e-09,
      "unit": "ms",
      "passed": true,
-     "seconds": 0.008,
+     "seconds": 0.014,
      "note": "",
      "exception": "",
      "detail": {
@@ -4356,7 +5056,7 @@
      "tolerance": 0.0001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.044,
+     "seconds": 0.047,
      "note": "",
      "exception": "",
      "detail": {
@@ -4430,7 +5130,7 @@
      "tolerance": 0.01,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.046,
+     "seconds": 0.031,
      "note": "",
      "exception": "",
      "detail": {
@@ -4475,7 +5175,7 @@
      "tolerance": 1.0,
      "unit": "px",
      "passed": true,
-     "seconds": 5.147,
+     "seconds": 3.381,
      "note": "",
      "exception": "",
      "detail": {
@@ -4512,7 +5212,7 @@
      "tolerance": 0.01,
      "unit": "σ",
      "passed": true,
-     "seconds": 1.891,
+     "seconds": 1.656,
      "note": "",
      "exception": "",
      "detail": {
@@ -4552,7 +5252,7 @@
      "tolerance": 0.001,
      "unit": "degrees or mm",
      "passed": true,
-     "seconds": 0.521,
+     "seconds": 0.427,
      "note": "",
      "exception": "",
      "detail": {
@@ -4598,7 +5298,7 @@
      "tolerance": 0.22556461820268847,
      "unit": "log ratio",
      "passed": true,
-     "seconds": 14.33,
+     "seconds": 12.924,
      "note": "",
      "exception": "",
      "detail": {
@@ -4812,7 +5512,7 @@
      "tolerance": 0.31980107453341566,
      "unit": "log ratio",
      "passed": true,
-     "seconds": 5.353,
+     "seconds": 4.879,
      "note": "",
      "exception": "",
      "detail": {
@@ -4895,7 +5595,7 @@
      "tolerance": 0.0001,
      "unit": "relative",
      "passed": true,
-     "seconds": 1.028,
+     "seconds": 0.968,
      "note": "",
      "exception": "",
      "detail": {
@@ -4919,33 +5619,33 @@
       "kay1993",
       "zhang2004"
      ],
-     "error": 0.16005221601459357,
+     "error": 0.11149683576945649,
      "tolerance": 0.41425857805424554,
      "unit": "log ratio",
      "passed": true,
-     "seconds": 6.98,
+     "seconds": 6.152,
      "note": "",
      "exception": "",
      "detail": {
       "trials": 60,
       "ratios": [
-       1.06,
-       1.045,
-       1.032,
-       0.985,
-       1.174,
-       0.999
+       1.065,
+       1.087,
+       0.929,
+       1.118,
+       1.081,
+       1.028
       ],
       "band_log": 0.41425857805424554,
-      "mahalanobis_worst_in_bands": 0.13117595277678767,
+      "mahalanobis_worst_in_bands": 0.17843947378284775,
       "module_agreement": true,
       "predicted": {
-       "yaw_deg": 0.08988870711441069,
-       "pitch_deg": 0.12812533446742627,
-       "roll_deg": 0.17942873641120724,
-       "x_mm": 4.245971101213136,
-       "y_mm": 6.284239015996885,
-       "z_mm": 16.409025823267005
+       "yaw_deg": 0.19138138232119492,
+       "pitch_deg": 0.15576336911022778,
+       "roll_deg": 0.12700983566297694,
+       "x_mm": 3.8444433595979293,
+       "y_mm": 5.708818893732537,
+       "z_mm": 19.94659244081546
       }
      },
      "figure": {
@@ -4958,20 +5658,20 @@
         "label": "axes",
         "kind": "points",
         "x": [
-         0.089888707,
-         0.12812533,
-         0.17942874,
-         4.2459711,
-         6.284239,
-         16.409026
+         0.19138138,
+         0.15576337,
+         0.12700984,
+         3.8444434,
+         5.7088189,
+         19.946592
         ],
         "y": [
-         0.095252111,
-         0.13384603,
-         0.18519532,
-         4.1835109,
-         7.3750079,
-         16.389492
+         0.20389506,
+         0.16938073,
+         0.11794495,
+         4.2978962,
+         6.1685684,
+         20.499782
         ]
        }
       ],
@@ -5017,24 +5717,24 @@
      "id": "lidar_calib.recovery",
      "model": "lidar_calib",
      "title": "An injected lidar mounting error is recovered",
-     "quantity": "position error (mm) of the lidar L1 the lidar–camera calibration recovers from synthetic captures (camera images through the real lens, lidar scans with range noise) of its six planned board poses with camera F, L1 mounted 15, −10, 8 mm and 0.6°, −0.4°, 0.3° off its plan; the rotation error must be under 0.08° and the error within 3 of the solve's own 1σ",
+     "quantity": "position error (mm) of the lidar L1 the lidar–camera calibration recovers from synthetic captures (camera images through the real lens, lidar scans with range noise) of its six planned board poses with camera F, L1 mounted 15, −10, 8 mm and 0.6°, −0.4°, 0.3° off its plan; the rotation error must be under 0.08° and the error within 3 of the solve's own 1σ (2–3 mm here; over seeds 1–5 the error is 1.6–5.6 mm)",
      "reference": "the injected mounting error the captures were simulated with",
      "references": [
       "zhang2004",
       "unnikrishnan2005"
      ],
-     "error": 0.8348703631552501,
-     "tolerance": 3.0,
+     "error": 4.080693523075721,
+     "tolerance": 6.0,
      "unit": "mm",
      "passed": true,
-     "seconds": 10.778,
+     "seconds": 6.103,
      "note": "",
      "exception": "",
      "detail": {
-      "position_error_mm": 0.8348703631552501,
-      "rotation_error_deg": 0.01411122380841493,
-      "sigma_position_mm": 1.6527015351958394,
-      "sigma_angle_deg": 0.015011213566459352,
+      "position_error_mm": 4.080693523075721,
+      "rotation_error_deg": 0.026701925717028147,
+      "sigma_position_mm": 1.8883489174906205,
+      "sigma_angle_deg": 0.016205839761794082,
       "poses_used": 6
      },
      "figure": null
@@ -5063,7 +5763,7 @@
      "tolerance": 0.05,
      "unit": "px",
      "passed": true,
-     "seconds": 0.56,
+     "seconds": 0.527,
      "note": "",
      "exception": "",
      "detail": {
@@ -5123,7 +5823,7 @@
      "tolerance": 0.05,
      "unit": "px",
      "passed": true,
-     "seconds": 0.01,
+     "seconds": 0.008,
      "note": "",
      "exception": "",
      "detail": {
@@ -5202,7 +5902,7 @@
      "tolerance": 0.02,
      "unit": "index",
      "passed": true,
-     "seconds": 0.21,
+     "seconds": 0.197,
      "note": "",
      "exception": "",
      "detail": {
@@ -5389,7 +6089,7 @@
      "tolerance": 1e-09,
      "unit": "share",
      "passed": true,
-     "seconds": 0.003,
+     "seconds": 0.002,
      "note": "",
      "exception": "",
      "detail": {
@@ -5411,7 +6111,7 @@
      "tolerance": 0.022500562521094628,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.213,
+     "seconds": 0.192,
      "note": "",
      "exception": "",
      "detail": {
@@ -5628,7 +6328,7 @@
      "tolerance": 0.0,
      "unit": "frames",
      "passed": true,
-     "seconds": 0.167,
+     "seconds": 0.156,
      "note": "",
      "exception": "",
      "detail": {
@@ -5659,7 +6359,7 @@
      "tolerance": 0.5,
      "unit": "ms",
      "passed": true,
-     "seconds": 0.004,
+     "seconds": 0.006,
      "note": "",
      "exception": "",
      "detail": {

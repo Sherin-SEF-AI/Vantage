@@ -31,7 +31,7 @@ def _rig():
     v = next(v for v in p.variants if v.sensors)
     p.active_uid = v.uid
     mesh = p.vehicle.mesh
-    for kind, mid in (('imu', 'ins_dual'), ('gnss', 'gnss_survey'), ('gnss', 'gnss_survey')):
+    for kind, mid in (('imu', 'oxts_rt3000_v4'), ('gnss', 'novatel_gnss850'), ('gnss', 'novatel_gnss850')):
         m = p.sensor_models[mid]
         tag = sensors.next_tag(kind, {s.tag for s in v.sensors} | {c.tag for c in v.cameras})
         v.sensors.append(Sensor(kind=kind, model_id=mid, tag=tag,
@@ -221,7 +221,7 @@ def test_registry_gnss(done):
     assert _val(res, 'gnss.expected_sats') == pytest.approx(min(a.expected_sats for a in gr.antennas))
     b = gr.baseline
     assert _val(res, 'gnss.baseline_m') == pytest.approx(b['horizontal_m'])
-    m = p.sensor_models['ins_dual']
+    m = p.sensor_models['oxts_rt3000_v4']
     assert _val(res, 'gnss.heading_sigma_deg') == pytest.approx(m.heading_sigma(b['horizontal_m']))
     assert _val(res, 'gnss.pose_sigma_mm') == pytest.approx(max(r['total_mm'] for r in gr.budget['rows']))
     # without antennas: why not

@@ -10,6 +10,7 @@ OVERLAYS = [('frustums', 'Frustums', 'frustum', True), ('footprints', 'Footprint
             ('occlusion', 'Occlusion rays', 'occlusion', False), ('seams', 'Seams', 'seam', True),
             ('roi', 'ROI', 'roi', True), ('targets', 'Calibration targets', 'checker', False),
             ('dimensions', 'Dimensions', 'measure', False), ('grid', 'Grid', 'snap-grid', True),
+            ('rings', 'Range rings', 'roi', False),              # 1, 2, 5, 10 m from the body on the ground
             ('labels', 'Labels', 'pin', True),                   # camera tags and target names on plates in 3D
             ('volume', 'Blind volume', 'blind', False), ('guidelines', 'Parking guidelines', 'axle', False),
             ('sensors', 'Lidar rings and radar fields', 'sensor', True),

@@ -137,7 +137,7 @@ def _gnss_car():
     return p
 
 
-def _antenna(tag='GN1', x=1.0, y=0.0, z=TOP + OZ, model='gnss_survey'):
+def _antenna(tag='GN1', x=1.0, y=0.0, z=TOP + OZ, model='novatel_gnss850'):
     from ..core.project import Sensor
     return Sensor(kind='gnss', model_id=model, tag=tag, x=x, y=y, z=z)
 
@@ -203,7 +203,7 @@ def _budget(ctx):
     from ..core.project import Camera, Sensor
     G.clear_cache()
     p = _gnss_car()
-    p.variant.sensors += [Sensor(kind='imu', model_id='ins_dual', tag='IMU1', x=0.5, y=0.0, z=0.4),
+    p.variant.sensors += [Sensor(kind='imu', model_id='oxts_rt3000_v4', tag='IMU1', x=0.5, y=0.0, z=0.4),
                           _antenna('GN1', x=0.5), _antenna('GN2', x=2.5)]
     p.variant.cameras.append(Camera(tag='C1', x=3.5, y=1.0, z=1.4))
     st = G.GnssSettings.from_dict(dict(pos_sigma_cm=2.0, vertical_ratio=2.0, attitude_sigma_deg=0.05,

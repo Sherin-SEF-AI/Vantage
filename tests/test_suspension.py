@@ -48,8 +48,8 @@ def rig():
     p = samples.tigor_sample_project()
     v = next(v for v in p.variants if v.sensors)
     p.active_uid = v.uid
-    v.sensors.append(Sensor(tag='GN1', name='GNSS', kind='gnss', model_id='gnss_survey', x=0.5, y=0.3, z=1.55))
-    v.sensors.append(Sensor(tag='IMU1', name='IMU', kind='imu', model_id='ins_dual', x=0.3, y=0.0, z=0.4))
+    v.sensors.append(Sensor(tag='GN1', name='GNSS', kind='gnss', model_id='novatel_gnss850', x=0.5, y=0.3, z=1.55))
+    v.sensors.append(Sensor(tag='IMU1', name='IMU', kind='imu', model_id='oxts_rt3000_v4', x=0.3, y=0.0, z=0.4))
     return p
 
 

@@ -96,7 +96,7 @@ writes; it describes version 1 as Vantage 0.2 writes it.
 
 ### vehicle
 
-`name`, `spec_name` (model name as shown), `template` (the generated body's template key, else empty), `source` (the
+`name`, `spec_name` (model name as shown), `template` (the vehicle-library id of a template body or of a downloaded library model, e.g. `lincoln_mkz_2017`; `tigor`; older files' `sedan`, `suv` … name library vehicles; else empty), `source` (the
 imported file's path on the computer it was imported on, or `template:<key>`), `import_units` (`m`, `mm`, `cm`, `in`),
 `import_up` and `import_forward` (the imported model's axes, `±X`, `±Y`, `±Z`), `occluder_target` (triangles the body
 is simplified to for occlusion), `imported_tris`, `wheel_centres` (`FL`, `FR`, `RL`, `RR` → [x, y, z] m), `spec`
@@ -126,11 +126,11 @@ A **sensor model** (lidar, radar, GNSS antenna, IMU): `id`, `name`, `kind`, `ven
 `solid`, `nonrepetitive`), `channels`, `v_min`/`v_max` or measured `beams` (elevations, °), `h_fov`, `h_res`,
 `rate_hz`, `rotation` (`cw`, `ccw` seen from above), `points_per_s`, `bytes_per_point`; ranges `range_m` (lidar: on a
 10 % target; radar: on a 10 m² car), `range_max_m`, `range_min_m`; radar: `zones` [[range m, azimuth half-angle °,
-elevation half-angle °]], `data_mbps`; GNSS: `mask_deg`; IMU/INS: `antennas`, `heading_sigma_deg` at
+elevation half-angle °]], `data_mbps`; GNSS: `mask_deg`, `lna_gain_db` (the antenna's LNA gain, dB; 0 if not stated); IMU/INS: `antennas`, `heading_sigma_deg` at
 `heading_baseline_m`, `pos_sigma_cm`, `attitude_sigma_deg`, noise densities `accel_noise_density` (m/s²/√Hz),
 `accel_random_walk` (m/s³/√Hz), `gyro_noise_density` (rad/s/√Hz), `gyro_random_walk` (rad/s²/√Hz); and for all:
-`interface`, `time_sync`, `size_mm`, `optical_z_mm` (optical centre above the base), `power_w`, `builtin`, `note`.
-Library figures are datasheet values or typical classes, as each entry's `note` says.
+`interface`, `time_sync`, `size_mm`, `optical_z_mm` (optical centre above the base), `power_w`, `builtin`, `note`, `url` (the maker's page or datasheet).
+Library figures are the makers' stated values, as each entry's `note` and `url` say (a figure a maker does not state is 0 or blank).
 
 ### variants
 

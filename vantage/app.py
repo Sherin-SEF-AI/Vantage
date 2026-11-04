@@ -64,7 +64,8 @@ def main(argv=None):
                     help='check this installation (analysis, OpenCV, fonts, OpenGL, main window) without a window')
     ap.add_argument('path', nargs='?', help='a .vantage project, or a vehicle model to import')
     ap.add_argument('--sample', action='store_true', help='open the Tata Tigor EV sample project')
-    ap.add_argument('--template', help='start from a template: tigor, sedan, hatchback, suv, van, truck')
+    ap.add_argument('--template', help='start from a template: tigor, or a vehicle-library id (lincoln_mkz_2017, '
+                    'renault_zoe_ph1, ...; the old sedan, hatchback, suv, van, truck name library vehicles)')
     ap.add_argument('--theme', choices=['dark', 'light', 'system'])
     ap.add_argument('--scale', type=float, help='UI scale, e.g. 1.15')
     ap.add_argument('--software-3d', action='store_true', help='draw the 3D view with QPainter instead of OpenGL')

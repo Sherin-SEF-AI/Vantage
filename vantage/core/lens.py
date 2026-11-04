@@ -1,4 +1,5 @@
-"""Camera modules, lenses and projection models, and the built-in library of e-con Systems camera modules.
+"""Camera modules, lenses and projection models, and the built-in library of real camera modules (e-con Systems first,
+then Leopard Imaging, Sekonix, D3 Embedded, Basler, FLIR and LUCID: VENDOR_NOTE).
 
 r(θ) is the image height in millimetres for a ray θ radians off the optical axis.
 
@@ -475,11 +476,12 @@ def derived(module: Module, lens: Lens) -> dict:
 
 # ---------------------------------------------------------------- built-in library
 CHECKED = '2026-10-24'             # when e-con's pages were read for the figures below
+VENDOR_CHECKED = '2026-11-04'      # when the other makers' pages (and e-con's newer ones) were read
 _E = 'https://www.e-consystems.com'
 LIBRARY_NOTE = (
     'Built-in modules: e-con Systems camera modules, with the figures e-con states on its public product pages '
     f'(read {CHECKED}; each entry names its page). A figure e-con does not state is left as not given (0 or blank) '
-    'and the app then uses its typical figure where it needs one. e-con states each lens\'s field of view but not '
+    'and the app says so where it needs one (a power budget counts it 0 W and lists it). e-con states each lens\'s field of view but not '
     'its focal length or aperture: the focal length is derived from the stated FOV with the base projection that fits '
     'it best, and the distortion terms are fitted so the model reproduces the stated FOV within 0.5°. The resolution '
     'between the stated angles, the centre resolution and the image circle are therefore modelled, not measured; a '
@@ -487,9 +489,10 @@ LIBRARY_NOTE = (
 
 
 def _module(mid, name, sensor, res, pixel_um, fmt, fps, *, shutter, dr_db, temp, size, urls, extra='', weight=0.0,
-            cables=(15.0,), power=0.0, sync=False, ip='', chroma='colour', interface='GMSL2') -> Module:
+            cables=(15.0,), power=0.0, sync=False, ip='', chroma='colour', interface='GMSL2',
+            checked=CHECKED) -> Module:
     pages = ' and '.join(urls)
-    note = f'Figures from e-con Systems\' page{"s" if len(urls) > 1 else ""} {pages} (read {CHECKED}).'
+    note = f'Figures from e-con Systems\' page{"s" if len(urls) > 1 else ""} {pages} (read {checked}).'
     return Module(id=mid, name=name, vendor='e-con Systems', sensor=sensor, width_px=res[0], height_px=res[1],
                   pixel_um=pixel_um, optical_format=fmt, interface=interface, fps=fps, hw_sync=sync,
                   size_mm=tuple(float(v) for v in size), weight_g=weight, cables_m=tuple(float(c) for c in cables),
@@ -618,6 +621,153 @@ def builtin_modules() -> list[Module]:
                 urls=(_E + '/fpd-link-iv-camera-modules/5mp-ox05b1s-global-shutter-rgb-ir-camera.asp',),
                 extra='FPD-Link IV twin of STURDeCAM57 (in-cabin RGB-IR, 25 + 25 fps), cable up to 10 m. Size 70 × 35 '
                       '× 30 mm, taken as 70 wide, 35 high, 30 long. Hardware frame sync is not stated.'),
+        _module('sturdecam84', 'STURDeCAM84', 'onsemi AR0823AT', (3840, 2160), 2.1, '1/1.8"', 30.0,
+                shutter='rolling', dr_db=150.0, temp=(-40, 80), size=(20.8, 20.8, 0.0), weight=25.0,
+                cables=(3.0, 15.0), ip='IP69K',
+                checked=VENDOR_CHECKED, urls=(_E + '/automotive-cameras/4k-ar0823at-ip69k-gmsl2-150db-hdr-camera.asp',),
+                extra='4K front-view camera, 20.8 × 20.8 mm with its IP69K enclosure (length not given), 25 g with '
+                      'lens and enclosure. Up to 150 dB HDR with LED flicker mitigation. Power is "TBD" on e-con\'s '
+                      'page. Hardware frame sync is not stated.'),
+        _module('nedu4cam88', 'Nedu4CAM88', 'OmniVision OX08B40', (3840, 2160), 2.1, '1/1.73"', 30.0,
+                shutter='rolling', dr_db=140.0, temp=(-40, 85), size=(42.0, 42.0, 0.0), cables=(10.0,),
+                power=2.4, ip='IP67', interface='FPD-Link IV',
+                checked=VENDOR_CHECKED, urls=(_E + '/fpd-link-iv-camera-modules/8mp-ox08b40-hdr-camera.asp',),
+                extra='FPD-Link IV twin of STURDeCAM88: 4K at 30 fps, 140 dB HDR. 2.4 W typical at 12 V. 42 × 42 mm '
+                      '(length not given). Cable up to 10 m. Hardware frame sync is not stated.'),
+        _module('neducam81', 'NeduCAM81', 'onsemi AR0821', (3840, 2160), 2.1, '1/1.7"', 22.0,
+                shutter='rolling', dr_db=0.0, temp=(-30, 70), size=(30.0, 30.0, 0.0), interface='FPD-Link III',
+                checked=VENDOR_CHECKED, urls=(_E + '/fpd-link-iii-serdes/4k-onsemi-ar0821-hdr-camera-for-ti-sk-tda4vm.asp',),
+                extra='FPD-Link III board camera (30 × 30 mm, IP67 enclosure optional) on TI\'s SK-TDA4VM: 4K at 22 '
+                      'fps, Full HD at 60. HDR is claimed without a dB figure; power "TBD".'),
+        _module('nilecam21', 'NileCAM21', 'onsemi AR0233AT', (1920, 1080), 3.0, '1/2.5"', 30.0,
+                shutter='rolling', dr_db=140.0, temp=(-40, 85), size=(30.0, 30.0, 0.0), power=2.196, sync=True,
+                checked=VENDOR_CHECKED, urls=(_E + '/camera-modules/ar0233-hdr-gmsl-camera-module.asp',),
+                extra='Board version of STURDeCAM21 (no enclosure; IP67 enclosure optional): Full HD at 30 fps from '
+                      'the 2048 × 1280 sensor, up to 140 dB. Power 0.78–2.196 W (the maximum is used). External '
+                      'trigger for multi-camera sync.'),
+        _module('nilecam56', 'NileCAM56', 'Sony IMX568', (2472, 2064), 2.74, '1/1.8"', 90.0,
+                shutter='global', dr_db=0.0, temp=(-30, 70), size=(30.0, 30.0, 0.0),
+                checked=VENDOR_CHECKED, urls=(_E + '/camera-modules/5mp-sony-imx568-global-shutter-gmsl2-camera-module.asp',),
+                extra='Board camera (IP67 enclosure offered): 5 MP Pregius S global shutter at 90 fps, RAW Bayer, no '
+                      'default firmware. Power "TBD"; dynamic range and frame sync are not stated.'),
+    ] + _vendor_modules()
+
+
+# ---------------------------------------------------------------- other vendors
+VENDOR_NOTE = ('Modules from other makers, with the figures each maker states on its public pages and datasheets '
+               f'(read {VENDOR_CHECKED}). Lenses sold with a camera carry their maker\'s stated FOV, focal length and '
+               'aperture; a machine-vision camera sold without a lens carries the lens its dataset used (nuScenes, '
+               'KITTI) or one real lens product, modelled from its stated focal length.')
+
+
+def _vmod(mid, vendor, name, sensor, res, pixel_um, fmt, fps, *, interface, url, note, shutter='', dr_db=0.0,
+          temp=(), size=(0.0, 0.0, 0.0), weight=0.0, cables=(), power=0.0, sync=False, ip='', chroma='colour'):
+    return Module(id=mid, name=name, vendor=vendor, sensor=sensor, width_px=res[0], height_px=res[1],
+                  pixel_um=pixel_um, optical_format=fmt, interface=interface, fps=fps, hw_sync=sync,
+                  size_mm=tuple(float(v) for v in size), weight_g=weight,
+                  cables_m=tuple(float(c) for c in cables) or (3.0,), power_w=power, builtin=True, shutter=shutter,
+                  dynamic_range_db=dr_db, ip_rating=ip, temp_c=tuple(float(t) for t in temp), chroma=chroma,
+                  url=url, note=f'Figures from {vendor}\'s {url} (read {VENDOR_CHECKED}). {note}'.strip())
+
+
+_SEKONIX = ('https://www.sekonix.co.kr/SEKONIX/file/SF332X-10X_2Mega-LVDS-Automotive-Camera-Datasheet_Ver-2.2.5_'
+            '190726.pdf')
+
+
+def _vendor_modules() -> list[Module]:
+    li = 'https://leopardimaging.com/wp-content/uploads/'
+    d3 = 'https://www.d3embedded.com/product/'
+    return [
+        _vmod('leopard_imx390_gmsl2', 'Leopard Imaging', 'LI-IMX390-GMSL2', 'Sony IMX390', (1937, 1217), 3.0,
+              '1/2.7"', 60.0, interface='GMSL2', url=li + 'pdf/LI-IMX390-GMSL2-xxxH_Datasheet.pdf',
+              temp=(-40, 85), size=(30.0, 30.0, 50.96), weight=45.0, cables=(3.0,), power=1.464, sync=True,
+              ip='IP67',
+              note='60 fps at 1937 × 1217, HDR with LED flicker mitigation (no dB figure). Power: about 122 mA at '
+                   '12 V (1.464 W, measured at 1936 × 1100 and 35 fps). 30 × 30 mm, 50.96 mm long with the 60° lens '
+                   '(47.98 mm with the 120°). The sensor\'s FSYNC is wired to the serializer (block diagram). '
+                   'Shutter type not stated.'),
+        _vmod('leopard_imx728_gmsl2', 'Leopard Imaging', 'LI-IMX728-GM2B', 'Sony IMX728', (3857, 2177), 2.1,
+              '1/1.72"', 45.0, interface='GMSL2', url=li + '2025/11/LI-IMX728-GM2B-xxxH-xx-AA_Datasheet.pdf',
+              temp=(-40, 85), size=(30.0, 30.0, 57.78), cables=(3.0,), power=1.464, sync=True,
+              note='8 MP at 45 fps, HDR with LED flicker mitigation (no dB figure), active-alignment lenses. A rev '
+                   '0.1 draft: weight and IP rating are TBD, and its power line (about 122 mA at 12 V, 1.464 W) is '
+                   'the IMX390\'s word for word, so it may be a placeholder. 30 × 30 mm, 57.78 mm long with the 120° '
+                   'lens. Shutter type not stated.'),
+        _vmod('leopard_imx490_gmsl2', 'Leopard Imaging', 'LI-IMX490-GMSL2', 'Sony IMX490', (2880, 1860), 3.0,
+              '1/1.55"', 40.0, interface='GMSL2', url=li + '2025/07/LI-IMX490-GMSL2-xxxH_Datasheet.pdf',
+              temp=(-40, 85), weight=55.0, cables=(3.0,), power=1.224, sync=True, ip='IP67',
+              note='5.4 MP HDR: 40 fps at 2880 × 1860 (rev 2.1 datasheet, July 2025). Power: about 102 mA at 12 V '
+                   '(1.224 W, measured at 19 fps). About 55 g. IP69K with the 30° and 120° lenses, IP67 with the '
+                   'others. Its size is given only as drawings. Sensor FSIN wired to the serializer. Shutter type '
+                   'not stated.'),
+        _vmod('sekonix_sf3324_101', 'Sekonix', 'SF3324-101', 'onsemi AR0231AT', (1928, 1208), 3.0, '1/2.7"', 30.0,
+              interface='GMSL', url=_SEKONIX, temp=(-40, 85), size=(26.0, 26.0, 30.7), ip='IP69K',
+              note='An NVIDIA DRIVE camera with the 120° lens (-101: RGB; -100 is RCCB). Sekonix states no frame '
+                   'rate: 30 fps is onsemi\'s for the AR0231AT at full size with 4-exposure HDR (40 fps with 3), the '
+                   'sensor maker\'s figure. GMSL (MAX96705), 8 V supply over the coax; power, weight, shutter and '
+                   'dynamic range not stated. 26 × 26 mm; 30.7 mm long read off the drawing. A preliminary '
+                   'datasheet (rev 2.2.5, 2019).'),
+        _vmod('sekonix_sf3325_101', 'Sekonix', 'SF3325-101', 'onsemi AR0231AT', (1928, 1208), 3.0, '1/2.7"', 30.0,
+              interface='GMSL', url=_SEKONIX, temp=(-40, 85), size=(26.0, 26.0, 30.7), ip='IP69K',
+              note='An NVIDIA DRIVE camera with the 60° lens (-101: RGB). Frame rate, power and the rest as for the '
+                   'SF3324: 30 fps is onsemi\'s sensor figure; Sekonix states none.'),
+        _vmod('d3_imx390_gmsl2', 'D3 Embedded', 'Discovery PRO IMX390 (GMSL2, sealed)', 'Sony IMX390',
+              (1920, 1080), 3.0, '1/2.7"', 30.0, interface='GMSL2', url=d3 + 'imx390-medium-fov-gmsl2-sealed/',
+              shutter='rolling', temp=(-40, 85), size=(31.0, 31.0, 40.17), sync=True, ip='IP67',
+              note='30 fps at 1920 × 1080 on the product pages (the series datasheet says 60), HDR with LED flicker '
+                   'mitigation (no dB figure), frame sync. 31 × 31 mm, 40.17 mm long with the medium lens (32.42 '
+                   'wide, 48.08 narrow) plus 7.1 mm of connector. 12 V nominal; power not stated.'),
+        _vmod('d3_imx728_gmsl2', 'D3 Embedded', 'Discovery PRO IMX728 (GMSL2, sealed)', 'Sony IMX728',
+              (3840, 2160), 2.1, '1/1.72"', 30.0, interface='GMSL2', url=d3 + 'imx728-medium-fov-gmsl2-sealed/',
+              shutter='rolling', temp=(-40, 85), sync=True, ip='IP67',
+              note='8 MP at 30 fps, linear mode only ("HDR mode is not yet supported"), frame sync. Dimensions '
+                   '("line drawings coming soon"), weight and power are not published.'),
+        _vmod('basler_aca1600_60gc', 'Basler', 'ace acA1600-60gc', 'e2v EV76C570', (1600, 1200), 4.5, '1/1.8"',
+              60.0, interface='GigE (1000BASE-T)', url='https://docs.baslerweb.com/aca1600-60gc', shutter='global',
+              temp=(0, 50), size=(29.0, 29.0, 42.0), weight=90.0, power=2.7, sync=True, ip='IP30',
+              note='The camera of the nuScenes dataset (six of them, cropped to 1600 × 900, 12 Hz, triggered as '
+                   'the lidar sweeps each camera\'s centre). Global or rolling shutter (selectable; nuScenes ran it '
+                   'global). 2.7 W typical over PoE (2.1 W at 12–24 V). 29 × 29 × 42 mm without the lens mount '
+                   '(60.3 mm with it), under 90 g, housing 0–50 °C. C- or CS-mount; dynamic range not stated.'),
+        _vmod('flir_fl2_14s3c', 'FLIR (Point Grey)', 'Flea2 FL2-14S3C', 'Sony ICX267 CCD', (1384, 1032), 4.65,
+              '1/2"', 15.0, interface='IEEE 1394b', url='https://flir.netx.net/file/asset/13085/original/attachment/',
+              shutter='global', temp=(0, 45), size=(29.0, 29.0, 30.0), weight=58.0, power=2.5, sync=True,
+              note='The colour camera of the KITTI dataset (a stereo pair, triggered by the lidar at 10 Hz, cropped '
+                   'to 1392 × 512 there). Discontinued. Under 2.5 W (the bound is used). 29 × 29 × 30 mm without the '
+                   'lens holder. C-mount; dynamic range not stated. FireWire: no automotive cable limit is known.'),
+        _vmod('flir_fl2_14s3m', 'FLIR (Point Grey)', 'Flea2 FL2-14S3M', 'Sony ICX267 CCD', (1384, 1032), 4.65,
+              '1/2"', 15.0, interface='IEEE 1394b', url='https://flir.netx.net/file/asset/13085/original/attachment/',
+              shutter='global', temp=(0, 45), size=(29.0, 29.0, 30.0), weight=58.0, power=2.5, sync=True,
+              chroma='monochrome',
+              note='The greyscale camera of the KITTI dataset (a stereo pair). Discontinued. Under 2.5 W (the bound '
+                   'is used). 29 × 29 × 30 mm without the lens holder. C-mount.'),
+        _vmod('flir_bfs_pge_31s4c', 'Teledyne FLIR', 'Blackfly S BFS-PGE-31S4C', 'Sony IMX265', (2048, 1536), 3.45,
+              '1/1.8"', 35.0, interface='GigE (1000BASE-T)',
+              url='https://www.teledynevisionsolutions.com/products/blackfly-s-gige/?model=BFS-PGE-31S4C-C',
+              shutter='global', dr_db=72.0, temp=(0, 50), size=(29.0, 29.0, 30.0), weight=36.0, power=2.5,
+              sync=True,
+              note='35 fps (51 with lossless compression), 72 dB linear, hardware trigger and PTP, PoE. Under 2.5 W '
+                   '(the bound is used). C-mount.'),
+        _vmod('flir_bfs_u3_51s5c', 'Teledyne FLIR', 'Blackfly S BFS-U3-51S5C', 'Sony IMX250', (2448, 2048), 3.45,
+              '2/3"', 75.0, interface='USB 3.1',
+              url='https://www.teledynevisionsolutions.com/products/blackfly-s-usb3/?model=BFS-U3-51S5C-C',
+              shutter='global', dr_db=71.5, temp=(0, 50), size=(29.0, 29.0, 30.0), weight=36.0, power=3.0,
+              sync=True, note='75 fps, 71.5 dB linear, hardware trigger. 3 W maximum. C-mount.'),
+        _vmod('lucid_tri054s', 'LUCID Vision Labs', 'Triton TRI054S (IP67)', 'Sony IMX490', (2880, 1860), 3.0,
+              '1/1.55"', 20.8, interface='GigE (1000BASE-T)', url='https://thinklucid.com/product/triton-5-mp-imx490/',
+              shutter='rolling', dr_db=123.6, temp=(-20, 55), size=(29.0, 29.0, 45.0), weight=67.0, power=3.1,
+              sync=True, ip='IP67',
+              note='5.4 MP HDR: 123.6 dB (EMVA 1288; 120 dB in LUCID\'s headline), 20.8 fps at full size in 8-bit '
+                   '(the 24-bit HDR output runs at 2.3–6.9 fps). Hardware trigger and PTP. 3.1 W typical over PoE. '
+                   '29 × 29 × 45 mm (the axes are not labelled: 45 taken as the length). IP67 only with LUCID\'s '
+                   'IP67 lens tube. C-mount.'),
+        _vmod('lucid_tri032s', 'LUCID Vision Labs', 'Triton TRI032S (IP67)', 'Sony IMX265', (2048, 1536), 3.45,
+              '1/1.8"', 35.4, interface='GigE (1000BASE-T)', url='https://thinklucid.com/product/triton-32-mp-imx265/',
+              shutter='global', dr_db=71.68, temp=(-20, 55), size=(29.0, 29.0, 45.0), weight=67.0, power=3.1,
+              sync=True, ip='IP67',
+              note='3.2 MP global shutter, 35.4 fps, 71.68 dB linear (EMVA 1288). Hardware trigger and PTP. 3.1 W '
+                   'typical over PoE. 29 × 29 × 45 mm (45 taken as the length). IP67 only with LUCID\'s lens tube. '
+                   'C-mount.'),
     ]
 
 
@@ -631,7 +781,7 @@ def _fov_label(h):
 
 
 def _lens(lid, name, m: Module, sheet, *, where='', focus=0.0, focus_far=math.inf, circle='', extra='',
-          base=None, d_at_least=False) -> Lens:
+          base=None, d_at_least=False, checked=CHECKED) -> Lens:
     """A built-in lens from e-con's stated FOV (H, V, D; 0 = not stated). circle: why the stated D is the image
     circle's field rather than the sensor diagonal's ('' = it is the diagonal's): it then limits the image
     (max_half_deg) instead of being fitted, and the sensor corners beyond it are dark. d_at_least: e-con gives D as
@@ -643,7 +793,7 @@ def _lens(lid, name, m: Module, sheet, *, where='', focus=0.0, focus_far=math.in
     kb = fit_sheet(f, fit, hs, base=b)
     shown = ' × '.join(f'{"≥ " if a == "D" and d_at_least else ""}{v:g}° {a}' for v, a in zip(sheet, 'HVD') if v)
     note = (f'FOV {shown} as e-con states it{" (" + where + ")" if where else ""} on {m.name}\'s page (read '
-            f'{CHECKED}). e-con does not state the focal length: {f:.3g} mm is derived from that FOV with '
+            f'{checked}). e-con does not state the focal length: {f:.3g} mm is derived from that FOV with '
             f'{_an(b)} {b} base projection, and the distortion terms are fitted to reproduce it. Aperture not stated.')
     return Lens(id=lid, name=name, label=_fov_label(sheet[0]), module_id=m.id, focal_mm=f, f_number=0.0,
                 focus_near_m=focus, focus_far_m=focus_far, projection='kannala_brandt', kb=kb,
@@ -665,7 +815,8 @@ def _circle_reason(m: Module, h_deg, d_deg) -> str:
 
 
 def builtin_lenses() -> list[Lens]:
-    """The lenses e-con states a field of view for, each on its module (h05r2 first: the default lens)."""
+    """The lenses e-con states a field of view for, each on its module (h05r2 first: the default lens), then the
+    other makers' lenses (VENDOR_NOTE)."""
     M = {m.id: m for m in builtin_modules()}
     hs = half_sizes(M['sturdecam31'])
     sheets = ('as e-con\'s STURDeCAM31 Lens Datasheet (Rev 1.2) and Module Datasheet (Rev 1.4) state them; neither '
@@ -712,6 +863,151 @@ def builtin_lenses() -> list[Lens]:
         _lens('neducam25_std', '128° DFOV', M['neducam25'], (104.6, 61.6, 128.2), where='lens provided by e-con'),
         _lens('nedu4cam57_std', '148° DFOV', M['nedu4cam57'], (114.76, 85.92, 148.32), where='standard lens',
               focus=0.5, focus_far=2.0, extra='Focus 0.5 m to 2 m (driver and occupant monitoring).'),
+        _lens('sturdecam84_std', '140° DFOV', M['sturdecam84'], (121.2, 67.2, 140.1), where='default lens',
+              checked=VENDOR_CHECKED),
+        _lens('nedu4cam88_h02r1', 'H02R1', M['nedu4cam88'], (68.23, 38.83, 80.22), where='narrow lens',
+              checked=VENDOR_CHECKED),
+        _lens('nedu4cam88_h04r1', 'H04R1', M['nedu4cam88'], (120.12, 67.04, 137.36), where='wide lens',
+              checked=VENDOR_CHECKED),
+        _lens('neducam81_std', '120° DFOV', M['neducam81'], (104.8, 58.7, 120.0), where='lens provided by e-con',
+              checked=VENDOR_CHECKED),
+        _lens('nilecam21_std', '130° DFOV', M['nilecam21'], (110.65, 61.16, 129.7), where='lens provided by e-con',
+              checked=VENDOR_CHECKED),
+        _lens('nilecam56_std', '113° DFOV', M['nilecam56'], (85.64, 72.25, 113.0), where='lens provided by e-con',
+              checked=VENDOR_CHECKED),
+    ] + _vendor_lenses(M)
+
+
+def _stated_base(focal, sheet, hs) -> str:
+    """The base projection that, at the stated focal length, comes closest to the stated FOV angles."""
+    def err(b):
+        return sum((2 * math.degrees(float(theta_of_r(h, focal, b))) - v) ** 2 for v, h in zip(sheet, hs) if v)
+    wide = max(sheet) / 2 >= 80
+    return min((b for b in FIT_BASES if not (wide and b == 'rectilinear')), key=err)
+
+
+def _vlens(lid, name, m: Module, *, url, basis, sheet=(0.0, 0.0, 0.0), focal=0.0, fno=0.0, focus=0.0,
+           focus_far=math.inf, label='', circle=False) -> Lens:
+    """A lens from another maker. With a stated FOV the distortion terms are fitted to it (on the stated focal
+    length when there is one, else on one derived from the FOV, as for e-con's lenses); with a focal length only
+    (a machine-vision C-mount lens) it is modelled as rectilinear at that focal length."""
+    hs = half_sizes(m)
+    sheet = tuple(float(v or 0.0) for v in sheet)
+    if circle:                               # a fisheye whose image circle is inside the sensor: the FOV is the circle's
+        lens = Lens(id=lid, name=name, label=label or 'fisheye', module_id=m.id, focal_mm=float(focal),
+                    f_number=float(fno), focus_near_m=focus, focus_far_m=focus_far, projection='equidistant',
+                    sheet_fov=sheet, max_half_deg=sheet[0] / 2, builtin=True)
+        r = float(r_of_theta(math.radians(sheet[0] / 2), focal, 'equidistant'))
+        lens.note = (f'FOV {sheet[0]:g}° and focal length {focal:g} mm as stated. At {focal:g} mm a {sheet[0]:g}° '
+                     f'field is an image circle {2 * r:.2f} mm across, inside the {2 * hs[0]:.2f} × {2 * hs[1]:.2f} mm '
+                     'sensor: modelled as an equidistant fisheye limited to that circle (the image outside it is '
+                     f'dark). {basis} Source: {url} (read {VENDOR_CHECKED}).')
+        return lens
+    if any(sheet):
+        b, f0, _ = best_base(sheet, hs)
+        if focal:
+            b = _stated_base(float(focal), sheet, hs)
+        f = round(float(focal) if focal else f0, 3)
+        # a field the maker does not state (V, D) follows the base projection, so the curve keeps rising out to the
+        # sensor's corner instead of folding back past the stated angles
+        fit = tuple(v if v else min(2 * math.degrees(float(theta_of_r(h, f, b))), 190.0) for v, h in zip(sheet, hs))
+        kb = fit_sheet(f, fit, hs, base=b)
+        shown = ' × '.join(f'{v:g}° {a}' for v, a in zip(sheet, 'HVD') if v)
+        gaps = ' and '.join(a for v, a in zip(sheet, 'HVD') if not v)
+        how = (f'FOV {shown}{", focal length " + f"{focal:g} mm" if focal else ""} as stated; '
+               + ('' if focal else f'the focal length ({f:.3g} mm) is derived from the FOV with {_an(b)} {b} base '
+                                   'projection; ')
+               + 'the distortion terms are fitted to reproduce the FOV'
+               + (f' ({gaps} not stated: there the {b} projection is followed).' if gaps else '.'))
+        lens = Lens(id=lid, name=name, label=label or _fov_label(sheet[0] or 90.0), module_id=m.id, focal_mm=f,
+                    f_number=float(fno), focus_near_m=focus, focus_far_m=focus_far, projection='kannala_brandt',
+                    kb=kb, sheet_fov=sheet, builtin=True,
+                    # a stated diagonal past 186° reaches beyond the app's default 95° image limit: it is the limit
+                    max_half_deg=sheet[2] / 2 if sheet[2] / 2 > 93.0 else 0.0)
+    else:
+        how = (f'Focal length {focal:g} mm as stated, modelled as a rectilinear lens (a low-distortion '
+               'machine-vision lens); its field on this sensor follows from the focal length.')
+        lens = Lens(id=lid, name=name, label=label, module_id=m.id, focal_mm=float(focal), f_number=float(fno),
+                    focus_near_m=focus, focus_far_m=focus_far, projection='rectilinear', builtin=True)
+        lens.label = label or _fov_label(model_fov(m, lens)[0])
+    lens.note = f'{how} {basis} Source: {url} (read {VENDOR_CHECKED}).'
+    return lens
+
+
+def _vendor_lenses(M) -> list[Lens]:
+    li = 'https://leopardimaging.com/wp-content/uploads/'
+    d3 = 'https://www.d3embedded.com/product/'
+    li390, li728 = li + 'pdf/LI-IMX390-GMSL2-xxxH_Datasheet.pdf', li + '2025/11/LI-IMX728-GM2B-xxxH-xx-AA_Datasheet.pdf'
+    li490 = li + '2025/07/LI-IMX490-GMSL2-xxxH_Datasheet.pdf'
+    fuji = 'https://www.fujifilm.com/de/en/business/optical-devices/mvlens/hfxa5m'
+    computar = 'https://computarganz.s3.amazonaws.com/Computar+Active+Resources/M0814-MP2+spec.pdf'
+    return [
+        _vlens('leopard_imx390_060h', '060H', M['leopard_imx390_gmsl2'], sheet=(60.6, 36.1, 74.5), focal=6.0,
+               url=li390, basis='Leopard\'s ordering table (aperture not stated).'),
+        _vlens('leopard_imx390_120h', '120H', M['leopard_imx390_gmsl2'], sheet=(122.0, 74.0, 148.0), focal=2.8,
+               url=li390, basis='Leopard\'s ordering table (aperture not stated).'),
+        _vlens('leopard_imx390_200h', '200H fisheye', M['leopard_imx390_gmsl2'], sheet=(200.0, 0.0, 0.0),
+               focal=0.95, url=li390, basis='Leopard states only the horizontal FOV and the 0.95 mm EFL (lens '
+                                            'E7393E-R8); aperture not stated.', label='fisheye', circle=True),
+        _vlens('leopard_imx728_030h', '030H', M['leopard_imx728_gmsl2'], sheet=(30.0, 17.0, 34.4), focal=15.34,
+               fno=1.6, url=li728, basis='Leopard\'s lens table.'),
+        _vlens('leopard_imx728_070h', '070H', M['leopard_imx728_gmsl2'], sheet=(70.0, 39.3, 80.1), focal=6.6,
+               fno=1.6, url=li728, basis='Leopard\'s lens table.'),
+        _vlens('leopard_imx728_120h', '120H', M['leopard_imx728_gmsl2'], sheet=(120.0, 65.0, 140.0), focal=4.01,
+               fno=1.6, url=li728, basis='Leopard\'s lens table.'),
+        _vlens('leopard_imx490_030h', '030H', M['leopard_imx490_gmsl2'], sheet=(30.0, 19.5, 35.5), focal=16.37,
+               fno=1.6, url=li490, basis='Leopard\'s lens table (rev 2.1).'),
+        _vlens('leopard_imx490_065h', '065H', M['leopard_imx490_gmsl2'], sheet=(65.0, 37.0, 74.0), focal=7.9,
+               fno=2.0, url=li490, basis='Leopard\'s lens table (rev 2.1).'),
+        _vlens('leopard_imx490_090h', '090H', M['leopard_imx490_gmsl2'], sheet=(90.0, 0.0, 0.0), focal=5.39,
+               fno=2.6, url=li490, basis='Leopard\'s lens table (rev 2.1) states the horizontal FOV only.'),
+        _vlens('leopard_imx490_120h', '120H', M['leopard_imx490_gmsl2'], sheet=(120.0, 73.2, 0.0), focal=4.49,
+               fno=1.6, url=li490,
+               basis='Leopard\'s lens table (rev 2.1) also gives 154.9° D, which a lens 120° × 73.2° cannot reach '
+                     'on this sensor\'s diagonal (it is likely the image circle\'s): fitted to H and V. The 040H '
+                     'lens is left out: its stated FOV and focal length disagree on this sensor.'),
+        _vlens('leopard_imx490_160h', '160H', M['leopard_imx490_gmsl2'], sheet=(160.0, 0.0, 0.0), focal=3.0,
+               fno=2.8, url=li490, basis='Leopard\'s lens table (rev 2.1) states the horizontal FOV only.'),
+        _vlens('sekonix_na1262', 'NA1262 (120°)', M['sekonix_sf3324_101'], sheet=(120.0, 73.0, 146.0), url=_SEKONIX,
+               basis='Sekonix\'s lens table (focal length and aperture not stated).'),
+        _vlens('sekonix_na6062', 'NA6062 (60°)', M['sekonix_sf3325_101'], sheet=(60.0, 38.0, 70.0), url=_SEKONIX,
+               basis='Sekonix\'s lens table (focal length and aperture not stated).'),
+        _vlens('d3_imx390_wide', 'Wide', M['d3_imx390_gmsl2'], sheet=(180.0, 101.0, 207.0), focal=1.83, fno=2.3,
+               focus=0.14, url=d3 + 'imx390-wide-fov-gmsl2-sealed/', basis='D3\'s product page and datasheet.',
+               label='fisheye'),
+        _vlens('d3_imx390_medium', 'Medium', M['d3_imx390_gmsl2'], sheet=(98.0, 62.0, 107.0), focal=2.8, fno=2.8,
+               focus=0.27, url=d3 + 'imx390-medium-fov-gmsl2-sealed/', basis='D3\'s product page and datasheet.'),
+        _vlens('d3_imx390_narrow', 'Narrow', M['d3_imx390_gmsl2'], sheet=(65.0, 37.0, 75.0), focal=5.05, fno=2.6,
+               focus=0.97, url=d3 + 'imx390-narrow-fov-gmsl2-sealed/', basis='D3\'s product page and datasheet.'),
+        _vlens('d3_imx728_medium', 'Medium', M['d3_imx728_gmsl2'], sheet=(121.0, 67.0, 140.0), focal=3.9, fno=1.6,
+               focus=1.2, url=d3 + 'imx728-medium-fov-gmsl2-sealed/', basis='D3\'s product page and datasheet.'),
+        _vlens('d3_imx728_narrow', 'Narrow', M['d3_imx728_gmsl2'], sheet=(55.0, 33.0, 62.0), focal=7.8, fno=2.0,
+               focus=3.8, url=d3 + 'imx728-narrow-fov-gmsl2-sealed/', basis='D3\'s product page and datasheet.'),
+        _vlens('nuscenes_5_5mm', 'nuScenes 5.5 mm', M['basler_aca1600_60gc'], focal=5.5,
+               url='https://arxiv.org/abs/2512.02448',
+               basis='The front and side lens of nuScenes: 5.5 mm (nuScenes Revisited, Fong et al.); the nuScenes '
+                     'paper gives a 70° FOV without its axis. The lens model is not named.'),
+        _vlens('kitti_4mm', 'KITTI 4 mm (Edmund Optics)', M['flir_fl2_14s3c'], focal=4.0,
+               url='https://www.cvlibs.net/publications/Geiger2013IJRR.pdf',
+               basis='KITTI\'s lens (Geiger et al. 2013, IJRR): Edmund Optics, 4 mm, "opening angle ~90°" (axis not '
+                     'stated; the diagonal on this sensor), part number not given.'),
+        _vlens('kitti_4mm_mono', 'KITTI 4 mm (Edmund Optics)', M['flir_fl2_14s3m'], focal=4.0,
+               url='https://www.cvlibs.net/publications/Geiger2013IJRR.pdf',
+               basis='KITTI\'s lens on its greyscale cameras (Geiger et al. 2013, IJRR).'),
+        _vlens('computar_m0814_mp2_bfs', 'Computar M0814-MP2 (8 mm)', M['flir_bfs_pge_31s4c'], focal=8.0, fno=1.4,
+               focus=0.1, url=computar,
+               basis='A 2/3" C-mount lens for this 1/1.8" camera (a suggestion, not the maker\'s kit); Computar states '
+                     'its angles for 2/3" and 1/2" sensors only.'),
+        _vlens('computar_m0814_mp2_tri032', 'Computar M0814-MP2 (8 mm)', M['lucid_tri032s'], focal=8.0, fno=1.4,
+               focus=0.1, url=computar,
+               basis='A 2/3" C-mount lens for this 1/1.8" camera (a suggestion, not the maker\'s kit).'),
+        _vlens('fujinon_hf6xa_5m_bfs', 'Fujinon HF6XA-5M (6 mm)', M['flir_bfs_u3_51s5c'], focal=6.0, fno=1.9,
+               url=fuji,
+               basis='A 2/3" C-mount lens (a suggestion, not the maker\'s kit): Fujifilm states 74.7° × 58.1° on a '
+                     '2/3" sensor and −2.88 % TV distortion.'),
+        _vlens('fujinon_hf6xa_5m_tri054', 'Fujinon HF6XA-5M (6 mm)', M['lucid_tri054s'], focal=6.0, fno=1.9,
+               url=fuji,
+               basis='A 2/3" C-mount lens covering this 1/1.55" sensor (a suggestion, not the maker\'s kit).'),
     ]
 
 
