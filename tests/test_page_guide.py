@@ -126,7 +126,7 @@ def test_page_state_is_cheap_jsonable_and_has_no_paths():
 
 
 def test_compact_leaves_out_paths_secrets_and_cuts_lists():
-    doc = {'path': '/home/x/run', 'api_key': 'gsk_123', 'out_dir': 'a', 'n': 3, 'note': 'see /home/jo/a.bag',
+    doc = {'path': '/home/x/run', 'api_key': 'gsk_123', 'out_dir': 'a', 'n': 3, 'note': 'see /home/user/a.bag',
            'rows': list(range(10)), 'x': float('nan'), 'deep': {'a': {'b': {'c': {'d': 1}}}}, 'url': 'http://h'}
     c = PG.compact(PG._scrub(doc))
     assert 'path' not in c and 'api_key' not in c and 'out_dir' not in c and 'url' not in c
