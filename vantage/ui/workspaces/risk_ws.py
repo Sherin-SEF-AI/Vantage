@@ -250,6 +250,20 @@ class RiskPage(QWidget):
             self.fields[key] = f
             s.row(text, f, tip=tip)
         bl.addWidget(s)
+        s = Section('Issues below')
+        self.th_fields = {}
+        for c in RC.CLASSES:
+            f = ScrubSpinBox('', 'plain', 0, '%', step=5.0, width=90)
+            tip = (f'The Issues list flags {c}s when their risk-weighted coverage is below this (default '
+                   f'{RC.ISSUE_MIN_DEFAULT[c]:g} %: round 14\'s proposal on the sample\'s Data rig); a requirements '
+                   'scorecard row on risk-weighted coverage takes precedence')
+            f.setToolTip(tip)
+            f.committed.connect(lambda v, k=c: self.set_threshold(k, v))
+            self.th_fields[c] = f
+            s.row(RC.CLASS_LABEL[c], f, tip=tip)
+        self.th_note = label('', muted=True, small=True, wrap=True)
+        s.add(self.th_note)
+        bl.addWidget(s)
         bl.addStretch(1)
         scroll.setWidget(body)
         ol.addWidget(scroll, 1)
@@ -357,10 +371,48 @@ class RiskPage(QWidget):
         self.ctx.store.edit('analysis', fn, f'Risk-weighted coverage · {FIELD_LABEL.get(key, key)} {shown}')
         return True
 
+    def set_threshold(self, cls, value) -> bool:
+        """The Issues threshold of a class, % (one undo step; the Issues list follows at once)."""
+        if self._syncing or cls not in RC.CLASSES:
+            return False
+        old = self.settings.to_dict()
+        d = dict(old, issue_min=dict(old.get('issue_min') or {}, **{cls: value}))
+        new = RC.RiskSettings.from_dict(d).to_dict()
+        if new == old:
+            self._sync_fields()
+            return False
+
+        def fn(p):
+            p.analysis.risk_coverage = new
+        self.ctx.store.edit('analysis', fn, f'Risk-weighted coverage · Issues below {new["issue_min"][cls]:g} % for '
+                                            f'{cls}s')
+        self.push_issues()
+        return True
+
+    def push_issues(self) -> bool:
+        """Put this study's rows of the Issues list up to date from the cache (after a run or a threshold edit),
+        without collecting every other study's issues again."""
+        an = getattr(self.ctx, 'analysis', None)
+        if an is None or not hasattr(an, 'secondary'):
+            return False
+        try:
+            merged = RC.merge_issues(list(getattr(an, 'issues', []) or []), self.ctx.store.project)
+            an.secondary.emit('issues', merged)
+        except RuntimeError:
+            return False
+        return True
+
     def _sync_fields(self):
         st = self.settings
         self._syncing = True
         try:
+            th = RC.thresholds(self.ctx.store.project, st)
+            for c, f in self.th_fields.items():
+                f.set_value(float(th[c]['pct']))
+                f.setEnabled(not th[c]['source'].startswith('requirement'))
+            req = [f'{c}s: {th[c]["source"]}' for c in RC.CLASSES if th[c]['source'].startswith('requirement')]
+            self.th_note.setText('From the requirements scorecard: ' + '; '.join(req) if req else
+                                 'Defaults: round 14\'s proposal on the sample\'s Data rig (measured minus 5 %).')
             for k, f in self.fields.items():
                 f.set_value(float(getattr(st, k)))
             for k, sg in self.segs.items():
@@ -375,11 +427,9 @@ class RiskPage(QWidget):
 
     # ------------------------------------------------------------------ running
     def _key(self):
-        p = self.ctx.store.project
-        v = p.variant
-        cams = [(c.uid, c.x, c.y, c.z, c.yaw, c.pitch, c.roll, c.module_id, c.lens_id, c.visible) for c in v.cameras]
-        return (v.uid, tuple(cams), tuple(sorted(self.settings.to_dict().items())),
-                repr(getattr(p.analysis, 'perception', None)))
+        """Everything the result depends on (core.risk_coverage.cache_key: cameras, lenses, body, settings, the
+        hazard tables), not the Issues thresholds."""
+        return RC.cache_key(self.ctx.store.project)
 
     def _on_store(self, *_):
         self._sync_fields()
@@ -445,6 +495,8 @@ class RiskPage(QWidget):
             return
         self.result, self._for = res, key
         self.stale = key != self._key()
+        if not self.stale:
+            self.push_issues()
         self.status_text = f'{res.variant}: {sum(d["points"] for d in res.classes.values())} hazard points · ' \
                            f'{res.seconds:.1f} s'
         self.bar.setValue(1000)

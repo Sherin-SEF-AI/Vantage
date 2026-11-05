@@ -544,7 +544,8 @@ def test_bridge_spawns_records_and_tidies_up(fake_run):
     L = fake_run['rig']['lidars'][0]
     assert lid[5] == ego[1] and np.allclose(lid[4][:3], np.add(L['carla']['location'], origin), atol=1e-9)
     assert lid[3]['channels'] == '128' and float(lid[3]['dropoff_general_rate']) == 0.0
-    cams = [e for e in log if e[0] == 'spawn' and e[2] == 'sensor.camera.rgb']
+    cams = [e for e in log if e[0] == 'spawn' and e[2] == 'sensor.camera.rgb' and
+            e[3].get('role_name') != 'vantage_exposure_probe']           # (round 15: the metering probes apart)
     assert len(cams) == sum(len(c['views']) for c in fake_run['rig']['cameras'])
     assert all(float(e[3]['lens_k']) == 0.0 and float(e[3]['motion_blur_intensity']) == 0.0 for e in cams)
     # what was written
@@ -752,6 +753,9 @@ def test_bridge_command_line_with_the_fake(tmp_path):
     assert lines and lines[-1]['progress'] == 1.0
     rep = json.load(open(tmp_path / 'out' / 'run.json'))
     assert rep['status'] == 'ok' and rep['town'] == 'Town01' and rep['weather'] == {'preset': 'ClearNoon'}
+    # (round 15) the start marker's time carried into the report, and when it ended
+    ru = rep['recorded_utc']
+    assert ru['start'] and ru['end'] and ru['start'] <= ru['end'] and ru['end'].endswith('+00:00')
 
 
 # ======================================================================= round 8: ground truth, faults, scenarios, actors
@@ -1020,7 +1024,8 @@ def test_faults_change_what_carla_records_and_the_calibration_states_the_plan(tm
     # the views CARLA spawned: the planned views turned by R_plan · R(fault) · R_plan⁻¹
     cam = next(c for c in rig['cameras'] if c['tag'] == 'F')
     Rp, Ra = pose_matrix(cam['pose_vehicle']), pose_matrix(rot['actual_pose'])
-    views = [e for e in r['log'] if e[0] == 'spawn' and e[2] == 'sensor.camera.rgb']
+    views = [e for e in r['log'] if e[0] == 'spawn' and e[2] == 'sensor.camera.rgb' and
+             e[3].get('role_name') != 'vantage_exposure_probe']          # (round 15: the metering probes apart)
     for e, v in zip(views, cam['views']):
         got = FR.vantage_matrix(e[4][3], e[4][4], e[4][5])
         rr = v['carla']['rotation']
@@ -1145,8 +1150,9 @@ def test_walkers_on_the_sidewalks(tmp_path):
     ctrl = [e[1] for e in log if e[0] == 'spawn' and e[2] == 'controller.ai.walker']
     started = [e[1] for e in log if e[0] == 'walker_ai_start']
     stopped = [i for i, e in enumerate(log) if e[0] == 'walker_ai_stop']
-    destroyed = [i for i, e in enumerate(log) if e[0] == 'destroy']
-    assert len(ctrl) == 4 and sorted(started) == sorted(ctrl) and max(stopped) < min(destroyed)
+    probes = {e[1] for e in log if e[0] == 'spawn' and e[3].get('role_name') == 'vantage_exposure_probe'}
+    destroyed = [i for i, e in enumerate(log) if e[0] == 'destroy' and e[1] not in probes]   # (the metering probes
+    assert len(ctrl) == 4 and sorted(started) == sorted(ctrl) and max(stopped) < min(destroyed)  # go before the drive)
     assert ('pedestrians_seed', 4) in log
     T = _tables(r['out'])
     cats = {c['token']: c['name'] for c in T['category']}
@@ -1326,7 +1332,8 @@ def test_tidy_after_a_killed_bridge(tmp_path):
     assert set(w._actors) == {theirs.id, cam.id} and not w.get_settings().synchronous_mode
     n_veh = len([e for e in fc.LOG if e[0] == 'spawn' and e[2].startswith('vehicle.')]) - 1      # (not theirs)
     assert res['was_synchronous'] and res['walkers'] == 2 and res['controllers'] == 2 and res['vehicles'] == n_veh == 2
-    assert res['sensors'] == len([e for e in fc.LOG if e[0] == 'spawn' and e[2].startswith('sensor.')]) - 1
+    assert res['sensors'] == len([e for e in fc.LOG if e[0] == 'spawn' and e[2].startswith('sensor.') and
+                                  e[3].get('role_name') != 'vantage_exposure_probe']) - 1    # (probes: gone before)
     # the command line: --tidy needs a port; with one it says what it did
     env = dict(os.environ, PYTHONPATH=FAKE_DIR + os.pathsep + REPO)
     base = [sys.executable, '-m', 'vantage.sim.carla_bridge', '--tidy']
@@ -1902,3 +1909,139 @@ def test_open_run_shows_a_finished_drive_and_its_ground_truth(app, win, fake_run
     win.store.set_project(samples.tigor_sample_project())
     pump(app, 0.3)
     assert pg.result is None and pg.out_dir == '' and pg.gt.doc is None and pg.out.toPlainText() == ''
+
+
+# ======================================================================= exposure (round 15)
+def _expose(ln, ev):
+    """8-bit levels (B, G, R) of linear exposures exp(ln) at compensation ev, through the measured response."""
+    from vantage.sim import tonemap as TM
+    resp = np.asarray(TM.RESPONSE_LN)
+    x = ln + ev * math.log(2.0)
+    return np.stack([np.clip(np.rint(np.interp(x[..., c], resp[c], np.arange(256.0))), 0, 255)
+                     for c in range(3)], -1).astype(np.uint8)
+
+
+def _luma(img):
+    return float((0.114 * img[..., 0] + 0.587 * img[..., 1] + 0.299 * img[..., 2]).mean())
+
+
+def test_exposure_meter_finds_the_target_level_through_the_response():
+    from vantage.sim import carla_bridge as CB
+    rng = np.random.default_rng(3)
+    for shift in (3.5, 0.0, -2.0):                     # a scene that clips a fifth of EV 0 white, a normal, a dark one
+        ln = rng.normal(shift, 1.2, (60, 80, 1)) + rng.normal(0.0, 0.1, (60, 80, 3))
+        p0, p3 = _expose(ln, 0.0), _expose(ln, -3.0)
+        if shift > 2:
+            assert (p0 == 255).mean() > 0.2
+        ln0 = CB.hdr_ln([(0.0, p0), (-3.0, p3), (3.0, _expose(ln, 3.0))])
+        # the merged exposures predict any bracket's mean level (independently rendered) within a level
+        for ev in (-4.0, -1.5, 0.0, 1.0):
+            assert CB.mean_level(ln0, ev) == pytest.approx(_luma(_expose(ln, ev)), abs=1.0)
+        ev, lim = CB.meter_ev(ln0)
+        assert not lim and _luma(_expose(ln, ev)) == pytest.approx(CB.METER_TARGET, abs=1.5)
+        ev2, _ = CB.meter_ev(ln0, target=80.0)
+        assert ev2 < ev                                  # a darker target: less exposure
+    # weights: only the weighted pixels count; a black frame hits the upper limit
+    a, b = np.full((10, 3), -2.0), np.full((10, 3), 2.0)
+    ln = np.concatenate([a, b])
+    w = np.r_[np.ones(10), np.zeros(10)]
+    assert CB.mean_level(ln, 0.0, w) == pytest.approx(CB.mean_level(a, 0.0))
+    assert CB.meter_ev(np.full((5, 3), -60.0)) == (CB.METER_LIMITS_EV[1], True)
+
+
+def test_exposure_settings_round_trip_and_old_rigs_read_as_manual(tmp_path):
+    from vantage.core import simrig
+    st = simrig.SimSettings()
+    assert st.exposure == 'metered' and st.exposure_target == simrig.EXPOSURE_TARGET   # the measured default
+    for d, want in (({'exposure': 'manual'}, 'manual'), ({'exposure': 'histogram'}, 'histogram'),
+                    ({'exposure': 'auto?'}, 'metered'), ({}, 'metered')):
+        assert simrig.SimSettings.from_dict(d).exposure == want
+    s2 = simrig.SimSettings.from_dict({'exposure': 'metered', 'exposure_target': 999, 'exposure_ev': -0.5})
+    assert s2.exposure_target == 220.0 and simrig.SimSettings.from_dict(s2.to_dict()) == s2
+    p = _project(extra=False)
+    met = simrig.build(p, simrig.SimSettings.from_dict({'image_scale': 0.08, 'exposure_ev': -0.5})).doc['output']
+    assert met['exposure'] == 'manual' and met['exposure_ev'] == -0.5 and met['exposure_meter']['target_level'] == 118.0
+    man = simrig.build(p, simrig.SimSettings.from_dict({'image_scale': 0.08, 'exposure': 'manual'})).doc['output']
+    assert man['exposure'] == 'manual' and man['exposure_ev'] == 0.0 and 'exposure_meter' not in man
+    # what a drive was recorded with: old rigs (no exposure keys at all, or manual / histogram) read as they were
+    assert simrig.exposure_of({'output': {}}) == {'mode': 'manual', 'exposure_ev': 0.0}
+    assert simrig.exposure_of({'output': man}, {'status': 'ok'}) == {'mode': 'manual', 'exposure_ev': 0.0}
+    assert simrig.exposure_of({'output': {'exposure': 'histogram', 'exposure_ev': 1.0}})['mode'] == 'histogram'
+    assert simrig.exposure_of(None, None)['mode'] == 'manual'
+    run = {'exposure': {'mode': 'metered', 'cameras': {'F': {'compensation_ev': -2.75}}}}
+    assert simrig.exposure_of({'output': met}, run) == {'mode': 'metered', 'exposure_ev': -0.5, 'target_level': 118.0,
+                                                        'cameras': {'F': -2.75}}
+    # a project saved before round 15 with the exposure it chose keeps it
+    p.analysis.sim = {'exposure': 'manual', 'exposure_ev': 0.0}
+    assert simrig.settings_of(p).exposure == 'manual'
+
+
+def test_bridge_meters_each_camera_and_records_at_that_exposure(tmp_path, monkeypatch):
+    """The fake renders the scene brighter than the target (a level 255 sky…); with the fake made to respond to
+    exposure_compensation through the measured response, the bridge's metered drive records its cameras at the
+    target mean level, every view of a camera at one compensation, and the probes leave nothing behind."""
+    import cv2
+    from vantage.core import simrig
+    from vantage.sim import carla_bridge as CB
+    from vantage.sim import tonemap as TM
+    fc = _fake()
+    resp = np.asarray(TM.RESPONSE_LN)
+    orig = fc.World._camera
+
+    def exposed(self, s, M, boxes, f, t, tr):
+        im = orig(self, s, M, boxes, f, t, tr)
+        ev = s._bp._f('exposure_compensation', 0.0) + 1.5      # the fake's scene, 1.5 EV brighter than drawn
+        a = np.frombuffer(im.raw_data, np.uint8).reshape(im.height, im.width, 4).copy()
+        ln = np.stack([resp[c][a[..., c]] for c in range(3)], -1)
+        a[..., :3] = _expose(ln, ev)
+        return fc.Image(im.frame, im.timestamp, im.transform, im.width, im.height, im.fov, a.tobytes())
+    monkeypatch.setattr(fc.World, '_camera', exposed)
+    r = _mini_run(tmp_path / 'm', cams=('F', 'ML'), lidar=False)
+    ex = r['report']['exposure']
+    assert ex['mode'] == 'metered' and set(ex['cameras']) == {'F', 'ML'}
+    for tag, c in ex['cameras'].items():
+        assert c['compensation_ev'] == c['metered_ev'] and not c['at_limit']
+        assert c['mean_level_predicted'] == pytest.approx(118.0, abs=1.0) and c['mean_level_ev0'] > 118.0
+    log = r['log']
+    probes = [e for e in log if e[0] == 'spawn' and e[3].get('role_name') == CB.ROLE_PROBE]
+    views = sum(len(c['views']) for c in r['rig']['cameras'])
+    assert len(probes) == 3 * views                    # EV +3, 0 and −3 per view, all destroyed
+    assert {e[1] for e in probes} <= {e[1] for e in log if e[0] == 'destroy'}
+    cams = [e for e in log if e[0] == 'spawn' and e[2] == 'sensor.camera.rgb' and e[3].get('role_name') != CB.ROLE_PROBE]
+    assert len(cams) == views and all(e[3]['exposure_mode'] == 'manual' for e in cams)
+    assert {float(e[3]['exposure_compensation']) for e in cams} == {round(c['compensation_ev'], 4)
+                                                                     for c in ex['cameras'].values()}
+    # the recorded images: the first one's mean level (inside the image circle) at the target (later ones move with
+    # the scene: the exposure stays fixed)
+    run = json.load(open(os.path.join(r['out'], 'run.json')))
+    assert simrig.exposure_of(r['rig'], run)['cameras'].keys() == {'F', 'ML'}
+    for tag in ('F', 'ML'):
+        jp = sorted(glob_jpgs(r['out'], tag))                  # (by their stamps)
+        assert jp
+        img = cv2.imread(jp[0])
+        inside = img.max(axis=2) > 0
+        assert _luma(img[inside][None]) == pytest.approx(118.0, abs=8.0)
+    # a manual rig: no probes, the old attributes, run.json says manual
+    monkeypatch.setattr(fc.World, '_camera', orig)
+    r2 = _mini_run(tmp_path / 'man', settings={'exposure': 'manual'}, cams=('F',), lidar=False)
+    assert r2['report']['exposure'] == {'mode': 'manual', 'exposure_ev': 0.0}
+    assert not [e for e in r2['log'] if e[0] == 'spawn' and e[3].get('role_name') == CB.ROLE_PROBE]
+
+
+def glob_jpgs(out, tag):
+    import glob
+    return [p for p in glob.glob(os.path.join(out, '**', '*.jpg'), recursive=True) if f'CAM_{tag}' in p]
+
+
+def test_a_running_marker_is_never_a_drive(tmp_path, fake_run):
+    """(round 15) The bridge's start marker (status 'running', left by a run killed before its report) reads as no
+    report; a finished in-process run states when it ended (its start unknown without the command line)."""
+    from vantage.core import simrig
+    d = tmp_path / 'killed'
+    d.mkdir()
+    (d / 'run.json').write_text(json.dumps({'schema': simrig.RUN_SCHEMA, 'status': 'running',
+                                            'recorded_utc': {'start': '2026-11-05T10:00:00+00:00'}}))
+    assert simrig.read_run(str(d)) is None
+    rep = fake_run['report']
+    assert rep['status'] == 'ok' and rep['recorded_utc']['start'] is None and rep['recorded_utc']['end']
+    assert simrig.read_run(fake_run['out'])['status'] == 'ok'

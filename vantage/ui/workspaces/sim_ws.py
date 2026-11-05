@@ -53,7 +53,10 @@ FIELDS = (
     ('Cameras', 'face_oversample', 'View detail', '×', 2, 0.1, 1.0,
      'Resolution of the pinhole views CARLA renders against the lens\'s own at the image centre'),
     ('Cameras', 'jpeg_quality', 'JPEG quality', '', 0, 5.0, 1.0, 'JPEG quality of the written images'),
-    ('Cameras', 'exposure_ev', 'Exposure', 'EV', 1, 0.25, 1.0, 'CARLA\'s exposure compensation'),
+    ('Cameras', 'exposure_ev', 'Exposure', 'EV', 1, 0.25, 1.0,
+     'CARLA\'s exposure compensation (with Metered: added to the metered value)'),
+    ('Cameras', 'exposure_target', 'Metered level', '', 0, 2.0, 1.0,
+     'The mean 8-bit level each camera\'s image is metered to (118 = 18 % grey in sRGB)'),
     ('Lidar and radar', 'lidar_noise_cm', 'Range noise', 'cm', 1, 0.5, 1.0, 'Lidar range noise along the ray (1 σ)'),
     ('Lidar and radar', 'max_lidar_channels', 'Max channels', '', 0, 16.0, 1.0,
      'The most even CARLA channels a lidar\'s beams may be laid over (more: exact elevations, more rays)'),
@@ -372,10 +375,13 @@ class SimPage(QWidget):
                 self.rate.changed.connect(lambda k: self._set('cameras at the ' + ('lidar rate' if k == 'lidar' else
                                                                                    'module fps'), camera_rate=k))
                 ll.addWidget(self.rate)
-                self.exposure = SegmentedControl([('manual', 'Manual exposure'), ('histogram', 'Auto per view')],
-                                                 'manual')
-                self.exposure.setToolTip('Manual: every view of a camera exposed alike (no seams). Auto: CARLA\'s '
-                                         'histogram exposure per view, which shows as seams between views')
+                self.exposure = SegmentedControl([('metered', 'Metered'), ('manual', 'Manual exposure'),
+                                                  ('histogram', 'Auto per view')], 'metered')
+                self.exposure.setToolTip('Metered (default): each camera metered once before the drive so its image\'s '
+                                         'mean level is the target, then recorded at that fixed exposure, every view '
+                                         'alike (no seams). Manual: CARLA\'s fixed exposure at the compensation (every '
+                                         'drive before round 15). Auto: CARLA\'s histogram exposure per view: seams '
+                                         'between views, and stuck at its clamp in daylight')
                 self.exposure.changed.connect(lambda k: self._set(f'exposure {k}', exposure=k))
                 ll.addWidget(self.exposure)
             elif g == 'Simulation':

@@ -75,7 +75,8 @@ What this module makes
   Vantage's exact lens (project.lens_for, with the camera's unit calibration) unprojects each pixel centre and the
   pinhole geometry of its view projects it; pixels outside the image circle stay black. The views' resolution matches
   the lens's own at the image centre times face_oversample. All views of a camera render at the same instant with the
-  same manual exposure, no motion blur, bloom or lens flare (each would differ per view and show as seams), and CARLA's
+  same exposure (manual mode: metered once per camera before the drive by default, see EXPOSURES), no motion
+  blur, bloom or lens flare (each would differ per view and show as seams), and CARLA's
   lens-distortion effect off (lens_k = lens_kcube = lens_circle_multiplier = 0). Measured on the 0.9.16 server (RTX
   5080, Town10HD), and handled by the bridge:
   - Unreal's default vignette (intensity 0.4, applied in linear light before the tone curve; no blueprint attribute)
@@ -149,7 +150,14 @@ WEATHER_KEYS = ('cloudiness', 'precipitation', 'precipitation_deposits', 'wind_i
                 'sun_altitude_angle', 'fog_density', 'fog_distance', 'fog_falloff', 'wetness')
 CAMERA_RATES = ('lidar', 'module')
 CHANNEL_NAMES = ('tags', 'nuscenes')
-EXPOSURES = ('manual', 'histogram')
+EXPOSURES = ('metered', 'manual', 'histogram')
+# metered (the default from round 15): each camera metered once before the drive and recorded in manual mode at that
+# compensation (vantage.sim.carla_bridge._meter_exposure); manual: CARLA's manual exposure at exposure_ev (every rig
+# and drive before round 15); histogram: CARLA's auto exposure per view. Measured on CARLA 0.9.16 (round 15, Town01,
+# Town02, Town03, Town10HD at ClearNoon and ClearSunset): manual at EV 0 renders the road at a median level of 241–247
+# of 255 at noon in Town01–03; CARLA's histogram mode sits at its default clamp (EV100 10–12), 1.40 EV under manual,
+# in every one of those scenes; the meter puts each camera's mean level at the target (118) within about one level.
+EXPOSURE_TARGET = 118.0
 QUALITIES = ('Epic', 'Low')
 # blueprint id -> (base type, length, width (mirrors included), height, wheelbase, rear axle x in the actor frame), m:
 # measured on a CARLA 0.9.16 server (no rendering) on 2026-10-27: each blueprint spawned on Town10HD, its bounding box
@@ -211,7 +219,7 @@ LIMITS = {'duration_s': (1.0, 600.0), 'traffic': (0, 300), 'seed': (0, 999999), 
           'face_oversample': (0.5, 2.0), 'jpeg_quality': (30, 100), 'keyframe_hz': (0.2, 20.0),
           'tick_hz': (0.0, 400.0), 'min_tick_hz': (1.0, 400.0), 'max_tick_hz': (1.0, 400.0),
           'lidar_noise_cm': (0.0, 20.0), 'max_lidar_channels': (2, 1024), 'radar_points': (50, 20000),
-          'exposure_ev': (-5.0, 5.0), 'warmup_s': (0.0, 30.0), 'memory_gb': (4.0, 64.0), 'port': (1024, 65000),
+          'exposure_ev': (-5.0, 5.0), 'exposure_target': (40.0, 220.0), 'warmup_s': (0.0, 30.0), 'memory_gb': (4.0, 64.0), 'port': (1024, 65000),
           'tm_port': (1024, 65000), 'timeout_s': (5.0, 600.0), 'spawn_point': (-1, 100000), 'walkers': (0, 300)}
 INTS = ('traffic', 'seed', 'jpeg_quality', 'max_lidar_channels', 'radar_points', 'port', 'tm_port', 'spawn_point',
         'walkers')
@@ -225,7 +233,9 @@ BOOLS = ('nuscenes', 'rosbag', 'drop_self_hits', 'undistort')
 ASSUMPTIONS = (
     'CARLA renders its own world, traffic and ego vehicle (the nearest CARLA vehicle by size, not the project\'s '
     'body). Cameras: pinhole views from one optical centre remapped through Vantage\'s lens model; each frame is one '
-    'instant (no rolling shutter or motion blur) with a manual exposure. Lidar: CARLA\'s even channels resampled to '
+    'instant (no rolling shutter or motion blur) with one exposure per camera, fixed for the drive (metered before '
+    'it by default: the mean level of the camera\'s image at a target; CARLA\'s own auto exposure is per view and '
+    'clamped). Lidar: CARLA\'s even channels resampled to '
     'the beam elevations, the azimuth grid exact; one return per beam, intensity = CARLA\'s atmospheric attenuation '
     '(not reflectivity); no weather effect. Radar: CARLA\'s random rays in an elliptical cone per zone, no RCS. Rates '
     'and trigger times round to the simulation step. Weather: a Vantage condition\'s fog becomes CARLA\'s fog by a '
@@ -250,8 +260,10 @@ class SimSettings:
     face_oversample: float = 1.0       # view resolution against the lens's own at the image centre
     undistort: bool = False            # rectified pinhole images (camera_intrinsic exact) instead of the real lens's
     jpeg_quality: int = 90
-    exposure: str = 'manual'           # manual: every view of a camera alike; histogram: CARLA's auto per view (seams)
-    exposure_ev: float = 0.0           # CARLA's exposure_compensation
+    exposure: str = 'metered'          # metered: each camera metered once, then manual at that (see EXPOSURES);
+    #                                    manual: every view of a camera alike at exposure_ev; histogram: CARLA's auto
+    exposure_ev: float = 0.0           # CARLA's exposure_compensation (with metered: a bias on the metered value)
+    exposure_target: float = EXPOSURE_TARGET     # metered: the mean 8-bit output level aimed at
     keyframe_hz: float = 2.0
     channel_names: str = 'tags'
     nuscenes: bool = True
@@ -337,6 +349,39 @@ class SimSettings:
 
 def settings_of(project) -> SimSettings:
     return SimSettings.from_dict(getattr(project.analysis, 'sim', None))
+
+
+def exposure_output(st: SimSettings) -> dict:
+    """The rig's output keys for the exposure: CARLA's mode and compensation (what the bridge and the live view pass to
+    CARLA), plus exposure_meter only when metered, so a manual or histogram rig is written exactly as before round 15
+    (and its earlier drives are still the same rig)."""
+    if st.exposure == 'metered':
+        return {'exposure': 'manual', 'exposure_ev': st.exposure_ev,
+                'exposure_meter': {'target_level': st.exposure_target, 'per': 'camera', 'fixed': 'for the drive'}}
+    return {'exposure': st.exposure, 'exposure_ev': st.exposure_ev}
+
+
+def exposure_of(rig: dict | None, run: dict | None = None) -> dict:
+    """What exposure a drive was recorded with, from its sim_rig.json (and run.json when there is one): {'mode':
+    'metered' | 'manual' | 'histogram', 'exposure_ev', 'target_level' (metered), 'cameras' {tag: compensation EV}
+    (metered, from the run)}. A drive from before round 15 has no exposure_meter and no run.json exposure block: it reads
+    as its output.exposure (manual unless histogram was chosen) at its exposure_ev (0 by default)."""
+    out = (rig or {}).get('output') or {}
+    ev = out.get('exposure_ev', 0.0)
+    ev = float(ev) if isinstance(ev, (int, float)) and not isinstance(ev, bool) else 0.0
+    mode = out.get('exposure') if out.get('exposure') in ('manual', 'histogram') else 'manual'
+    doc = {'mode': mode, 'exposure_ev': ev}
+    meter = out.get('exposure_meter')
+    if isinstance(meter, dict):
+        doc = {'mode': 'metered', 'exposure_ev': ev,
+               'target_level': float(meter.get('target_level', EXPOSURE_TARGET))}
+    rx = (run or {}).get('exposure')
+    if isinstance(rx, dict) and rx.get('mode') in EXPOSURES:
+        doc['mode'] = rx['mode']
+        if isinstance(rx.get('cameras'), dict):
+            doc['cameras'] = {t: float(c.get('compensation_ev', 0.0)) for t, c in rx['cameras'].items()
+                              if isinstance(c, dict)}
+    return doc
 
 
 # =========================================================================== weather
@@ -1202,7 +1247,7 @@ def build(project, settings: SimSettings | None = None, variant=None, progress=N
                    'rosbag': st.rosbag, 'channel_names': st.channel_names, 'bag_name': DSET.bag_name(p),
                    'keyframe_hz': st.keyframe_hz, 'keyframe_ref_hz': ref_rate, 'lidar_noise_cm': st.lidar_noise_cm,
                    'drop_self_hits': st.drop_self_hits, 'camera_rate': st.camera_rate, 'undistort': st.undistort,
-                   'exposure': st.exposure, 'exposure_ev': st.exposure_ev, 'gt_range_m': GT_RANGE_M,
+                   **exposure_output(st), 'gt_range_m': GT_RANGE_M,
                    'dataset_version': DSET.VERSION, 'epoch_us': DSET.EPOCH_US},
         'cameras': doc_cams, 'lidars': doc_lid, 'radars': doc_rad, 'imus': doc_imu, 'gnss': doc_gnss,
         'nuscenes': {'sensor': sensor_tab, 'calibrated_sensor': cal_tab, 'categories': DSET.CATEGORIES,
@@ -1280,11 +1325,15 @@ def export(rig: SimRig, project, out_dir) -> list[str]:
 
 
 def read_run(out_dir) -> dict | None:
-    """The bridge's run.json in out_dir (vantage.sim_run/1), or None."""
+    """The bridge's run.json in out_dir (vantage.sim_run/1), or None. None also for status 'running': the bridge's start
+    marker (round 15), still there when the run is going or was killed before its report; every caller then treats it
+    as no report (a killed run: its half-written output removed), never as a drive."""
     path = os.path.join(out_dir, 'run.json')
     try:
         with open(path, encoding='utf-8') as fh:
             doc = json.load(fh)
     except (OSError, ValueError):
         return None
-    return doc if isinstance(doc, dict) and doc.get('schema') == RUN_SCHEMA else None
+    if not isinstance(doc, dict) or doc.get('schema') != RUN_SCHEMA or doc.get('status') == 'running':
+        return None
+    return doc

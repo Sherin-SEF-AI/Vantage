@@ -400,7 +400,7 @@ def test_the_card_says_every_value_of_every_kind_in_words_with_the_json_kept(wor
     recs = _drive_recordings(p, work, 2)
     wordy = dict(WORDY, detection=[V('recordings', [r['name'] for r in CT.find_runs(p, work)][:2]),
                                    V('views', 'both')])
-    assert set(wordy) == set(CP.KINDS)
+    assert set(wordy) == set(CP.KINDS) - set(CP.STUDY_KINDS)      # the study kinds: tests/test_copilot_r15.py
     seen = {}
     for kind, values in wordy.items():
         st = _step(p, kind, values, work)

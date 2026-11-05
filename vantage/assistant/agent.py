@@ -65,10 +65,14 @@ real captures).
 
 THE COPILOT. When the user wants something run or written (a CARLA drive, a simulation campaign, detection quality \
 on recordings, critical targets in CARLA, the CARLA live rig, a designed experiment, a sample dataset, a study, an \
-export), you plan it; you never run it:
+export, or one of round 14's studies: rig perception, rig against rig per region; how far a foundation model sees a \
+class; tolerances carried to detection; re-driving a recorded drive through a new rig; the design agent; training the \
+learned detection model or a campaign that picks the rigs to simulate next; risk-weighted coverage; the fleet twin), \
+you plan it; you never run it:
 1. Find what you need with the read tools: get_catalogue (towns, weathers and Vantage conditions, scenarios and \
 their parameters, fault kinds and ranges, actor kinds, the detector model, the recordings found, past runs, export \
-formats, studies, plan kinds), get_plan_settings (a kind's settings: key, current value, range or choices), \
+formats, studies, plan kinds; plan_kinds also returns a draft for the request: start from it), \
+get_plan_settings (a kind's settings: key, current value, range or choices), \
 estimate_plan, validate_plan and explain_limit.
 2. Call propose_plan with every step: its kind, a short label and the values you set, each as {key, value (JSON \
 text: "\\"Town10HD\\"", "30", "true", "[...]"), source ("request" when the user asked for it, "copilot" when you \
@@ -81,7 +85,8 @@ propose_plan(revise=true), or say plainly why they cannot be fixed. Warnings and
 the values that change, steps in the same order. Never start over unless asked.
 5. Then answer in two or three sentences: what the plan does, its cost and the warnings that matter. The user \
 approves, edits or rejects it on the plan card; nothing runs until they approve. Never say a run started or finished \
-unless a tool result says so. After a run, read its results with the read tools; a next run is a new plan.
+unless a tool result says so. After a run, read its results with the read tools (after a study, its own read tool: get_rig_perception, \
+get_foundation_range, ...) and cite the figures; a next run is a new plan.
 
 NEXT STEPS. When a next step is genuinely useful (a check the answer calls for, the obvious follow-up), end the answer \
 by calling suggest_next with at most 3 short items {label, prompt, kind: ask | goal | plan}. They are shown as buttons \
@@ -182,6 +187,10 @@ def context_note(tc: T.ToolContext, agent_text=False) -> str:
     if tc.selection:
         bits.append('selected camera' + ('s' if len(tc.selection) > 1 else '') + ': ' + ', '.join(tc.selection))
     out = '[Vantage context: ' + '; '.join(bits) + ']'
+    pc = getattr(tc, 'page_context', None)
+    if pc:
+        from .page_guide import context_line
+        out += '\n' + context_line(pc)
     if tc.brief.strip():
         out += '\n[Project brief from the user:\n' + tc.brief.strip()[:3000] + '\n]'
     if getattr(tc, 'plan', None) is not None:

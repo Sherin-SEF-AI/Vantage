@@ -1272,12 +1272,15 @@ vantage project.vantage            # open a project</code></pre>
       process per class on the empirical logit of recall over a monotone logistic prior in pixels.</p>
     <p>It learns from perception records (<code>vantage.perception_record/1</code>) that Rig perception, Foundation
       models and Robust perception write: one rig evaluated on one scene set by one detector, per class and region. Its
-      calibration is measured by leaving one scene set out and by leaving one rig out, against two baselines (the
-      logistic in pixels alone and a constant). On 100 records (92 rigs, 3 scene sets), leaving a scene set out:
-      pedestrian 95 % interval coverage 0.92 and RMSE 0.24 (logistic 0.23, constant 0.45); vehicle 0.88 and 0.27 (0.28,
-      0.34). That is a small set, and its rigs are camera subsets of one drive: the logistic in pixels does about as
-      well, and choosing the rigs to simulate by expected improvement did not beat random choice (RMSE 0.121 against
-      0.122 at 32 rigs).</p>
+      calibration is measured by leaving out a whole town, a scene set or a rig, against two baselines (the logistic in
+      pixels alone and a constant). On a campaign of 1050 records (136 rigs, 48 CARLA scene sets in six towns, noon
+      and sunset), leaving a town out: pedestrian RMSE of recall 0.230 (logistic 0.307, constant 0.411), 95 % interval
+      coverage 0.965 and 68 % coverage 0.705; vehicle 0.239 (0.281, 0.384), 0.959 and 0.714. It beats the baseline in
+      every town. The gain comes from towns and scene sets, not rigs: with one training town it is no better than the
+      baseline, an eighth of the records does as well as all of them, and choosing the rigs to simulate by expected
+      improvement did not beat random choice. It is calibrated for CARLA noon and sunset scenes, YOLOX-S lifted to 3D,
+      camera rigs within the training resolutions and ranges within 60 m; on whole rigs driven at a higher resolution
+      its 95 % intervals covered 0.90.</p>
     <p>A trained model predicts a variant without simulating it, ranks which variants to simulate next, joins the
       placement optimiser's objective (the <i>Learned detection</i> weight: the predicted recall less its standard
       deviation, so an optimistic guess is not rewarded) and gives the design agent its detection axis. The records are
@@ -1693,7 +1696,14 @@ vantage project.vantage            # open a project</code></pre>
       campaign: turn F and ML by 0.1 to 1°, three seeds, plus clean drives</i>; <i>compare detection on the two latest
       drives</i>; <i>critical targets in CARLA</i>; <i>start the live rig and freeze QR after 10 s</i>; <i>an
       experiment: F pitch 25–45° by 5° × the two lenses, blind area</i>; <i>a 20 s sample dataset at 40 km/h</i>; a
-      study; an export. The model works only through tools: it reads the catalogue (towns, weathers and Vantage
+      study; an export; or a perception study: <i>compare pedestrian detection of rig A and B on the left</i>, <i>how
+      far can F see a cyclist</i>, <i>what if the mounts are 2 mm off</i>, <i>can we reuse last month's drive with the
+      new rig</i>, <i>design a rig for this brief</i>, <i>train the detection model</i>, <i>which rigs should we
+      simulate next</i>. A plan has steps of 18 kinds: the nine above and rig perception, foundation-model range,
+      robust perception, re-drive, design agent, train the learned model, learned-model campaign, risk-weighted
+      coverage and fleet twin. An approved study step runs in the background, can be cancelled, and its result lands
+      on the study's page, where the read tools find it; the design agent's step never creates a variant. Without a
+      model, <code>/plan …</code> maps these requests to their kinds by Vantage's own rules, sending nothing. The model works only through tools: it reads the catalogue (towns, weathers and Vantage
       conditions, scenarios and their parameters, fault kinds and ranges, actor kinds, the detector model, the
       recordings found, past runs), each kind's settings and the documented limits, then proposes a <b>plan</b>.</p>
     <p>A plan is one or more steps: a <b>CARLA drive</b>, a <b>simulation campaign</b>, <b>detection quality</b>,
@@ -1741,6 +1751,11 @@ vantage project.vantage            # open a project</code></pre>
       simulation campaign, the CARLA page and its runs, the live rig) and the Copilot's plans. Every figure a
       recommendation quotes is read off those results; computing them sends nothing.</p>
     <ul>
+      <li><b>On every page</b> the panel knows what the page is for, what it needs first and where its result is
+        (47 pages), and the strip leads with that page's next step: a missing prerequisite and where to fix it, the
+        page's Run (a plan for CARLA, GPU and training pages), up to three of the page's findings to ask about, the next
+        page of the workflow, its export and <i>What can I do here?</i>. It refreshes 60 ms after you change page
+        (300 ms after an edit). The model reads the same through <code>get_page_context</code>.</li>
       <li><b>The live strip</b> at the top of the panel follows what you are doing: the open page, the selection (a
         camera, a sensor, a rig part, a target, a requirement, a plan), your last edit with the analysis before and
         after it, and a job that has just finished. It shows one to three recommendations about that thing, a moment
@@ -1931,6 +1946,13 @@ vantage project.vantage            # open a project</code></pre>
       rig's geometry in another renderer. The <b>as-built check</b> reports a CARLA drive as <i>not checkable</i>: CARLA's
       car is not your vehicle's body, so its outline cannot match the plan's; the drive-log rotation check is the
       cross-check there.</p>
+    <p>Exposure: by default each camera is metered before the drive. Its views are rendered small at three exposures,
+      merged in linear light through CARLA's measured camera response, and the camera is recorded at the fixed exposure
+      that puts its image's mean level at the target (118 of 255, a field on the page). Every view of a camera then has
+      the same exposure, so a fisheye has no seams, and the exposure does not drift during the drive. CARLA's own auto
+      exposure (Auto per view) meters each view separately and, at its default limits, does not adapt in daylight.
+      Manual exposure is what every drive before this version used: on sunny towns it renders the road near white.
+      run.json records each camera's compensation.</p>
     <p>A fisheye camera is rendered as several pinhole views from one optical centre (CARLA has only pinhole cameras) and
       remapped through the lens model, within 0.1 px. Each cube face reaches 1.5° past its seams and the faces are
       feathered there: CARLA renders the views of a moving camera slightly differently (its temporal anti-aliasing
@@ -2239,8 +2261,9 @@ vantage project.vantage            # open a project</code></pre>
       camera's axis and down the road. The fit of P(detect) against the logarithm of range gives R50 and R90 with
       bootstrap intervals that resample objects, and the same fit against height in pixels the pixel height the
       detector needs; the geometric range is Vantage's pixel rule for the same camera, class and line, so a ratio below 1
-      means geometry over-promises. In a 60-drive CARLA sweep on the sample's front fisheye, YOLOX-S finds half the
-      pedestrians out to 43 m [37–51] where the pixel rule promises 68 m (it needs about 38 px, not 24), and monocular
+      means geometry over-promises. In a 60-drive CARLA sweep with metered exposure on the sample's front fisheye, YOLOX-S finds
+      half the pedestrians out to 49 m [44–54] where the pixel rule promises 68 m (it needs about 34 px, not 24), on the
+      side camera 27 m [23–35] against 60 m, and cyclists only to about 12–14 m against 58–64 m (a lower bound); monocular
       depth stays within 10 % only to about 5 m. These are models trained on photographs measured on renders: compare
       cameras, classes and models. Batch: <code>--foundation-range OUT_DIR</code> with
       <code>--foundation-recording</code>, <code>--foundation-models</code>, <code>--foundation-depth</code> and
@@ -2511,7 +2534,7 @@ vantage project.vantage --fleet-twin-online V3 online.json --fleet-twin twin/ --
       <tr><td><code>--detection-quality OUT_DIR</code></td><td>The detector on CARLA drives with ground truth, evaluated: JSON, CSV, PNG, COCO results, overlays. <code>--detection-recording RUN_DIR</code> (repeatable, the first the reference; default the project's recordings), <code>--detection-download</code> fetches the model first.</td></tr>
       <tr><td><code>--campaign OUT_DIR</code></td><td>The project's simulation campaign (or <code>--campaign-template fault_detectability|weather_sweep|rig_ab</code>): its drives in the campaign's folder when it names one, else OUT_DIR/drives; the analysis into OUT_DIR. <code>--campaign-phase drive|evaluate|analyse</code> runs part of it; a run again resumes.</td></tr>
       <tr><td><code>--critical-carla OUT_DIR</code></td><td>The critical targets stood in CARLA and compared with the study (drives in OUT_DIR/drives, reused); <code>--critical-carla-drives DIR</code> compares drives recorded before, without CARLA.</td></tr>
-      <tr><td><code>--run-plan ID[:VERSION] [OUT_DIR]</code></td><td>Run a Copilot plan approved in the app from its approval record in the project (its stored settings; no model is asked), each step through the option that runs that kind into OUT_DIR/step-&lt;n&gt;-&lt;kind&gt; (default: the plan's folder in the working folder); every output's provenance names the plan. CARLA steps need a server already running, as <code>--carla-run</code> does.</td></tr>
+      <tr><td><code>--run-plan ID[:VERSION] [OUT_DIR]</code></td><td>Run a Copilot plan approved in the app from its approval record in the project (its stored settings; no model is asked), each step through the option that runs that kind into OUT_DIR/step-&lt;n&gt;-&lt;kind&gt; (default: the plan's folder in the working folder); every output's provenance names the plan; a perception-study step runs its study headless (<code>--save</code> keeps what a fleet-twin watch step adds). CARLA steps need a server already running, as <code>--carla-run</code> does.</td></tr>
       <tr><td><code>--rig-perception OUT_DIR</code></td><td>3D detection per class and region, rig against rig (Simulate ▸ Rig perception): <code>--perception-recording DIR[:RIG]</code> (repeatable, the first rig the reference; default the project's), <code>--perception-backend lifted|external:NAME</code>, <code>--perception-records</code> (add the records to the learned model's store).</td></tr>
       <tr><td><code>--perception-scene-set SET OUT_DIR</code></td><td>Drive a perception scene set (<code>standard</code>, <code>quick</code>) in CARLA for <code>--scene-variants</code> with <code>--scene-seeds</code> (drives already there are reused).</td></tr>
       <tr><td><code>--redrive DRIVE_DIR OUT_DIR</code></td><td>The data-reuse report of a proposed rig (<code>--redrive-variant</code>, else the tab's) on a recorded drive; <code>--reshoot</code> also writes the re-shot drive into OUT_DIR/reshot.</td></tr>

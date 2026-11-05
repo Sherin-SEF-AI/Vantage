@@ -544,9 +544,16 @@ class RiskSettings:
     cell_m: float = 0.5                 # fine ground map
     area_m: float = 60.0                # the unweighted area figure counts the ground out to here
     map_m: float = 80.0                 # the fine hazard map's half width
+    issue_min: dict = field(default_factory=dict)   # class -> % below which the Issues list says so (empty: default)
 
     def to_dict(self):
         return asdict(self)
+
+    def result_dict(self) -> dict:
+        """What the result depends on (the Issues thresholds do not change it)."""
+        d = self.to_dict()
+        d.pop('issue_min', None)
+        return d
 
     @staticmethod
     def from_dict(d) -> 'RiskSettings':
@@ -561,6 +568,14 @@ class RiskSettings:
         v = d.get('extended')
         if isinstance(v, bool):
             s.extended = v
+        im = d.get('issue_min')
+        for c, x in (im.items() if isinstance(im, dict) else []):
+            try:
+                x = float(x)
+            except (TypeError, ValueError):
+                continue
+            if c in CLASSES and math.isfinite(x):
+                s.issue_min[c] = min(max(x, 0.0), 100.0)
         for k, (lo, hi) in LIMITS.items():
             if k in d:
                 try:
@@ -975,6 +990,16 @@ class Coverage:
         k = self.count(xy, cls, 'resolved' if metric == 'redundant' else metric)
         return k >= (2 if metric == 'redundant' else 1)
 
+    def seen_by(self, xy, cls: str):
+        """(camera uids, tags, seen (n_cams, n)): which cameras have each point in view (resolved or not): for an
+        uncovered point, the cameras that look there but see the object too small (or one short of two)."""
+        oc = self.classes[cls]
+        xy = np.asarray(xy, float).reshape(-1, 2)
+        seen = np.zeros((len(self.cams), len(xy)), bool)
+        for i, (c, intr, cube) in enumerate(zip(self.cams, self.intr, self.cubes)):
+            seen[i] = self.PE.object_pixels(c, intr, xy, oc, cube)[2]
+        return [c.uid for c in self.cams], [c.tag for c in self.cams], seen
+
     def inside_body(self, xy) -> np.ndarray:
         xy = np.asarray(xy, float).reshape(-1, 2)
         if self.body is None:
@@ -996,12 +1021,15 @@ class RiskResult:
     seconds: float = 0.0
     notes: list = field(default_factory=list)
     finished_at: float = 0.0
+    variant_uid: str = ''
 
 
 def run(project, engine=None, settings: RiskSettings | None = None, variant=None, progress=None, cancel=None,
-        coverage=None) -> RiskResult | None:
+        coverage=None, use_cache=True) -> RiskResult | None:
     """The hazard densities and the rig's coverage weighted by them (None when cancelled). coverage: an object with
-    covered(xy, cls, metric) and inside_body(xy) (tests); by default the cameras' perception test."""
+    covered(xy, cls, metric) and inside_body(xy) (tests); by default the cameras' perception test, and then the result
+    is cached on everything it depends on (cache_key): a second run of the same design returns it at once
+    (use_cache=False computes it again; the new result replaces the cached one)."""
     t0 = time.perf_counter()
     st = settings or settings_of(project)
     stop = cancel or (lambda: False)
@@ -1015,6 +1043,13 @@ def run(project, engine=None, settings: RiskSettings | None = None, variant=None
         v = next((x for x in project.variants if x.uid == variant or x.name == variant), project.variant)
     else:
         v = variant
+    key = None
+    if coverage is None and project is not None and v is not None:
+        key = cache_key(project, st, v)
+        hit = _cache_get(key) if use_cache else None
+        if hit is not None:
+            prog(1.0)
+            return hit
     if coverage is None:
         from .analysis import Engine
         coverage = Coverage(project, engine or Engine(), v)
@@ -1057,6 +1092,12 @@ def run(project, engine=None, settings: RiskSettings | None = None, variant=None
             notes.append(f'{CLASS_LABEL[c]}: {inb.mean() * 100:.1f} % of the hazard points fall on the body footprint '
                          '(the target touching it near the conflict): counted as uncovered.')
         cov = coverage.covered(XY, c, st.metric) & ~inb
+        unc_all = ~cov
+        cam_uids, cam_tags, cam_seen = [], [], None
+        if hasattr(coverage, 'seen_by') and unc_all.any():
+            cam_uids, cam_tags, cam_seen = coverage.seen_by(XY[unc_all], c)
+        seen_idx = np.full(len(XY), -1)
+        seen_idx[unc_all] = np.arange(int(unc_all.sum()))
         tot = float(WT.sum())
         weighted = float((WT * cov).sum() / tot) if tot > 0 else None
         # the unweighted figure: the ground out to area_m, off the body
@@ -1087,6 +1128,15 @@ def run(project, engine=None, settings: RiskSettings | None = None, variant=None
             for tid, w in zip(TID[unc], WT[unc]):
                 by_t[tid] = by_t.get(tid, 0.0) + float(w)
             top = sorted(by_t.items(), key=lambda kv: -kv[1])[:3]
+            looks = []                                   # cameras with the uncovered hazard in view (too small)
+            wu = float(WT[unc].sum())
+            if cam_seen is not None and wu > 0:
+                cols = seen_idx[unc]
+                for k in range(len(cam_uids)):
+                    sh = float((WT[unc] * cam_seen[k, cols]).sum() / wu)
+                    if sh > 0.01:
+                        looks.append({'uid': cam_uids[k], 'tag': cam_tags[k], 'share': sh})
+                looks.sort(key=lambda x: -x['share'])
             regions[rid] = {'name': name, 'hazard_share': wr / tot if tot else 0.0,
                             'covered': float((WT[m] * cov[m]).sum() / wr) if wr > 0 else None,
                             'uncovered_share': float(WT[unc].sum() / tot) if tot else 0.0,
@@ -1094,7 +1144,8 @@ def run(project, engine=None, settings: RiskSettings | None = None, variant=None
                             'area_m2': grid.area_m2(s, r),
                             'density_per_m2': wr / tot / grid.area_m2(s, r) if tot else 0.0,
                             'top_uncovered': [{'template': k, 'share_of_class': v_ / tot,
-                                               'what': TEMPLATES[k]['what']} for k, v_ in top]}
+                                               'what': TEMPLATES[k]['what']} for k, v_ in top],
+                            'cameras_looking': looks[:4]}
         outside = float(WT[r_i < 0].sum() / tot) if tot else 0.0
         gaps = sorted(((rid, d) for rid, d in regions.items() if d['uncovered_share'] > 0),
                       key=lambda kv: -kv[1]['uncovered_share'])[:5]
@@ -1118,7 +1169,9 @@ def run(project, engine=None, settings: RiskSettings | None = None, variant=None
         done += 1
         prog(0.6 + 0.4 * done / work)
     res = RiskResult(st, getattr(v, 'name', ''), grid, body, cls_out, W, fine, time.perf_counter() - t0, notes,
-                     time.time())
+                     time.time(), getattr(v, 'uid', ''))
+    if key is not None:
+        _cache_put(key, res)
     prog(1.0)
     return res
 
@@ -1133,6 +1186,228 @@ def _gap_text(c, weighted, area, gaps, st) -> str:
         tops = ', '.join(t['template'] for t in d['top_uncovered'][:2])
         s += f'; the largest gap is {d["name"]} ({d["uncovered_share"] * 100:.1f} % of the exposure: {tops})'
     return s + '.'
+
+
+# =========================================================================== the cache and the Issues list
+# The study takes about a second, so the Issues list reads a cached result only. The key is everything the result
+# depends on: the variant's cameras (pose, module, lens, unit calibration, visibility), the body geometry the cameras'
+# occlusion maps and the region grid come from (the vehicle mesh's contents, the occluder, the rig parts, the
+# housings), the perception study's object classes (heights, widths, pixel thresholds), this study's settings (not
+# the Issues thresholds) and the hazard tables (a digest of every table and constant of this module).
+CACHE_VERSION = 1
+CACHE_KEPT = 16
+SERIOUS_POINTS = 10.0         # a class this many percentage points below its threshold is serious (else a warning)
+# Default Issues thresholds, % of the class's pre-crash exposure covered: round 14's requirement proposal on the
+# sample's Data rig (requirement_proposal: the measured 88.3 / 83.5 / 93.2 / 79.3 % minus 5, rounded down to 5;
+# crash frequency, resolved). Used when neither the requirements scorecard nor the page sets one.
+ISSUE_MIN_DEFAULT = {'pedestrian': 80.0, 'cyclist': 75.0, 'vehicle': 85.0, 'motorcyclist': 70.0}
+_CACHE: dict = {}
+_CACHE_LOCK = None
+_TABLES_VERSION = []
+
+
+def _lock():
+    global _CACHE_LOCK
+    if _CACHE_LOCK is None:
+        import threading
+        _CACHE_LOCK = threading.Lock()
+    return _CACHE_LOCK
+
+
+def tables_version() -> str:
+    """A digest of the hazard tables and every constant of this module (the cache's 'hazard tables version')."""
+    if not _TABLES_VERSION:
+        import hashlib
+        h = hashlib.sha256()
+        g = globals()
+        for k in sorted(g):
+            if k.isupper() and not k.startswith('_') and not callable(g[k]) and k not in ('CACHE_KEPT',):
+                h.update(k.encode())
+                h.update(repr(g[k]).encode())
+        _TABLES_VERSION.append(h.hexdigest()[:16])
+    return _TABLES_VERSION[0]
+
+
+def _variant_of(project, variant=None):
+    if variant is None:
+        return project.variant
+    if isinstance(variant, str):
+        return next((x for x in project.variants if x.uid == variant or x.name == variant), project.variant)
+    return variant
+
+
+def cache_key(project, settings: RiskSettings | None = None, variant=None) -> str:
+    """The cache key of a design and settings (sha256 of everything the result depends on; see above)."""
+    import hashlib
+    from . import housings as H
+    from .experiments import _mesh_key
+    from .rig import rig_key
+    st = settings or settings_of(project)
+    v = _variant_of(project, variant)
+    veh = project.vehicle
+    doc = {'v': CACHE_VERSION, 'schema': SCHEMA, 'tables': tables_version(), 'settings': st.result_dict(),
+           'variant': getattr(v, 'uid', ''), 'name': getattr(v, 'name', ''),
+           'cams': [H._cam_key(project, c) + (bool(c.visible),) for c in v.cameras],
+           'classes': {k: repr(c) for k, c in _object_classes(project).items()},
+           'mesh': _mesh_key(getattr(veh, 'mesh', None)), 'occluder': getattr(veh, 'occluder_target', None),
+           'rig': rig_key([r for r in getattr(project, 'rig', ()) if r.visible]),
+           'housings': repr(H.key(project, v))}
+    return hashlib.sha256(json.dumps(doc, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _cache_get(key):
+    with _lock():
+        res = _CACHE.pop(key, None)
+        if res is not None:
+            _CACHE[key] = res                         # most recent last
+        return res
+
+
+def _cache_put(key, res):
+    with _lock():
+        _CACHE.pop(key, None)
+        _CACHE[key] = res
+        while len(_CACHE) > CACHE_KEPT:
+            _CACHE.pop(next(iter(_CACHE)))
+
+
+def clear_cache():
+    with _lock():
+        _CACHE.clear()
+
+
+def cached(project, settings: RiskSettings | None = None, variant=None) -> RiskResult | None:
+    """The result for exactly this design and these settings when it has been computed (by the page, the batch, the
+    scorecard or the background run after an analysis), else None. Cheap (a key and a lookup)."""
+    try:
+        return _cache_get(cache_key(project, settings, variant))
+    except Exception:                                            # noqa: BLE001 — a half-built project: no result
+        return None
+
+
+def wants_prime(project, variant=None) -> bool:
+    """Whether the background run after an analysis has work: a visible camera and no cached result."""
+    v = _variant_of(project, variant)
+    return any(c.visible for c in v.cameras) and cached(project, None, v) is None
+
+
+def prime(project, engine=None, variant=None, cancel=None) -> RiskResult | None:
+    """Compute and cache the result of the design as it is (the project's settings) when it is not cached: the
+    analysis worker calls this after the Issues (as it does worst_single_camera), then lists the Issues again.
+    Returns the result (cached or new); None when cancelled or no camera is visible."""
+    v = _variant_of(project, variant)
+    if not any(c.visible for c in v.cameras):
+        return None
+    return run(project, engine, settings_of(project), v, cancel=cancel)
+
+
+def thresholds(project, settings: RiskSettings | None = None) -> dict:
+    """{class: {'pct', 'source', 'priority'}}: the lowest risk-weighted coverage, %, the Issues list accepts. In order:
+    a requirements scorecard row on risk_coverage.weighted_pct for the class (or for every class; the highest
+    target when several), the page's threshold (settings.issue_min), else ISSUE_MIN_DEFAULT."""
+    st = settings or settings_of(project)
+    out = {c: {'pct': float(st.issue_min[c]), 'source': 'the risk page\'s threshold', 'priority': ''}
+           if c in st.issue_min else {'pct': ISSUE_MIN_DEFAULT[c], 'source': 'the default threshold',
+                                      'priority': ''} for c in CLASSES}
+    try:
+        from . import requirements as RQ
+        items = RQ.settings_of(project).items
+    except Exception:                                            # noqa: BLE001 — no scorecard
+        items = []
+    req = {}
+    for it in items:
+        if it.get('metric') != 'risk_coverage.weighted_pct' or it.get('op') not in ('>=', '>'):
+            continue
+        cls = str((it.get('params') or {}).get('cls') or '').lower()
+        try:
+            t = float(it.get('target'))
+        except (TypeError, ValueError):
+            continue
+        for c in ([cls] if cls in CLASSES else CLASSES):
+            if c not in req or t > req[c]['pct']:
+                req[c] = {'pct': t, 'source': f'requirement {it.get("id") or ""}'.strip(),
+                          'priority': str(it.get('priority') or '')}
+    out.update(req)
+    return out
+
+
+def _bearing_cameras(v, xy, n=2) -> list:
+    """The visible cameras whose heading points nearest to xy (when no camera has the gap in view at all)."""
+    rows = []
+    for c in v.cameras:
+        if not c.visible:
+            continue
+        b = math.degrees(math.atan2(xy[1] - c.y, xy[0] - c.x))
+        rows.append((abs((b - c.yaw + 180.0) % 360.0 - 180.0), c))
+    rows.sort(key=lambda r: r[0])
+    return [c for _, c in rows[:n]]
+
+
+def issues(project, vg=None) -> list:
+    """For the Issues list, from the cached result only (nothing when there is none: the analysis worker or the page
+    computes it): a class whose risk-weighted coverage is below its threshold (thresholds()), serious when a must
+    requirement fails or it is SERIOUS_POINTS or more below, else a warning; the message names the largest uncovered
+    hazard regions and their scenarios; uids: the cameras that have those regions in view but do not resolve the
+    road user there (else the cameras pointing nearest), where: the largest gap's centre."""
+    from .rules import Issue
+    v = project.variant
+    if not any(c.visible for c in v.cameras):
+        return []
+    st = settings_of(project)
+    res = cached(project, st, v)
+    if res is None:
+        return []
+    th = thresholds(project, st)
+    cam_uids = {cam.uid for cam in v.cameras}
+    out = []
+    for c in CLASSES:
+        d = res.classes.get(c) or {}
+        if d.get('weighted') is None:
+            continue
+        pct = 100.0 * d['weighted']
+        t = th[c]
+        if pct >= t['pct'] - 1e-9:
+            continue
+        gaps = d.get('gaps', [])[:3]
+        uids, tags = [], []                      # the largest gap's: the cameras looking there, else nearest
+        for x in (gaps[0].get('cameras_looking') or [] if gaps else []):
+            if x['uid'] not in uids and x['uid'] in cam_uids:
+                uids.append(x['uid'])
+                tags.append(x['tag'])
+        where = None
+        if gaps:
+            sr = res.grid.parse_id(gaps[0]['region'])
+            if sr is not None:
+                where = tuple(float(q) for q in res.grid.centre_xy(*sr))
+                if not uids:
+                    for cam in _bearing_cameras(v, where):
+                        uids.append(cam.uid)
+                        tags.append(cam.tag)
+        sev = 'serious' if t['priority'] == 'must' or t['pct'] - pct >= SERIOUS_POINTS else 'warning'
+        gap_txt = '; '.join(f'{g["name"]} {100 * g["uncovered_share"]:.1f} %'
+                            + (f' ({", ".join(x["template"] for x in g["top_uncovered"][:2])})'
+                               if g.get('top_uncovered') else '') for g in gaps)
+        looking = gaps[0].get('cameras_looking') if gaps else []
+        ml = METRIC_LABEL[st.metric]
+        msg = (f'{CLASS_LABEL[c]}s: risk-weighted coverage {pct:.1f} % is below {t["pct"]:g} % ({t["source"]}; '
+               f'{WEIGHT_LABEL[st.weight]}, {ml[0].lower() + ml[1:]}).'
+               + (f' Largest uncovered pre-crash exposure: {gap_txt}.' if gaps else '')
+               + ((' ' + ', '.join(x['tag'] for x in looking[:3]) + ' see' + 's' * (len(looking[:3]) == 1)
+                   + f' {gaps[0]["name"]}' + (', but fewer than two cameras resolve the road user there.'
+                                               if st.metric == 'redundant' else
+                                               ', but the road user is too small in the image there.'))
+                  if looking else (f' No camera has {gaps[0]["name"]} in view.' if gaps else '')))
+        objects = (', '.join(tags) or '—') + (f' · {gaps[0]["name"]}' if gaps else '')
+        out.append(Issue(sev, msg, objects, uids, 'risk_coverage', where))
+    return out
+
+
+def merge_issues(listed: list, project, vg=None) -> list:
+    """An Issues list with this study's rows replaced by the ones the cache gives now, sorted by severity: after the
+    page or the background run cached a new result (no need to collect every other study's issues again)."""
+    from .rules import SEVERITY_ORDER
+    keep = [i for i in (listed or []) if getattr(i, 'action', '') != 'risk_coverage']
+    return sorted(keep + issues(project, vg), key=lambda i: SEVERITY_ORDER.get(i.severity, 9))
 
 
 # =========================================================================== exports

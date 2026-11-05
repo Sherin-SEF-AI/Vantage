@@ -166,7 +166,11 @@ LIMITS_TEXT = (
     'Side cameras see down the road only off their axis; along their axis the town\'s buildings end the sweep. '
     'One still frame per drive: no motion blur, rolling shutter or compression beyond the recording\'s JPEG. The '
     'relative-depth scale assumes a flat ground under the camera\'s calibrated pose. Classes CARLA cannot stand in '
-    '(stroller, wheelchair, debris, animal) are ranged only where a recording\'s ground truth has them.')
+    '(stroller, wheelchair, debris, animal) are ranged only where a recording\'s ground truth has them. The frames '
+    'carry the CARLA page\'s exposure: metered by default from round 15 (each camera\'s mean level at 118, fixed for '
+    'the drive); drives from before were at CARLA\'s manual exposure, which renders a sunny road near white (the '
+    'result\'s notes and each recording\'s exposure say which). The exposure is one fixed value per camera: no auto '
+    'exposure lag, flicker or high dynamic range of a real camera.')
 METHOD = {
     'trial': 'one object at one camera frame, seen (not hidden more than max_occluded nor cut off more than '
              'max_truncated); a pinhole-view trial is detected when any view showing it detects it',
@@ -906,6 +910,45 @@ def run_sweep(project, st: FoundationSettings, variant=None, sim_settings=None, 
     return done, pl
 
 
+def recording_exposure(path) -> dict | None:
+    """The camera exposure a CARLA drive was recorded with (core.simrig.exposure_of on its rig/sim_rig.json and
+    run.json): drives from before round 15 read as manual at EV 0; None when the folder has no CARLA rig file (a
+    recording from elsewhere)."""
+    from . import simrig as SR
+
+    def load(*parts):
+        try:
+            with open(os.path.join(str(path), *parts), encoding='utf-8') as fh:
+                return json.load(fh)
+        except (OSError, ValueError, TypeError):
+            return None
+    rig = load('rig', 'sim_rig.json') or load('sim_rig.json')
+    if not isinstance(rig, dict):
+        return None
+    return SR.exposure_of(rig, load('run.json'))
+
+
+def exposure_note(exps) -> str:
+    """One line for the result's notes: what exposure the evaluated frames were recorded with."""
+    exps = [e for e in exps if e]
+    if not exps:
+        return 'Exposure of the frames: unknown (not CARLA drives of this version\'s bridge).'
+    parts = []
+    for mode in ('metered', 'manual', 'histogram'):
+        es = [e for e in exps if e['mode'] == mode]
+        if not es:
+            continue
+        if mode == 'metered':
+            evs = [v for e in es for v in (e.get('cameras') or {}).values()]
+            rng = (f' (compensation {min(evs):+.2f} … {max(evs):+.2f} EV)' if evs and max(evs) - min(evs) > 0.005
+                   else (f' (compensation {evs[0]:+.2f} EV)' if evs else ''))
+            parts.append(f'{len(es)} metered{rng}')
+        else:
+            evs = sorted({round(float(e.get('exposure_ev', 0.0)), 2) for e in es})
+            parts.append(f'{len(es)} {mode} at EV ' + ', '.join(f'{v:+.2f}' for v in evs))
+    return 'Exposure of the frames: ' + '; '.join(parts) + ' (core.simrig.exposure_of).'
+
+
 # =========================================================================== one image
 def _objects(frame, classes, vst, sweep=None):
     """A frame's objects as detection_eval.gt_objects arrays plus 'scls' (study class, -1 none), 'trial' (counts
@@ -1467,7 +1510,9 @@ def run(project=None, engine=None, settings: FoundationSettings | None = None, v
     for rec, sw in sources:
         d = rec.info()
         d['kind'] = 'sweep drive' if sw is not None else 'recording'
+        d['exposure'] = recording_exposure(rec.path)
         infos_src.append(d)
+    notes.append(exposure_note([d['exposure'] for d in infos_src]))
     if any(not FM.allowed(m, False) for m in list(dets) + ([st.depth_model] if dm is not None and st.depth_model
                                                             else []) if m in FM.SPECS):
         notes.append('Models whose licence does not allow commercial use were run on your opt-in (see Models).')

@@ -450,3 +450,39 @@ def test_docs_name_every_round14_setting_flag_and_section():
                  'site/docs.html', 'site/guide.html', 'site/index.html'):
         text = open(os.path.join(root, page), encoding='utf-8').read()
         assert home not in text, page
+
+
+# ======================================================================= round 15: risk coverage in the Issues list
+def test_issues_list_reads_risk_weighted_coverage(rig):
+    """The rules hook: a class below its threshold, from the cached result only."""
+    from vantage.core import risk_coverage as RC
+    from vantage.core import rules
+    p, eng, res = rig
+    q = p.snapshot()
+    q.analysis.risk_coverage = {'issue_min': {'pedestrian': 100.0}}
+    RC.clear_cache()
+    assert not [i for i in rules.collect_issues(q, res, eng.vehicle_geom(q)) if i.action == 'risk_coverage']
+    RC.run(q, eng)
+    out = [i for i in rules.collect_issues(q, res, eng.vehicle_geom(q)) if i.action == 'risk_coverage']
+    assert len(out) == 1 and out[0].message.startswith('Pedestrians') and out[0].severity == 'serious'
+
+
+def _store_primes_risk():
+    import inspect
+    from vantage.ui import store
+    return 'risk_coverage' in inspect.getsource(store.AnalysisController._run)
+
+
+@pytest.mark.skipif(not _store_primes_risk(), reason='the analysis worker does not run risk_coverage.prime yet '
+                    '(glue15 proposal for vantage/ui/store.py)')
+def test_the_analysis_worker_caches_risk_coverage_for_the_issues_list(app, win):
+    from vantage.core import risk_coverage as RC
+    store = win.ctx.store
+    RC.clear_cache()
+    store.edit('analysis', lambda pr: setattr(pr.analysis, 'risk_coverage', {'issue_min': {'cyclist': 100.0}}),
+               'threshold')
+    win.ctx.analysis.run_now()
+    _wait(app, lambda: RC.cached(store.project) is not None and
+          any(i.action == 'risk_coverage' for i in win.ctx.analysis.issues), 120)
+    store.undo.undo()
+    pump(app, 0.3)

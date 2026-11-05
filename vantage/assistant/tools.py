@@ -81,6 +81,7 @@ class ToolContext:
     on_next: object = None               # callable(list of Recommendation): next-step chips to show under the answer
     on_log: object = None                # callable(dict): a design-log entry the model proposes (the user accepts it)
     vision: bool = False                 # the model takes images: look returns a picture (else its caption only)
+    page_context: dict | None = None     # the open page: id, label, purpose, its state (assistant/page_guide.py)
     _proposals: int = 0
 
     def status(self, text):
@@ -580,6 +581,17 @@ def get_seams(tc, advise=True, **_):
     out['azimuth'] = 'degrees about the body centre, counter-clockwise from +x (forward)'
     out['centre'] = [_r(v) for v in res.centre]
     return out
+
+
+def get_page_context(tc, **_):
+    """The page the user is on (gathered on the UI thread when the question was asked): what it is for, what it needs,
+    how far the user got with it (never run, stale, running, its result's figures and findings), the pages before and
+    after it in the workflow, and the actions the app recommends there."""
+    pc = getattr(tc, 'page_context', None)
+    if not pc:
+        return {'page': tc.page or None, 'note': 'No page context was gathered (the question did not come from the '
+                                                 'app window).'}
+    return pc
 
 
 def get_studies(tc, **_):
@@ -2185,6 +2197,11 @@ TOOLS = [
          'Results of studies already run in the app: objects in the stitched view, the 3D blind volume, parking '
          'guidelines and the worst single-camera error. Use run_study to compute one that has not been run.', {},
          get_studies),
+    Tool('get_page_context', 'Read the open page',
+         'The page the user has open: what it is for, what it needs before it can run (and where to get it), whether '
+         'it was never run, is stale or running, its last result\'s figures and top findings, its settings, the pages '
+         'that come before and after it, and the actions the app recommends there (each: ask, plan or open). Read it '
+         'when the user asks what to do here or about "this page".', {}, get_page_context),
     Tool('get_rig_health', 'Read the live rig health',
          'While the Live rig page streams the cameras: per camera the measured frame rate against the module\'s, '
          'jitter, dropped frames, resolution, exposure, sharpness, frozen images and a drift indicator, with an '

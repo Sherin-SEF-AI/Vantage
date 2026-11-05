@@ -333,7 +333,8 @@
         "camera_rate": {"enum": ["lidar", "module"], "description": "lidar: one frame per lidar rotation at the sync plan's trigger; module: the module's frame rate."},
         "undistort": {"type": "boolean", "description": "Rectified pinhole images instead of the real lens's."},
         "exposure": {"enum": ["manual", "histogram"], "description": "CARLA only: manual (every view of a camera alike) or CARLA's auto exposure."},
-        "exposure_ev": {"type": "number", "description": "CARLA only: exposure compensation."},
+        "exposure_ev": {"type": "number", "description": "CARLA only: exposure compensation (with exposure_meter: a bias added to each camera's metered value)."},
+        "exposure_meter": {"type": "object", "additionalProperties": false, "required": ["target_level"], "description": "CARLA only, present when the rig meters its exposure (the default from round 15): before recording, each camera's views are rendered as small probes at manual EV +3, 0 and -3, and the camera records in manual mode at the compensation that puts its image's mean 8-bit level at target_level, fixed for the drive. Absent: the rig records as exposure says (every rig before round 15).", "properties": {"target_level": {"type": "number", "minimum": 20, "maximum": 235, "description": "The mean 8-bit luma each camera's image is metered to (118: 18 % grey in sRGB)."}, "per": {"const": "camera", "description": "One compensation per camera, the same for all its views."}, "fixed": {"const": "for the drive", "description": "Metered once before the drive, not adjusted during it."}}},
         "gt_range_m": {"type": "number", "description": "Actors are annotated within this horizontal distance of the ego."},
         "dataset_version": {"type": "string", "description": "The nuScenes version folder: 'v1.0-vantage'."},
         "epoch_us": {"type": "integer", "description": "t = 0 of the drive (the first sync pulse) in microseconds since 1970-01-01 UTC."}

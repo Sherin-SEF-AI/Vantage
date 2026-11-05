@@ -44,6 +44,7 @@ def find_runs(project, working_dir='', gt_only=False, limit=40) -> list:
             continue
         sc = doc.get('scenario') or {}
         out.append({'path': d, 'name': workdir.display(d, working_dir or None), 'status': doc.get('status'),
+                    'variant': doc.get('variant') or '',
                     'town': doc.get('town'), 'weather': (doc.get('weather') or {}).get('label') if
                     isinstance(doc.get('weather'), dict) else doc.get('weather'),
                     'duration_s': (doc.get('performance') or {}).get('simulated_s'),
@@ -135,9 +136,31 @@ def get_catalogue(tc, topic='', **_):
     if topic == 'studies':
         from . import tools as T
         return {'studies': list(CP.STUDIES), 'about': T.BY_NAME['run_study'].description}
-    return {'kinds': [{'kind': k, 'label': CP.KIND_LABEL[k], 'page': CP.KIND_PAGE[k] or None,
-                       'settings_saved_on_the_page': CP.KIND_SLOT[k] is not None} for k in CP.KINDS],
-            'note': 'get_plan_settings(kind) lists a kind\'s settings with their current values and ranges'}
+    out = {'kinds': [{'kind': k, 'label': CP.KIND_LABEL[k], 'page': CP.KIND_PAGE[k] or None,
+                      'settings_saved_on_the_page': CP.KIND_SLOT[k] is not None or k in CP.STUDY_KINDS,
+                      **({'what': CP.STUDY_ABOUT[k][0], 'for_example': CP.STUDY_ABOUT[k][1],
+                          'plan_only_options': list(CP.STUDY_EXTRAS[k])} if k in CP.STUDY_KINDS else {})}
+                     for k in CP.KINDS],
+           'note': 'get_plan_settings(kind) lists a kind\'s settings with their current values and ranges. The study '
+                   'kinds (rig_perception … fleet_twin) run round 14\'s studies after approval, in the background; '
+                   'their results reach the page and the read tools (get_rig_perception, get_foundation_range, '
+                   'get_robust_perception, get_redrive, get_perf_model, design_rig, get_risk_coverage, '
+                   'get_fleet_twin), which you then cite.'}
+    if tc.request:
+        try:
+            draft = CP.offline_steps(p, tc.request, _wd(tc))
+        except Exception:                   # noqa: BLE001 — a draft is a hint, never in the way
+            draft = []
+        if draft:
+            out['draft_for_this_request'] = {
+                'steps': PV_scrub(draft), 'note': 'what Vantage\'s own planner reads from the request: a starting '
+                                                  'point for propose_plan (check the values against the request)'}
+    return out
+
+
+def PV_scrub(o):
+    from ..core import provenance as PV
+    return PV.scrub(o)
 
 
 def _choices(kind, key):
@@ -167,6 +190,50 @@ def _choices(kind, key):
     if kind == 'export':
         return {'units': ['m', 'mm'], 'angles': ['deg', 'rad'],
                 'frame': ['rear_axle', 'front_axle', 'front_bumper', 'ground_centre', 'custom']}.get(key)
+    if kind in CP.STUDY_KINDS:
+        return _study_choices(kind, key)
+    return None
+
+
+def _study_choices(kind, key):
+    ch = CP.STUDY_EXTRA_CHOICES.get((kind, key))
+    if ch:
+        return list(ch)
+    try:
+        if kind == 'rig_perception':
+            from ..core import perception_scenes as PS
+            from ..core import rig_perception as RP
+            from ..core import regions as RG
+            return {'views': list(RP.VIEW_MODES), 'instants': list(RP.INSTANTS), 'cache': list(RP.CACHE_MODES),
+                    'scene_set.set_id': list(PS.SCENE_SETS), 'focus': list(RG.SECTOR_NAMES_8),
+                    'classes': list(RP.BB.BEV_CLASSES), 'backend': ['lifted', 'external:<name>']}.get(key)
+        if kind == 'foundation_range':
+            from ..core import foundation_models as FM
+            from ..core import foundation_range as FR
+            return {'source': list(FR.SOURCES), 'views': ['fisheye', 'pinhole', 'both'],
+                    'detectors': ['yolox_s'] + list(FM.DETECTORS), 'depth_model': [''] + list(FM.DEPTH_MODELS),
+                    'sweep_classes': [c['name'] for c in FR.DEFAULT_CLASSES], 'device': ['auto', 'cuda', 'cpu']}.get(key)
+        if kind == 'robust_perception':
+            from ..core import robust_perception as RB
+            return list(RB.CHOICES[key]) if key in getattr(RB, 'CHOICES', {}) else None
+        if kind == 'redrive':
+            from ..core import redrive as RDV
+            return {'schedule': ['recorded', 'rate'], 'rolling_shutter': ['module', 'off'],
+                    'ground_truth': ['auto', 'always', 'never'], 'sources': list(RDV.SOURCES)}.get(key)
+        if kind == 'design':
+            from ..core import rig_designer as DSG
+            return {'axes': list(DSG.AXES)}.get(key)
+        if kind in ('perf_model_train', 'perf_model_campaign'):
+            from ..core import perf_model as PM
+            return {'mode': ['ei', 'std', 'ucb'], 'classes': list(PM.CLASSES), 'metrics': list(PM.METRICS)}.get(key)
+        if kind == 'risk_coverage':
+            return {'weight': ['frequency', 'cost', 'fatal', 'fyl', 'ncap'], 'metric': ['resolved', 'seen', 'redundant'],
+                    'dataset': ['swanson2019', 'najm2007']}.get(key)
+        if kind == 'fleet_twin':
+            return {'limit_source': ['auto', 'critical', 'analysis', 'fleet', 'user'], 'pool': ['sensor', 'kind'],
+                    'online_obs': ['segments', 'windows']}.get(key)
+    except Exception:                       # noqa: BLE001 — choices are a nicety
+        return None
     return None
 
 
@@ -190,6 +257,8 @@ def _limits(kind):
         if kind == 'campaign':
             from ..core import simcampaign as SC
             return SC.LIMITS
+        if kind in CP.STUDY_KINDS:
+            return CP.study_limits(kind)
     except Exception:                       # noqa: BLE001
         return {}
     return {}
@@ -203,6 +272,8 @@ def get_plan_settings(tc, kind='', **_):
     if kind == 'detection':
         from .. import workdir
         d['recordings'] = [workdir.display(r, tc.working_dir or None) for r in d.get('recordings') or []]
+    if kind in CP.STUDY_KINDS:
+        d = CP.study_for_model(kind, d, tc.working_dir)
     lim = _limits(kind)
     rows = []
     for k, v in CP.flatten(d).items():
@@ -233,11 +304,64 @@ def get_plan_settings(tc, kind='', **_):
     if kind == 'campaign':
         out['note'] = ('template ("fault_detectability", "weather_sweep", "rig_ab") starts from that design fitted to '
                        'the variant; fault_sets are lists of {kind, tags, axes, magnitudes, signs}')
+    if kind in CP.STUDY_KINDS:
+        out['what'] = CP.STUDY_ABOUT[kind][0]
+        out['plan_only_options'] = {k: v for k, v in CP.STUDY_EXTRAS[kind].items()}
+        out['note'] = STUDY_NOTES.get(kind, '') + (' ' if STUDY_NOTES.get(kind) else '') + (
+            'Nothing runs until the user approves; the result goes to the page and to the read tools.')
     if kind == 'experiment':
         out['note'] = ('factors: [{kind: camera|sensor|cameras|roi|load_case|weather, target: a tag, attr: x y z yaw '
                        'pitch roll | lens | model | distance | case | condition, mode: value|offset, lo, hi, levels, '
                        'choices}]; responses: [{metric, params, op, target}] (get_requirement_metrics lists metrics)')
     return PV.scrub(out)
+
+
+STUDY_NOTES = {
+    'rig_perception': 'recordings: [{path (as get_catalogue recordings names it), rig (a name; default the '
+                      'recording\'s variant)}], the first rig the reference; source carla drives the perception scene '
+                      'set (scene_set.set_id standard | quick, scene_set.variants by name, scene_set.seeds) in CARLA '
+                      'first; focus: the sectors the user asked about (the study measures every region); records: hand '
+                      'the perception records to the learned model\'s store.',
+    'foundation_range': 'source recordings (recordings: drives with ground truth) or sweep (sweep_cameras, '
+                        'sweep_classes, ranges_m, seeds: stood at known ranges in CARLA); detectors and depth_model '
+                        'must be downloaded on Simulate ▸ Foundation models; depth_model "" for none.',
+    'robust_perception': 'recordings: CARLA drives with ground truth of this rig; mount_from custom with mount_deg '
+                         '/ mount_mm for a given error; thermal, vibration, calibration switch the other sources.',
+    'redrive': 'drive: the recorded drive (default the Log replay page\'s); variant: the proposed rig by name; reshoot: '
+               'also write the re-shot drive (hundreds of MB).',
+    'design': 'requirements_from brief reads the requirements and constraints from brief with Vantage\'s parser (the '
+              'card lists them; approving accepts them); page uses the ones accepted on Analysis ▸ Design agent. '
+              'Never creates a variant.',
+    'perf_model_train': 'save: keep the trained model where the app loads it.',
+    'perf_model_campaign': 'k rigs a round for rounds rounds, from variants (by name; [] every variant with a camera); '
+                           'each driven duration_s in CARLA (0: the CARLA page\'s) and evaluated by rig perception.',
+    'risk_coverage': 'weight frequency | cost | fatal | fyl | ncap; metric resolved | seen | redundant.',
+    'fleet_twin': 'action run (fit the twin) or watch_once (read the vehicles\' watch folders once, then fit).',
+}
+
+
+def widen_schemas(T):
+    """Offer every plan kind in the Copilot tools' schemas (tools.py lists the round-7 kinds; the study kinds were
+    added in round 15): the kind enum of a step and of get_plan_settings, the topics of explain_limit, and the
+    kinds propose_plan's description names. Idempotent."""
+    kinds = list(CP.KINDS)
+    item = getattr(T, '_STEP_ITEM', None)
+    if isinstance(item, dict):
+        item['properties']['kind']['enum'] = kinds
+    for t in getattr(T, 'TOOLS', []):
+        if t.name == 'get_plan_settings' and isinstance(t.params.get('kind'), dict):
+            t.params['kind'] = dict(t.params['kind'], enum=kinds)
+        elif t.name == 'explain_limit' and isinstance(t.params.get('topic'), dict):
+            t.params['topic'] = dict(t.params['topic'], enum=list(CP.LIMITS_DOC))
+        elif t.name in ('propose_plan', 'estimate_plan', 'validate_plan'):
+            steps = t.params.get('steps')
+            if isinstance(steps, dict) and isinstance(steps.get('items'), dict):
+                steps['items']['properties']['kind']['enum'] = kinds
+            if t.name == 'propose_plan' and 'rig_perception' not in t.description:
+                t.description = t.description.replace(
+                    'sample_dataset, study or export', 'sample_dataset, study, export, or one of round 14\'s studies '
+                    '(rig_perception, foundation_range, robust_perception, redrive, design, perf_model_train, '
+                    'perf_model_campaign, risk_coverage, fleet_twin: get_catalogue plan_kinds says what each is for)')
 
 
 def explain_limit(tc, topic='', **_):

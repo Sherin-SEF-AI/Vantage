@@ -165,6 +165,7 @@ class AssistantController(QObject):
         self.plans: dict = {}           # plan id -> {'plan': the latest copilot.Plan, 'versions': {n: Plan}}
         self.current_plan: CP.Plan | None = None    # the plan on screen a follow-up revises
         self.runner: PlanRunner | None = None
+        self.hooks: dict = {}           # stand-ins a study step passes to its module (tests: fake detectors, carla)
         self.last_question = ''
         self._tid = 0
         self._cancel = None
@@ -643,7 +644,25 @@ class AssistantController(QObject):
                              critical_carla=self._page_summary('critical_carla'), carla_live=self._carla_live(),
                              splat=self._page_summary('splat'), online_calib=self._page_summary('online_calib'),
                              working_dir=workdir.get(self.ctx.settings), plan=self.current_plan,
-                             provider=self.provider, model=self.model, studies=self._studies())
+                             provider=self.provider, model=self.model, studies=self._studies(),
+                             page_context=self._page_context(page))
+
+    def _page_context(self, page) -> dict | None:
+        """The open page for the model (assistant/page_guide.py): what it is for, what it needs, its state and the
+        actions the panel recommends there (titles and kinds only). No paths, no keys; None without a page."""
+        if not page:
+            return None
+        from ..assistant import page_guide as PG
+        try:
+            pc = PG.page_state(page, self.ctx.store.project, self.ctx.window)
+        except Exception:                                    # noqa: BLE001 — a question never fails on the page
+            return None
+        pc.pop('ms', None)
+        panel = getattr(self.ctx.window, 'assistant_panel', None)
+        rc = getattr(panel, 'recommender', None)
+        recs = [r for r in (getattr(rc, 'recs', None) or []) if ('page', page) in {tuple(a) for a in r.about}]
+        pc['recommended'] = [{'title': r.title, 'kind': r.kind, 'why': r.why} for r in recs[:6]]
+        return pc
 
     def _rig_health(self):
         w = self.ctx.window
@@ -965,10 +984,37 @@ class AssistantController(QObject):
                 self.current_plan = None
             self.plan_state.emit(plan.id)
 
+    def plan_offline(self, text: str) -> CP.Plan | None:
+        """A plan from Vantage's own deterministic planner (no model, nothing sent anywhere) for a request it knows
+        (the study kinds), shown like any plan and approved the same way; None when it does not know it."""
+        t = text.strip()
+        if t.lower().startswith('/plan'):
+            t = t[5:].strip()
+        if not t:
+            return None
+        try:
+            plan = CP.offline_plan(self.ctx.store.project.snapshot(), t, workdir.get(self.ctx.settings),
+                                   self._engine())
+        except Exception as e:                              # noqa: BLE001 — said, never raised into the panel
+            self.ctx.msg(f'The plan could not be made: {type(e).__name__}: {e}', 6000)
+            return None
+        if plan is None:
+            return None
+        self._add_plan(plan)
+        self.plan_state.emit(plan.id)
+        return plan
+
     def _apply_step(self, rec_or_plan, i, text):
         """Write a step's settings into its page's slot of the project as one undo step (nothing runs)."""
         steps = rec_or_plan['steps'] if isinstance(rec_or_plan, dict) else [s.to_dict() for s in rec_or_plan.steps]
         s = steps[i]
+        if s['kind'] in CP.STUDY_KINDS:
+            st = copy.deepcopy(s['settings'])
+
+            def fn_study(p, kind=s['kind']):
+                CP.apply_study_settings(p, kind, st)
+            self.ctx.store.edit('analysis', fn_study, text)
+            return True
         slot = CP.KIND_SLOT.get(s['kind'])
         if slot is None:
             return False
@@ -1109,6 +1155,8 @@ class PlanRunner(QObject):
         job = self._job or {}
         pg = job.get('page')
         try:
+            if job.get('stop') is not None:
+                job['stop']()
             if job.get('kind') == 'carla_live' and pg is not None:
                 pg.stop('the plan was stopped')
             elif pg is not None and hasattr(pg, 'cancel'):
@@ -1192,6 +1240,13 @@ class PlanRunner(QObject):
                 return
             if self._phase == 'running':
                 if not job['done']():
+                    if job.get('progress') is not None:
+                        f, text = job['progress']()
+                        st = self._step_run()
+                        msg = f'{100 * f:.0f} %' + (f' · {text}' if text else '')
+                        if f is not None and st.get('message') != msg:
+                            st['message'] = msg[:300]
+                            self.progress.emit()
                     return
                 ok, message, summary, out, files = job['result']()
                 st = self._step_run()
@@ -1228,6 +1283,8 @@ class PlanRunner(QObject):
     def _make_job(self, kind, settings, tk) -> dict:
         w = self.ctx.window
         p = self.ctx.store.project
+        if kind in CP.STUDY_KINDS:
+            return self._study_job(kind, settings, tk)
         if kind == 'carla_run':
             pg = w.page('sim')
 
@@ -1380,6 +1437,106 @@ class PlanRunner(QObject):
                     out, [x for x in paths if x.endswith('.json')]
             return {'kind': kind, 'start': start, 'done': lambda: 'paths' in box, 'result': result}
         raise KeyError(kind)
+
+
+    # ---------------------------------------------------------------- round 14's studies: headless, then on the page
+    def _study_job(self, kind, settings, tk) -> dict:
+        """A study step: the gate first, then the module in a background thread on a snapshot of the project (with
+        the step's settings, which _next has just put on the page), its export in the plan's folder; when it is
+        done the result goes to the page (which shows it) and so to the read tools."""
+        p = self.ctx.store.project
+        ok, why = CP.gate(p, tk, kind, settings)
+        if not ok:
+            raise RuntimeError(why)
+        name = CP.KIND_PAGE[kind]
+        w = self.ctx.window
+        pg = w.page(name) if w is not None and name else None
+        if pg is not None and (getattr(pg, 'busy', False) or getattr(pg, 'drive_busy', False)):
+            raise RuntimeError(f'{PAGES.get(name, name)} is busy with a run of its own: wait for it or stop it, then '
+                               'run the plan again from its record.')
+        snap = p.snapshot()
+        out = os.path.join(self.folder, f'step-{self.i + 1}-{kind}')
+        stop = threading.Event()
+        box = {'progress': (0.0, '')}
+        eng = self.ctl._engine()
+        hooks = dict(getattr(self.ctl, 'hooks', None) or {})
+
+        def progress(f, text=''):
+            box['progress'] = (float(f), str(text or ''))
+
+        def work():
+            try:
+                box['run'] = CP.run_study_kind(snap, kind, settings, out, eng, tk, progress, stop.is_set, hooks)
+            except Exception as e:                      # noqa: BLE001 — a failed study is said, never silent
+                box['run'] = CP.StudyRun(1, f'{type(e).__name__}: {e}')
+
+        def start():
+            threading.Thread(target=work, daemon=True, name=f'copilot-{kind}').start()
+            return True, ''
+
+        def result():
+            r = box['run']
+            if r.ok:
+                self._deliver(kind, r)
+            msg = r.message + ('' if r.rc in (0, 1) else f' (exit {r.rc}: {CP.STUDY_EXIT.get(r.rc, "")})')
+            files = [f for f in r.files if str(f).endswith('.json')]
+            return r.ok, msg, r.summary, r.out_dir if r.out_dir and os.path.isdir(r.out_dir) else '', files
+        port = None
+        if (kind == 'rig_perception' and settings.get('source') == 'carla') or \
+                (kind == 'foundation_range' and settings.get('source') == 'sweep') or kind == 'perf_model_campaign':
+            if not hooks.get('runner') and not hooks.get('evaluator'):
+                port = SR_port(None, p)
+        return {'kind': kind, 'page': None, 'stop': stop.set, 'port': port, 'start': start,
+                'done': lambda: 'run' in box, 'result': result, 'progress': lambda: box['progress']}
+
+    # a study kind's page and how its own "done" path takes a result (the page shows it, the read tools read it)
+    def _deliver(self, kind, r):
+        w = self.ctx.window
+        p = self.ctx.store.project
+        if kind == 'fleet_twin' and r.fleet_slot is not None:
+            slot = copy.deepcopy(r.fleet_slot)
+
+            def fn(pj):
+                pj.analysis.fleet_twin = copy.deepcopy(slot)
+            self.ctx.store.edit('analysis', fn, f'Copilot · plan {self.id} · drives read by the fleet twin\'s watch')
+        if w is None or r.result is None:
+            return
+        name = CP.KIND_PAGE[kind]
+        try:
+            pg = w.page(name)
+        except Exception:                                   # noqa: BLE001 — no page: the record keeps the summary
+            return
+        res = r.result
+        try:
+            if kind == 'rig_perception':
+                pg._thread_done(pg._gen, ('rig_perception', ((p, pg._key(p)), res)))
+            elif kind == 'foundation_range':
+                pg._thread_done(pg._gen, ('foundation', ((p, pg._key(p)), res)))
+            elif kind == 'robust_perception':
+                pg._done(pg._gen, res)
+            elif kind == 'risk_coverage':
+                pg._done(pg._gen, (pg._key(), res))
+            elif kind == 'design':
+                pg._done(pg._gen, (p, res))
+            elif kind == 'perf_model_train':
+                pg._thread_done(pg._gen, ('perf_model', (p, res)))
+            elif kind == 'perf_model_campaign':
+                pg._thread_done(pg._gen, ('perf_model_campaign', res))
+            elif kind == 'fleet_twin':
+                pg._done(pg._gen, ((p, pg._inputs_key()), res))
+            elif kind == 'redrive':
+                pg._thread_done(pg._gen, ('redrive', res))
+        except Exception:                                   # noqa: BLE001 — the page's own path changed: show it
+            attr = {'redrive': 'rd_result', 'design': 'res', 'perf_model_campaign': 'campaign_result'}.get(kind,
+                                                                                                       'result')
+            setattr(pg, attr, res)
+            for m in ('refresh', '_rd_show', '_fill_state'):
+                if hasattr(pg, m):
+                    try:
+                        getattr(pg, m)()
+                    except Exception:                       # noqa: BLE001
+                        pass
+                    break
 
 
 def SR_port(settings=None, project=None) -> int:
@@ -2127,6 +2284,8 @@ def _sections(kind):
         out += [('Faults', ['faults']), ('Ground truth', ['ground_truth.'])]
         out += [(g, ks) for g, ks in groups.items()]
         return out
+    if kind in CP.STUDY_KINDS:                       # the plan-only options first: where the inputs come from
+        return [('Plan', list(CP.STUDY_EXTRAS[kind])), ('Settings', [])]
     return [('Settings', [])]
 
 
@@ -3498,6 +3657,10 @@ class Composer(QFrame):
         self.edit.clear()
         return t
 
+    def _offline_text(self) -> bool:
+        """/plan without a model set up: Vantage's own planner takes the study kinds."""
+        return self.edit.toPlainText().lstrip().lower().startswith('/plan ')
+
     def _grow(self):
         fm = QFontMetricsF(self.edit.font())
         lines = max(1, min(8, int(self.edit.document().size().height())))
@@ -3550,7 +3713,7 @@ class Composer(QFrame):
         self.go.setIcon(icons.icon('stop' if busy else 'send', 14, t['panel']))
         self.go.setToolTip('Stop  Esc' if busy else 'Send  Enter  (Shift+Enter for a new line)')
         has = bool(self.edit.toPlainText().strip())
-        en = busy or (has and self.ctl.ready)
+        en = busy or (has and (self.ctl.ready or self._offline_text()))
         self.go.setEnabled(en)
         bg = t['ink'] if en else t['sel']
         self.go.setStyleSheet(f'QToolButton, QToolButton:disabled {{ background: {bg}; border: none; '
@@ -3575,11 +3738,11 @@ class Composer(QFrame):
             self.ctx_lbl.setToolTip('The selected cameras are mentioned with your question')
         else:
             self.ctx_lbl.setText('')
-        self.edit.setEnabled(self.ctl.ready)
+        self.edit.setEnabled(True)
         on = self.ctl.agent_mode
         self.edit.setPlaceholderText(('Describe a goal, e.g. “no blind ground, at least 4 px/cm”…' if on else
                                       'Ask about this design…   / for commands') if self.ctl.ready
-                                     else 'Set up the assistant first')
+                                     else 'Set up the assistant first, or /plan a study (planned on this computer)')
         self.agent.setStyleSheet(
             f'QPushButton {{ border: 1px solid {t["ink"] if on else t["strong"]}; border-radius: 10px; padding: 1px 9px; '
             f'min-height: 18px; color: {t["panel"] if on else t["ink2"]}; background: {t["ink"] if on else "transparent"}; }}'
@@ -3881,14 +4044,37 @@ class Recommender(QObject):
         self.tracker.changed.connect(self.schedule)
         w = ctx.window
         if w is not None and hasattr(w, 'pages'):
-            w.pages.currentChanged.connect(self.schedule)
+            w.pages.currentChanged.connect(self._page_changed)
         so = getattr(ctx, 'stitched', None)
         if so is not None and hasattr(so, 'ready'):
             so.ready.connect(self.schedule)
+        self.page_state: dict | None = None      # the open page's page_guide.page_state, as of the last refresh
         self.refresh()
 
     def schedule(self, *_):
-        self.timer.start()
+        self.timer.start(self.DEBOUNCE_MS)
+
+    # ---------------------------------------------------------------- the open page (assistant/page_guide.py)
+    PAGE_MS = 60                         # a page change refreshes sooner than an edit: the strip follows the page
+
+    def _page_changed(self, *_):
+        self.timer.start(min(self.PAGE_MS, self.timer.remainingTime()) if self.timer.isActive() else self.PAGE_MS)
+
+    def page_states(self, page) -> dict:
+        """{page: page_state} for the open page (read off what the page and the app hold; nothing is computed)."""
+        from ..assistant import page_guide as PG
+        try:
+            self.page_state = PG.page_state(page, self.ctx.store.project, self.ctx.window)
+        except Exception:                                    # noqa: BLE001 — no page items beats no list
+            self.page_state = None
+        return {page: self.page_state} if self.page_state else {}
+
+    def page_line(self) -> str:
+        """'On Recording budget: how much data …': the strip's header line about the open page."""
+        ps = self.page_state
+        if not ps or not ps.get('purpose'):
+            return ''
+        return f'On {ps.get("label")}: {ps["purpose"]}'
 
     # ---------------------------------------------------------------- dismissed, per project file
     def _key(self) -> str:
@@ -4074,6 +4260,9 @@ class Recommender(QObject):
             t0 = time.perf_counter()
             state = self.gather()
             cx = self.tracker.context()
+            tp = time.perf_counter()
+            state.pages = self.page_states(cx.page)
+            page_ms = (time.perf_counter() - tp) * 1000
             for name, key in self._hint_keys(state, cx).items():
                 if key in self.hints:
                     if self.hints[key] is not None:
@@ -4088,11 +4277,12 @@ class Recommender(QObject):
             t2 = time.perf_counter()
         except RuntimeError:                                 # the window is closing
             return
-        self.ms = {'gather': (t1 - t0) * 1000, 'recommend': (t2 - t1) * 1000}
+        self.ms = {'gather': (t1 - t0) * 1000, 'recommend': (t2 - t1) * 1000, 'page': page_ms}
         self.refreshes += 1
         self.recs, self.context = recs, cx
         strip = self.strip()
-        shown = ([(r.id, r.title, r.why, r.kind) for r in recs], RC.context_label(cx, strip), [r.id for r in strip])
+        shown = ([(r.id, r.title, r.why, r.kind) for r in recs], RC.context_label(cx, strip), [r.id for r in strip],
+                 self.page_line())
         if shown != self._shown:
             self._shown = shown
             self.updated.emit()
@@ -4237,6 +4427,10 @@ class LiveStrip(QFrame):
         self.head = label('', muted=True, small=True)
         head.addWidget(self.head, 1)
         v.addLayout(head)
+        self.purpose = label('', muted=True, small=True)     # "On <page>: <what it is for>" (page_guide)
+        self.purpose.setWordWrap(True)
+        self.purpose.hide()
+        v.addWidget(self.purpose)
         self.list = RecList(RC.STRIP, compact=True)
         self.list.act.connect(self.act.emit)
         self.list.dismiss.connect(self.dismiss.emit)
@@ -4257,6 +4451,11 @@ class LiveStrip(QFrame):
         self.head.setText(html.escape(text or 'Now', quote=False))
         self.list.set_recs(recs)
         self.show()
+
+    def set_page_line(self, text: str):
+        """The line about the open page under the header (what the page is for); hidden when there is none."""
+        self.purpose.setText(html.escape(text or '', quote=False))
+        self.purpose.setVisible(bool(text))
 
 
 class NextSteps(QWidget):
@@ -4321,7 +4520,34 @@ def plan_chips(plan: CP.Plan, rec: dict | None) -> list:
     if 'sample_dataset' in kinds:
         out.append(RC.Recommendation(f'plan:{plan.id}:dataset', 'Open the sample dataset', '', 'open',
                                      target={'page': 'dataset'}, source='Copilot plan'))
+    for k in kinds:
+        if k in STUDY_FOLLOW_UP:
+            title, prompt = STUDY_FOLLOW_UP[k]
+            out.append(RC.Recommendation(f'plan:{plan.id}:{k}', title, '', 'ask', prompt=prompt, source='Copilot plan'))
+            out.append(RC.Recommendation(f'plan:{plan.id}:{k}:open', f'Open {PAGES.get(CP.KIND_PAGE[k], k)}', '',
+                                         'open', target={'page': CP.KIND_PAGE[k]}, source='Copilot plan'))
     return out
+
+
+# a study step that ran: the question that reads its result (the Copilot then cites it)
+STUDY_FOLLOW_UP = {
+    'rig_perception': ('Which rig detects better?', 'Read get_rig_perception: which rig detects better, where, and how '
+                                                    'sure is it?'),
+    'foundation_range': ('How far does it see?', 'Read get_foundation_range: how far does each camera find each class, '
+                                                 'against the geometric range?'),
+    'robust_perception': ('Does the tolerance hurt?', 'Read get_robust_perception: how much does the tolerance cost '
+                                                      'in detection, and what drives it?'),
+    'redrive': ('Can the drive be reused?', 'Read get_redrive: how much of the drive can the proposed rig reuse?'),
+    'design': ('Which option fits?', 'Read design_rig\'s last result and compare the options it found.'),
+    'perf_model_train': ('How good is the model?', 'Read get_perf_model: is the model trained, and how well calibrated '
+                                                   'is it?'),
+    'perf_model_campaign': ('What did the campaign learn?', 'Read get_perf_model: what did the campaign evaluate and how '
+                                                            'did the model\'s error change?'),
+    'risk_coverage': ('Where are the risky gaps?', 'Read get_risk_coverage: where are the largest gaps in risk-weighted '
+                                                   'coverage?'),
+    'fleet_twin': ('Which vehicle needs attention?', 'Read get_fleet_twin: which vehicle and sensor needs '
+                                                     'recalibrating first?'),
+}
 
 
 class RecPopup(QFrame):
@@ -4688,6 +4914,9 @@ class AssistantPanel(QWidget):
         if not text:
             return
         if not self.ctl.ready:
+            if not self.ctl.busy and (text.lower().startswith('/plan ') or CP.match_kind(text)) and \
+                    self._plan_offline(text):
+                return
             open_settings(self.ctx)
             return
         if self.ctl.busy:
@@ -4745,6 +4974,33 @@ class AssistantPanel(QWidget):
             turn.on(A.Event('done', {'ok': False}))
             self.cur = None
 
+    def _plan_offline(self, text) -> bool:
+        """No model is set up: a request for one of the study kinds is planned by Vantage's own planner (nothing is
+        sent anywhere) and shown as a plan card to approve, edit or reject."""
+        plan = self.ctl.plan_offline(text)
+        if plan is None:
+            return False
+        if self.empty is not None:
+            self.col.removeWidget(self.empty)
+            self._drop(self.empty)
+            self.empty = None
+            self.empty_list = None
+        if self.composer.edit.toPlainText().strip() == text:
+            self.composer.take()
+        self._add(UserTurn(text))
+        box = QWidget()
+        v = QVBoxLayout(box)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(6)
+        v.addWidget(label('Planned on this computer by Vantage\'s own planner (no model is set up; nothing was sent). '
+                          'Check the values, then approve, edit or reject it.', ink2=True, small=True, wrap=True))
+        card = CopilotCard(self.ctl, plan)
+        v.addWidget(card)
+        self._add(box)
+        self.offline_cards = getattr(self, 'offline_cards', []) + [card]
+        self._stick = True
+        return True
+
     def _add(self, w):
         self.col.insertWidget(self.col.count() - 1, w)
 
@@ -4787,6 +5043,7 @@ class AssistantPanel(QWidget):
         self._recs_chip()
         items = rc.strip()
         self.strip.set_items(items, RC.context_label(rc.context, items))
+        self.strip.set_page_line(rc.page_line() if items else '')
         if self.empty_list is not None and not rc.recs:
             self._show_empty()                  # every one dismissed: the static starters again
         elif self.empty_list is not None:

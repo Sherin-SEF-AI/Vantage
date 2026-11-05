@@ -29,7 +29,9 @@ Features (describe_rig)
 -----------------------
 Physics only, from the geometry (no image): for every class (its typical height and width) and region, at 12 points
 of the region (4 bearings × 3 ranges, at the object's mid-height), each camera's view through its real lens model
-(core.lens; a record's unknown module from its stated field and projection): seen (in the image, inside the image
+(core.lens; a record's unknown module from its stated field and projection) at the size the detector sees the image
+(the recorded size, scaled down to DETECTOR_INPUT_PX on its longer side as the lifted backend's YOLOX 'auto' input
+does: a 4K camera's extra pixels detect nothing more, so they are not counted): seen (in the image, inside the image
 circle, not hidden by the body: the engine's occlusion cube maps), pixels per metre there (the lens's density at that
 direction and range), so pixels on the object (height × px/m), θ / θ_max (how near the image edge), depression of the
 view, mounting height; then per region: log2 pixels on the object for the best camera (median and 25th percentile over
@@ -51,11 +53,14 @@ on a random subset and the posterior is FITC on k-means++ inducing points (Snels
 the latent logit's mean and variance per class × region, turned into recall by Gauss–Hermite quadrature; an interval
 is the logit's interval through the logistic (exact for quantiles).
 
-Calibration is reported, not assumed: leave-one-scene-out (scene sets: same town, scenario, seed, weather, duration
-and traffic) and leave-one-rig-out cross-validation, refitting everything per fold; on the held-out rows the coverage
+Calibration is reported, not assumed: leave-one-town-out (every scene set of a town held out together: the check of
+a town the model has never seen, with each town's own scores), leave-one-scene-out (scene sets: same town, scenario,
+seed, weather, duration and traffic) and leave-one-rig-out cross-validation, refitting everything per fold; on the held-out rows the coverage
 of the 68 % and 95 % predictive intervals of the observed empirical logit (latent variance + the row's noise), the
 RMSE of recall and the mean negative log predictive density, against two baselines with the same noise model: the
-logistic in pixels alone and a constant. Below MIN_RECORDS records (or MIN_ROWS rows for a class) a model is "not
+logistic in pixels alone and a constant; besides the plain RMSE, the RMSE weighted by objects, on rows with at least
+BIG_N object-instants, and the floor a perfect predictor would still have from the rows' binomial sampling.
+learning_curve() measures the leave-town-out error as the training towns and records grow. Below MIN_RECORDS records (or MIN_ROWS rows for a class) a model is "not
 trained (N records, need M)" and predicts nothing.
 
 Active learning
@@ -87,7 +92,7 @@ from . import regions as RG
 
 SCHEMA = 'vantage.perf_model/1'
 RECORD_SCHEMA = 'vantage.perception_record/1'
-FEATURES_VERSION = 1
+FEATURES_VERSION = 2                   # 2: pixels as the detector sees them (DETECTOR_INPUT_PX)
 FRAME_V = 'vehicle (ISO 8855, rear axle)'
 CLASSES = ('pedestrian', 'cyclist', 'motorcyclist', 'car', 'truck', 'bus', 'vehicle')
 SOURCES = ('carla', 'redrive', 'synthetic-test')
@@ -107,6 +112,10 @@ FEATURE_TEXT = {
     'depression_deg': 'view depression', 'mount_h_m': 'mounting height', 'baseline_m': 'stereo baseline',
     'log2_lidar_pts': 'lidar points on the object', 'radar_share': 'radar coverage', 'log2_range_m': 'range'}
 PX_FLOOR = 0.5                         # log2 of pixels on an unseen object: log2(0.5) = −1
+# the lifted backend's YOLOX runs each image at its own size up to this on its longer side (core.detection
+# DetectorSettings.max_input_px, 'auto' input): a larger image is scaled down before the detector sees it, so its extra
+# pixels detect nothing more. Features count pixels as the detector sees them (0: no cap).
+DETECTOR_INPUT_PX = 1280
 MIN_RECORDS = 8
 MIN_ROWS = 25
 SPARSE_N = 3000
@@ -762,7 +771,15 @@ def _region_points(grid: RG.RegionGrid, n_b=4):
     return np.asarray(pts), np.asarray(rng)
 
 
-def _rig_cams_from_block(rig: dict, project=None, engine=None, occlusion=True):
+def _detector_view(intr, input_px):
+    """The intrinsics of the image the detector sees: scaled down to input_px on its longer side when larger."""
+    if not input_px or max(intr.width, intr.height) <= input_px:
+        return intr
+    s = float(input_px) / max(intr.width, intr.height)
+    return _scaled(intr, max(1, int(round(intr.width * s))), max(1, int(round(intr.height * s))))
+
+
+def _rig_cams_from_block(rig: dict, project=None, engine=None, occlusion=True, input_px=DETECTOR_INPUT_PX):
     cams, known = [], 0
     use_body = False
     vg = None
@@ -774,6 +791,7 @@ def _rig_cams_from_block(rig: dict, project=None, engine=None, occlusion=True):
             use_body = vg is not None
     for c in rig.get('cameras') or []:
         intr, ok = _block_intr(c, project)
+        intr = _detector_view(intr, input_px)
         known += ok
         C = np.array([float(c['x']), float(c['y']), float(c['z'])])
         cube = engine.cube(C, vg) if use_body else None
@@ -806,11 +824,12 @@ _LIDAR_CACHE = {}
 
 
 def describe_rig(project_or_rig, variant=None, grid=None, engine=None, classes=CLASSES, project=None,
-                 occlusion=True) -> dict:
+                 occlusion=True, input_px=DETECTOR_INPUT_PX) -> dict:
     """Physics-informed features per class × region of a rig, from its geometry alone (see the module doc).
     project_or_rig: a Project (its variant, default the active one) or a record's rig block (dict; project, when
     given, resolves its modules and lenses and, on the same vehicle, its body as an occluder). grid: a RegionGrid (or
-    its dict); default the project's (regions.default_grid). Returns {'names', 'regions', 'classes', 'X': {class:
+    its dict); default the project's (regions.default_grid). input_px: the detector's largest input side (pixels
+    beyond it are scaled away before detection; DETECTOR_INPUT_PX). Returns {'names', 'regions', 'classes', 'X': {class:
     (regions × features) array}, 'rig_hash', 'grid', 'occlusion', 'cameras', 'seconds', ...}."""
     t0 = time.perf_counter()
     if isinstance(project_or_rig, dict):
@@ -823,7 +842,7 @@ def describe_rig(project_or_rig, variant=None, grid=None, engine=None, classes=C
     if grid is None:
         grid = RG.default_grid(project) if project is not None else RG.RegionGrid()
     eng = engine if engine is not None else (shared_engine() if (project is not None and occlusion) else None)
-    cams, body, known = _rig_cams_from_block(rig, project, eng, occlusion)
+    cams, body, known = _rig_cams_from_block(rig, project, eng, occlusion, input_px)
     sens = _sensor_objs(rig)
     G, rcentre = _region_points(grid)                 # (R, P, 2)
     nR, nP = G.shape[:2]
@@ -916,7 +935,7 @@ def describe_rig(project_or_rig, variant=None, grid=None, engine=None, classes=C
     return {'schema': 'vantage.perf_features/1', 'version': FEATURES_VERSION, 'names': list(FEATURE_NAMES),
             'regions': [rid for _, _, rid, _ in grid.regions()], 'classes': list(classes), 'X': X,
             'grid': grid.to_dict(), 'rig_hash': rig_hash(rig), 'cameras': nC, 'lenses_known': int(known),
-            'lidars': len(lidars), 'radars': len(radars), 'occlusion': bool(body),
+            'lidars': len(lidars), 'radars': len(radars), 'occlusion': bool(body), 'input_px': input_px,
             'seconds': round(time.perf_counter() - t0, 4)}
 
 
@@ -1023,11 +1042,11 @@ def _same(g):
     return (c[:, None] == c[None, :]).astype(float)
 
 
-def _nll_and_grad(theta, X, r, s2, d, S=None, Q=None):
-    """Negative log marginal likelihood of residuals r with K = k(X, X) + σs² S + σq² Q + diag(φ s2 + σn²), and its
-    gradient in θ = [log ℓ (d), log σf, log σn, log φ (, log σs, log σq)] (R&W eq. 5.9: ½ tr((K⁻¹ − α αᵀ) ∂K)). S and Q
-    are the same-scene and same-scene-and-region indicator matrices (the scene's and the scene × region's random
-    offsets), or None."""
+def _nll_and_grad(theta, X, r, s2, d, *G):
+    """Negative log marginal likelihood of residuals r with K = k(X, X) + Σ_l σl² G_l + diag(φ s2 + σn²), and its
+    gradient in θ = [log ℓ (d), log σf, log σn, log φ, log σl …] (R&W eq. 5.9: ½ tr((K⁻¹ − α αᵀ) ∂K)). G: the
+    same-group indicator matrices of the random offsets (GROUP_LEVELS: scene set, scene set × region, town, town ×
+    region), none for a GP without them."""
     from scipy.linalg import cho_factor, cho_solve
     ell = np.exp(theta[:d])
     sf2 = math.exp(2 * theta[d])
@@ -1040,10 +1059,10 @@ def _nll_and_grad(theta, X, r, s2, d, S=None, Q=None):
     E = np.exp(-SQ5 * Rr)
     Kf = sf2 * (1.0 + SQ5 * Rr + 5.0 / 3.0 * R2) * E
     K = Kf + np.diag(phi * s2 + sn2 + 1e-8)
-    groups = S is not None
-    if groups:
-        ss2, sq2 = math.exp(2 * theta[d + 3]), math.exp(2 * theta[d + 4])
-        K = K + ss2 * S + sq2 * Q
+    G = [g for g in G if g is not None]
+    gv = [math.exp(2 * theta[d + 3 + j]) for j in range(len(G))]
+    for v, Gm in zip(gv, G):
+        K = K + v * Gm
     try:
         cf = cho_factor(K, lower=True, check_finite=False)
     except np.linalg.LinAlgError:
@@ -1067,9 +1086,8 @@ def _nll_and_grad(theta, X, r, s2, d, S=None, Q=None):
     g[d] = 0.5 * float((W * (2.0 * Kf)).sum())
     g[d + 1] = 0.5 * float(np.trace(W) * 2.0 * sn2)
     g[d + 2] = 0.5 * float((np.diag(W) * phi * s2).sum())
-    if groups:
-        g[d + 3] = 0.5 * float((W * S).sum() * 2.0 * ss2)
-        g[d + 4] = 0.5 * float((W * Q).sum() * 2.0 * sq2)
+    for j, (v, Gm) in enumerate(zip(gv, G)):
+        g[d + 3 + j] = 0.5 * float((W * Gm).sum() * 2.0 * v)
     return nll, g
 
 
@@ -1122,11 +1140,39 @@ class GPSettings:
     seed: int = 0
 
 
+GROUP_LEVELS = ('scene', 'scene_region', 'town', 'town_region')
+SCENE_LEVELS = GROUP_LEVELS[:2]          # round 14's offsets (scene set, scene set × region)
+GROUP_TEXT = {'scene': 'scene set', 'scene_region': 'scene set × region', 'town': 'town', 'town_region': 'town × region'}
+NEW = '\x00new'                          # the label of a group the training data does not have
+
+
+def group_labels(levels, n, scenes=None, regions=None, towns=None) -> dict:
+    """Per level, the n rows' group labels. A missing scene set or town is one new group shared by the rows; a missing
+    region makes every row its own region (one rig's regions are distinct)."""
+    sc = [str(v) for v in scenes] if scenes is not None else [NEW] * n
+    rg = [str(v) for v in regions] if regions is not None else [f'{NEW}{i}' for i in range(n)]
+    tw = [str(v) for v in towns] if towns is not None else [NEW] * n
+    out = {}
+    for lv in levels:
+        if lv == 'scene':
+            out[lv] = np.asarray(sc)
+        elif lv == 'scene_region':
+            out[lv] = np.asarray([f'{a}|{b}' for a, b in zip(sc, rg)])
+        elif lv == 'town':
+            out[lv] = np.asarray(tw)
+        elif lv == 'town_region':
+            out[lv] = np.asarray([f'{a}|{b}' for a, b in zip(tw, rg)])
+    return out
+
+
 class ClassModel:
     """One class and metric: the logistic prior in log2 pixels, an ARD Matérn-5/2 GP on the residual logit, and (with
-    groups) random offsets per scene set and per scene set × region: rows of one drive share its objects and its
-    town's difficulty, so they are not independent evidence, and a new scene set adds that much variance to every
-    prediction (a hierarchical GP: the offsets are kernels σs²·[same scene] and σq²·[same scene and region])."""
+    groups) random offsets per group level (GROUP_LEVELS): per scene set and scene set × region (round 14), and per
+    town and town × region (round 15): rows of one drive share its objects and its town's difficulty, a town's streets
+    hide the same regions in every drive there, so they are not independent evidence; a new scene set adds σs² + σq²,
+    a new town also σt² + σtq² to every prediction (a hierarchical GP: the offsets are kernels σl²·[same group]). With
+    many rows (FITC) the offsets are kept exactly as low-rank terms beside the inducing points (Woodbury), not folded
+    into the diagonal."""
 
     def __init__(self, cls, metric='recall', names=FEATURE_NAMES):
         self.cls, self.metric = cls, metric
@@ -1134,15 +1180,33 @@ class ClassModel:
         self.px_index = self.names.index('log2_px_obj')
         self.trained = False
         self.n_rows = 0
-        self.groups = False
-        self.ss2 = self.sq2 = 0.0
+        self.levels = []
+        self.gv = {}                       # level -> σl²
+        self.lab_train = {}
         self.off = []                      # feature columns left out (a camera-only detector: lidar and radar)
+
+    @property
+    def groups(self) -> bool:
+        return bool(self.levels)
+
+    @property
+    def ss2(self) -> float:
+        return self.gv.get('scene', 0.0)
+
+    @property
+    def sq2(self) -> float:
+        return self.gv.get('scene_region', 0.0)
+
+    def new_group_var(self) -> float:
+        """The offsets' variance a prediction for a new scene set in a new town carries."""
+        return float(sum(self.gv.values()))
 
     # ---------------------------------------------------------------- fitting
     def fit(self, X, succ, trials, st: GPSettings | None = None, y=None, s2=None, theta0=None, scenes=None,
-            regions=None, off=()):
+            regions=None, off=(), towns=None):
         """X raw features (n × d); succ/trials the binomial counts (or y, s2 given directly: an empirical logit and
-        its sampling variance); scenes/regions: per row its scene set and region (the random offsets), or None."""
+        its sampling variance); scenes/regions (and towns): per row its scene set, region (and town), for the random
+        offsets, or None (no offsets)."""
         from scipy.optimize import minimize
         st = st or GPSettings()
         X = np.asarray(X, float)
@@ -1150,7 +1214,7 @@ class ClassModel:
         if y is None:
             y, s2 = empirical_logit(succ, trials)
             self.a, self.b = fit_logistic_prior(X[:, self.px_index], succ, trials)
-            zz, kk, nn = X[:, self.px_index], np.asarray(succ, float), np.asarray(trials, float)
+            zz, nn = X[:, self.px_index], np.asarray(trials, float)
             pp = sigmoid(self.a + self.b * zz)
             wt = nn * pp * (1 - pp)
         else:
@@ -1171,16 +1235,16 @@ class ClassModel:
         self.off = sorted(int(j) for j in off)
         Z = self.std(X)
         r = y - self.prior(X)
-        self.groups = scenes is not None
-        sc = np.asarray([str(v) for v in scenes]) if self.groups else None
-        sq = np.asarray([f'{a}|{b}' for a, b in zip(scenes, regions)]) if self.groups else None
+        self.levels = [] if scenes is None else list(SCENE_LEVELS) + (['town', 'town_region'] if towns is not None
+                                                                       else [])
+        lab = group_labels(self.levels, n, scenes, regions, towns) if self.levels else {}
         rng = np.random.default_rng(st.seed)
         sub = np.arange(n)
         if n > st.subset_n:
             sub = np.sort(rng.choice(n, st.subset_n, replace=False))
         Zs, rs, s2s = Z[sub], r[sub], s2[sub]
-        args = (Zs, rs, s2s, d) + ((_same(sc[sub]), _same(sq[sub])) if self.groups else ())
-        ng = 2 if self.groups else 0
+        args = (Zs, rs, s2s, d) + tuple(_same(lab[lv][sub]) for lv in self.levels)
+        ng = len(self.levels)
         lo = np.r_[np.full(d, math.log(0.1)), math.log(0.02), math.log(1e-3), 0.0, np.full(ng, math.log(1e-3))]
         hi = np.r_[np.full(d, math.log(50.0)), math.log(5.0), math.log(3.0), math.log(200.0), np.full(ng, math.log(3.0))]
         v0 = max(float(np.var(rs)), 0.05)
@@ -1204,7 +1268,7 @@ class ClassModel:
         self.theta = best.x
         self.nll = float(best.fun)
         self._unpack()
-        self._posterior(Z, r, s2, st, rng, sc, sq)
+        self._posterior(Z, r, s2, st, rng, lab)
         self.n_rows = n
         self.trained = True
         return self
@@ -1215,25 +1279,25 @@ class ClassModel:
         self.sf2 = math.exp(2 * self.theta[d])
         self.sn2 = math.exp(2 * self.theta[d + 1])
         self.phi = math.exp(self.theta[d + 2])
-        self.groups = len(self.theta) == d + 5
-        self.ss2 = math.exp(2 * self.theta[d + 3]) if self.groups else 0.0
-        self.sq2 = math.exp(2 * self.theta[d + 4]) if self.groups else 0.0
+        ng = len(self.theta) - d - 3
+        if len(self.levels) != ng:                       # a saved model of round 14: scene set and scene × region
+            self.levels = list(GROUP_LEVELS[:ng])
+        self.gv = {lv: math.exp(2 * self.theta[d + 3 + j]) for j, lv in enumerate(self.levels)}
 
-    def _posterior(self, Z, r, s2, st: GPSettings | None = None, rng=None, sc=None, sq=None):
-        """The posterior for standardised inputs Z, residuals r, sampling variances s2 and the rows' scene and
-        scene × region labels: exact below sparse_n rows, else FITC on k-means++ inducing points (the group offsets
-        then only on the diagonal: an approximation)."""
-        from scipy.linalg import cho_solve, solve_triangular
+    def _posterior(self, Z, r, s2, st: GPSettings | None = None, rng=None, lab=None):
+        """The posterior for standardised inputs Z, residuals r, sampling variances s2 and the rows' group labels
+        (lab: level -> labels): exact below sparse_n rows, else FITC on k-means++ inducing points with the group
+        offsets as exact low-rank terms."""
+        from scipy.linalg import cho_solve
         st = st or GPSettings()
         noise = self.phi * s2 + self.sn2
         n = len(r)
         self.Ztrain, self.rtrain, self.s2train = Z, r, s2
-        self.sc_train = np.asarray(sc if sc is not None else [''] * n)
-        self.sq_train = np.asarray(sq if sq is not None else [''] * n)
+        self.lab_train = {lv: np.asarray(lab[lv]) for lv in self.levels} if lab else {}
         if n <= st.sparse_n:
             K = matern52(Z, Z, self.ell, self.sf2) + np.diag(noise + 1e-8)
-            if self.groups:
-                K += self.ss2 * _same(self.sc_train) + self.sq2 * _same(self.sq_train)
+            for lv in self.levels:
+                K += self.gv[lv] * _same(self.lab_train[lv])
             L = np.linalg.cholesky(K)
             self.kind = 'exact'
             self.U = Z
@@ -1245,25 +1309,73 @@ class ClassModel:
         rng = rng or np.random.default_rng(st.seed)
         self._posterior_fitc_at(_kmeanspp(Z, min(st.inducing, n), rng), Z, r, s2)
 
+    def _indicators(self, lab_rows, n, sparse=False):
+        """[n × g] indicator columns of the rows' labels against the training groups of every level (a label the
+        training data does not have gives a zero row), concatenated over the levels (a scipy CSR matrix with sparse),
+        and the columns' variances."""
+        from scipy import sparse as SP
+        rows, cols, var, off = [], [], [], 0
+        for lv in self.levels:
+            names = self.group_names[lv]
+            idx = {g: j for j, g in enumerate(names)}
+            for i, g in enumerate(lab_rows[lv]):
+                j = idx.get(g)
+                if j is not None:
+                    rows.append(i)
+                    cols.append(off + j)
+            var.append(np.full(len(names), self.gv[lv]))
+            off += len(names)
+        M = SP.csr_matrix((np.ones(len(rows)), (rows, cols)), shape=(n, off))
+        return (M if sparse else M.toarray()), (np.concatenate(var) if var else np.zeros(0))
+
     def _posterior_fitc_at(self, U, Z, r, s2):
-        from scipy.linalg import solve_triangular
+        """FITC (Snelson and Ghahramani 2006) on inducing inputs U, the group offsets as explicit low-rank terms:
+        K ≈ [Aᵀ Zg] D [Aᵀ Zg]ᵀ + Λ with A = Lm⁻¹ Kmn, Zg the training rows' group indicators, D = diag(1, σl²) and Λ
+        FITC's diagonal (σf² − diag AᵀA + noise); solves by Woodbury, C = D⁻¹ + WᵀΛ⁻¹W."""
+        from scipy.linalg import cho_solve, solve_triangular
         noise = self.phi * s2 + self.sn2
         Kmm = matern52(U, U, self.ell, self.sf2) + 1e-6 * self.sf2 * np.eye(len(U))
         Lm = np.linalg.cholesky(Kmm)
         Kmn = matern52(U, Z, self.ell, self.sf2)
-        A = solve_triangular(Lm, Kmn, lower=True)
-        lam = np.maximum(self.sf2 - (A * A).sum(0), 0.0) + noise + self.ss2 + self.sq2
-        B = np.eye(len(U)) + (A / lam) @ A.T
-        LB = np.linalg.cholesky(B)
-        c = solve_triangular(LB, (A / lam) @ r, lower=True)
-        tmp = solve_triangular(LB.T, c, lower=False)
+        A = solve_triangular(Lm, Kmn, lower=True)                        # m × n
+        lam = np.maximum(self.sf2 - (A * A).sum(0), 0.0) + noise
+        self.group_names = {lv: sorted(set(self.lab_train[lv].tolist())) for lv in self.levels}
+        Zg, vg = self._indicators(self.lab_train, len(r), sparse=True)    # n × g, one 1 per row and level
+        m = len(U)
+        il = 1.0 / lam
+        AL = A * il                                                        # m × n: A Λ⁻¹
+        ZL = Zg.multiply(il[:, None]).tocsr()                              # Λ⁻¹ Zg, sparse
+        C = np.zeros((m + len(vg), m + len(vg)))
+        C[:m, :m] = np.eye(m) + AL @ A.T
+        if len(vg):
+            C12 = np.asarray((ZL.T @ A.T).T)                               # A Λ⁻¹ Zg (m × g)
+            C[:m, m:], C[m:, :m] = C12, C12.T
+            C[m:, m:] = np.diag(1.0 / np.maximum(vg, 1e-12)) + (Zg.T @ ZL).toarray()
+        LC = np.linalg.cholesky(C + 1e-10 * np.eye(len(C)))
+
+        def wt(M):                                                         # Wᵀ M for W = [Aᵀ Zg] (M: n × k)
+            if not len(vg):
+                return A @ M
+            return (np.concatenate if np.ndim(M) == 1 else np.vstack)([A @ M, np.asarray(Zg.T @ M)])
+
+        def wx(x):                                                         # W x
+            return A.T @ x[:m] + (np.asarray(Zg @ x[m:]) if len(vg) else 0.0)
+
+        def kinv(M):                                                       # K⁻¹ M by Woodbury
+            M = np.asarray(M, float)
+            ML = M * (il if M.ndim == 1 else il[:, None])
+            corr = wx(cho_solve((LC, True), wt(ML)))
+            return ML - corr * (il if M.ndim == 1 else il[:, None])
+        H = self._H(Z)                                                     # 2 × n
+        KiH = kinv(H.T)
+        self.Ainv = np.linalg.inv(np.linalg.inv(self._B()) + H @ KiH)
+        self.delta = self.Ainv @ (H @ kinv(r))
+        wcat = cho_solve((LC, True), wt((r - H.T @ self.delta) * il))
         self.kind = 'fitc'
-        self.U, self.Lm, self.LB = U, Lm, LB
-        self.w = solve_triangular(Lm.T, tmp, lower=False)
-        # the prior's coefficients: their posterior with the rows taken as independent (Λ, FITC's diagonal)
-        H = self._H(Z)
-        self.Ainv = np.linalg.inv(np.linalg.inv(self._B()) + (H / lam) @ H.T)
-        self.delta = np.zeros(2)
+        self.U, self.Lm, self.LC = U, Lm, LC
+        self.w = solve_triangular(Lm.T, wcat[:m], lower=False)             # kernel weights on the inducing inputs
+        self.wz = wcat[m:]                                                 # the training groups' offsets
+        self.HLW = wt((H * il).T).T                                        # 2 × (m + g): H Λ⁻¹ W
         self.KiH = None
 
     def _B(self):
@@ -1289,7 +1401,7 @@ class ClassModel:
         self.w = self.alpha - KiH @ self.delta
 
     def mean(self, X):
-        """The posterior mean of the latent logit at raw features X for a new scene set."""
+        """The posterior mean of the latent logit at raw features X for a new scene set (in a new town)."""
         Z = self.std(X)
         return self.prior(X) + self._H(Z).T @ self.delta + matern52(Z, self.U, self.ell, self.sf2) @ self.w
 
@@ -1303,43 +1415,51 @@ class ClassModel:
         return Z
 
     # ---------------------------------------------------------------- prediction
-    def predict(self, X, full_cov=False, scenes=None, regions=None, offsets=True):
-        """Latent logit mean and variance (or covariance) at raw features X. scenes/regions: the rows' scene set and
-        region when they belong to a scene set of the training data (its offsets are then known); by default a new
-        scene set, whose offsets add σs² (shared by the rows) and σq² (per region) to the variance."""
-        from scipy.linalg import solve_triangular
+    def predict(self, X, full_cov=False, scenes=None, regions=None, offsets=True, towns=None):
+        """Latent logit mean and variance (or covariance) at raw features X. scenes/regions/towns: the rows' groups
+        when known (a group of the training data shares its offset with its training rows; one it does not have adds
+        its variance); by default one new scene set in a new town, whose offsets add σs² + σt² (shared by the rows)
+        and σq² + σtq² (per region) to the variance. offsets=False (no groups given): the GP's own (epistemic)
+        uncertainty only."""
+        from scipy.linalg import cho_solve, solve_triangular
         X = np.asarray(X, float)
         Z = self.std(X)
         m = len(Z)
         Ks = matern52(Z, self.U, self.ell, self.sf2)
-        known = scenes is not None and self.groups and self.kind == 'exact'
-        if known:
-            sc = np.asarray([str(v) for v in scenes])
-            sq = np.asarray([f'{a}|{b}' for a, b in zip(scenes, regions)])
-            Ks = Ks + self.ss2 * (sc[:, None] == self.sc_train[None, :]) + \
-                self.sq2 * (sq[:, None] == self.sq_train[None, :])
+        given = scenes is not None or towns is not None
+        use = self.groups and (offsets or given)
+        lab = group_labels(self.levels, m, scenes, regions, towns) if use else {}
+        Gss = np.zeros((m, m))
+        for lv in lab:
+            Gss += self.gv[lv] * (lab[lv][:, None] == lab[lv][None, :])
         Hs = self._H(Z)
-        mu = self.prior(X) + Hs.T @ self.delta + Ks @ self.w
-        if self.groups and (offsets or known):
-            if known:
-                Gss = self.ss2 * (sc[:, None] == sc[None, :]) + self.sq2 * (sq[:, None] == sq[None, :])
-            else:                               # one new scene set: a shared offset, and one per region
-                Gss = self.ss2 * np.ones((m, m)) + self.sq2 * np.eye(m)
-        else:
-            Gss = np.zeros((m, m))
         if self.kind == 'exact':
+            for lv in lab:
+                Ks = Ks + self.gv[lv] * (lab[lv][:, None] == self.lab_train[lv][None, :])
+            mu = self.prior(X) + Hs.T @ self.delta + Ks @ self.w
             KsKi = Ks @ self._kinv()                      # a matrix product (BLAS): milliseconds for a rig
             R = Hs - self.KiH.T @ Ks.T                    # 2 × m
             if full_cov:
                 return mu, matern52(Z, Z, self.ell, self.sf2) + Gss - KsKi @ Ks.T + R.T @ self.Ainv @ R
             return mu, np.maximum(self.sf2 + np.diag(Gss) - (KsKi * Ks).sum(1) +
                                   ((self.Ainv @ R) * R).sum(0), 1e-12)
-        V1 = solve_triangular(self.Lm, Ks.T, lower=True)
-        V2 = solve_triangular(self.LB, V1, lower=True)
+        # FITC with exact low-rank offsets: u* = [Lm⁻¹ k_m(x*), z*]; posterior = Kss − a*ᵀa_* − (known offsets)
+        # + u*ᵀ C⁻¹ u* (+ the new groups' offsets in Gss)
+        a = solve_triangular(self.Lm, Ks.T, lower=True)                    # m_ind × m
+        if lab:
+            Zs, vs = self._indicators(lab, m)
+        else:
+            Zs, vs = np.zeros((m, len(self.wz))), np.zeros(len(self.wz))
+        Ucat = np.vstack([a, Zs.T])                                        # (m_ind + g) × m
+        mu = self.prior(X) + Hs.T @ self.delta + Ks @ self.w + Zs @ self.wz
+        V = solve_triangular(self.LC, Ucat, lower=True)
+        R = Hs - self.HLW @ cho_solve((self.LC, True), Ucat)
+        known = (Zs * vs) @ Zs.T                                           # the known groups' prior part
         if full_cov:
-            return mu, matern52(Z, Z, self.ell, self.sf2) + Gss - V1.T @ V1 + V2.T @ V2 + Hs.T @ self.Ainv @ Hs
-        return mu, np.maximum(self.sf2 + np.diag(Gss) - (V1 * V1).sum(0) + (V2 * V2).sum(0) +
-                              ((self.Ainv @ Hs) * Hs).sum(0), 1e-12)
+            return mu, (matern52(Z, Z, self.ell, self.sf2) - a.T @ a + Gss - known + V.T @ V +
+                        R.T @ self.Ainv @ R)
+        return mu, np.maximum(self.sf2 - (a * a).sum(0) + np.diag(Gss) - np.diag(known) + (V * V).sum(0) +
+                              ((self.Ainv @ R) * R).sum(0), 1e-12)
 
     def _kinv(self):
         """K⁻¹ of the exact posterior, from its Cholesky factor, computed once."""
@@ -1371,7 +1491,7 @@ class ClassModel:
 
     def condition(self, X, y_latent):
         """A copy with pseudo-observations (the kriging believer's): rows X observed at latent values y_latent with
-        only the homoscedastic noise σn² (no sampling noise), in a scene set of their own. Hyperparameters
+        only the homoscedastic noise σn² (no sampling noise), in a scene set (and town) of their own. Hyperparameters
         unchanged; the exact posterior's Cholesky factor is extended by a block (O(n² m)), not refactored."""
         from scipy.linalg import cho_solve, solve_triangular
         m = copy.copy(self)
@@ -1381,15 +1501,16 @@ class ClassModel:
         r = np.r_[self.rtrain, np.asarray(y_latent, float) - self.prior(X)]
         s2 = np.r_[self.s2train, np.zeros(k)]
         tag = f'believer-{len(r)}'
-        sc = np.r_[self.sc_train, np.full(k, tag)]
-        sq = np.r_[self.sq_train, np.array([f'{tag}|{i}' for i in range(k)])]
-        if self.kind != 'exact':
-            m._posterior(Z, r, s2, GPSettings(sparse_n=SPARSE_N), None, sc, sq)
+        newlab = group_labels(self.levels, k, [tag] * k, [str(i) for i in range(k)], [tag] * k)
+        lab = {lv: np.r_[self.lab_train[lv], newlab[lv]] for lv in self.levels}
+        if self.kind != 'exact':                                       # the same inducing inputs
+            m.Ztrain, m.rtrain, m.s2train, m.lab_train = Z, r, s2, lab
+            m._posterior_fitc_at(self.U, Z, r, s2)
             return m
         K12 = matern52(self.Ztrain, Zn, self.ell, self.sf2)          # no shared group with the training rows
         K22 = matern52(Zn, Zn, self.ell, self.sf2) + np.eye(k) * (self.sn2 + 1e-8)
-        if self.groups:
-            K22 += self.ss2 + self.sq2 * np.eye(k)
+        for lv in self.levels:
+            K22 += self.gv[lv] * _same(newlab[lv])
         B = solve_triangular(self.L, K12, lower=True)
         L22 = np.linalg.cholesky(K22 - B.T @ B + 1e-10 * np.eye(k))
         n0 = len(self.rtrain)
@@ -1397,7 +1518,7 @@ class ClassModel:
         L[:n0, :n0] = self.L
         L[n0:, :n0] = B.T
         L[n0:, n0:] = L22
-        m.Ztrain, m.rtrain, m.s2train, m.sc_train, m.sq_train = Z, r, s2, sc, sq
+        m.Ztrain, m.rtrain, m.s2train, m.lab_train = Z, r, s2, lab
         m.U, m.L = Z, L
         m._Ki = None
         m.alpha = cho_solve((L, True), r)
@@ -1413,8 +1534,8 @@ class ClassModel:
         d.update({'a': self.a, 'b': self.b, 'theta': self.theta.tolist(), 'nll': self.nll,
                   'mu_x': self.mu_x.tolist(), 'sd_x': self.sd_x.tolist(), 'kind': self.kind,
                   'Ztrain': self.Ztrain.tolist(), 'rtrain': self.rtrain.tolist(), 's2train': self.s2train.tolist(),
-                  'scenes': self.sc_train.tolist(), 'scene_regions': self.sq_train.tolist(), 'off': self.off,
-                  'prior_cov': np.asarray(self.B0).tolist()})
+                  'levels': list(self.levels), 'labels': {lv: v.tolist() for lv, v in self.lab_train.items()},
+                  'off': self.off, 'prior_cov': np.asarray(self.B0).tolist()})
         if self.kind == 'fitc':
             d['U'] = self.U.tolist()
         return d
@@ -1431,15 +1552,19 @@ class ClassModel:
         m.mu_x, m.sd_x = np.asarray(d['mu_x'], float), np.asarray(d['sd_x'], float)
         m.off = [int(j) for j in d.get('off') or []]
         m.B0 = np.asarray(d.get('prior_cov') or np.eye(2) * 1e-12, float)
+        m.levels = [lv for lv in (d.get('levels') or []) if lv in GROUP_LEVELS]
         m._unpack()
         Z, r, s2 = (np.asarray(d[k], float) for k in ('Ztrain', 'rtrain', 's2train'))
-        sc, sq = d.get('scenes'), d.get('scene_regions')
+        lab = d.get('labels')
+        if not lab and m.levels and d.get('scenes') is not None:           # round 14's file
+            lab = {'scene': d['scenes'], 'scene_region': d.get('scene_regions')}
+        lab = {lv: np.asarray(lab[lv]) for lv in m.levels} if m.levels else {}
         st = GPSettings(sparse_n=SPARSE_N if d.get('kind') == 'fitc' else max(len(r), SPARSE_N))
-        if d.get('kind') == 'fitc':
-            st.inducing = len(d.get('U') or []) or INDUCING_M
-        m._posterior(Z, r, s2, st, np.random.default_rng(0), sc, sq)
-        if d.get('kind') == 'fitc' and d.get('U'):        # the saved inducing points, exactly
+        if d.get('kind') == 'fitc' and d.get('U'):                          # the saved inducing points, exactly
+            m.Ztrain, m.rtrain, m.s2train, m.lab_train = Z, r, s2, lab
             m._posterior_fitc_at(np.asarray(d['U'], float), Z, r, s2)
+        else:
+            m._posterior(Z, r, s2, st, np.random.default_rng(0), lab)
         m.trained = True
         return m
 
@@ -1478,9 +1603,9 @@ def _rows_of(doc, cls, metric='recall'):
 
 
 def training_rows(docs, feats_of, cls, metric='recall'):
-    """Stacked rows of one class over records: X, successes, trials, y, s2, and per row the record index, scene key
-    and rig hash."""
-    Xs, K, Nn, Y, V, rec, scn, rig, reg = [], [], [], [], [], [], [], [], []
+    """Stacked rows of one class over records: X, successes, trials, y, s2, and per row the record index, scene key,
+    town, rig hash and region."""
+    Xs, K, Nn, Y, V, rec, scn, rig, reg, twn = [], [], [], [], [], [], [], [], [], []
     for i, d in enumerate(docs):
         rid, k, n, y, s2 = _rows_of(d, cls, metric)
         if not rid:
@@ -1499,13 +1624,14 @@ def training_rows(docs, feats_of, cls, metric='recall'):
         V.append(s2[keep])
         rec += [i] * len(keep)
         scn += [scene_key(d)] * len(keep)
+        twn += [town_key(d)] * len(keep)
         rig += [d.get('rig_hash', '')] * len(keep)
         reg += [rid[j] for j in keep]
     if not Xs:
         return None
     return {'X': np.vstack(Xs), 'k': np.concatenate(K), 'n': np.concatenate(Nn), 'y': np.concatenate(Y),
             's2': np.concatenate(V), 'rec': np.asarray(rec), 'scene': np.asarray(scn), 'rig': np.asarray(rig),
-            'region': np.asarray(reg)}
+            'region': np.asarray(reg), 'town': np.asarray(twn)}
 
 
 def detector_key(doc) -> str:
@@ -1522,8 +1648,18 @@ def scene_key(doc) -> str:
     return sc.get('scene_hash') or scene_hash(sc)
 
 
+def town_key(doc) -> str:
+    """The place a record was measured in: its CARLA town (a re-driven log: its source), '' when unknown. CARLA's
+    layered maps (Town10HD_Opt) are the same town as their full ones."""
+    sc = doc.get('scene') or {}
+    t = str(sc.get('town') or sc.get('source_id') or '')
+    return t[:-4] if t.endswith('_Opt') else t
+
+
 # =========================================================================== the model
 Z68, Z95 = 0.9944578832097535, 1.959963984540054
+CV_KINDS = ('town', 'scene', 'rig')     # leave one town out (the honest check), one scene set out, rigs out
+CV_TITLE = {'town': 'leave one town out', 'scene': 'leave one scene set out', 'rig': 'leave rigs out'}
 CURVE_LEVELS = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.68, 0.7, 0.8, 0.9, 0.95, 0.99)
 
 
@@ -1549,6 +1685,7 @@ class PerfModelSettings:
     store_in_project: bool = False
     occlusion: bool = True
     scene_effects: bool = True          # random offsets per scene set and scene set × region (hierarchical GP)
+    town_effects: bool = True           # and per town and town × region (round 15; False: round 14's model)
     seed: int = 0
 
     def to_dict(self):
@@ -1581,7 +1718,7 @@ class PerfModelSettings:
             if v is not None and not isinstance(d.get(k), bool):
                 lo, hi = LIMITS[k]
                 setattr(s, k, float(min(max(v, lo), hi)))
-        for k in ('cv', 'store_in_project', 'occlusion', 'scene_effects'):
+        for k in ('cv', 'store_in_project', 'occlusion', 'scene_effects', 'town_effects'):
             if isinstance(d.get(k), bool):
                 setattr(s, k, d[k])
         if d.get('mode') in ('ei', 'std', 'ucb'):
@@ -1618,92 +1755,183 @@ def _ml_noise(res, s2):
     return math.exp(r.x[0]), math.exp(r.x[1])
 
 
+BIG_N = 20                              # rows with at least this many object-instants: little binomial noise
+
+
 def _scores(y, mu, var, p_obs, p_pred, n) -> dict:
+    """Held-out scores: interval coverage of the observed empirical logit, RMSE of recall (all rows, weighted by
+    object-instants, rows with ≥ BIG_N), NLPD, and rmse_floor: the RMSE a perfect predictor would still have from the
+    rows' binomial sampling alone (√ mean p(1−p)/n at the predicted p; frames of one drive are not independent, so the
+    true floor is higher)."""
     sd = np.sqrt(var)
     a = np.abs(y - mu) / sd
     from scipy.stats import norm
     curve = [[lv, float(np.mean(a <= norm.ppf(0.5 + lv / 2)))] for lv in CURVE_LEVELS]
     w = n / n.sum()
+    big = n >= BIG_N
+    pp = np.clip(p_pred, 0.0, 1.0)
     return {'n': int(len(y)), 'coverage68': float(np.mean(a <= Z68)), 'coverage95': float(np.mean(a <= Z95)),
             'rmse': float(np.sqrt(np.mean((p_obs - p_pred) ** 2))),
             'rmse_weighted': float(np.sqrt((w * (p_obs - p_pred) ** 2).sum())),
+            'rmse_floor': float(np.sqrt(np.mean(pp * (1 - pp) / np.maximum(n, 1)))),
+            'n_big': int(big.sum()),
+            'rmse_big': float(np.sqrt(np.mean((p_obs[big] - p_pred[big]) ** 2))) if big.any() else None,
+            'coverage95_big': float(np.mean(a[big] <= Z95)) if big.any() else None,
             'nlpd': float(np.mean(0.5 * np.log(2 * math.pi * var) + 0.5 * (y - mu) ** 2 / var)), 'curve': curve}
 
 
-def cross_validate(rows, cls, metric, by, st: PerfModelSettings, progress=None, cancel=None, off=()) -> dict:
-    """Leave-one-group-out over scene sets (by='scene') or rigs (by='rig', at most st.cv_max_folds folds of whole
-    rigs): everything refitted per fold (prior, hyperparameters, posterior), scored on the held-out rows against the
-    logistic-in-pixels and constant baselines with the same noise model."""
-    groups = rows['scene'] if by == 'scene' else rows['rig']
-    ug = sorted(set(groups.tolist()))
-    if len(ug) < 2:
-        return {'ok': False, 'why': f'needs two {"scene sets" if by == "scene" else "rigs"} (has {len(ug)})'}
-    rng = np.random.default_rng(st.seed + (1 if by == 'rig' else 0))
-    nf = min(len(ug), st.cv_max_folds)
-    perm = rng.permutation(len(ug))
-    fold_of = {g: int(perm[i] % nf) for i, g in enumerate(ug)}
-    fold = np.array([fold_of[g] for g in groups.tolist()])
+def _fold(rows, tr, te, cls, metric, st: PerfModelSettings, off=(), cancel=None):
+    """One train/test split of training rows: the GP refitted on rows tr (prior, hyperparameters, posterior) and the
+    two baselines with the same noise model (the logistic in pixels alone and a constant, each with its own φ and
+    τ²), predicted on rows te as a new scene set. None when there is too little to fit."""
     X, k, n, y, s2 = rows['X'], rows['k'], rows['n'], rows['y'], rows['s2']
     pz = X[:, list(FEATURE_NAMES).index('log2_px_obj')]
-    out = {m: {'y': [], 'mu': [], 'var': [], 'p': []} for m in ('gp', 'logistic', 'constant')}
-    obs_p, obs_n, folds_done = [], [], 0
+    tr, te = np.asarray(tr, bool), np.asarray(te, bool)
+    if tr.sum() < st.min_rows or te.sum() == 0 or (cancel and cancel()):
+        return None
+
     def grp(sel, fit=False):
         g = {'scenes': rows['scene'][sel], 'regions': rows['region'][sel]} if st.scene_effects else {}
+        if st.scene_effects and st.town_effects:
+            g['towns'] = rows['town'][sel]
         if fit:
             g['off'] = off
         return g
+    cm = ClassModel(cls, metric)
+    gst = st.gp(restarts=1, max_iter=min(st.max_iter, 80))
+    try:
+        if metric == 'ap':
+            cm.fit(X[tr], None, None, gst, y=y[tr], s2=s2[tr], **grp(tr, True))
+        else:
+            cm.fit(X[tr], k[tr], n[tr], gst, **grp(tr, True))
+    except RuntimeError:
+        return None
+    mu, var = cm.predict(X[te], **grp(te))
+    r = {'gp': (y[te], mu, var + cm.noise_var(s2[te]), logistic_moments(mu, var)[0])}
+    a, b = (cm.a, cm.b) if metric == 'ap' else fit_logistic_prior(pz[tr], k[tr], n[tr])
+    ml = a + b * pz
+    ph, t2 = _ml_noise(y[tr] - ml[tr], s2[tr])
+    r['logistic'] = (y[te], ml[te], ph * s2[te] + t2, logistic_moments(ml[te], np.full(te.sum(), t2))[0])
+    wc = 1.0 / s2[tr]
+    c0 = float((wc * y[tr]).sum() / wc.sum())
+    ph, t2 = _ml_noise(y[tr] - c0, s2[tr])
+    r['constant'] = (y[te], np.full(te.sum(), c0), ph * s2[te] + t2,
+                     logistic_moments(np.full(te.sum(), c0), np.full(te.sum(), t2))[0])
+    r['obs'] = ((k[te] / n[te]) if metric != 'ap' else k[te] / np.maximum(n[te], 1), n[te])
+    return r
+
+
+def _pool(results) -> dict | None:
+    """Scores of pooled fold results (None when none)."""
+    results = [r for r in results if r is not None]
+    if not results:
+        return None
+    po = np.concatenate([r['obs'][0] for r in results])
+    nn = np.concatenate([r['obs'][1] for r in results])
+    out = {}
+    for m in ('gp', 'logistic', 'constant'):
+        y, mu, var, pp = (np.concatenate([r[m][j] for r in results]) for j in range(4))
+        out[m] = _scores(y, mu, var, po, pp, nn)
+    return out
+
+
+def cross_validate(rows, cls, metric, by, st: PerfModelSettings, progress=None, cancel=None, off=()) -> dict:
+    """Leave-one-group-out over towns (by='town': every scene set of the town held out together, the check of a
+    town the model has not seen), scene sets (by='scene') or rigs (by='rig', at most st.cv_max_folds folds of whole
+    rigs): everything refitted per fold (prior, hyperparameters, posterior), scored on the held-out rows against the
+    logistic-in-pixels and constant baselines with the same noise model."""
+    groups = rows[by] if by in ('scene', 'town') else rows['rig']
+    ug = sorted(set(groups.tolist()))
+    if len(ug) < 2:
+        what = {'scene': 'scene sets', 'town': 'towns'}.get(by, 'rigs')
+        return {'ok': False, 'why': f'needs two {what} (has {len(ug)})'}
+    rng = np.random.default_rng(st.seed + {'rig': 1, 'town': 2}.get(by, 0))
+    nf = len(ug) if by == 'town' else min(len(ug), st.cv_max_folds)
+    perm = rng.permutation(len(ug))
+    fold_of = {g: int(perm[i] % nf) for i, g in enumerate(ug)}
+    fold = np.array([fold_of[g] for g in groups.tolist()])
 
     def one(f):
-        te, tr = fold == f, fold != f
-        if tr.sum() < st.min_rows or te.sum() == 0 or (cancel and cancel()):
-            return None
-        cm = ClassModel(cls, metric)
-        gst = st.gp(restarts=1, max_iter=min(st.max_iter, 80))
-        try:
-            if metric == 'ap':
-                cm.fit(X[tr], None, None, gst, y=y[tr], s2=s2[tr], **grp(tr, True))
-            else:
-                cm.fit(X[tr], k[tr], n[tr], gst, **grp(tr, True))
-        except RuntimeError:
-            return None
-        mu, var = cm.predict(X[te], **grp(te))
-        r = {'gp': (y[te], mu, var + cm.noise_var(s2[te]), logistic_moments(mu, var)[0])}
-        # baselines: the prior alone, and a constant, each with its own (φ, τ²)
-        a, b = (cm.a, cm.b) if metric == 'ap' else fit_logistic_prior(pz[tr], k[tr], n[tr])
-        ml = a + b * pz
-        ph, t2 = _ml_noise(y[tr] - ml[tr], s2[tr])
-        r['logistic'] = (y[te], ml[te], ph * s2[te] + t2, logistic_moments(ml[te], np.full(te.sum(), t2))[0])
-        wc = 1.0 / s2[tr]
-        c0 = float((wc * y[tr]).sum() / wc.sum())
-        ph, t2 = _ml_noise(y[tr] - c0, s2[tr])
-        r['constant'] = (y[te], np.full(te.sum(), c0), ph * s2[te] + t2,
-                         logistic_moments(np.full(te.sum(), c0), np.full(te.sum(), t2))[0])
-        r['obs'] = ((k[te] / n[te]) if metric != 'ap' else k[te] / np.maximum(n[te], 1), n[te])
-        return r
+        return _fold(rows, fold != f, fold == f, cls, metric, st, off, cancel)
     import concurrent.futures as cf
     with cf.ThreadPoolExecutor(max(1, min(CV_THREADS, nf))) as pool:
         results = list(pool.map(one, range(nf)))
     if cancel and cancel():
         return {'ok': False, 'why': 'cancelled'}
-    for r in results:
-        if r is None:
-            continue
-        for meth in ('gp', 'logistic', 'constant'):
-            for key, v in zip(('y', 'mu', 'var', 'p'), r[meth]):
-                out[meth][key].append(v)
-        obs_p.append(r['obs'][0])
-        obs_n.append(r['obs'][1])
-        folds_done += 1
     if progress:
         progress(1.0)
-    if not folds_done:
+    pooled = _pool(results)
+    if pooled is None:
         return {'ok': False, 'why': 'no fold had enough training rows'}
-    po, nn = np.concatenate(obs_p), np.concatenate(obs_n)
-    res = {'ok': True, 'by': by, 'folds': folds_done, 'groups': len(ug)}
-    for m, v in out.items():
-        res[m] = _scores(np.concatenate(v['y']), np.concatenate(v['mu']), np.concatenate(v['var']), po,
-                         np.concatenate(v['p']), nn)
+    res = {'ok': True, 'by': by, 'folds': sum(r is not None for r in results), 'groups': len(ug), **pooled}
+    if by == 'town':                     # each held-out town's own scores: which towns the model transfers to
+        names = {f: [g for g in ug if fold_of[g] == f] for f in range(nf)}
+        res['per_group'] = {', '.join(names[f]) or '?': {m: {k: sc[m][k] for k in ('n', 'rmse', 'coverage95', 'nlpd')}
+                                                        for m in ('gp', 'logistic')}
+                            for f, r in enumerate(results) if r is not None for sc in [_pool([r])]}
     return res
+
+
+def _summ(sc) -> dict:
+    return {k: sc[k] for k in ('n', 'rmse', 'rmse_weighted', 'rmse_big', 'rmse_floor', 'coverage68', 'coverage95',
+                               'nlpd')}
+
+
+def learning_curve(rows, cls, metric='recall', st: PerfModelSettings | None = None, sizes=None, repeats=3,
+                   record_fracs=(), seed=0, cancel=None, off=()) -> dict:
+    """How the model's error on towns it has not seen falls as it is trained on more towns and more records.
+
+    by_towns: for each k in sizes (default 1 … T−1), up to `repeats` distinct random sets of k training towns; each
+    is fitted (everything refitted, as cross_validate) and scored on every town it was not trained on; scores pooled
+    over the sets, the GP against the logistic-in-pixels and constant baselines. by_records: for each fraction in
+    record_fracs, leave-one-town-out with only that random fraction of the training towns' records (whole records: a
+    rig on a drive, so a rig's regions stay together). Each split is scored on the towns it was not trained on, so the
+    rows scored differ between sizes (a size's figure pools its splits); the baselines are scored on the same rows as
+    the GP at every size."""
+    import itertools
+    st = st or PerfModelSettings()
+    towns = sorted(set(rows['town'].tolist()))
+    T = len(towns)
+    if T < 2:
+        return {'ok': False, 'why': f'needs two towns (has {T})', 'towns': towns}
+    rng = np.random.default_rng(seed)
+    sizes = [k for k in (sizes or range(1, T)) if 1 <= k < T]
+    jobs = []
+    for k in sizes:
+        combos = list(itertools.combinations(range(T), k))
+        pick = rng.permutation(len(combos))[:repeats]
+        for j in pick:
+            tr_towns = {towns[i] for i in combos[j]}
+            tr = np.isin(rows['town'], list(tr_towns))
+            jobs.append(('towns', k, tr, ~tr))
+    recs = rows['rec']
+    for frac in record_fracs:
+        for t in towns:
+            te = rows['town'] == t
+            ur = np.unique(recs[~te])
+            keep = rng.choice(ur, max(1, int(round(frac * len(ur)))), replace=False)
+            jobs.append(('records', float(frac), np.isin(recs, keep) & ~te, te))
+    import concurrent.futures as cf
+
+    def one(job):
+        return _fold(rows, job[2], job[3], cls, metric, st, off, cancel)
+    with cf.ThreadPoolExecutor(max(1, min(CV_THREADS, len(jobs)))) as pool:
+        results = list(pool.map(one, jobs))
+    out = {'ok': True, 'class': cls, 'metric': metric, 'towns': towns, 'by_towns': [], 'by_records': []}
+    for kind, key in [('towns', k) for k in sizes] + [('records', float(f)) for f in record_fracs]:
+        sel = [(j, r) for j, r in zip(jobs, results) if j[0] == kind and j[1] == key]
+        pooled = _pool([r for _, r in sel])
+        if pooled is None:
+            continue
+        row = {'splits': sum(r is not None for _, r in sel),
+               'train_rows': int(np.mean([j[2].sum() for j, r in sel if r is not None])),
+               'train_records': int(np.mean([len(np.unique(recs[j[2]])) for j, r in sel if r is not None])),
+               **{m: _summ(pooled[m]) for m in ('gp', 'logistic', 'constant')}}
+        if kind == 'towns':
+            out['by_towns'].append({'k': key, **row})
+        else:
+            out['by_records'].append({'frac': key, **row})
+    return out
 
 
 class Model:
@@ -1816,6 +2044,8 @@ class Model:
                 continue
             cm = ClassModel(c, m)
             grp = {'scenes': rows['scene'], 'regions': rows['region']} if st.scene_effects else {}
+            if st.scene_effects and st.town_effects:
+                grp['towns'] = rows['town']
             grp['off'] = self.off_columns()
             try:
                 if m == 'ap':
@@ -1829,7 +2059,7 @@ class Model:
             self.status[key] = f'trained on {n_rows} rows of {recs} records'
             if st.cv:
                 self.cv[(c, m)] = {by: cross_validate(rows, c, m, by, st, cancel=cancel, off=grp['off'])
-                                   for by in ('scene', 'rig')}
+                                   for by in CV_KINDS}
             if progress:
                 progress((j + 1) / len(jobs), f'{c} ({m})')
         self.seconds = time.perf_counter() - t0
@@ -1880,7 +2110,7 @@ class Model:
                 continue
             X = feats['X'][c]
             mu = cm.mean(X)
-            var = np.full(len(mu), cm.sf2 * 0.0 + cm.ss2 + cm.sq2)        # the new scene set's offsets only
+            var = np.full(len(mu), cm.new_group_var())                   # the new scene set's (town's) offsets only
             mean += wc * float((w * logistic_moments(mu, var)[0]).sum() / w.sum())
             wsum += wc
         return mean / wsum if wsum > 0 else math.nan
@@ -1974,7 +2204,7 @@ class Model:
             cm = ClassModel.from_dict(md)
             m.models[(cm.cls, cm.metric)] = cm
         for cv in d.get('cv') or []:
-            m.cv[(cv['class'], cv['metric'])] = {k: v for k, v in cv.items() if k in ('scene', 'rig')}
+            m.cv[(cv['class'], cv['metric'])] = {k: v for k, v in cv.items() if k in CV_KINDS}
         m.train_rigs = {h: features_from_json(f) for h, f in (d.get('train_rigs') or {}).items()}
         return m
 
@@ -2541,7 +2771,7 @@ def prospective(model: Model, docs, project=None, metric='recall') -> dict:
         rows = training_rows(docs, lambda d: cache.get(d, project, eng, model.st.occlusion), c, m)
         if rows is None:
             continue
-        mu, var = cm.predict(rows['X'], scenes=rows['scene'], regions=rows['region'])
+        mu, var = cm.predict(rows['X'], scenes=rows['scene'], regions=rows['region'], towns=rows['town'])
         ys.append(rows['y'])
         mus.append(mu)
         vs.append(var + cm.noise_var(rows['s2']))
@@ -2665,7 +2895,8 @@ def summary(res: PerfModelResult) -> dict:
 
 
 def cv_table(model: Model) -> list:
-    """Rows: class, metric, CV kind, method, n, coverage68, coverage95, rmse, nlpd, folds."""
+    """Rows: class, metric, CV kind (town, scene, rig), method, n, coverage68, coverage95, rmse, rmse_weighted,
+    rmse_floor, rmse_big (rows with ≥ BIG_N object-instants), nlpd, folds."""
     rows = []
     for (c, met), cvs in model.cv.items():
         for by, cv in cvs.items():
@@ -2677,6 +2908,8 @@ def cv_table(model: Model) -> list:
                 rows.append({'class': c, 'metric': met, 'cv': by, 'method': meth, 'n': s['n'],
                              'coverage68': _r(s['coverage68'], 3), 'coverage95': _r(s['coverage95'], 3),
                              'rmse': _r(s['rmse'], 4), 'rmse_weighted': _r(s['rmse_weighted'], 4),
+                             'rmse_floor': _r(s.get('rmse_floor'), 4), 'n_big': s.get('n_big'),
+                             'rmse_big': _r(s.get('rmse_big'), 4), 'coverage95_big': _r(s.get('coverage95_big'), 3),
                              'nlpd': _r(s['nlpd'], 3), 'folds': cv['folds']})
     return rows
 
@@ -2705,6 +2938,9 @@ def to_doc(res: PerfModelResult, project=None) -> dict:
                                                         'sigma_n': _r(math.sqrt(cm.sn2)), 'dispersion': _r(cm.phi),
                                                         'sigma_scene': _r(math.sqrt(cm.ss2)),
                                                         'sigma_scene_region': _r(math.sqrt(cm.sq2)),
+                                                        'sigma_town': _r(math.sqrt(cm.gv.get('town', 0.0))),
+                                                        'sigma_town_region':
+                                                            _r(math.sqrt(cm.gv.get('town_region', 0.0))),
                                                         'rows': cm.n_rows, 'posterior': cm.kind}
                                          for (c, met), cm in m.models.items() if cm.trained}},
            'calibration': cv_table(m),
@@ -2721,11 +2957,11 @@ def to_csv(res: PerfModelResult) -> str:
     import io
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(['class', 'metric', 'cv', 'method', 'n', 'coverage68', 'coverage95', 'rmse', 'rmse_weighted', 'nlpd',
-                'folds', 'note'])
+    cols = ('class', 'metric', 'cv', 'method', 'n', 'coverage68', 'coverage95', 'rmse', 'rmse_weighted', 'rmse_floor',
+            'n_big', 'rmse_big', 'coverage95_big', 'nlpd', 'folds', 'note')
+    w.writerow(cols)
     for r in cv_table(res.model):
-        w.writerow([r.get(k, '') for k in ('class', 'metric', 'cv', 'method', 'n', 'coverage68', 'coverage95', 'rmse',
-                                           'rmse_weighted', 'nlpd', 'folds', 'note')])
+        w.writerow([r.get(k, '') if r.get(k) is not None else '' for k in cols])
     return buf.getvalue()
 
 
@@ -2764,18 +3000,18 @@ def export(res: PerfModelResult, project, out_dir) -> list:
     return paths
 
 
-def calibration_png(model: Model, size=(900, 420)) -> bytes:
-    """Reliability plot of the leave-one-scene-out (left) and leave-rigs-out (right) intervals: empirical against
-    nominal coverage, the GP and both baselines, for every trained class pooled by row."""
+def calibration_png(model: Model, size=(1200, 420)) -> bytes:
+    """Reliability plot of the leave-one-town-out, leave-one-scene-out and leave-rigs-out intervals: empirical
+    against nominal coverage, the GP and both baselines, for every trained class pooled by row."""
     import cv2
     W, H = size
     img = np.full((H, W, 3), 255, np.uint8)
     cols = {'gp': (214, 120, 42), 'logistic': (60, 160, 60), 'constant': (150, 150, 150)}
-    for p, by in enumerate(('scene', 'rig')):
-        x0, y0, w, h = 50 + p * (W // 2), 40, W // 2 - 80, H - 90
+    for p, by in enumerate(CV_KINDS):
+        x0, y0, w, h = 50 + p * (W // 3), 40, W // 3 - 80, H - 90
         cv2.rectangle(img, (x0, y0), (x0 + w, y0 + h), (200, 200, 200), 1)
         cv2.line(img, (x0, y0 + h), (x0 + w, y0), (210, 210, 210), 1)
-        title = 'leave one scene set out' if by == 'scene' else 'leave rigs out'
+        title = CV_TITLE[by]
         cv2.putText(img, title, (x0, y0 - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (40, 40, 40), 1, cv2.LINE_AA)
         for t in (0.0, 0.5, 1.0):
             cv2.putText(img, f'{t:g}', (x0 - 28, int(y0 + h - t * h) + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4,

@@ -15,11 +15,16 @@
     {
       "description": "No drive: the run failed or was cancelled (error says why when it failed).",
       "properties": {"status": {"enum": ["failed", "cancelled"]}}
+    },
+    {
+      "description": "No drive yet: the bridge's start marker, written as it starts (with recorded_utc.start) and replaced by its report; still there, the run is going or was killed before reporting (core.simrig.read_run reads it as no report).",
+      "properties": {"status": {"const": "running"}}
     }
   ],
   "properties": {
     "schema": {"const": "vantage.sim_run/1"},
-    "status": {"enum": ["ok", "failed", "cancelled"]},
+    "status": {"enum": ["ok", "failed", "cancelled", "running"]},
+    "recorded_utc": {"type": "object", "additionalProperties": false, "description": "CARLA (round 15): when the bridge ran, UTC (ISO 8601, seconds): start as the bridge started (null when the bridge was run in-process without its command line), end as it wrote its report.", "properties": {"start": {"type": ["string", "null"], "description": "When the bridge started."}, "end": {"type": "string", "description": "When it wrote the finished report."}}},
     "project": {"type": ["string", "null"], "description": "The rig file's project."},
     "variant": {"type": ["string", "null"], "description": "The rig file's variant."},
     "out_dir": {"type": "string", "description": "The output folder as the bridge saw it (absolute, on the computer that ran it)."},
@@ -66,6 +71,22 @@
       }
     }},
     "start": {"$ref": "#/$defs/start"},
+    "exposure": {"type": "object", "description": "CARLA (round 15): what exposure the cameras were recorded with. A run.json without it is from before round 15: manual at the rig's output.exposure_ev (core.simrig.exposure_of).", "required": ["mode", "exposure_ev"], "additionalProperties": false, "properties": {
+      "mode": {"enum": ["metered", "manual", "histogram"], "description": "metered: each camera metered before the drive, then manual at that compensation; manual, histogram: CARLA's modes as the rig says."},
+      "exposure_ev": {"type": "number", "description": "The rig's exposure_ev (with metering: the bias added to each camera's metered value)."},
+      "carla_exposure_mode": {"const": "manual", "description": "Metered: the mode CARLA is given."},
+      "target_level": {"type": "number", "description": "Metered: the mean 8-bit luma aimed at."},
+      "cameras": {"type": "object", "description": "Metered, per camera tag.", "additionalProperties": {"type": "object", "additionalProperties": false, "required": ["metered_ev", "compensation_ev"], "properties": {
+        "metered_ev": {"type": "number", "description": "The compensation the meter found (EV against manual 0)."},
+        "compensation_ev": {"type": "number", "description": "What the camera recorded with: metered_ev + exposure_ev."},
+        "at_limit": {"type": "boolean", "description": "The meter hit its range (-8 … +8 EV)."},
+        "mean_level_ev0": {"type": "number", "description": "The image's mean level at manual EV 0 (from the probes)."},
+        "mean_level_predicted": {"type": "number", "description": "The mean level predicted at the compensation (the target, unless at a limit)."},
+        "views": {"type": "array", "items": {"type": "object", "additionalProperties": false, "properties": {"view": {"type": ["string", "integer"]}, "weight": {"type": "number", "description": "The view's share of the camera's output pixels."}, "mean_level_ev0": {"type": "number"}}}}}}},
+      "probe_ev": {"type": "array", "items": {"type": "number"}, "description": "The probes' manual compensations."},
+      "probe_px": {"type": "integer", "description": "A probe view's longer side, pixels."},
+      "probe_ticks": {"type": "integer", "description": "Simulation steps rendered before the probes' frame is read."},
+      "method": {"type": "string"}}},
     "faults_injected": {"type": "array", "description": "Every fault as applied (empty for a clean drive): the known answers.", "items": {"$ref": "#/$defs/fault_row"}},
     "scenario": {"$ref": "#/$defs/scenario"},
     "ground_truth": {"$ref": "#/$defs/ground_truth"},

@@ -25,6 +25,8 @@ from ..widgets import ROW_H, ScrubSpinBox, StatusLine, ToggleSwitch, button, fit
 
 JOB = 'fleet_twin'
 DRIVE_JOB = 'fleet_twin_drive'
+WATCH_STATE_TEXT = {'arriving': 'arriving', 'quiet': 'waiting until it is quiet', 'incomplete': 'not finished',
+                    'ready': 'ready'}
 URG_COLOR = {'beyond': STATUS['critical'], 'due': STATUS['serious'], 'soon': STATUS['warning'], 'later': '#8fbf3a',
              'ok': STATUS['good'], 'unknown': '#6e7f96'}
 SRC_COLOR = {'install_check': '#3987e5', 'extrinsics': '#199e70', 'nuscenes': '#199e70', 'kalibr': '#c98500',
@@ -732,6 +734,9 @@ class FleetTwinPage(QWidget):
             self.watch_label.setToolTip('')
         seen = FT.seen(p).get(self.sel_vehicle, {})
         lines = [f'{v.get("drive")}: {v.get("status")} · {v.get("message")}' for v in list(seen.values())[-4:]]
+        lines += [f'{FT._drive_name(path)}: {WATCH_STATE_TEXT.get(s, s)} · {t}'
+                  for (vid, path), (s, t) in sorted(self.watch_state.status.items())
+                  if vid == self.sel_vehicle and s not in ('read', 'reading')][:6]
         if self.reading is not None:
             lines.append(f'Calibrating {os.path.basename(self.reading[1].rstrip(os.sep))}…')
         self.watch_status.setText('\n'.join(lines))
@@ -798,7 +803,8 @@ class FleetTwinPage(QWidget):
         sub = os.path.join(path, 'nuscenes')
         if os.path.isdir(sub) and sub in found:
             path = sub
-        return self._read_drive(vid, path, FT.drive_key(path))
+        date = self.drive_date.text().strip()
+        return self._read_drive(vid, path, FT.drive_key(path), FL.normalise_date(date) if FL.parse_date(date) else '')
 
     def set_watch_folder(self, folder=None):
         vid = self.sel_vehicle
@@ -833,24 +839,24 @@ class FleetTwinPage(QWidget):
         ready = self.watch_state.poll(self.ctx.store.project)
         if ready:
             vid, path, key = ready[0]
-            self._read_drive(vid, path, key)
+            self._read_drive(vid, path, key)            # dated by the drive itself (the typed date is for one drive)
+        else:
+            self._sync_watch()
         return ready
 
-    def _read_drive(self, vid, path, key) -> bool:
+    def _read_drive(self, vid, path, key, date='') -> bool:
         if self.reading is not None:
             self.ctx.msg('A drive is being calibrated: wait for it to finish.', 4000)
             return False
         project = self.ctx.store.project.snapshot()
         win = self.ctx.window
         eng = self._engine()
-        date = self.drive_date.text().strip()
         self.reading = (vid, path, key)
         self.watch_state.busy.add((vid, key))
         self._sync_watch()
 
         def work(progress, cancel):
-            return (vid, path, key, FT.read_drive(project, vid, path, eng, progress, cancel,
-                                                  date=FL.normalise_date(date) if FL.parse_date(date) else ''))
+            return (vid, path, key, FT.read_drive(project, vid, path, eng, progress, cancel, date=date))
         if win is not None and hasattr(win, 'run_job'):
             ok = win.run_job(DRIVE_JOB, f'Calibrating {os.path.basename(path.rstrip(os.sep))}', work,
                              lambda out: self._drive_done(out), lambda m: self._drive_failed(m))
@@ -932,8 +938,14 @@ class FleetTwinPage(QWidget):
             self._sync_watch()
             return
         name = rep['drive']
+        if rep['status'] == 'changed':                  # still being written: looked at afresh, nothing added
+            self.watch_state.forget(vid, path)
+            self.ctx.msg(f'{name}: {rep["message"]}', 6000)
+            self._sync_watch()
+            return
         info = dict(rep, observations=len(rep['observations']))
         self._add_obs(vid, rep['observations'], f'drive {name} for {self._vehicle_name(vid)}', (key, info))
+        self.watch_state.mark_read(vid, path)
         self.ctx.msg(f'{name}: {rep["status"]} · {rep["message"]}', 6000)
         self._sync_watch()
 

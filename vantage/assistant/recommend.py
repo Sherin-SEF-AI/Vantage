@@ -57,6 +57,7 @@ class Recommendation:
     evidence: dict = field(default_factory=dict)    # the figures: a material change brings a dismissed one back
     topic: str = ''              # recommendations on one topic are deduplicated (the most useful kept)
     base: float = 0.0            # the priority before the context's boost
+    severity: str = ''           # critical | serious | warning | info | start (set by _rec)
 
     @property
     def button(self) -> str:
@@ -90,6 +91,7 @@ class State:
     records: list = field(default_factory=list)         # copilot approval records in the project
     brief: str = ''
     hints: dict = field(default_factory=dict)           # worked out off the UI thread: pitch_hint(), scale_hint()
+    pages: dict = field(default_factory=dict)           # page id -> page_guide.page_state (the panel fills the open one)
 
 
 @dataclass
@@ -153,7 +155,7 @@ _URL = re.compile(r'[a-z][a-z0-9+.-]*://\S+', re.IGNORECASE)
 
 def _rec(rid, title, why, kind, sev, value=1.0, **kw) -> Recommendation:
     base = SEVERITY.get(sev, 30.0) * min(max(float(value), 0.6), 1.4)
-    return Recommendation(rid, title, why, kind, priority=base, base=base, **kw)
+    return Recommendation(rid, title, why, kind, priority=base, base=base, severity=sev, **kw)
 
 
 def _location(project, x, y) -> str:
@@ -790,6 +792,22 @@ RULES = (edit_rules, selection_rules, issue_rules, ground_rules, tolerance_rules
          perception_rules, lidar_rules, stale_rules, carla_rules, drivelog_rules, detection_rules, campaign_rules,
          rig_rules, plan_rules)
 
+PAGE_PREFIX = 'page:'           # the page guide's items (page_guide.page_recommendations)
+
+
+def page_rules(st: State, cx: Context):
+    """The open page's own items (assistant/page_guide.py): what it needs, Run, its result's top findings, the next page
+    of the workflow, its export, "What can I do here?". Only when the panel gathered the page's state (State.pages);
+    ranked as the page's own: above the starters, below every critical item (see recommend)."""
+    ps = (st.pages or {}).get(cx.page)
+    if not isinstance(ps, dict):
+        return []
+    from . import page_guide as PG
+    return PG.page_recommendations(cx.page, ps, cx)
+
+
+PAGE_RULES = (page_rules,)      # additive: they never count towards leaving the starters out
+
 
 # ====================================================================================================== hints
 # Worked out off the UI thread by the panel (they analyse copies: too slow for recommend's 50 ms) and passed in as
@@ -875,6 +893,42 @@ class Dismissed:
                 del self.data[rid]
 
 
+def _page_items(state: State, cx: Context, recs: list) -> list:
+    """The page guide's items for the open page, without the ones another rule already gives (the same page and button
+    to open, or a plan about this page)."""
+    own = []
+    for rule in PAGE_RULES:
+        try:
+            own += rule(state, cx)
+        except Exception as e:                          # noqa: BLE001 — the page's trouble never empties the list
+            own.append(_rec(f'error:{rule.__name__}', 'A recommendation rule failed', f'{type(e).__name__}: {e}',
+                            'open', 'start', 0.6, source=rule.__name__, target={'page': None}))
+    page = ('page', cx.page)
+    targets = {(t.get('page'), t.get('focus')) for t in (r.target for r in recs) if isinstance(t, dict)}
+    planned = any(r.kind == 'plan' and page in {tuple(a) for a in r.about} for r in recs)
+    out = []
+    for r in own:
+        t = r.target if isinstance(r.target, dict) else {}
+        if r.kind == 'open' and t and (t.get('page'), t.get('focus')) in targets:
+            continue
+        if r.kind == 'plan' and planned:
+            continue
+        out.append(r)
+    return out
+
+
+def _rank_page_items(recs: list):
+    """The page guide's items rank as the page's own: above the starters, below every critical item (a severity step
+    below the lowest one, so the stable order cannot lift them above it); their order among themselves is kept."""
+    crit = [r.priority for r in recs if r.severity == 'critical' and not r.id.startswith(PAGE_PREFIX)]
+    if not crit:
+        return
+    cap = 20.0 * int(min(crit) // 20) - 0.01
+    mine = sorted((r for r in recs if r.id.startswith(PAGE_PREFIX) and r.priority > cap), key=lambda r: -r.priority)
+    for i, r in enumerate(mine):
+        r.priority = max(cap - 0.001 * i, SEVERITY['start'] * 1.4 + 0.5)
+
+
 def recommend(state: State, context: Context | None = None, dismissed: Dismissed | None = None,
               previous: list | None = None) -> list:
     """Every recommendation for the state, the ones about the current thing first, deduplicated, dismissed ones left
@@ -889,6 +943,7 @@ def recommend(state: State, context: Context | None = None, dismissed: Dismissed
                              'open', 'start', 0.6, source=rule.__name__, target={'page': None}))
     if sum(1 for r in recs if not r.id.startswith('error:')) < 3:
         recs += default_rules(state, cx)
+    recs += _page_items(state, cx, recs)
     focus, page = cx.focus(), ('page', cx.page)
     for r in recs:
         r.priority = r.base
@@ -897,6 +952,7 @@ def recommend(state: State, context: Context | None = None, dismissed: Dismissed
             r.priority += FOCUS_BOOST
         elif page in keys:
             r.priority += PAGE_BOOST
+    _rank_page_items(recs)
     out, seen, topics = [], set(), {}
     for r in sorted(recs, key=lambda r: (-r.priority, r.id)):
         if r.id in seen:

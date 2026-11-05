@@ -505,6 +505,9 @@ def test_study_on_the_sweep_with_detectors_that_know_the_truth(sweep):
     doc = FR.to_doc(res, p)
     json.dumps(doc, default=str)
     assert doc['schema'] == FR.SCHEMA and doc['plan']['placements'] and doc['frame'].startswith('vehicle')
+    # (round 15) the sweep's drives were metered: every drive says so, and so do the notes
+    assert all(r['exposure']['mode'] == 'metered' and r['exposure']['cameras'] for r in doc['recordings'])
+    assert any(n.startswith('Exposure of the frames: ') and 'metered' in n for n in doc['notes'])
     names = [n for n, _ in FR.files(res, p)]
     assert 'foundation_range.json' in names and any(n.startswith('foundation_pdetect_f_pedestrian') for n in names)
     assert any(n.startswith('examples/') for n in names) and any(n.startswith('records/') for n in names)
@@ -562,6 +565,30 @@ def test_study_on_a_recording_and_the_perception_records(sweep, tmp_path):
     if out['how'].startswith('core.perf_model'):                 # the store knows them: a second hand-over adds none
         again2 = FR.store_records(res, None, store=str(tmp_path / 'records.jsonl'))
         assert again2['stored'] == 0 and again2['duplicates'] == len(res.records)
+
+
+def test_old_drives_read_as_manual_exposure(tmp_path):
+    """A drive recorded before round 15 (a rig file without exposure_meter, a run.json without an exposure block)
+    reads as manual at its EV; a metered one as metered with its cameras' compensations; a folder without a rig file
+    as unknown."""
+    from vantage.core import foundation_range as FR
+    old = tmp_path / 'old'
+    (old / 'rig').mkdir(parents=True)
+    (old / 'rig' / 'sim_rig.json').write_text(json.dumps({'output': {'exposure': 'manual', 'exposure_ev': 0.0}}))
+    (old / 'run.json').write_text(json.dumps({'status': 'ok'}))
+    assert FR.recording_exposure(str(old)) == {'mode': 'manual', 'exposure_ev': 0.0}
+    new = tmp_path / 'new'
+    (new / 'rig').mkdir(parents=True)
+    (new / 'rig' / 'sim_rig.json').write_text(json.dumps({'output': {
+        'exposure': 'manual', 'exposure_ev': 0.0, 'exposure_meter': {'target_level': 118.0}}}))
+    (new / 'run.json').write_text(json.dumps({'exposure': {'mode': 'metered', 'cameras': {
+        'F': {'compensation_ev': -3.04}, 'ML': {'compensation_ev': -2.5}}}}))
+    e = FR.recording_exposure(str(new))
+    assert e['mode'] == 'metered' and e['cameras'] == {'F': -3.04, 'ML': -2.5}
+    assert FR.recording_exposure(str(tmp_path / 'nothing')) is None
+    note = FR.exposure_note([FR.recording_exposure(str(old)), e, None])
+    assert '1 metered (compensation -3.04 … -2.50 EV)' in note and '1 manual at EV +0.00' in note
+    assert 'unknown' in FR.exposure_note([None])
 
 
 def test_cancel_returns_none(sweep):

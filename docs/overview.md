@@ -943,10 +943,14 @@ of recall, over a monotone logistic prior in pixels.
 **Training data:** perception records (`vantage.perception_record/1`) from Rig perception, Foundation models and Robust
 perception, in a store in your data folder (or beside the project). Records export anonymised for pooling.
 
-**Calibration**, by leave-one-scene-out cross-validation on 100 records (92 rigs, 3 scene sets): pedestrian 95 %
-interval coverage 0.92, RMSE 0.24 (logistic baseline 0.23, constant 0.45); vehicle 0.88, 0.27 (0.28, 0.34). The set is
-small and the rigs are camera subsets of one drive: the logistic in pixels alone does about as well, and active
-learning did not beat random selection (RMSE 0.121 against 0.122 at 32 rigs).
+**Calibration** is measured by leaving out a whole town (every scene set recorded there), a scene set or a rig,
+against two baselines (the logistic in pixels alone and a constant). On a campaign of 1050 records (136 rigs, 48 CARLA
+scene sets in six towns, noon and sunset), leaving a town out: pedestrian RMSE of recall 0.230 (logistic 0.307,
+constant 0.411), 95 % interval coverage 0.965, 68 % coverage 0.705; vehicle 0.239 (0.281, 0.384), 0.959, 0.714. It
+beats the baseline in every town. The gain comes from towns and scene sets: with one training town it is no better
+than the baseline, an eighth of the records does as well as all of them, and choosing rigs by expected improvement did
+not beat random choice. Calibrated for CARLA noon and sunset, YOLOX-S lifted to 3D, camera rigs within the training
+resolutions and ranges within 60 m; on whole rigs driven at a higher resolution its 95 % intervals covered 0.90.
 
 **Uses:** predict a variant without simulating it, rank which variants to simulate next (expected improvement), a term
 in the placement optimiser (*Learned detection* weight), and the design agent's detection axis.
@@ -1313,6 +1317,8 @@ nuScenes plus a ROS 2 bag, in the sample dataset's layout.
 - **Fisheyes** as pinhole cube faces remapped through the lens model (within 0.1 px):
   - the seams are feathered;
   - Unreal's vignette is removed in linear light;
+  - each camera is metered once before the drive (mean level 118, fixed, every view alike; manual and CARLA's auto
+    exposure stay available);
   - each lidar point is placed where the sensor was when it fired.
 - **Lidar beams** exactly on CARLA's channels.
 - **Radar zones** as CARLA radars.
@@ -1498,9 +1504,10 @@ request from a pinned revision with every file SHA-256 checked (models without a
 opt-in). P(detect) against range by logistic regression with cluster-bootstrap intervals gives R50, R90 and the pixel
 height the detector needs.
 
-**Measured** in a CARLA range sweep on the sample's front fisheye (60 drives): YOLOX-S finds half the pedestrians out to
-43 m [37–51] where the pixel rule promises 68 m (it needs about 38 px, not 24); monocular depth stays within 10 % only to
-about 5 m. Models trained on photographs, measured on renders.
+**Measured** in a CARLA range sweep with metered exposure on the sample's front fisheye (60 drives): YOLOX-S finds half
+the pedestrians out to 49 m [44–54] where the pixel rule promises 68 m (it needs about 34 px, not 24), on the side
+camera 27 m [23–35] against 60 m, and cyclists only to about 12–14 m against 58–64 m (a lower bound: bike and rider are
+matched as one); monocular depth stays within 10 % only to about 5 m. Models trained on photographs, measured on renders.
 
 ### 15.13 Robust perception (Simulate ▸ Robust perception)
 
@@ -1667,8 +1674,12 @@ as a new variant, and it is then measured against the prediction.
 - *"a fault campaign: turn F and ML by 0.1 to 1°, three seeds"*;
 - *"an experiment: F pitch 25–45° by 5° × the two lenses"*.
 
-**The answer is a plan:** steps of kinds such as CARLA drive, campaign, detection, critical targets, live rig,
-experiment, sample dataset, study or export.
+**The answer is a plan:** steps of 18 kinds: CARLA drive, campaign, detection, critical targets, live rig,
+experiment, sample dataset, study, export, and the perception studies (rig perception, foundation-model range, robust
+perception, re-drive, design agent, train the learned model, learned-model campaign, risk-weighted coverage, fleet
+twin). An approved study step runs in the background, can be cancelled, and its result lands on the study's page;
+the design agent's step never creates a variant. Without a model, `/plan …` maps plain requests to these kinds by
+Vantage's own rules.
 
 **What each step shows:**
 
@@ -1705,6 +1716,10 @@ using a wrong port, or with a missing model.
 
 **Where they appear:**
 
+- **On every page**, the strip knows what the page is for, what it needs first and where its result is. It leads with
+  that page's next step: a missing prerequisite and where to fix it, the page's Run (a plan for CARLA, GPU and training
+  pages), up to three of its findings to ask about, the next page of the workflow, its export and *What can I do
+  here?*. It refreshes 60 ms after you change page; the model reads the same through `get_page_context`.
 - **A live strip** that follows what you are doing. Examples:
   - *"QR alone sees 3.00 m²"*;
   - *"Your last change added 0.155 m² blind ground: undo it"*;
@@ -2178,7 +2193,9 @@ Vantage states its limits wherever they apply. The main ones:
 
 - The detection figures are a COCO detector's (and two open-vocabulary detectors') on CARLA renders: they compare rigs,
   cameras and models; they are not a stack's absolute performance. No qualifying pretrained BEV model was found.
-- The learned model is trained on 100 records from 3 scene sets: its intervals are checked, but it has seen little.
+- The learned model was measured on CARLA renders (six towns, noon and sunset, no cyclists, to 60 m) with one
+  detector: its intervals hold on an unseen town there, not on real roads, at night or for other detectors. Vantage
+  ships no trained model: train it on your own records.
 - Re-drive was validated on CARLA drives only; no real third-party log was used.
 - The fleet twin's knock and forecast figures come from real CARLA online calibrations arranged in time by a labelled
   fixture: no real fleet data was used.

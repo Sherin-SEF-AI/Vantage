@@ -34,19 +34,31 @@ SLOT = 'copilot'                     # project.analysis.copilot: {'plans': [reco
 MAX_RECORDS = 60
 EXIT_REFUSED = 10                    # batch --run-plan: no approved, intact plan with that id, or the gate refused
 
+# round 14's studies (round 15): each runs its core module headless (run_study_kind), in the background in the app
+STUDY_KINDS = ('rig_perception', 'foundation_range', 'robust_perception', 'redrive', 'design', 'perf_model_train',
+               'perf_model_campaign', 'risk_coverage', 'fleet_twin')
 KINDS = ('carla_run', 'campaign', 'detection', 'critical_carla', 'carla_live', 'experiment', 'sample_dataset',
-         'study', 'export')
+         'study', 'export') + STUDY_KINDS
 KIND_LABEL = {'carla_run': 'CARLA drive', 'campaign': 'Simulation campaign', 'detection': 'Detection quality',
               'critical_carla': 'Critical targets in CARLA', 'carla_live': 'CARLA live rig',
               'experiment': 'Designed experiment', 'sample_dataset': 'Sample dataset', 'study': 'Study',
-              'export': 'Export'}
+              'export': 'Export', 'rig_perception': 'Rig perception', 'foundation_range': 'Foundation-model range',
+              'robust_perception': 'Robust perception', 'redrive': 'Re-drive a recorded drive',
+              'design': 'Design agent', 'perf_model_train': 'Train the learned detection model',
+              'perf_model_campaign': 'Learned-model campaign', 'risk_coverage': 'Risk-weighted coverage',
+              'fleet_twin': 'Fleet twin'}
 KIND_PAGE = {'carla_run': 'sim', 'campaign': 'campaign', 'detection': 'detection', 'critical_carla': 'critical_carla',
              'carla_live': 'sim', 'experiment': 'experiments', 'sample_dataset': 'dataset', 'study': '',
-             'export': ''}
-# the project.analysis slot a kind's settings live in (what "Open on its page" and Run set); None: kept in the plan
+             'export': '', 'rig_perception': 'rig_perception', 'foundation_range': 'foundation',
+             'robust_perception': 'robust_perception', 'redrive': 'splat', 'design': 'designer',
+             'perf_model_train': 'perf_model', 'perf_model_campaign': 'perf_model', 'risk_coverage': 'risk_coverage',
+             'fleet_twin': 'fleet_twin'}
+# the project.analysis slot a kind's settings live in (what "Open on its page" and Run set); None: kept in the plan.
+# A study kind's settings are kept in the plan too (they hold plan-only options besides the page's settings): the
+# runner merges the page's part into STUDY_SLOT[kind] (apply_study_settings) before it runs.
 KIND_SLOT = {'carla_run': 'sim', 'campaign': 'campaign', 'detection': 'detection', 'critical_carla': 'critical_carla',
              'carla_live': None, 'experiment': 'experiments', 'sample_dataset': 'dataset', 'study': None,
-             'export': None}
+             'export': None, **{k: None for k in STUDY_KINDS}}
 SOURCES = {'request': 'from your request', 'default': 'default', 'copilot': 'chosen by the Copilot',
            'limit': 'forced by a limit'}
 STATUSES = ('draft', 'approved', 'running', 'done', 'failed', 'cancelled', 'rejected', 'superseded')
@@ -87,6 +99,25 @@ LIMITS_DOC = {
             'rig page; below real time CARLA slows the streams down.',
     'sample_dataset': 'The sample dataset is synthetic geometry for testing pipelines, not for training.',
     'experiment_carla': 'Experiment responses computed in CARLA drive the simulator once per design point.',
+    'scene_set': 'A perception scene set drives every scene once per seed and per variant in CARLA (about 6.5 min of '
+                 'wall time per 12 s six-camera drive with ground truth on the development machine: the standard set '
+                 'for two rigs took 56 min); drives already there are reused.',
+    'perception_detector': 'Rig perception lifts an off-the-shelf 2D detector (YOLOX, COCO classes) to 3D boxes on '
+                           'CARLA renders: compare rigs on the same scenes, not absolute performance. A plan cannot '
+                           'download the detector.',
+    'foundation_models': 'Foundation models (OWLv2, Grounding DINO, Depth Anything V2) need PyTorch and transformers '
+                         'and are downloaded on request on Simulate ▸ Foundation models (a plan cannot download them); '
+                         'they run on the GPU when there is one. Trained on photographs, measured on renders.',
+    'redrive': 'A re-drive rebuilds the recorded drive as 3D Gaussians (PyTorch; a GPU makes it minutes, the CPU much '
+               'longer): moving people are rebuilt as rigid bodies, so detection of pedestrians on a re-shot drive is '
+               'not valid.',
+    'design_options': 'The design agent never changes the project: an option becomes a variant only when you create '
+                      'it on Analysis ▸ Design agent (one undo step, written to the design log).',
+    'perf_model': 'The learned model is a Gaussian process on recall from the rig\'s geometry, trained on perception '
+                  'records; a new town, weather or detector is outside what it has seen. Its store and saved model '
+                  'are in your data folder (or the project\'s, when it opts in).',
+    'fleet_watch': 'Watching the fleet\'s folders once reads every drive that arrived and has been quiet for the '
+                   'watch\'s quiet time; each drive is read once.',
 }
 
 
@@ -97,8 +128,9 @@ _PLAN_WORDS = re.compile(
 
 
 def is_plan_request(text: str) -> bool:
-    """Does the message ask for something to be run or written (a Copilot turn: thinking effort high)?"""
-    return bool(_PLAN_WORDS.search(text or ''))
+    """Does the message ask for something to be run or written (a Copilot turn: thinking effort high)? Also every
+    request the deterministic planner maps to a study kind ("how far can F see a cyclist")."""
+    return bool(_PLAN_WORDS.search(text or '')) or bool(match_kind(text))
 
 
 def utc_now() -> str:
@@ -205,6 +237,8 @@ def defaults(kind: str, project) -> dict:
                 'tolerance_mm': None, 'condition': ''}
     if kind == 'export':
         return {'formats': [], 'folder': '', 'frame': 'rear_axle', 'units': 'm', 'angles': 'deg'}
+    if kind in STUDY_KINDS:
+        return study_defaults(kind, project)
     raise KeyError(kind)
 
 
@@ -285,6 +319,8 @@ def clean(kind: str, d: dict, project, working_dir='') -> tuple[dict, list]:
         return _clean_study(d)
     if kind == 'export':
         return _clean_export(d)
+    if kind in STUDY_KINDS:
+        return clean_study(kind, d, project, working_dir)
     raise KeyError(kind)
 
 
@@ -632,8 +668,12 @@ def _item_texts(kind, key, value, project=None, raw=False) -> list | None:
         return [SC.EVALUATOR_LABEL.get(e, e) for e in value]
     if kind == 'campaign' and key == 'variants' and project is not None:
         return [next((v.name for v in project.variants if v.uid == u), u) for u in value]
-    if kind == 'detection' and key == 'recordings':
+    if kind in ('detection', 'foundation_range', 'robust_perception') and key == 'recordings':
         return [os.path.basename(str(r).rstrip('/\\')) or str(r) for r in value]
+    if kind in STUDY_KINDS:
+        t = study_item_texts(kind, key, value, project)
+        if t is not None:
+            return t
     if kind == 'export' and key == 'formats':
         from ..core import exporters as ex
         out = []
@@ -668,10 +708,16 @@ def value_text(kind, key, value, project=None, unit='', scale=1.0) -> str:
             return EX.DESIGN_LABEL.get(value, value)
         if base == 'name' and key.startswith(('scenario.', 'base.scenario.')):
             return _scenario_label(value)
+        if kind in STUDY_KINDS:
+            t = study_value_text(kind, key, value, project)
+            if t is not None:
+                return t
         return value if value else '—'
     if value is None:
         return '—'
     if isinstance(value, list):
+        if not value and kind in STUDY_KINDS and (kind, key) in STUDY_EMPTY_TEXT:
+            return STUDY_EMPTY_TEXT[(kind, key)]
         if not value:
             return {'cameras': 'every camera', 'variants': 'the active variant',
                     'weathers': 'the base drive\'s weather', 'scenarios': 'the base drive\'s scenario',
@@ -797,6 +843,8 @@ def unused(kind, settings, project=None) -> dict:
         for k, studies in STUDY_USES.items():
             if st not in studies:
                 out[k] = ('not used by this study', f'{st.replace("_", " ")} does not take it')
+    elif kind in STUDY_KINDS:
+        out.update(study_unused(kind, s, project))
     return out
 
 
@@ -1051,6 +1099,8 @@ def _limit_reason(kind, key, asked, got, project=None, changes=None) -> str:
         elif kind == 'carla_live':
             from ..core import simrig as SR
             lim = {'scale': (SR.LIMITS['image_scale'][0], 1.0), 'duration_s': (0.0, 3600.0)}.get(key)
+        elif kind in STUDY_KINDS:
+            lim = study_limits(kind).get(key)
     except Exception:                       # noqa: BLE001 — a reason is a nicety
         lim = None
 
@@ -1131,8 +1181,8 @@ def resolve_step(project, kind, values=(), label='', base=None, base_sources=Non
     for key, val in asked.items():
         if key == 'template':
             continue
-        if kind == 'detection' and key == 'recordings':
-            continue                    # named as the catalogue shows them, kept as full paths
+        if kind == 'detection' and key == 'recordings' or (kind, key) in NAMED_KEYS:
+            continue                    # named as the catalogue shows them, kept as full paths (variants as uids)
         got = get_path(settings, key, flat.get(key))
         if key.startswith('scenario.params.') and got is None:
             from ..sim import carla_bridge as CB
@@ -1163,6 +1213,8 @@ def resolve_step(project, kind, values=(), label='', base=None, base_sources=Non
                                                      'scenarios', 'evaluators') and \
                 not k.startswith('scenario.params.') and k != 'template':
             sources.pop(k)
+    if kind in STUDY_KINDS:
+        study_sources(kind, settings, asked, sources, project)
     st = Step(kind, (label or KIND_LABEL[kind]).strip()[:120], settings, sources, errors)
     if check:
         check_step(project, st, working_dir=working_dir, engine=engine)
@@ -1399,6 +1451,8 @@ def check_step(project, st: Step, working_dir='', engine=None, budget=None):
             from ..core import exporters as ex
             est.update(formats=len(s.get('formats') or []), text=f'{len(s.get("formats") or [])} formats into '
                        + (s.get('folder') or 'the working folder\'s exports'))
+        elif k in STUDY_KINDS:
+            check_study(project, st, errors, warnings, notes, est, working_dir)
     except ValueError as e:
         errors.append(str(e))
     except Exception as e:                  # noqa: BLE001 — a check that fails says so; it never passes silently
@@ -1791,6 +1845,8 @@ def for_model(plan: Plan, working_dir='') -> dict:
         st = copy.deepcopy(s.settings)
         if s.kind == 'detection':
             st['recordings'] = [workdir.display(r, working_dir or None) for r in st.get('recordings') or []]
+        if s.kind in STUDY_KINDS:
+            st = study_for_model(s.kind, st, working_dir)
         if s.kind == 'campaign' and st.get('out_dir'):
             st['out_dir'] = workdir.display(st['out_dir'], working_dir or None)
         un = unused(s.kind, s.settings, None)
@@ -1804,3 +1860,1400 @@ def for_model(plan: Plan, working_dir='') -> dict:
                                                                      flatten(s.settings))}})
     return PV.scrub({'plan': plan.id, 'version': plan.version, 'status': plan.status, 'title': plan.title,
                      'ok': plan.ok, 'steps': steps, 'changed_from_previous_version': plan.diff[:60]})
+
+
+# =========================================================================== round 14's studies as plan kinds
+# Each study kind's settings are the page's own settings (its core module's settings class, cleaned by its from_dict)
+# plus a few plan-only options (STUDY_EXTRAS: where the recordings come from, whether to hand the perception records
+# to the learned model, ...). The plan keeps all of them; when the step runs, the page's part is merged into the
+# page's slot (apply_study_settings, one undo step in the app) and run_study_kind runs the module headless.
+STUDY_SLOT = {'rig_perception': 'rig_perception', 'foundation_range': 'foundation',
+              'robust_perception': 'robust_perception', 'redrive': 'redrive', 'design': 'designer',
+              'perf_model_train': 'perf_model', 'perf_model_campaign': 'perf_model', 'risk_coverage': 'risk_coverage',
+              'fleet_twin': 'fleet_twin'}
+STUDY_MODULE = {'rig_perception': ('rig_perception', 'RigPerceptionSettings'),
+                'foundation_range': ('foundation_range', 'FoundationSettings'),
+                'robust_perception': ('robust_perception', 'RobustSettings'),
+                'redrive': ('redrive', 'RedriveSettings'), 'design': ('rig_designer', 'DesignerSettings'),
+                'perf_model_train': ('perf_model', 'PerfModelSettings'),
+                'perf_model_campaign': ('perf_model', 'PerfModelSettings'),
+                'risk_coverage': ('risk_coverage', 'RiskSettings'), 'fleet_twin': ('fleet_twin', 'FleetTwinSettings')}
+STUDY_EXTRAS = {
+    'rig_perception': {'source': 'recordings', 'records': False, 'focus': []},
+    'foundation_range': {}, 'robust_perception': {},
+    'redrive': {'drive': '', 'reshoot': False},
+    'design': {'requirements_from': 'page'},
+    'perf_model_train': {'save': True},
+    'perf_model_campaign': {'variants': [], 'rounds': 1, 'duration_s': 0.0},
+    'risk_coverage': {},
+    'fleet_twin': {'action': 'run'},
+}
+STUDY_EXTRA_CHOICES = {('rig_perception', 'source'): ('recordings', 'carla'),
+                       ('design', 'requirements_from'): ('page', 'brief'),
+                       ('fleet_twin', 'action'): ('run', 'watch_once')}
+STUDY_EXTRA_LIMITS = {'perf_model_campaign': {'rounds': (1, 5), 'duration_s': (0.0, 60.0)}}
+# the designer's history and documents are the page's, never a plan's
+STUDY_EXCLUDE = {'design': ('documents', 'not_checkable', 'rejected', 'extraction', 'accepted', 'approvals')}
+# set by name (a recording as the catalogue shows it, a variant by its name): kept as paths and uids
+NAMED_KEYS = {('rig_perception', 'recordings'), ('rig_perception', 'scene_set.variants'),
+              ('foundation_range', 'recordings'), ('robust_perception', 'recordings'), ('redrive', 'drive'),
+              ('redrive', 'paired_drive'), ('redrive', 'variant'), ('perf_model_campaign', 'variants')}
+STUDY_EMPTY_TEXT = {('perf_model_campaign', 'variants'): 'every variant with a camera',
+                    ('rig_perception', 'scene_set.variants'): 'the active variant',
+                    ('rig_perception', 'focus'): 'every sector', ('design', 'requirements'): 'none',
+                    ('design', 'constraints'): 'none', ('foundation_range', 'cameras'): 'every camera'}
+# what each kind is for, and requests the deterministic planner maps to it (get_catalogue plan_kinds)
+STUDY_ABOUT = {
+    'rig_perception': ('3D detection per class and region around the car, rig against rig on the same scenes, with '
+                       'intervals; on recordings with ground truth, or a perception scene set driven in CARLA '
+                       '(source carla)', 'compare pedestrian detection of rig A and B on the left'),
+    'foundation_range': ('how far each detector finds each class with each camera (R50, R90) and how far monocular '
+                         'depth is usable; on recordings, or a range sweep in CARLA (source sweep)',
+                         'how far can F see a cyclist'),
+    'robust_perception': ('the mounting, thermal, vibration and calibration tolerances carried to detection: rig '
+                          'recall with its band over builds, what drives the spread', 'what if the mounts are 2 mm off'),
+    'redrive': ('a recorded drive re-rendered through a proposed rig: how much of the data survives per camera '
+                '(reuse, partial, re-collect); optionally the re-shot drive', 'can we reuse last month\'s drive with '
+                                                                               'the new rig'),
+    'design': ('the design agent: 3–7 complete rigs from the accepted requirements (or the brief, read by the parser),'
+               ' never applied: you create an option on its page', 'design a rig for this brief'),
+    'perf_model_train': ('train the learned detection model on the perception records and save it',
+                         'train the detection model'),
+    'perf_model_campaign': ('active learning: the model proposes k variants, each driven in CARLA and evaluated by rig '
+                            'perception, the model retrained after each round', 'which rigs should we simulate next'),
+    'risk_coverage': ('coverage weighted by where crashes start (NHTSA pre-crash scenarios, Euro NCAP)',
+                      'risk-weighted coverage with the NCAP weights'),
+    'fleet_twin': ('the fleet twin: drift per vehicle and sensor, knocks, the recalibration schedule; or watch the '
+                   'vehicles\' folders once (action watch_once)', 'which car needs recalibrating'),
+}
+# measured costs the estimates use (each from the round-14 report that measured it, on the development machine)
+COST_SCENE_SET_DRIVE_S = 390.0       # bev: about 6.5 min of wall time per 12 s six-camera drive with ground truth
+COST_SWEEP_DRIVE_S = 63.0            # foundation: 60 sweep drives in 63 min (Town01, one still frame)
+COST_FOUNDATION_EVAL_S = 0.39        # foundation: 555 s for 1,440 image × model evaluations on the RTX 5080
+COST_REDRIVE_S = 350.0               # redrive, 12 s drive on the GPU: scene 188 s, evidence 59, calibration 70, report 33
+COST_RESHOOT_S, COST_RESHOOT_MB = 376.0, 747.0      # redrive: the re-shot export of the 12 s drive
+COST_DESIGN_S_PER_RIG = 1.1          # designer: 2–3 min for 160 rigs scored on the data rig
+COST_DESIGN_SETUP_S = 35.0           # copilot15: 65 s for 12 rigs with a 30 s budget on the 6-cam sample (loaded machine)
+COST_RISK_S = 2.0                    # robust: about 2 s per variant
+COST_FLEET_S = 5.0                   # fleettwin: 4.2–4.6 s for fleets up to 20 vehicles × 12 sensors × 24 records
+COST_TRAIN_S_PER_RECORD = 0.2        # copilot15: 1.8–4.4 s for 24 records with cross-validation on this machine
+# the most a study's export takes on the sample (measured by tests/test_copilot_r15.py; the estimate says "at most")
+DISK_MB = {'rig_perception': 4.0, 'foundation_range': 20.0, 'robust_perception': 4.0, 'redrive': 30.0, 'design': 2.0,
+           'perf_model_train': 2.0, 'perf_model_campaign': 2.0, 'risk_coverage': 3.0, 'fleet_twin': 2.0}
+LIDAR_HZ = 10.0                      # the bridge's instants: the reference lidar's sweeps
+
+
+def _study_mod(kind):
+    import importlib
+    return importlib.import_module(f'..core.{STUDY_MODULE[kind][0]}', __package__)
+
+
+def _study_cls(kind):
+    mod = _study_mod(kind)
+    return mod, getattr(mod, STUDY_MODULE[kind][1])
+
+
+def study_part(kind, settings) -> dict:
+    """The page's part of a study step's settings (without the plan-only options)."""
+    ex = STUDY_EXTRAS[kind]
+    return {k: copy.deepcopy(v) for k, v in (settings or {}).items() if k not in ex}
+
+
+def study_defaults(kind, project) -> dict:
+    mod = _study_mod(kind)
+    d = mod.settings_of(project).to_dict()
+    for k in STUDY_EXCLUDE.get(kind, ()):
+        d.pop(k, None)
+    d.update(copy.deepcopy(STUDY_EXTRAS[kind]))
+    return clean_study(kind, d, project)[0]
+
+
+def study_limits(kind) -> dict:
+    out = {}
+    try:
+        out.update(getattr(_study_mod(kind), 'LIMITS', {}) or {})
+        if kind == 'rig_perception':
+            from ..core import perception_scenes as PS
+            out.update({f'scene_set.{k}': v for k, v in PS.LIMITS.items()})
+    except Exception:                       # noqa: BLE001 — a range is a nicety
+        pass
+    out.update(STUDY_EXTRA_LIMITS.get(kind, {}))
+    return out
+
+
+def find_variant(project, name):
+    """A variant by uid, name (any case) or 1-based index; None when there is none."""
+    n = str(name or '').strip()
+    if not n:
+        return None
+    for i, v in enumerate(project.variants):
+        if n in (v.uid, v.name, str(i + 1)) or n.lower() == v.name.lower():
+            return v
+    return None
+
+
+def _variant_uids(project, names, bad, key) -> list:
+    out = []
+    for n in names if isinstance(names, (list, tuple)) else [names]:
+        v = find_variant(project, n)
+        if v is None:
+            bad.append(f'{key}: no variant {str(n)!r} (variants: {", ".join(x.name for x in project.variants)}).')
+        elif v.uid not in out:
+            out.append(v.uid)
+    return out
+
+
+def _bool(v, default):
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str) and v.strip().lower() in ('1', 'true', 'yes', 'on', '0', 'false', 'no', 'off'):
+        return v.strip().lower() in ('1', 'true', 'yes', 'on')
+    if isinstance(v, (int, float)) and v in (0, 1):
+        return bool(v)
+    return default
+
+
+def _clean_extras(kind, d, project, working_dir, bad) -> dict:
+    out = {}
+    for k, default in STUDY_EXTRAS[kind].items():
+        v = d.get(k, default)
+        ch = STUDY_EXTRA_CHOICES.get((kind, k))
+        if ch is not None:
+            if v not in ch:
+                bad.append(f'{k} must be one of {", ".join(ch)}.')
+                v = default
+        elif isinstance(default, bool):
+            v = _bool(v, default)
+        elif k == 'focus':
+            from ..core import regions as RG
+            names = RG.default_grid(project).sector_names() if project is not None else list(RG.SECTOR_NAMES_8)
+            vv = [v] if isinstance(v, str) else (v if isinstance(v, (list, tuple)) else [])
+            got = []
+            for x in vv:
+                t = str(x).strip().lower().replace(' ', '-')
+                if t in names:
+                    if t not in got:
+                        got.append(t)
+                elif t:
+                    bad.append(f'focus: no sector {str(x)!r} (sectors: {", ".join(names)}).')
+            v = [n for n in names if n in got]
+        elif k == 'variants':
+            v = _variant_uids(project, v or [], bad, 'variants') if project is not None else []
+        elif k == 'drive':
+            v = _resolve_recording(v, project, working_dir) if str(v or '').strip() else ''
+        elif k in ('rounds', 'duration_s'):
+            lo, hi = STUDY_EXTRA_LIMITS[kind][k]
+            x = _num(v, lo, hi)
+            x = default if x is None else x
+            v = int(round(x)) if k == 'rounds' else (0.0 if x < 2.0 else round(float(x), 3))
+        out[k] = v
+    return out
+
+
+def _read_brief(raw, project, bad):
+    """requirements_from brief: the brief read by Vantage's deterministic parser (designer_llm.deterministic), the
+    rows typed on the page (origin user) kept, as the page's Read does."""
+    from ..core import docs_ingest as DI
+    from . import designer_llm as DL
+    brief = raw.get('brief') if isinstance(raw.get('brief'), str) else ''
+    if not brief.strip():
+        bad.append('requirements_from brief: the brief is empty (set brief to the text to read).')
+        return
+    ex = DL.deterministic([DI.from_text(brief)], project)
+    keep_r = [r for r in raw.get('requirements') or [] if isinstance(r, dict) and r.get('origin') == 'user']
+    keep_c = [c for c in raw.get('constraints') or [] if isinstance(c, dict) and c.get('origin') == 'user']
+    raw['requirements'] = keep_r + list(ex.requirements)
+    raw['constraints'] = keep_c + list(ex.constraints)
+    if not ex.requirements and not ex.constraints:
+        bad.append('The parser read no requirement and no constraint from the brief: say what the rig must see, how '
+                   'far, and its limits (cost, power, cameras), or accept requirements on Analysis ▸ Design agent.')
+
+
+def clean_study(kind, d, project, working_dir='') -> tuple[dict, list]:
+    """A study step's settings as its page's settings class keeps them, plus the plan-only options, and problems."""
+    bad = []
+    d = d if isinstance(d, dict) else {}
+    _mod, cls = _study_cls(kind)
+    extras = STUDY_EXTRAS[kind]
+    raw = {k: copy.deepcopy(v) for k, v in d.items() if k not in extras and k not in STUDY_EXCLUDE.get(kind, ())}
+    ex = _clean_extras(kind, {k: d[k] for k in extras if k in d}, project, working_dir, bad)
+    if kind == 'rig_perception':
+        from ..core import perception_scenes as PS
+        if isinstance(raw.get('recordings'), (list, tuple)):
+            recs = []
+            for r in raw['recordings']:
+                r = {'path': r} if isinstance(r, str) else r
+                if isinstance(r, dict) and str(r.get('path') or '').strip():
+                    recs.append({'path': _resolve_recording(r['path'], project, working_dir),
+                                 'rig': str(r.get('rig') or '').strip()})
+            raw['recordings'] = recs
+        ss = dict(raw.get('scene_set')) if isinstance(raw.get('scene_set'), dict) else {}
+        if 'variants' in ss and project is not None:
+            ss['variants'] = _variant_uids(project, ss['variants'] or [], bad, 'scene_set.variants')
+        raw['scene_set'] = PS.SceneSetSettings.from_dict(ss).to_dict()
+    elif kind in ('foundation_range', 'robust_perception'):
+        if isinstance(raw.get('recordings'), (list, tuple)):
+            raw['recordings'] = [_resolve_recording(r, project, working_dir) for r in raw['recordings']
+                                 if isinstance(r, str) and r.strip()]
+    elif kind == 'redrive':
+        if isinstance(raw.get('paired_drive'), str) and raw['paired_drive'].strip():
+            raw['paired_drive'] = _resolve_recording(raw['paired_drive'], project, working_dir)
+        if isinstance(raw.get('variant'), str) and raw['variant'].strip() and project is not None:
+            uids = _variant_uids(project, [raw['variant']], bad, 'variant')
+            raw['variant'] = uids[0] if uids else ''
+    elif kind == 'design' and ex.get('requirements_from') == 'brief':
+        _read_brief(raw, project, bad)
+    out = cls.from_dict(raw).to_dict()
+    for k in STUDY_EXCLUDE.get(kind, ()):
+        out.pop(k, None)
+    if kind == 'rig_perception':
+        from ..core import perception_scenes as PS
+        out['scene_set'] = PS.SceneSetSettings.from_dict(out.get('scene_set')).to_dict()
+    out.update(ex)
+    return out, bad
+
+
+def _base(p) -> str:
+    return os.path.basename(str(p).rstrip('/\\')) or str(p)
+
+
+def _req_text(r) -> str:
+    it = (r or {}).get('item') or {}
+    if it.get('text'):
+        return str(it['text'])
+    return f'{it.get("metric", "?")} {it.get("op", "")} {_g(it.get("target"))}'.strip()
+
+
+def study_item_texts(kind, key, value, project=None) -> list | None:
+    if kind == 'rig_perception' and key == 'recordings':
+        return [(_base(r.get('path', '')) + (f' as {r["rig"]}' if r.get('rig') else '')) if isinstance(r, dict)
+                else _base(r) for r in value]
+    if key in ('variants', 'scene_set.variants') and project is not None:
+        return [next((v.name for v in project.variants if v.uid == u), str(u)) for u in value]
+    if kind == 'design' and key == 'requirements':
+        return [_req_text(r) for r in value]
+    if kind == 'design' and key == 'constraints':
+        return [str(c.get('text') or f'{c.get("kind")} {c.get("op")} {_g(c.get("value"))} {c.get("unit", "")}')
+                for c in value if isinstance(c, dict)]
+    return None
+
+
+def study_value_text(kind, key, value, project=None) -> str | None:
+    if key in ('drive', 'paired_drive', 'scene_set.out_dir') and value:
+        return _base(value)
+    if kind == 'redrive' and key == 'variant':
+        if not value:
+            return 'the log replay\'s rig B (else the active variant)'
+        v = find_variant(project, value) if project is not None else None
+        return v.name if v is not None else value
+    return None
+
+
+VIEW_KEYS = ('view_fov_deg', 'view_pitch_deg', 'view_yaws', 'view_width', 'view_aspect')
+SWEEP_KEYS = ('sweep_cameras', 'sweep_classes', 'ranges_m', 'offsets_deg', 'road_lateral_m', 'seeds', 'town',
+              'weather', 'image_scale', 'duration_s', 'sweep_frames')
+
+
+def study_unused(kind, s, project=None) -> dict:
+    out = {}
+    if kind == 'rig_perception':
+        if s.get('source', 'recordings') == 'recordings':
+            out['scene_set'] = ('not used without a CARLA drive', 'the study runs on the recordings named')
+        else:
+            out['recordings'] = ('replaced by the scene set\'s drives', 'source carla drives the scene set first')
+        if s.get('views', 'fisheye') == 'fisheye':
+            for k in VIEW_KEYS:
+                out[k] = ('not used with fisheye images', 'no pinhole views are cut from the images')
+    elif kind == 'foundation_range':
+        if s.get('source', 'recordings') == 'recordings':
+            for k in SWEEP_KEYS:
+                out[k] = ('not used without a sweep', 'the study runs on the recordings named')
+        else:
+            out['recordings'] = ('not used by a sweep', 'the sweep drives its own scenes in CARLA')
+        if s.get('views') == 'fisheye':
+            for k in VIEW_KEYS:
+                out[k] = ('not used with fisheye images', 'no pinhole views are cut from the images')
+    elif kind == 'redrive':
+        if s.get('schedule', 'recorded') == 'recorded':
+            out['rate_hz'] = ('not used with the recorded schedule', 'the drive\'s own frame times are used')
+        if 'paired' not in (s.get('sources') or []):
+            out['paired_drive'] = ('not used without the paired source', 'sources does not include paired')
+        if 'loo' not in (s.get('sources') or []):
+            out['loo_camera'] = ('not used without the leave-one-out source', 'sources does not include loo')
+    elif kind == 'fleet_twin' and s.get('action', 'run') == 'run':
+        out['watch_quiet_s'] = ('not used without a watch', 'action run fits the twin on the records there are')
+    return out
+
+
+def study_sources(kind, settings, asked, sources, project=None):
+    """What the plan's sources say beyond the values asked: the requirements a brief gave."""
+    if kind != 'design':
+        return
+    n_r, n_c = len(settings.get('requirements') or []), len(settings.get('constraints') or [])
+    if settings.get('requirements_from') == 'brief':
+        why = f'read from the brief by Vantage\'s parser: {n_r} requirement' + ('s' if n_r != 1 else '') + f', {n_c} constraint' + ('s' if n_c != 1 else '') + ' (approving accepts them)'
+        src = sources.get('brief', {}).get('source', 'request')
+        for k in ('requirements', 'constraints'):
+            sources[k] = {'source': src if src in ('request', 'copilot') else 'request', 'reason': why}
+
+
+def study_for_model(kind, st, working_dir=''):
+    from .. import workdir
+    wd = working_dir or None
+    st = copy.deepcopy(st)
+    if kind == 'rig_perception':
+        st['recordings'] = [dict(r, path=workdir.display(r['path'], wd)) for r in st.get('recordings') or []]
+        if (st.get('scene_set') or {}).get('out_dir'):
+            st['scene_set']['out_dir'] = workdir.display(st['scene_set']['out_dir'], wd)
+    if kind in ('foundation_range', 'robust_perception'):
+        st['recordings'] = [workdir.display(r, wd) for r in st.get('recordings') or []]
+    for k in ('drive', 'paired_drive'):
+        if st.get(k):
+            st[k] = workdir.display(st[k], wd)
+    return st
+
+
+def apply_study_settings(project, kind, settings):
+    """Merge the page's part of a study step into the page's slot (the drive of a re-drive into the log replay's), as
+    the page itself would keep it. The caller makes it one undo step."""
+    part = study_part(kind, settings)
+    if kind == 'fleet_twin':
+        from ..core import fleet_twin as FT
+        FT.set_settings(project, **part)
+        return
+    slot = STUDY_SLOT[kind]
+    cur = getattr(project.analysis, slot, None)
+    new = dict(cur) if isinstance(cur, dict) else {}
+    new.update(part)
+    setattr(project.analysis, slot, new)
+    if kind == 'redrive' and (settings or {}).get('drive'):
+        project.analysis.splat = dict(project.analysis.splat or {}, drive=settings['drive'])
+
+
+# --------------------------------------------------------------------------- checks and estimates
+def _carla_root_found() -> bool:
+    try:
+        from ..core import simcampaign as SC
+        if hasattr(SC, '_carla_root'):
+            return bool(SC._carla_root())
+        from ..sim import server as SV
+        return bool(SV.candidate_roots())
+    except Exception:                       # noqa: BLE001
+        return False
+
+
+def _carla_ready(project, errors, warnings, notes, port=None, tm_port=None) -> bool:
+    """The CARLA a study needs: a server on the port (or a CARLA folder to start one from) and CARLA's client Python;
+    errors say what is missing. True when the app starts the server."""
+    from ..core import simcampaign as SC
+    from ..core import simrig as SR
+    sim = SR.settings_of(project)
+    port, tm = int(port or sim.port), int(tm_port or sim.tm_port)
+    will_start = _check_ports(project, port, tm, errors, warnings, notes, sim.memory_gb)
+    if not SC.carla_python():
+        errors.append('This needs CARLA, and no CARLA client Python is set: choose the CARLA folder on Simulate ▸ '
+                      'CARLA (or run it on recordings you already have).')
+    elif will_start and not _carla_root_found():
+        errors.append(f'This needs CARLA: no server answers on port {port} and no CARLA folder is set to start one '
+                      '(Simulate ▸ CARLA).')
+    warnings.append(LIMITS_DOC['carla_vehicle'])
+    return will_start
+
+
+def _detector_ok(model, errors, why=''):
+    from ..core import detection as DT
+    s = DT.status(model)
+    if not s['verified']:
+        errors.append((why or 'The 2D detector model') + ' is not downloaded or does not verify: ' +
+                      LIMITS_DOC['detector'])
+    return s['verified']
+
+
+def _instants(path, rig='', mode='all', step=1):
+    """(instants, cameras) of a recording with ground truth, or raise ValueError saying why it cannot be read."""
+    from ..core import rig_perception as RP
+    rec = RP.PerceptionRecording(path, rig)
+    return len(rec.instants(mode, max(int(step or 1), 1))), len(rec.cams), rec
+
+
+def _needs(est, carla=False, gpu='', torch=False, models=()):
+    est['needs'] = {'carla': bool(carla), 'gpu': gpu or 'no', 'torch': bool(torch), 'models': list(models)}
+
+
+def _rec_errors(project, paths, errors, working_dir, mode='all', step=1, rigs=None, reader='bev'):
+    """(camera images, instants, rig labels) of the recordings; errors say which cannot be read. reader 'bev': the
+    rig perception reader (nuScenes annotations); 'frames': detection_eval's (the camera frames' labels), as robust
+    perception and the foundation-model study read them."""
+    from .. import workdir
+    images, frames, labels = 0, 0, []
+    for i, p in enumerate(paths):
+        if reader == 'frames':
+            from ..core import detection_eval as DE
+            info = DE.recording_info(p)
+            if not info['ok']:
+                errors.append(f'{workdir.display(p, _working(project, working_dir))}: {info["text"]}')
+                continue
+            images += int(info.get('frames') or 0) // max(int(step or 1), 1)
+            frames += int(info.get('frames') or 0)
+            labels.append(str(info.get('variant') or ''))
+            continue
+        try:
+            n, cams, rec = _instants(p, (rigs or {}).get(p, ''), mode, step)
+        except (ValueError, OSError, KeyError) as e:
+            errors.append(f'{workdir.display(p, _working(project, working_dir))}: {e}')
+            continue
+        images += n * cams
+        frames += n
+        labels.append(rec.rig)
+    return images, frames, labels
+
+
+def check_study(project, st, errors, warnings, notes, est, working_dir=''):
+    {'rig_perception': _chk_rig_perception, 'foundation_range': _chk_foundation, 'robust_perception': _chk_robust,
+     'redrive': _chk_redrive, 'design': _chk_design, 'perf_model_train': _chk_train,
+     'perf_model_campaign': _chk_campaign, 'risk_coverage': _chk_risk,
+     'fleet_twin': _chk_fleet}[st.kind](project, st.settings, errors, warnings, notes, est, working_dir)
+
+
+def _chk_rig_perception(project, s, errors, warnings, notes, est, working_dir):
+    from ..core import perception_scenes as PS
+    from ..core import rig_perception as RP
+    from ..core import simcampaign as SC
+    rs = RP.RigPerceptionSettings.from_dict(study_part('rig_perception', s))
+    mode = 'keyframes' if rs.instants == 'keyframes' else 'all'
+    carla, carla_s, images = False, 0.0, 0
+    if s.get('source') == 'carla':
+        carla = True
+        ss = PS.SceneSetSettings.from_dict(rs.scene_set)
+        e = PS.estimate(project, ss)
+        for m in e.get('problems') or []:
+            (warnings if 'only the first' in m else errors).append(m)
+        if not e.get('drives'):
+            errors.append('The scene set has nothing to drive for these variants.')
+        _carla_ready(project, errors, warnings, notes, ss.port or None, ss.tm_port or None)
+        warnings.append(LIMITS_DOC['scene_set'])
+        todo = max(int(e.get('drives') or 0) - int(e.get('done') or 0), 0)
+        dur = float(ss.duration_s or PS.scene_set(ss.set_id)['duration_s'])
+        # simcampaign's cost model (this machine's measured drives where there are any), else bev's measured drive
+        carla_s = float(e.get('remaining_s') or 0.0) or todo * COST_SCENE_SET_DRIVE_S * dur / 12.0
+        vs = [v for v in project.variants if v.uid in (ss.variants or [project.variant.uid])]
+        cams = sum(sum(1 for c in v.cameras if c.visible) for v in vs) / max(len(vs), 1)
+        images = int(int(e.get('drives') or 0) * dur * LIDAR_HZ * cams / max(rs.frame_step, 1))
+        notes.append(f'Scene set {ss.set_id}: {e.get("text", "")}')
+        rigs = [v.name for v in vs]
+    else:
+        if not rs.recordings:
+            errors.append('Name the recordings with ground truth (get_catalogue topic recordings), or set source '
+                          'carla to drive a perception scene set.')
+        images, _f, rigs = _rec_errors(project, [r['path'] for r in rs.recordings], errors, working_dir, mode,
+                                       rs.frame_step, {r['path']: r.get('rig') or '' for r in rs.recordings})
+    if len(set(rigs)) < 2:
+        notes.append('One rig: its figures with intervals, no rig-against-rig comparison.')
+    models = []
+    if rs.backend == 'lifted':
+        models.append(rs.model)
+        _detector_ok(rs.model, errors)
+    else:
+        notes.append(f'{rs.backend[9:]}: the external detector set up on this computer (checked when it runs).')
+    warnings.append(LIMITS_DOC['perception_detector'])
+    if s.get('records'):
+        notes.append('Its perception records are added to the learned model\'s store.')
+    if s.get('focus'):
+        notes.append('The answer looks at the ' + _and(s['focus']) + ' sectors; the study measures every region.')
+    secs = images * SC.EVAL_COST_S['detection']
+    _needs(est, carla=carla, models=models)
+    est.update(images=images, seconds=round(secs, 1), carla_s=round(carla_s, 1), disk_mb=DISK_MB['rig_perception'],
+               basis='detection 0.2 s per image (the campaign cost model; seconds when the 2D detections are cached)'
+                     + ('; the scene set\'s drives by the campaign cost model (measured drives on this machine where '
+                        'there are any; about 6.5 min per 12 s six-camera drive measured on the standard set)'
+                        if carla else ''),
+               text=(f'about {_hm(carla_s)} of CARLA, then ' if carla else '') +
+                    f'{images:,} camera images, about {_hm(secs)} of detection · at most '
+                    f'{DISK_MB["rig_perception"]:g} MB')
+
+
+def _chk_foundation(project, s, errors, warnings, notes, est, working_dir):
+    from ..core import detection as DT
+    from ..core import foundation_models as FM
+    from ..core import foundation_range as FR
+    fs = FR.FoundationSettings.from_dict(study_part('foundation_range', s))
+    if not fs.detectors and not fs.depth_model:
+        errors.append('Choose at least one detector or a depth model.')
+    models = list(fs.detectors) + ([fs.depth_model] if fs.depth_model else [])
+    torch_need = any(m in FM.SPECS for m in models)
+    if torch_need:
+        why = FM.torch_missing()
+        if why:
+            errors.append(f'{why} (the foundation models need it).')
+    for mid in models:
+        if mid in DT.MODELS:
+            _detector_ok(mid, errors, DT.status(mid).get('name') or mid)
+            continue
+        if mid in FM.SPECS and not FM.allowed(mid, fs.opt_in):
+            errors.append(f'{FM.SPECS[mid].name}: {FM.SPECS[mid].licence_note}')
+        st_ = FM.status(mid, verify=False)
+        if not st_.get('present'):
+            errors.append(f'{FM.model_label(mid) if hasattr(FM, "model_label") else mid} is not downloaded: '
+                          + LIMITS_DOC['foundation_models'])
+    carla, carla_s, images = False, 0.0, 0
+    if fs.source == 'sweep':
+        carla = True
+        pl = FR.sweep_plan(project, fs)
+        n = len(pl.get('drives') or [])
+        if not n:
+            errors.append('Nothing to sweep: choose sweep cameras of the variant and classes CARLA can stand in.')
+        _carla_ready(project, errors, warnings, notes)
+        carla_s = n * COST_SWEEP_DRIVE_S
+        cams = [c for c in project.variant.cameras if c.visible and c.tag in fs.sweep_cameras]
+        images = n * len(cams) * int(fs.sweep_frames)
+        notes.append(f'{len(pl.get("placements") or [])} placements in {n} drives (Town {fs.town}, {fs.weather}).')
+    else:
+        if not fs.recordings:
+            errors.append('Name the recordings with ground truth, or set source sweep to stand the classes at known '
+                          'ranges in CARLA.')
+        imgs, _f, _l = _rec_errors(project, fs.recordings, errors, working_dir, 'all', fs.frame_step,
+                                   reader='frames')
+        images = imgs
+    kinds = (1 if fs.views in ('fisheye', 'both') else 0) + (len(fs.view_yaws) if fs.views in ('pinhole', 'both')
+                                                               else 0)
+    evals = images * max(kinds, 1) * max(len(models), 1)
+    secs = evals * COST_FOUNDATION_EVAL_S
+    warnings.append(LIMITS_DOC['foundation_models'])
+    _needs(est, carla=carla, gpu='recommended' if torch_need else 'no', torch=torch_need, models=models)
+    est.update(images=images, evaluations=evals, seconds=round(secs, 1), carla_s=round(carla_s, 1),
+               disk_mb=DISK_MB['foundation_range'],
+               basis='0.39 s per image and model on the RTX 5080 (the round-14 sweep study)'
+                     + ('; sweep drives about 63 s each (measured: 60 drives in 63 min)' if carla else ''),
+               text=(f'about {_hm(carla_s)} of CARLA, then ' if carla else '') +
+                    f'{evals:,} image × model evaluations, about {_hm(secs)} on a GPU · at most '
+                    f'{DISK_MB["foundation_range"]:g} MB')
+
+
+def _chk_robust(project, s, errors, warnings, notes, est, working_dir):
+    from ..core import detection_eval as DE
+    from ..core import robust_perception as RB
+    from ..core import simcampaign as SC
+    rb = RB.RobustSettings.from_dict(study_part('robust_perception', s))
+    if not rb.recordings:
+        errors.append('Name the recordings with ground truth (CARLA runs of this rig: get_catalogue topic '
+                      'recordings); a CARLA drive with ground truth makes one.')
+    images, _f, _l = _rec_errors(project, rb.recordings, errors, working_dir, 'all', rb.frame_step, reader='frames')
+    models = []
+    if rb.detect:
+        model = DE.settings_of(project).model
+        models.append(model)
+        _detector_ok(model, errors)
+    act = rb.active()
+    if not act:
+        errors.append('Every tolerance source is off: switch on at least one (mounting, thermal, vibration, '
+                      'calibration).')
+    builds = 1 + rb.samples + rb.oat_samples * len(act)
+    secs = builds * images * SC.EVAL_COST_S['detection'] if rb.detect else 0.0
+    notes.append(f'Sources: {", ".join(act) or "none"}; {builds} builds with the detector'
+                 + (f', Sobol n = {rb.sobol_n} for the BEV figures' if rb.sobol_n else ''))
+    warnings.append('One CARLA drive per recording: the spread is the build variation, not scene sampling.')
+    _needs(est, models=models)
+    est.update(images=images, builds=builds, seconds=round(secs, 1), disk_mb=DISK_MB['robust_perception'],
+               basis='detection 0.2 s per image per build (the campaign cost model)',
+               text=f'{builds} builds × {images:,} images, about {_hm(secs)} of detection · at most '
+                    f'{DISK_MB["robust_perception"]:g} MB')
+
+
+def _chk_redrive(project, s, errors, warnings, notes, est, working_dir):
+    from .. import workdir
+    from ..core import redrive as RDV
+    from ..core import splat_reproject as SP
+    why = SP.torch_missing()
+    if why:
+        errors.append(why)
+    drive = s.get('drive') or SP.settings_of(project).drive
+    if not drive:
+        errors.append('Choose the recorded drive (drive: a CARLA run, a nuScenes folder or a ROS 2 bag), or open it '
+                      'on Simulate ▸ Log replay.')
+    elif not os.path.exists(drive):
+        errors.append(f'{workdir.display(drive, _working(project, working_dir))}: not found.')
+    st = RDV.RedriveSettings.from_dict(study_part('redrive', s))
+    v = RDV.proposed_variant(project, st, SP.settings_of(project))
+    if v is None or not any(c.visible for c in v.cameras):
+        errors.append('The proposed rig has no visible camera.')
+    else:
+        notes.append(f'Proposed rig: {v.name}.')
+    secs = COST_REDRIVE_S + (COST_RESHOOT_S if s.get('reshoot') else 0.0)
+    disk = DISK_MB['redrive'] + (COST_RESHOOT_MB if s.get('reshoot') else 0.0)
+    warnings.append(LIMITS_DOC['redrive'])
+    _needs(est, gpu='recommended', torch=True)
+    est.update(seconds=secs, disk_mb=disk, basis='a 12 s CARLA drive on the RTX 5080 (scene 188 s, evidence 59 s, '
+                                                 'calibration 70 s, report 33 s; the re-shot export 376 s and 747 MB): '
+                                                 'it grows with the drive\'s length',
+               text=f'about {_hm(secs)} on a GPU for a 12 s drive' + (', with the re-shot drive' if s.get('reshoot')
+                                                                      else '') + f' · about {disk:,.0f} MB')
+
+
+def _chk_design(project, s, errors, warnings, notes, est, working_dir):
+    from ..core import rig_designer as DSG
+    ds = DSG.DesignerSettings.from_dict(study_part('design', s))
+    if not ds.items():
+        errors.append('No accepted requirement: read them from a brief (requirements_from brief, with the brief) or '
+                      'accept them on Analysis ▸ Design agent.')
+    if not ds.prices:
+        warnings.append('No prices set: every option\'s cost is incomplete (Analysis ▸ Design agent ▸ Prices).')
+    warnings.append(LIMITS_DOC['design_options'])
+    secs = COST_DESIGN_SETUP_S + min(float(ds.budget_s), ds.evaluations * COST_DESIGN_S_PER_RIG)
+    _needs(est)
+    est.update(seconds=round(secs, 1), rigs=ds.evaluations, options=ds.options, disk_mb=DISK_MB['design'],
+               basis='about 1.1 s per rig scored (2–3 min for 160 on the data rig), the search stopped by the budget; '
+                     'about 35 s of set-up and final checks on top (measured)',
+               text=f'{len(ds.items())} requirements · {ds.evaluations} rigs scored for {ds.options} options, about '
+                    f'{_hm(secs)} · nothing changes until you create an option')
+
+
+def _store_count(project, errors):
+    from ..core import perf_model as PM
+    try:
+        return len(PM.store_for(project).records())
+    except Exception as e:                  # noqa: BLE001 — an unreadable store is said
+        errors.append(f'The perception-record store cannot be read: {e}')
+        return 0
+
+
+def _chk_train(project, s, errors, warnings, notes, est, working_dir):
+    from ..core import perf_model as PM
+    pm = PM.PerfModelSettings.from_dict(study_part('perf_model_train', s))
+    n = _store_count(project, errors)
+    if n < pm.min_records:
+        errors.append(f'Training needs at least {pm.min_records} perception records; the store has {n} (Rig '
+                      'perception, Foundation models and Robust perception write them).')
+    warnings.append(LIMITS_DOC['perf_model'])
+    if s.get('save'):
+        notes.append('A trained model is saved where the app loads it (it replaces the saved one).')
+    secs = n * COST_TRAIN_S_PER_RECORD
+    _needs(est)
+    est.update(records=n, seconds=round(secs, 1), disk_mb=DISK_MB['perf_model_train'],
+               basis='about 0.2 s a record with cross-validation (24 records in 1.8–4.4 s, measured on the '
+                     'development machine); it grows faster than the records for large stores',
+               text=f'{n} records, about {_hm(secs)} of training')
+
+
+def _campaign_candidates(project, s):
+    uids = s.get('variants') or []
+    return [v for v in project.variants if (not uids or v.uid in uids) and any(c.visible for c in v.cameras)]
+
+
+def _chk_campaign(project, s, errors, warnings, notes, est, working_dir):
+    from ..core import perf_model as PM
+    from ..core import rig_perception as RP
+    from ..core import simcampaign as SC
+    from ..core import simrig as SR
+    pm = PM.PerfModelSettings.from_dict(study_part('perf_model_campaign', s))
+    cands = _campaign_candidates(project, s)
+    if not cands:
+        errors.append('No variant with a camera to evaluate.')
+    rounds = int(s.get('rounds') or 1)
+    n_eval = min(len(cands), pm.k * rounds)
+    model = RP.RigPerceptionSettings().model
+    _detector_ok(model, errors)
+    _carla_ready(project, errors, warnings, notes)
+    n = _store_count(project, errors)
+    if n < pm.min_records:
+        notes.append(f'The store has {n} records (fewer than {pm.min_records}): the first round spreads its picks over '
+                     'the rigs by geometry, the model trains once there are enough.')
+    sim = SR.settings_of(project)
+    dur = float(s.get('duration_s') or sim.duration_s)
+    per_s, over = SC.COST_DEFAULT['full']
+    wall = over + per_s * (dur + float(sim.warmup_s))
+    cams = sum(sum(1 for c in v.cameras if c.visible) for v in cands) / max(len(cands), 1)
+    images = int(n_eval * dur * LIDAR_HZ * cams)
+    ev = images * SC.EVAL_COST_S['detection']
+    carla_s = n_eval * wall
+    notes.append(f'{n_eval} of {len(cands)} variants evaluated: {rounds} round' + ('s' if rounds != 1 else '') +
+                 f' of {pm.k}, the model retrained after each and saved.')
+    warnings.append(LIMITS_DOC['perf_model'])
+    _needs(est, carla=True, models=[model])
+    est.update(rigs=n_eval, seconds=round(ev, 1), carla_s=round(carla_s, 1), disk_mb=DISK_MB['perf_model_campaign'],
+               basis='the campaign cost model per drive (full ground truth) and 0.2 s per image of detection',
+               text=f'{n_eval} rigs driven {dur:g} s each, about {_hm(carla_s)} of CARLA and {_hm(ev)} of detection')
+
+
+def _chk_risk(project, s, errors, warnings, notes, est, working_dir):
+    if not any(c.visible for c in project.variant.cameras):
+        errors.append('The variant has no visible camera.')
+    _needs(est)
+    est.update(seconds=COST_RISK_S, disk_mb=DISK_MB['risk_coverage'], basis='about 2 s per variant (round 14)',
+               text=f'about {COST_RISK_S:g} s · cameras only, clear weather')
+
+
+def _chk_fleet(project, s, errors, warnings, notes, est, working_dir):
+    from ..core import fleet as FL
+    from ..core import fleet_twin as FT
+    if not FL.vehicles(project):
+        errors.append('The project has no fleet: add the vehicles and their records on Calibrate ▸ Fleet.')
+    if s.get('action') == 'watch_once':
+        if not FT.watches(project):
+            errors.append('No watch folder is set: set one per vehicle on Calibrate ▸ Fleet twin ▸ Watch.')
+        warnings.append(LIMITS_DOC['fleet_watch'])
+        notes.append('The drives read are added to the fleet\'s observations (one undo step), then the twin is fitted.')
+    _needs(est)
+    est.update(seconds=COST_FLEET_S, disk_mb=DISK_MB['fleet_twin'],
+               basis='4–5 s for fleets up to 20 vehicles × 12 sensors × 24 records (round 14); a watched drive adds '
+                     'its online calibration (about 33 s a drive)',
+               text=f'about {COST_FLEET_S:g} s' + (' plus about 33 s per new drive' if s.get('action') == 'watch_once'
+                                                   else ''))
+
+
+# --------------------------------------------------------------------------- running a study step (headless)
+# The exit codes are batch's for the same study (README "batch mode"): 0 ran, 3 and 5 findings (the plan goes on),
+# 2 nothing to do, 4 an input that cannot be read (or PyTorch missing), 7 CARLA, 8 a model missing, 9 a drive or the
+# external detector failed, 10 refused by the gate, 130 cancelled.
+STUDY_EXIT = {0: 'ran', 2: 'nothing to evaluate', 3: 'ran, with a finding', 4: 'an input cannot be read', 5:
+              'ran: no option meets every must', 7: 'CARLA is not there', 8: 'a model is missing',
+              9: 'a drive or the external detector failed', 10: 'refused: no approved plan', 130: 'cancelled'}
+STUDY_FINDINGS = (3, 5)
+
+
+@dataclass
+class StudyRun:
+    rc: int
+    message: str = ''
+    summary: dict | None = None
+    files: list = field(default_factory=list)       # what the step wrote (absolute paths)
+    result: object = None                           # the module's result (the page shows it)
+    out_dir: str = ''
+    fleet_slot: dict | None = None                  # watch_once: the fleet twin's slot after the drives were read
+
+    @property
+    def ok(self) -> bool:
+        return self.rc == 0 or self.rc in STUDY_FINDINGS
+
+
+def _sub(progress, a, b):
+    if progress is None:
+        return None
+
+    def f(x, text=''):
+        try:
+            progress(a + (b - a) * min(max(float(x), 0.0), 1.0), text)
+        except TypeError:
+            progress(a + (b - a) * min(max(float(x), 0.0), 1.0))
+    return f
+
+
+def run_study_kind(project, kind, settings, out_dir, engine=None, ticket=None, progress=None, cancel=None,
+                   hooks=None, log=None) -> StudyRun:
+    """Run one approved study step headless: refused (exit 10) unless the project holds an approved, intact record
+    of the ticket's plan whose step is this kind with exactly these settings (gate); then the step's page settings
+    are merged into the project (apply_study_settings: pass a snapshot from a thread), the module runs, its export is
+    written into out_dir and its summary() returned. hooks: stand-ins for the tests and the app ('detector',
+    'backend', 'detectors', 'depth', 'runner', 'python', 'evaluator', 'coverage')."""
+    if kind not in STUDY_KINDS:
+        raise KeyError(kind)
+    ok, why = gate(project, ticket, kind, settings)
+    if not ok:
+        return StudyRun(EXIT_REFUSED, why)
+    hooks = hooks or {}
+    stop = cancel or (lambda: False)
+    say = log or (lambda m: None)
+    apply_study_settings(project, kind, settings)
+    os.makedirs(out_dir, exist_ok=True)
+    try:
+        r = _STUDY_RUN[kind](project, settings, out_dir, engine, progress, stop, hooks, say)
+    except KeyboardInterrupt:
+        return StudyRun(130, 'interrupted', out_dir=out_dir)
+    r.out_dir = out_dir
+    r.files = _stamped(project, r.files, out_dir, ticket)
+    if r.summary is not None:
+        from ..core import provenance as PV
+        r.summary = PV.scrub(_jsonable(r.summary))
+    if r.rc == 0 and stop():
+        r.rc, r.message = 130, 'cancelled'
+    return r
+
+
+def _stamped(project, paths, out_dir, ticket=None):
+    """Stamp every JSON a step wrote with a provenance block naming the plan and the step."""
+    from ..core import provenance as PV
+    try:
+        return PV.stamp_paths(list(paths), project, out_dir, **({'plan': ticket} if ticket else {}))
+    except Exception:                       # noqa: BLE001 — the files are there; their stamp is a nicety
+        return list(paths)
+
+
+def sector_named(text, sector) -> bool:
+    """Does a finding name a region of this sector ('at left · 0–10 m'; 'rear-left' is not 'left')?"""
+    return bool(re.search(rf'(?<![\w-]){re.escape(sector)} ·', str(text or '')))
+
+
+def _focus(res, sectors, classes) -> dict:
+    """Per rig and class, the recall and n in each region of the focus sectors, and the findings that name them."""
+    g = res.grid
+    names = g.sector_names()
+    out = {'sectors': list(sectors), 'regions': {}, 'findings': []}
+    for rig in [r['name'] for r in res.rigs]:
+        for c in classes:
+            for s_ in [names.index(x) for x in sectors if x in names]:
+                for r_ in range(g.n_ranges):
+                    cell = res.cell(rig, c, g.region_id(s_, r_)) or {}
+                    if not cell.get('n_gt'):
+                        continue
+                    out['regions'].setdefault(rig, {}).setdefault(c, {})[g.region_name(s_, r_)] = {
+                        'n_gt': cell.get('n_gt'), 'recall': None if cell.get('recall') is None else
+                        round(float(cell['recall']), 4), 'recall_ci': cell.get('recall_ci')}
+    out['findings'] = [f['text'] for f in res.findings if f.get('significant') and
+                       any(sector_named(f.get('text', ''), x) for x in sectors)][:12]
+    return out
+
+
+def _run_rig_perception(p, s, out, eng, progress, stop, hooks, say):
+    from ..core import detection as DT
+    from ..core import perception_scenes as PS
+    from ..core import rig_perception as RP
+    from ..core import simcampaign as SC
+    st = RP.RigPerceptionSettings.from_dict(study_part('rig_perception', s))
+    lo = 0.0
+    if s.get('source') == 'carla':
+        ss = PS.SceneSetSettings.from_dict(st.scene_set)
+        say(f'scene set {ss.set_id}: driving')
+        try:
+            r = PS.run(p, ss, None, progress=_sub(progress, 0.0, 0.6), cancel=stop, runner=hooks.get('runner'),
+                       python=hooks.get('python'))
+        except SC.Cancelled:
+            return StudyRun(130, 'cancelled while driving the scene set')
+        except RuntimeError as e:
+            return StudyRun(7, str(e))
+        bad = {k: v for k, v in r['states'].items() if v not in ('ok', 'reused')}
+        if bad:
+            return StudyRun(9, f'{len(bad)} of {len(r["states"])} scene-set drives failed: ' +
+                            '; '.join(f'{k}: {(r.get("errors") or {}).get(k, v)}' for k, v in list(bad.items())[:3]))
+        st.recordings = list(r['recordings'])
+        lo = 0.6
+    if not st.recordings:
+        return StudyRun(4, 'no recording with ground truth')
+    for rr in st.recordings:
+        i = RP.recording_info(rr['path'])
+        if not i['ok']:
+            return StudyRun(4, f'{_base(rr["path"])}: {i["text"]}')
+    if st.backend == 'lifted' and hooks.get('detector') is None and hooks.get('backend') is None and \
+            not DT.status(st.model)['verified']:
+        return StudyRun(8, DT.status(st.model)['text'])
+    try:
+        res = RP.run(p, eng, st, progress=_sub(progress, lo, 0.97), cancel=stop, detector=hooks.get('detector'),
+                     backend=hooks.get('backend'))
+    except FileNotFoundError as e:
+        return StudyRun(8, str(e))
+    except RuntimeError as e:
+        return StudyRun(9, str(e))
+    except ValueError as e:
+        return StudyRun(4, str(e))
+    if res is None:
+        return StudyRun(130, 'cancelled')
+    files = list(RP.export(res, p, out))
+    summ = RP.summary(res)
+    if s.get('focus'):
+        summ['focus'] = _focus(res, s['focus'], res.classes)
+    if s.get('records'):
+        summ['records_added'] = len(RP.to_records(res, p, add=True))
+    return StudyRun(0, f'{len(res.rigs)} rig(s), {res.timing.get("frames", 0)} instants, '
+                       f'{len(summ["findings"])} significant finding(s)', summ, files, res)
+
+
+def _run_foundation(p, s, out, eng, progress, stop, hooks, say):
+    from ..core import foundation_models as FM
+    from ..core import foundation_range as FR
+    st = FR.FoundationSettings.from_dict(study_part('foundation_range', s))
+    if st.source == 'recordings' and not st.recordings:
+        return StudyRun(2, 'no recording to evaluate')
+    models = list(st.detectors) + ([st.depth_model] if st.depth_model else [])
+    if hooks.get('detectors') is None and any(m in FM.SPECS for m in models):
+        why = FM.torch_missing()
+        if why:
+            return StudyRun(4, why)
+    kw = {}
+    if st.source == 'sweep':
+        from ..core import simrig as SR
+        kw = dict(sim_settings=SR.settings_of(p), out_dir=os.path.join(out, 'sweep'), python=hooks.get('python'),
+                  runner=hooks.get('runner'))
+    try:
+        res = FR.run(p, eng, st, progress=_sub(progress, 0.0, 0.97), cancel=stop, detectors=hooks.get('detectors'),
+                     depth=hooks.get('depth'), **kw)
+    except FileNotFoundError as e:
+        return StudyRun(8, str(e))
+    except RuntimeError as e:
+        return StudyRun(7 if st.source == 'sweep' else 4, str(e))
+    except ValueError as e:
+        return StudyRun(2, str(e))
+    if res is None:
+        return StudyRun(130, 'cancelled')
+    files = list(FR.export(res, p, out))
+    summ = FR.summary(res)
+    return StudyRun(0, f'{len(res.fits)} range fits', summ, files, res)
+
+
+def _run_robust(p, s, out, eng, progress, stop, hooks, say):
+    from ..core import robust_perception as RB
+    st = RB.RobustSettings.from_dict(study_part('robust_perception', s))
+    if not st.recordings:
+        return StudyRun(2, 'no recording to evaluate')
+    try:
+        res = RB.run(p, eng, st, progress=_sub(progress, 0.0, 0.97), cancel=stop, detector=hooks.get('detector'))
+    except FileNotFoundError as e:
+        return StudyRun(8, str(e))
+    except (ValueError, OSError) as e:
+        return StudyRun(2, str(e))
+    if res is None:
+        return StudyRun(130, 'cancelled')
+    files = list(RB.export(res, p, out))
+    summ = RB.summary(res)
+    heads = [h for r in summ.get('recordings') or [] for h in (r.get('headline') or [])]
+    return StudyRun(0, '; '.join(heads[:2]) or f'{len(res.recordings)} recording(s)', summ, files, res)
+
+
+def _run_redrive(p, s, out, eng, progress, stop, hooks, say):
+    from ..core import redrive as RDV
+    from ..core import splat_reproject as SP
+    why = SP.torch_missing()
+    if why:
+        return StudyRun(4, why)
+    st = RDV.settings_of(p)
+    try:
+        res = RDV.run(p, eng, st, progress=_sub(progress, 0.0, 0.8 if s.get('reshoot') else 0.97), cancel=stop)
+    except (ValueError, OSError, RuntimeError) as e:
+        return StudyRun(4, str(e))
+    if res is None:
+        return StudyRun(130, 'cancelled')
+    files = list(RDV.export(res, p, out))
+    summ = RDV.summary(res)
+    if s.get('reshoot'):
+        try:
+            doc = RDV.export_dataset(p, os.path.join(out, 'reshot'), st, engine=eng,
+                                     prepared=getattr(res, '_prepared', None), progress=_sub(progress, 0.8, 0.98),
+                                     cancel=stop)
+        except (ValueError, OSError, RuntimeError) as e:
+            return StudyRun(4, f'the re-shot drive was not written: {e}', summ, files, res)
+        if doc is None:
+            return StudyRun(130, 'cancelled while writing the re-shot drive', summ, files, res)
+        summ['reshot'] = True
+    verdict = summ.get('rig_verdict')
+    msg = f'{summ.get("variant")}: {verdict}, {100 * (summ.get("rig_within_share") or 0):.0f} % within ' \
+          f'{_g(summ.get("budget"))} grey levels'
+    return StudyRun(3 if verdict == 're-collect' else 0, msg, summ, files, res)
+
+
+def _run_design(p, s, out, eng, progress, stop, hooks, say):
+    from ..core import rig_designer as DSG
+    st = DSG.DesignerSettings.from_dict(dict(DSG.settings_of(p).to_dict(), **study_part('design', s)))
+    if not st.items():
+        return StudyRun(2, 'no accepted requirement')
+    try:
+        res = DSG.run(p, eng, st, progress=_sub(progress, 0.0, 0.97), cancel=stop)
+    except ValueError as e:
+        return StudyRun(2, str(e))
+    if res is None:
+        return StudyRun(130, 'cancelled')
+    files = list(DSG.export(res, p, out))
+    summ = DSG.summary(res)
+    passing = [o for o in summ.get('options') or [] if o.get('verdict') == 'pass']
+    msg = f'{len(summ.get("options") or [])} options, {len(passing)} meet every must (nothing was created)'
+    return StudyRun(0 if passing else 5, msg, summ, files, res)
+
+
+def _run_train(p, s, out, eng, progress, stop, hooks, say):
+    from ..core import perf_model as PM
+    st = PM.PerfModelSettings.from_dict(study_part('perf_model_train', s))
+    try:
+        res = PM.run(p, eng, st, progress=_sub(progress, 0.0, 0.97), cancel=stop)
+    except (OSError, ValueError) as e:
+        return StudyRun(4, str(e))
+    if res is None:
+        return StudyRun(130, 'cancelled')
+    files = list(PM.export(res, p, out))
+    summ = PM.summary(res)
+    if not res.model.trained:
+        return StudyRun(3, res.model.reason(), summ, files, res)
+    if s.get('save'):
+        summ['saved'] = os.path.basename(PM.save_model(res.model))
+    return StudyRun(0, f'trained on {res.model.n_records} records', summ, files, res)
+
+
+def _jsonable(o):
+    return json.loads(json.dumps(o, default=lambda x: float(x) if hasattr(x, '__float__') else str(x)))
+
+
+def _run_campaign(p, s, out, eng, progress, stop, hooks, say):
+    from ..core import perf_model as PM
+    from ..core import simrig as SR
+    st = PM.PerfModelSettings.from_dict(study_part('perf_model_campaign', s))
+    vs = _campaign_candidates(p, s)
+    if not vs:
+        return StudyRun(2, 'no variant with a camera to evaluate')
+    cands = PM.candidates_from_variants(p, vs, eng)
+    ev = hooks.get('evaluator')
+    if ev is None:
+        sim = SR.settings_of(p)
+        if s.get('duration_s'):
+            sim = SR.SimSettings.from_dict(dict(sim.to_dict(), duration_s=float(s['duration_s'])))
+        ev = PM.default_evaluator(p, sim, os.path.join(out, 'drives'), hooks.get('detector'))
+    try:
+        doc = PM.campaign(p, cands, rounds=int(s.get('rounds') or 1), k=st.k, evaluator=ev, settings=st,
+                          progress=_sub(progress, 0.0, 0.97), cancel=stop, save=True)
+    except FileNotFoundError as e:
+        return StudyRun(8, str(e))
+    except RuntimeError as e:
+        return StudyRun(7, str(e))
+    except (OSError, ValueError) as e:
+        return StudyRun(4, str(e))
+    m = doc['model']
+    summ = _jsonable({'schema': 'vantage.perf_model_campaign/1', 'rounds': [
+        {'round': r['round'], 'picks': [{k: x.get(k) for k in ('name', 'mean', 'std', 'ei', 'why') if k in x}
+                                        for x in r['picks']], 'records': len(r['records'])} for r in doc['rounds']],
+        'curve': doc['curve'], 'model': {'trained': m.trained, 'records': m.n_records, 'rigs': m.n_rigs,
+                                         'reason': m.reason()}})
+    path = os.path.join(out, 'perf_model_campaign.json')
+    with open(path, 'w', encoding='utf-8') as fh:
+        json.dump(summ, fh, indent=1)
+    files = [path]
+    picked = [x['name'] for r in summ['rounds'] for x in r['picks']]
+    if stop():
+        return StudyRun(130, 'cancelled', summ, files, doc)
+    return StudyRun(0 if m.trained else 3, f'evaluated {", ".join(picked) or "nothing"}; the model '
+                                           + (f'trained on {m.n_records} records' if m.trained else m.reason()),
+                    summ, files, doc)
+
+
+def _run_risk(p, s, out, eng, progress, stop, hooks, say):
+    from ..core import risk_coverage as RC
+    st = RC.RiskSettings.from_dict(study_part('risk_coverage', s))
+    res = RC.run(p, eng, st, progress=(lambda f: progress(f)) if progress else None, cancel=stop,
+                 coverage=hooks.get('coverage'))
+    if res is None:
+        return StudyRun(130, 'cancelled')
+    files = list(RC.export(res, p, out))
+    summ = RC.summary(res)
+    summ['requirement_proposals'] = RC.requirement_proposal(res)
+    return StudyRun(0, '; '.join(str(d.get('text', c)) for c, d in list(res.classes.items())[:2]), summ, files, res)
+
+
+def _run_fleet(p, s, out, eng, progress, stop, hooks, say):
+    from ..core import fleet_twin as FT
+    got = []
+    if s.get('action') == 'watch_once':
+        got = FT.watch_once(p, FT.WatchState(), eng, cancel=stop, log=say)
+    try:
+        res = FT.run(p, eng, FT.settings_of(p), None, _sub(progress, 0.5 if got else 0.0, 0.97), stop)
+    except (ValueError, FT.TwinError) as e:
+        return StudyRun(4, str(e))
+    if res is None:
+        return StudyRun(130 if stop() else 4, 'cancelled' if stop() else 'the fleet twin could not run')
+    files = list(FT.export(res, p, out))
+    summ = FT.summary(res)
+    summ.pop('assumptions', None)
+    if s.get('action') == 'watch_once':
+        summ['drives_read'] = len(got)
+    msg = (f'{len(got)} new drive' + ('s' if len(got) != 1 else '') + ' read; ' if s.get('action') == 'watch_once'
+           else '') + f'{len(res.findings)} finding(s)'
+    return StudyRun(FT.exit_code(res), msg, summ, files, res,
+                    fleet_slot=copy.deepcopy(getattr(p.analysis, 'fleet_twin', None)) if got else None)
+
+
+_STUDY_RUN = {'rig_perception': _run_rig_perception, 'foundation_range': _run_foundation,
+              'robust_perception': _run_robust, 'redrive': _run_redrive, 'design': _run_design,
+              'perf_model_train': _run_train, 'perf_model_campaign': _run_campaign, 'risk_coverage': _run_risk,
+              'fleet_twin': _run_fleet}
+
+
+# =========================================================================== the deterministic planner (no model)
+# Natural requests for the study kinds, read with patterns on this computer: what the Copilot plans when no model is
+# set up (the panel), and the draft get_catalogue('plan_kinds') hands the model for the request it is answering. Each
+# value it sets says it came from the request (with the words it read) or was chosen, and why.
+_KIND_PATTERNS = (
+    ('perf_model_campaign', r'\b(which|what)\s+(rigs?|variants?|designs?)\s+(should|to|do|would)\b.*\b(simulat\w*|'
+                            r'evaluat\w*|drive|test|try)\b|\bsimulate\s+next\b|\bactive[- ]learning\b|'
+                            r'\blearned[- ]model\s+campaign\b'),
+    ('perf_model_train', r'\b(train|retrain|re-train|fit|refit)\b.{0,40}\b(model|learned|predictor|gaussian)\b'),
+    ('design', r'\bdesign\s+(me\s+)?(a\s+|the\s+|new\s+)*(rigs?|sensor\s+rigs?|layouts?)\b|\bdesign\s+agent\b|'
+               r'\brigs?\s+for\s+(this|the|my|our)\s+brief\b'),
+    ('redrive', r'\b(re-?use|re-?drive|re-?shoot|re-?render)\w*\b.{0,60}\b(drives?|logs?|data|recordings?|rigs?)\b|'
+                r'\b(drives?|logs?|data|recordings?)\b.{0,40}\b(with|through|on)\s+the\s+new\s+rig\b'),
+    ('robust_perception', r'\b(mounts?|mounting|brackets?)\b.{0,40}\b(off|out|wrong|error|shifted|tolerance|slip\w*)\b|'
+                          r'\brobust\s+perception\b|\btolerances?\b.{0,40}\b(detection|recall|perception)\b'),
+    ('foundation_range', r'\bhow\s+far\b.{0,40}\b(see|sees|detect\w*|find\w*|spot\w*|recogni[sz]\w*)\b|'
+                         r'\bfoundation[- ]models?\b|\bdetection\s+range\b|\bmonocular\s+depth\b'),
+    ('rig_perception', r'\b(compare|comparing|versus|vs\.?|against|better)\b.{0,80}\b(detect\w*|recall|perception|'
+                       r'mAP)\b|\b(detect\w*|recall|perception)\b.{0,60}\brigs?\b.{0,20}\b(and|vs\.?|versus|or)\b|'
+                       r'\brig\s+perception\b'),
+    ('risk_coverage', r'\brisk[- ]weighted\b|\brisk\s+coverage\b|\b(pre-?crash|crash\w*|ncap)\b.{0,40}\bcover\w*\b|'
+                      r'\bcover\w*\b.{0,40}\b(pre-?crash|crash\w*|ncap)\b'),
+    ('fleet_twin', r'\bfleet\s+twin\b|\b(drift\w*|recalibrat\w*|knock\w*)\b.{0,40}\b(fleet|vehicles?|cars?)\b|'
+                   r'\b(fleet|vehicles?|cars?)\b.{0,40}\b(drift\w*|recalibrat\w*|knock\w*)\b|'
+                   r'\bwatch\s+(the\s+)?(fleet|vehicles?|folders?)\b'),
+)
+_KIND_RX = [(k, re.compile(rx, re.IGNORECASE)) for k, rx in _KIND_PATTERNS]
+CLASS_WORDS = (('motorcyclist', r'motorcyclists?|motorbikes?|motorcycles?'),
+               ('cyclist', r'cyclists?|bicycles?|bikes?|bicyclists?'),
+               ('pedestrian', r'pedestrians?|people|persons?|walkers?|children|child|kids?'),
+               ('truck', r'trucks?|lorr(?:y|ies)'), ('bus', r'bus(?:es)?'), ('car', r'cars?'),
+               ('vehicle', r'vehicles?'))
+SECTOR_WORDS = (('front-left', r'front[- ]left'), ('front-right', r'front[- ]right'), ('rear-left', r'rear[- ]left'),
+                ('rear-right', r'rear[- ]right'), ('front', r'front|ahead|forward'), ('rear', r'rear|behind|back'),
+                ('left', r'left'), ('right', r'right'))
+
+
+def match_kind(text) -> str:
+    """The study kind a request asks for ('' when none): the deterministic planner's first reading."""
+    t = str(text or '')
+    for k, rx in _KIND_RX:
+        if rx.search(t):
+            return k
+    return ''
+
+
+def _words(text, table) -> list:
+    out, t = [], ' ' + str(text or '').lower() + ' '
+    for name, rx in table:
+        m = re.search(rf'\b({rx})\b', t)
+        if m:
+            out.append(name)
+            t = t[:m.start()] + ' ' * (m.end() - m.start()) + t[m.end():]   # 'front-left' is not also 'left'
+    return out
+
+
+def _named_variants(project, text) -> list:
+    """Variants the request names: by their full name, or as 'rig A and B' (a variant named A or ending in ' A')."""
+    t = str(text or '')
+    low = t.lower()
+    out = []
+    for v in sorted(project.variants, key=lambda v: -len(v.name)):
+        if len(v.name) > 2 and v.name.lower() in low and v not in out:
+            out.append(v)
+    toks = []
+    for m in re.finditer(r'\b(?:rigs?|variants?)\s+([A-Za-z0-9]{1,12}(?:\s*(?:,|&|and|vs\.?|versus|or)\s*'
+                         r'(?:rig\s+)?[A-Za-z0-9]{1,12})*)', t):
+        toks += [x for x in re.split(r'\s*(?:,|&|\band\b|\bvs\.?|\bversus\b|\bor\b|\brig\b)\s*', m.group(1)) if x]
+    for tok in toks:
+        tl = tok.lower()
+        v = next((v for v in project.variants if v.name.lower() == tl or v.name.lower().endswith(' ' + tl)
+                  or v.name.lower() == f'rig {tl}'), None)
+        if v is not None and v not in out:
+            out.append(v)
+    order = {v.uid: i for i, v in enumerate(project.variants)}
+    pos = {v.uid: (low.find(v.name.lower()) if v.name.lower() in low else 10 ** 6 + order[v.uid]) for v in out}
+    for tok in toks:
+        for v in out:
+            if v.name.lower() == tok.lower() or v.name.lower().endswith(' ' + tok.lower()):
+                pos[v.uid] = min(pos[v.uid], low.find(tok.lower()))
+    return sorted(out, key=lambda v: pos[v.uid])
+
+
+def _camera_tags(project, text) -> list:
+    tags = {c.tag for c in project.variant.cameras if c.visible}
+    out = []
+    for m in re.finditer(r'\b([A-Z][A-Z0-9]{0,3})\b', str(text or '')):
+        if m.group(1) in tags and m.group(1) not in out:
+            prev = str(text)[max(0, m.start() - 8):m.start()].lower()
+            if re.search(r'\b(rig|rigs|variant|and)\s*$', prev) and m.group(1) not in ('F', 'B'):
+                continue
+            out.append(m.group(1))
+    return out
+
+
+def _V(key, value, source='request', reason=''):
+    return {'key': key, 'value': json.dumps(value), 'source': source, 'reason': reason}
+
+
+def _recordings_of(project, variants, working_dir='') -> dict:
+    """{variant uid: (path, name as the catalogue shows it)}: each variant's newest CARLA drive with ground truth (the
+    rig perception page's recordings first)."""
+    from ..core import rig_perception as RP
+    from . import copilot_tools as CT
+    out = {}
+    names = {v.name: v.uid for v in variants}
+    for r in RP.settings_of(project).recordings:
+        u = names.get(r.get('rig') or '')
+        if u and u not in out and os.path.isdir(r['path']):
+            out[u] = (r['path'], _base(r['path']))
+    for r in CT.find_runs(project, working_dir, gt_only=True):
+        u = names.get(r.get('variant') or '')
+        if u and u not in out and r.get('status') == 'ok':
+            out[u] = (r['path'], r['name'])
+    return out
+
+
+def offline_steps(project, text, working_dir='') -> list:
+    """The steps the deterministic planner reads from a request ([] when it does not know it): propose_plan's input,
+    [{'kind', 'label', 'values'}]."""
+    kind = match_kind(text)
+    if not kind:
+        return []
+    t = str(text or '')
+    fn = globals()[f'_offline_{kind}']
+    st = fn(project, t, working_dir)
+    return [st] if st else []
+
+
+def _offline_rig_perception(p, t, wd):
+    vs = _named_variants(p, t) or [p.variant]
+    cls = _words(t, CLASS_WORDS)
+    sec = _words(t, SECTOR_WORDS)
+    vals = []
+    if cls:
+        from ..core import bev_backends as BB
+        want = [c for c in BB.BEV_CLASSES if c in cls or (c in ('car', 'truck', 'bus') and 'vehicle' in cls)]
+        if want:
+            vals.append(_V('classes', want, 'request', f'you asked about {_and(cls)}'))
+    if sec:
+        vals.append(_V('focus', sec, 'request', f'you asked about the {_and(sec)}'))
+    have = _recordings_of(p, vs, wd)
+    if all(v.uid in have for v in vs):
+        vals.append(_V('source', 'recordings', 'copilot', 'every rig has a drive with ground truth already'))
+        vals.append(_V('recordings', [{'path': have[v.uid][1], 'rig': v.name} for v in vs], 'copilot',
+                       'the newest drive with ground truth of ' + _and(v.name for v in vs)))
+    else:
+        missing = [v.name for v in vs if v.uid not in have]
+        vals.append(_V('source', 'carla', 'copilot', f'no drive with ground truth of {_and(missing)} yet: a perception '
+                                                     'scene set drives the same scenes for every rig (paired)'))
+        vals.append(_V('scene_set.variants', [v.name for v in vs], 'request' if _named_variants(p, t) else 'copilot',
+                       'the rigs you named' if _named_variants(p, t) else 'the active variant'))
+        if re.search(r'\bquick\b', t, re.I):
+            vals.append(_V('scene_set.set_id', 'quick', 'request', 'you asked for a quick look'))
+    if len(vs) < 2:
+        label = f'{vs[0].name} detection'
+    else:
+        label = ' vs '.join(v.name for v in vs[:3]) + ' detection'
+    return {'kind': 'rig_perception', 'label': label[:80], 'values': vals}
+
+
+def _offline_foundation_range(p, t, wd):
+    from ..core import foundation_range as FR
+    from . import copilot_tools as CT
+    cams = _camera_tags(p, t)
+    cls = [c for c in _words(t, CLASS_WORDS) if c in [x['name'] for x in FR.DEFAULT_CLASSES]]
+    if 'vehicle' in _words(t, CLASS_WORDS) and 'car' not in cls:
+        cls.append('car')
+    vals = []
+    runs = [r for r in CT.find_runs(p, wd, gt_only=True) if r.get('status') == 'ok']
+    sweep = bool(cls) or not runs
+    if sweep:
+        vals.append(_V('source', 'sweep', 'copilot', 'a range sweep stands the class at known ranges in CARLA, so '
+                                                     'R50 and R90 are measured where they are'))
+        if cams:
+            vals.append(_V('sweep_cameras', cams, 'request', f'you named {_and(cams)}'))
+        if cls:
+            vals.append(_V('sweep_classes', cls, 'request', f'you asked about {_and(cls)}'))
+    else:
+        vals.append(_V('source', 'recordings', 'copilot', 'the newest drive with ground truth'))
+        vals.append(_V('recordings', [runs[0]['name']], 'copilot', 'the newest drive with ground truth'))
+        if cams:
+            vals.append(_V('cameras', cams, 'request', f'you named {_and(cams)}'))
+    if not re.search(r'\bdepth\b', t, re.I):
+        vals.append(_V('depth_model', '', 'copilot', 'you asked about detection range, not depth'))
+    what = (_and(cls) if cls else 'objects')
+    return {'kind': 'foundation_range', 'label': f'How far {_and(cams) if cams else "the cameras"} see {what}'[:80],
+            'values': vals}
+
+
+def _offline_robust_perception(p, t, wd):
+    from . import copilot_tools as CT
+    vals = []
+    mm = re.search(r'(\d+(?:\.\d+)?)\s*(mm|millimet\w*)\b', t, re.I)
+    cm = re.search(r'(\d+(?:\.\d+)?)\s*(cm|centimet\w*)\b', t, re.I)
+    dg = re.search(r'(\d+(?:\.\d+)?)\s*(°|deg\w*)', t, re.I)
+    if mm or cm or dg:
+        vals.append(_V('mount_from', 'custom', 'request', 'you gave the mounting error'))
+        x_mm = float(mm.group(1)) if mm else (10.0 * float(cm.group(1)) if cm else 0.0)
+        vals.append(_V('mount_mm', x_mm, 'request' if (mm or cm) else 'copilot',
+                       f'"{(mm or cm).group(0)}"' if (mm or cm) else 'you gave only an angle'))
+        vals.append(_V('mount_deg', float(dg.group(1)) if dg else 0.0, 'request' if dg else 'copilot',
+                       f'"{dg.group(0)}"' if dg else 'you gave only an offset: no rotation'))
+        for k in ('thermal', 'vibration', 'calibration'):
+            vals.append(_V(k, False, 'copilot', 'only the mounting varies, so the result says what that error does'))
+    runs = [r for r in CT.find_runs(p, wd, gt_only=True) if r.get('status') == 'ok']
+    mine = [r for r in runs if r.get('variant') == p.variant.name] or runs
+    if mine:
+        vals.append(_V('recordings', [mine[0]['name']], 'copilot', 'the newest drive with ground truth'
+                       + (f' of {p.variant.name}' if mine[0].get('variant') == p.variant.name else '')))
+    return {'kind': 'robust_perception', 'label': 'Mounting error carried to detection', 'values': vals}
+
+
+def _offline_redrive(p, t, wd):
+    from ..core import splat_reproject as SP
+    from . import copilot_tools as CT
+    vals = []
+    vs = _named_variants(p, t)
+    if not SP.settings_of(p).drive:
+        runs = [r for r in CT.find_runs(p, wd) if r.get('status') == 'ok']
+        if runs:
+            vals.append(_V('drive', runs[0]['name'], 'copilot', 'the newest recorded drive in the project\'s runs '
+                                                               'folder (the log replay has none chosen)'))
+    if vs:
+        vals.append(_V('variant', vs[0].name, 'request', f'you named {vs[0].name}'))
+    elif re.search(r'\bnew\s+rig\b', t, re.I) and len(p.variants) > 1:
+        vals.append(_V('variant', p.variants[-1].name, 'copilot', 'the newest variant, as "the new rig"'))
+    if re.search(r'\b(re-?shoot|re-?shot|export|dataset)\b', t, re.I):
+        vals.append(_V('reshoot', True, 'request', 'you asked for the re-shot drive'))
+    return {'kind': 'redrive', 'label': 'Can the drive be reused', 'values': vals}
+
+
+def _offline_design(p, t, wd):
+    from ..core import rig_designer as DSG
+    vals = []
+    m = re.search(r'(?:brief|requirements?)\s*[:—–-]\s*(.+)$', t, re.I | re.S)
+    brief = m.group(1).strip() if m and len(m.group(1).strip()) > 8 else ''
+    src = 'request'
+    if not brief:
+        brief = DSG.settings_of(p).brief or str((getattr(p.analysis, 'assistant', None) or {}).get('brief', ''))
+        src = 'copilot'
+    have = bool(DSG.settings_of(p).items())
+    if brief and (not have or src == 'request'):
+        vals.append(_V('brief', brief, src, 'the brief you gave' if src == 'request' else
+                       'the project\'s brief (Assistant ▸ Brief, or the design agent\'s)'))
+        vals.append(_V('requirements_from', 'brief', 'copilot', 'the requirements are read from the brief by '
+                                                                'Vantage\'s parser'))
+    n = re.search(r'\b([3-7])\s+(options|rigs|designs)\b', t, re.I)
+    if n:
+        vals.append(_V('options', int(n.group(1)), 'request', f'"{n.group(0)}"'))
+    return {'kind': 'design', 'label': 'Design rigs for the brief', 'values': vals}
+
+
+def _offline_perf_model_train(p, t, wd):
+    return {'kind': 'perf_model_train', 'label': 'Train the detection model',
+            'values': [_V('save', True, 'copilot', 'a trained model is what the app and the optimiser load')]}
+
+
+def _offline_perf_model_campaign(p, t, wd):
+    vals = []
+    n = re.search(r'\b(\d{1,2})\s+(rigs?|variants?|designs?|candidates?)\b', t, re.I)
+    if n:
+        vals.append(_V('k', int(n.group(1)), 'request', f'"{n.group(0)}"'))
+    else:
+        vals.append(_V('k', 2, 'copilot', 'two rigs a round: each is a CARLA drive and a rig perception run'))
+    vs = _named_variants(p, t)
+    if len(vs) > 1:
+        vals.append(_V('variants', [v.name for v in vs], 'request', 'the variants you named'))
+    return {'kind': 'perf_model_campaign', 'label': 'Which rigs to simulate next', 'values': vals}
+
+
+def _offline_risk_coverage(p, t, wd):
+    vals = []
+    for w, rx in (('ncap', r'\bncap\b'), ('fatal', r'\bfatal\w*\b'), ('cost', r'\bcosts?\b'),
+                  ('fyl', r'\bfunctional\s+years?\b|\bfyl\b')):
+        if re.search(rx, t, re.I):
+            vals.append(_V('weight', w, 'request', f'you asked for the {w} weighting'))
+            break
+    return {'kind': 'risk_coverage', 'label': 'Risk-weighted coverage', 'values': vals}
+
+
+def _offline_fleet_twin(p, t, wd):
+    watch = bool(re.search(r'\bwatch\w*\b|\bnew\s+drives?\b|\barriv\w*\b', t, re.I))
+    vals = [_V('action', 'watch_once' if watch else 'run', 'request' if watch else 'copilot',
+               'you asked to read the new drives' if watch else 'fit the twin on the records there are')]
+    return {'kind': 'fleet_twin', 'label': 'Fleet twin', 'values': vals}
+
+
+def offline_plan(project, text, working_dir='', engine=None, prev=None) -> 'Plan | None':
+    """A plan from the deterministic planner (provider 'vantage', no model), or None when it does not know the
+    request. It is checked and estimated like any plan and needs the same approval."""
+    steps = offline_steps(project, text, working_dir)
+    if not steps:
+        return None
+    kind = steps[0]['kind']
+    return build(project, steps, KIND_LABEL[kind], f'Read on this computer from your request ({STUDY_ABOUT.get(kind, ("",))[0]}).'
+                 [:600], prev=None, request=str(text or ''), provider='vantage', model='deterministic planner',
+                 working_dir=working_dir, engine=engine)

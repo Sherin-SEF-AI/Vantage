@@ -40,8 +40,45 @@ def _variant(tc, name):
     raise ValueError(f'no variant {name!r}: ' + ', '.join(v.name for v in p.variants))
 
 
+# the read tool's page -> the Copilot plan kinds whose results it reads when the page has none (a plan run headless, or
+# in the app before the page was opened): the newest approved plan step of that kind that ran
+PLAN_KINDS_OF = {'rig_perception': ('rig_perception',), 'foundation': ('foundation_range',),
+                 'robust_perception': ('robust_perception',), 'redrive': ('redrive',), 'designer': ('design',),
+                 'perf_model': ('perf_model_train',), 'perf_model_campaign': ('perf_model_campaign',),
+                 'risk_coverage': ('risk_coverage',), 'fleet_twin': ('fleet_twin',)}
+
+
+def plan_result(tc, name):
+    """The newest result of an approved Copilot plan step that feeds this read tool, with the plan it came from;
+    None when there is none."""
+    from . import copilot as CP
+    kinds = PLAN_KINDS_OF.get(name, ())
+    best = None
+    for rec in CP.records(tc.project):
+        if not isinstance(rec, dict) or not CP.verify(rec):
+            continue
+        for run in rec.get('runs') or []:
+            for i, (step, sr) in enumerate(zip(rec.get('steps') or [], run.get('steps') or [])):
+                if step.get('kind') in kinds and sr.get('status') == 'done' and isinstance(sr.get('summary'), dict):
+                    when = run.get('finished_utc') or run.get('started_utc') or ''
+                    if best is None or when >= best[0]:
+                        best = (when, sr['summary'], {'plan': rec.get('id'), 'version': rec.get('version'),
+                                                      'step': i + 1, 'title': rec.get('title'), 'finished_utc': when,
+                                                      'via': run.get('via')})
+    if best is None:
+        return None
+    return dict(best[1], from_plan=best[2])
+
+
 def _page(tc, name):
-    return (getattr(tc, 'studies', None) or {}).get(name)
+    """The page's last result (ToolContext.studies), else the newest Copilot plan step's that feeds it."""
+    s = (getattr(tc, 'studies', None) or {}).get(name)
+    if s:
+        return s
+    try:
+        return plan_result(tc, name)
+    except Exception:                                  # noqa: BLE001 — a record never breaks a question
+        return None
 
 
 def _scrub(doc):
@@ -50,16 +87,23 @@ def _scrub(doc):
 
 
 # =========================================================================== the pages' heavy studies
-def get_rig_perception(tc, cls=None, rig=None, **_):
+def get_rig_perception(tc, cls=None, rig=None, sector=None, **_):
     """The Rig perception page's last result (per rig and class: recall, mAP, ATE with intervals; the significant
     findings), else what is set up."""
     s = _page(tc, 'rig_perception')
     if s:
         out = dict(s)
         if cls:
-            out['per_rig'] = {r: {c: v for c, v in d.items() if c == cls} for r, d in out['per_rig'].items()}
+            out['per_rig'] = {r: {c: v for c, v in d.items() if c == cls} for r, d in out.get('per_rig', {}).items()}
         if rig:
-            out['per_rig'] = {r: d for r, d in out['per_rig'].items() if r == rig}
+            out['per_rig'] = {r: d for r, d in out.get('per_rig', {}).items() if r == rig}
+        if sector:
+            from . import copilot as CP
+            out['findings'] = [f for f in out.get('findings') or [] if CP.sector_named(f, sector)]
+            if isinstance(out.get('focus'), dict):
+                out['focus'] = dict(out['focus'], regions={
+                    r: {c: {k: v for k, v in rr.items() if k.startswith(sector + ' ')} for c, rr in d.items()
+                        if not cls or c == cls} for r, d in out['focus'].get('regions', {}).items()})
         return {'run': True, **_scrub(out),
                 'meaning': '3D detection of each class in each region around the car (8 sectors × range bins), per '
                            'rig on the same CARLA scenes; recall, precision and the centre error at a 2 m match, '
@@ -77,7 +121,7 @@ def get_rig_perception(tc, cls=None, rig=None, **_):
     return {'run': False, 'backend': st.backend, 'detector': {'id': s['id'], 'verified': s['verified']},
             'recordings': recs, 'classes': list(st.classes),
             'note': 'not run yet: Simulate ▸ Rig perception ▸ Run (seconds per drive with the 2D detections cached, '
-                    'minutes without; the assistant cannot run it). Drives come from CARLA (plan_perception_scene_set '
+                    'minutes without), or a Copilot plan step of kind rig_perception (propose_plan; the user approves). Drives come from CARLA (plan_perception_scene_set '
                     'says what a scene set costs).'}
 
 
@@ -100,7 +144,8 @@ def plan_perception_scene_set(tc, set_id='standard', variants=None, seeds=None, 
             'seeds': st.seeds, 'drives': est.get('drives'), 'done': est.get('done'), 'cost': est.get('text'),
             'problems': est.get('problems') or [],
             'note': 'the same scenes and seeds for every variant, so the rigs compare paired; driving it needs CARLA: '
-                    'Simulate ▸ Rig perception ▸ Drive (propose_plan cannot run it yet; the user starts it)'}
+                    'Simulate ▸ Rig perception ▸ Drive, or a rig_perception plan step with source carla (propose_plan; the user '
+                    'approves it)'}
 
 
 def get_redrive(tc, **_):
@@ -119,8 +164,8 @@ def get_redrive(tc, **_):
     v = tc.project.variant_by_uid(st.variant) if st.variant else None
     return {'run': False, 'drive_chosen': bool(sst.drive), 'proposed_rig': v.name if v is not None else None,
             'error_budget_grey_levels': st.error_budget, 'torch': SP.torch_missing() is None,
-            'note': 'not run yet: Simulate ▸ Log replay ▸ Re-drive ▸ Calibrate & report (minutes on a GPU; the '
-                    'assistant cannot run it)'}
+            'note': 'not run yet: Simulate ▸ Log replay ▸ Re-drive ▸ Calibrate & report (minutes on a GPU), or a redrive plan step '
+                    '(propose_plan; the user approves it)'}
 
 
 def get_foundation_range(tc, camera=None, cls=None, **_):
@@ -146,8 +191,8 @@ def get_foundation_range(tc, camera=None, cls=None, **_):
                       {'downloaded': bool((m.get('status') or {}).get('present'))})
     return {'run': False, 'source': st.source, 'recordings': len(st.recordings), 'detectors': list(st.detectors),
             'depth_model': st.depth_model, 'models': models, 'torch': FM.torch_missing() is None,
-            'note': 'not run yet: Simulate ▸ Foundation models ▸ Run (minutes on a GPU; downloads and runs are the '
-                    'user\'s)'}
+            'note': 'not run yet: Simulate ▸ Foundation models ▸ Run (minutes on a GPU), or a foundation_range plan '
+                    'step (propose_plan; downloads are the user\'s)'}
 
 
 def get_robust_perception(tc, **_):
@@ -166,7 +211,7 @@ def get_robust_perception(tc, **_):
     return {'run': False, 'recordings': len(st.recordings), 'mode': st.mode, 'sources': st.active(),
             'mounting_from': st.mount_from, 'builds': st.samples, 'sobol_n': st.sobol_n,
             'note': 'not run yet: Simulate ▸ Robust perception ▸ Run (tens of minutes per recording with the detector '
-                    'on; the assistant cannot run it)'}
+                    'on), or a robust_perception plan step (propose_plan; the user approves it)'}
 
 
 # =========================================================================== cheap studies
@@ -279,6 +324,9 @@ def get_perf_model(tc, **_):
                    fitted_utc=m.fitted_utc, calibration=PM.cv_table(m), status=m.status)
     if s:
         out['page'] = _scrub(s)
+    c = _page(tc, 'perf_model_campaign')
+    if c:
+        out['campaign'] = _scrub(c)
     out['meaning'] = ('a Gaussian process per class on the empirical logit of recall, from the rig\'s geometry alone '
                       '(pixels on the object, cameras seeing a region, lidar points, radar coverage …), trained on '
                       'perception records; its intervals\' coverage is measured by leave-one-scene-out and '
@@ -324,8 +372,8 @@ def suggest_simulations(tc, k=4, **_):
         d = PM.suggest_simulations(tc.project, k)
     except (RuntimeError, ValueError) as e:
         return {'ok': False, 'text': str(e), 'picks': []}
-    d['note'] = ('evaluating a pick for real means driving it in CARLA and running Rig perception: the user does it '
-                 '(plan_perception_scene_set gives the cost)')
+    d['note'] = ('evaluating a pick for real means driving it in CARLA and running Rig perception: a perf_model_campaign '
+                 'plan step does it after the user approves (plan_perception_scene_set gives the cost of a scene set)')
     return d
 
 
@@ -409,7 +457,10 @@ def _tools():
              'findings), else the recordings and detector set up. Use it for "how well will the perception work", '
              '"which rig detects pedestrians better at the left". Cheap: it reads the page, never runs it.',
              {'cls': {**S, 'description': 'one class (pedestrian, cyclist, motorcyclist, car, truck, bus, vehicle)'},
-              'rig': {**S, 'description': 'one rig by its name on the page'}}, get_rig_perception),
+              'rig': {**S, 'description': 'one rig by its name on the page'},
+              'sector': {**S, 'enum': ['front', 'front-left', 'left', 'rear-left', 'rear', 'rear-right', 'right',
+                                       'front-right'], 'description': 'the findings and focus regions of one sector'}},
+             get_rig_perception),
         Tool('plan_perception_scene_set', 'Cost a perception scene set',
              'A perception scene set (standard: 6 scenes; quick: 3) for the given variants and seeds: its scenes, the '
              'drives, the minutes of CARLA and the drives already done. Use it before suggesting a new evaluation in '
@@ -495,13 +546,23 @@ def _tools():
 
 
 def register(T=None):
-    """Add TOOLS_R14 to tools.TOOLS and tools.BY_NAME once (idempotent)."""
+    """Add TOOLS_R14 to tools.TOOLS and tools.BY_NAME once (idempotent), and offer the Copilot's study plan kinds
+    in its tools' schemas."""
     T = T or _T()
     have = {t.name for t in T.TOOLS}
     for t in TOOLS_R14:
         if t.name not in have:
             T.TOOLS.append(t)
         T.BY_NAME[t.name] = T.BY_NAME.get(t.name, t)
+    _widen(T)
+
+
+def _widen(T):
+    try:
+        from .copilot_tools import widen_schemas
+        widen_schemas(T)
+    except Exception:                                  # noqa: BLE001 — never takes the assistant down
+        pass
 
 
 TOOLS_R14 = _tools()
@@ -509,7 +570,14 @@ TOOLS_R14 = _tools()
 # tools.py imports this module at its end (TOOLS += TOOLS_R14); imported first instead, register when tools is done
 import sys as _sys                                                     # noqa: E402
 _tm = _sys.modules.get(__package__ + '.tools')
+if _tm is None:                                        # imported first: load tools now (its end adds TOOLS_R14)
+    try:
+        from . import tools as _tm                     # noqa: F811
+    except Exception:                                  # noqa: BLE001 — a broken tools module is said elsewhere
+        _tm = None
 if (_tm is not None and not getattr(getattr(_tm, '__spec__', None), '_initializing', False)
         and hasattr(_tm, 'BY_NAME') and 'get_fleet_twin' not in _tm.BY_NAME):
     register(_tm)
+elif _tm is not None and hasattr(_tm, '_STEP_ITEM'):
+    _widen(_tm)                                        # tools.py imports this module at its end: its schemas are there
 del _sys, _tm

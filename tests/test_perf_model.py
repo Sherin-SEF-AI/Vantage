@@ -248,12 +248,19 @@ def test_features_of_a_variant_and_its_record_block_agree_and_are_fast():
     # the body hides part of some view; the lidar puts points on near objects; a quarter-resolution record halves px/m
     X = f1['X']['pedestrian']
     assert X[:, PM.FEATURE_NAMES.index('log2_lidar_pts')].max() > 3
-    small = json.loads(json.dumps(rb))
-    for c in small['cameras']:
-        c['width'], c['height'] = c['width'] // 2, c['height'] // 2
-    f3 = PM.describe_rig(small, project=p)
+    # pixels as the detector sees them: the 1920 × 1536 modules run at 1280 × 1024 (DETECTOR_INPUT_PX), so a record
+    # at 2/3 scale has the same features and one at 1/3 scale (640 × 512) half the px/m
+    assert PM.DETECTOR_INPUT_PX == 1280 and f1['input_px'] == 1280
     seen = f1['X']['car'][:, PX] > 2
-    assert np.allclose(f3['X']['car'][seen, PX], f1['X']['car'][seen, PX] - 1.0, atol=0.05)
+    for div, drop in ((1.5, 0.0), (3.0, 1.0)):
+        small = json.loads(json.dumps(rb))
+        for c in small['cameras']:
+            c['width'], c['height'] = int(round(c['width'] / div)), int(round(c['height'] / div))
+        f3 = PM.describe_rig(small, project=p)
+        assert np.allclose(f3['X']['car'][seen, PX], f1['X']['car'][seen, PX] - drop, atol=0.05)
+    # without the cap, the full-size module has 1.5 × the px/m of the detector's view
+    f4 = PM.describe_rig(p, v, input_px=0)
+    assert np.allclose(f4['X']['car'][seen, PX], f1['X']['car'][seen, PX] + math.log2(1.5), atol=0.05)
 
 
 # ======================================================================= the Gaussian process
@@ -305,6 +312,41 @@ def test_gp_recovers_a_known_function_with_calibrated_intervals():
     # a saved and reloaded class model predicts the same
     back = PM.ClassModel.from_dict(json.loads(json.dumps(cm.to_dict())))
     assert np.allclose(back.predict(Xt)[0], mu) and np.allclose(back.predict(Xt)[1], var)
+
+
+def test_sparse_posterior_keeps_the_group_offsets_exactly():
+    """FITC with every training row as an inducing input, the scene, town and region offsets as low-rank terms, must
+    be the exact posterior: for a new town, a known town and a known scene set, mean and full covariance."""
+    rng = np.random.default_rng(0)
+    n = 300
+    X = rng.normal(size=(n, NF))
+    X[:, PX] = rng.uniform(0, 8, n)
+    sc = rng.integers(0, 6, n)
+    tw = sc // 2
+    rg = rng.integers(0, 5, n)
+    N = rng.integers(5, 80, n)
+    lg = -2 + 0.5 * X[:, PX] + rng.normal(0, 0.5, 6)[sc] + rng.normal(0, 0.8, 3)[tw] + rng.normal(0, 0.6, (3, 5))[tw, rg]
+    k = rng.binomial(N, PM.sigmoid(lg))
+    cm = PM.ClassModel('pedestrian').fit(X, k, N, PM.GPSettings(restarts=1, max_iter=40), scenes=sc, regions=rg,
+                                         towns=tw)
+    assert cm.kind == 'exact' and cm.levels == list(PM.GROUP_LEVELS) and cm.gv['town_region'] > 0.05
+    f = PM.ClassModel.__new__(PM.ClassModel)
+    f.__dict__.update(cm.__dict__)
+    f._posterior_fitc_at(cm.Ztrain, cm.Ztrain, cm.rtrain, cm.s2train)
+    Xt = rng.normal(size=(7, NF))
+    Xt[:, PX] = rng.uniform(0, 8, 7)
+    for kw in ({}, {'scenes': ['9'] * 7, 'regions': list(range(7)), 'towns': ['2'] * 7},
+               {'scenes': ['1'] * 7, 'regions': [0, 1, 2, 3, 4, 0, 1], 'towns': ['0'] * 7}):
+        mu_e, cov_e = cm.predict(Xt, full_cov=True, **kw)
+        mu_f, cov_f = f.predict(Xt, full_cov=True, **kw)
+        assert np.abs(mu_e - mu_f).max() < 1e-5 and np.abs(cov_e - cov_f).max() < 1e-6
+        assert np.allclose(np.diag(cov_f), f.predict(Xt, **kw)[1])
+    # a known town narrows the interval against a new one; the saved model predicts the same
+    v_new = cm.predict(Xt)[1]
+    v_known = cm.predict(Xt, scenes=['9'] * 7, regions=list(range(7)), towns=['2'] * 7)[1]
+    assert np.all(v_known < v_new)
+    back = PM.ClassModel.from_dict(json.loads(json.dumps(cm.to_dict())))
+    assert np.allclose(back.predict(Xt)[0], cm.predict(Xt)[0]) and back.levels == cm.levels
 
 
 def test_not_trained_below_the_minimum_and_predicts_nothing():
@@ -361,6 +403,117 @@ def test_model_trains_cross_validates_and_beats_the_baselines(tmp_path):
     assert names[:3] == ['perf_model.json', 'perf_model_calibration.csv', 'perf_model_predictions.csv']
     doc = json.loads(dict(PM.files(res))['perf_model.json'])
     assert doc['schema'] == PM.SCHEMA and doc['calibration'] and doc['regions'][0]['pedestrian']['recall'] is not None
+
+
+# ======================================================================= towns: the honest check (round 15)
+def town_set(towns=('A', 'B', 'C', 'D'), seeds=(1, 2), rigs=4, seed=3, offset=0.6):
+    """Records over towns, each with scene sets per seed; each town shifts the logit by its own offset (a town is
+    harder or easier as a whole), so a town the model has not seen is a real extrapolation."""
+    rng = np.random.default_rng(seed)
+    off = {t: rng.normal(0, offset) for t in towns}
+    docs, feats = [], {}
+    i = 0
+    for t in towns:
+        for sd in seeds:
+            for _ in range(rigs):
+                lpx = rng.uniform(1.0, 8.0, NR)
+                occ = rng.uniform(0.0, 1.0, NR)
+                ns = rng.integers(20, 200, NR)
+                k = rng.binomial(ns, PM.sigmoid(PM.logit(truth(lpx, occ)) + off[t]))
+                m = {'pedestrian': {rid: PM.metrics_cell(int(nn), int(kk), 0)
+                                    for (_, _, rid, _), nn, kk in zip(GRID1.regions(), ns, k)}}
+                d = PM.make_record(source='synthetic-test', scene={'kind': 'synthetic', 'town': t, 'seed': sd},
+                                   detector={'id': 'analytic', 'backend': 'external:test'}, rig=rig_of(i),
+                                   grid=GRID1, metrics=m)
+                docs.append(d)
+                feats[d['rig_hash']] = synth_feats(lpx, occ)
+                i += 1
+    return docs, feats
+
+
+def test_leave_one_town_out_and_the_learning_curve_over_towns_and_records():
+    docs, feats = town_set()
+    st = PM.PerfModelSettings(classes=['pedestrian'], restarts=1, objective={'pedestrian': 1.0})
+    m = PM.Model(st).fit(docs, feats_of=lambda d: feats[d['rig_hash']])
+    assert m.trained and m.n_scenes == 8
+    cv = m.cv[('pedestrian', 'recall')]
+    assert set(cv) == set(PM.CV_KINDS)
+    t = cv['town']
+    assert t['ok'] and t['folds'] == 4 and t['groups'] == 4 and t['gp']['n'] == 32 * NR
+    assert sorted(t['per_group']) == ['A', 'B', 'C', 'D']                 # one fold per town, every scene set in it
+    assert all(g['gp']['n'] == 8 * NR for g in t['per_group'].values())
+    assert cv['scene']['folds'] == 8
+    for by in PM.CV_KINDS:
+        g = cv[by]['gp']
+        assert 0.0 < g['rmse_floor'] < g['rmse'] and g['n_big'] > 0 and g['rmse_big'] is not None
+    assert t['gp']['rmse'] < t['logistic']['rmse'] < t['constant']['rmse'] and t['gp']['nlpd'] < t['constant']['nlpd']
+    assert 0.85 <= t['gp']['coverage95'] <= 1.0                         # a new town's offset widens the intervals
+    cm = m.models[('pedestrian', 'recall')]
+    assert cm.levels == list(PM.GROUP_LEVELS) and cm.gv['town'] > 0.1     # the towns' spread is found
+    # round 14's model (no town offsets): a held-out scene set gains nothing from its town's other scene sets, and a
+    # new town's intervals are too narrow
+    st14 = PM.PerfModelSettings(classes=['pedestrian'], restarts=1, objective={'pedestrian': 1.0}, town_effects=False)
+    m14 = PM.Model(st14).fit(docs, feats_of=lambda d: feats[d['rig_hash']])
+    cv14 = m14.cv[('pedestrian', 'recall')]
+    assert m14.models[('pedestrian', 'recall')].levels == list(PM.SCENE_LEVELS)
+    assert cv['scene']['gp']['rmse'] < 0.5 * cv14['scene']['gp']['rmse']
+    assert cv14['town']['gp']['coverage95'] < t['gp']['coverage95']
+    rows = PM.cv_table(m)
+    assert {r['cv'] for r in rows} == set(PM.CV_KINDS) and all('rmse_floor' in r for r in rows if r['method'])
+    assert 'rmse_floor' in PM.to_csv(PM.PerfModelResult(st, m, '', {}, 'v')).splitlines()[0]
+    assert len(PM.calibration_png(m)) > 1000
+    back = PM.Model.from_dict(json.loads(json.dumps(m.to_dict())))
+    assert set(back.cv[('pedestrian', 'recall')]) == set(PM.CV_KINDS)
+    # the learning curve: 1, 2, 3 training towns (distinct draws), and fractions of the records at 3 towns
+    rows = PM.training_rows(docs, lambda d: feats[d['rig_hash']], 'pedestrian')
+    assert sorted(set(rows['town'].tolist())) == ['A', 'B', 'C', 'D']
+    lc = PM.learning_curve(rows, 'pedestrian', st=st, repeats=3, record_fracs=(0.25, 1.0), seed=1)
+    assert lc['ok'] and [r['k'] for r in lc['by_towns']] == [1, 2, 3]
+    by_k = {r['k']: r for r in lc['by_towns']}
+    assert by_k[1]['splits'] == 3 and by_k[3]['splits'] == 3            # C(4, 3) = 4 sets, 3 drawn
+    assert by_k[1]['train_records'] == 8 and by_k[3]['train_records'] == 24
+    assert by_k[1]['gp']['n'] == 3 * 24 * NR                            # each set scored on the 3 other towns
+    assert by_k[3]['gp']['rmse'] < by_k[1]['gp']['rmse']                # more towns, less error on new towns
+    fr = {r['frac']: r for r in lc['by_records']}
+    assert fr[0.25]['train_records'] == 6 and fr[1.0]['train_records'] == 24 and fr[1.0]['splits'] == 4
+    assert fr[1.0]['gp']['rmse'] <= fr[0.25]['gp']['rmse'] + 0.01
+    assert PM.learning_curve({**rows, 'town': np.full(len(rows['town']), 'A')}, 'pedestrian', st=st)['ok'] is False
+
+
+def test_a_campaign_drive_finds_its_rig_file(tmp_path):
+    """core.simcampaign keeps a campaign's rig files beside its drives (rigs/<id>/sim_rig.json); a drive's own
+    rig/ folder wins; nothing outside the campaign is read (a rig id with a path in it)."""
+    import json as _j
+    from vantage.core import rig_perception as RP
+    drive = tmp_path / 'camp' / 'drives' / 'd0001'
+    drive.mkdir(parents=True)
+    rigf = tmp_path / 'camp' / 'rigs' / 'bank--clearnoon' / 'sim_rig.json'
+    rigf.parent.mkdir(parents=True)
+    rigf.write_text(_j.dumps({'variant': 'bank'}))
+    assert RP.rig_file(str(drive)) is None
+    (drive / 'campaign_drive.json').write_text(_j.dumps({'drive': {'rig': 'bank--clearnoon'}}))
+    assert RP.rig_file(str(drive)) == str(rigf)
+    (drive / 'campaign_drive.json').write_text(_j.dumps({'drive': {'rig': '../../rigs/bank--clearnoon'}}))
+    assert RP.rig_file(str(drive)) is None
+    own = drive / 'rig' / 'sim_rig.json'
+    own.parent.mkdir()
+    own.write_text('{}')
+    assert RP.rig_file(str(drive)) == str(own)
+
+
+def test_the_campaign_scene_set_and_its_towns():
+    from vantage.core import perception_scenes as PS, samples
+    p = samples.tigor_sample_project()
+    v = next(v for v in p.variants if v.sensors)
+    st = PS.SceneSetSettings.from_dict({'set_id': 'campaign', 'variants': [v.uid], 'seeds': [1, 2], 'town': 'Town05',
+                                        'weather': 'WetNoon'})
+    pl = PS.plan(p, st)
+    drives = [d for d in pl.drives if d['role'] == 'drive']
+    assert [d['scenario']['name'] for d in drives] == ['free_drive', 'pedestrian_crossing'] * 2
+    assert [d['seed'] for d in drives] == [1, 1, 2, 2] and {d['weather'] for d in drives} == {'WetNoon'}
+    cs = PS.campaign_settings(p, st)
+    assert cs.base['town'] == 'Town05' and cs.base['walkers'] == 60 and cs.base['traffic'] == 40
+    assert set(PS.TOWNS) == {'Town01', 'Town02', 'Town03', 'Town04', 'Town05', 'Town10HD'}
 
 
 # ======================================================================= active learning

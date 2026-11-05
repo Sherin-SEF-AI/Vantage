@@ -293,7 +293,7 @@ def test_a_fake_carla_drive_in_other_traffic_reports_no_unpinned_lidar_estimate(
     out = str(tmp_path / 'run')
     p = TS._project(lidar_z=2.0)
     rig = simrig.build(p, simrig.SimSettings.from_dict({'image_scale': 0.1, 'duration_s': 1.2, 'traffic': 6,
-                                                        'warmup_s': 0.25, 'seed': 4}))
+                                                        'warmup_s': 0.25, 'seed': 4, 'exposure': 'manual'}))
     simrig.export(rig, p, os.path.join(out, 'rig'))
     doc, remaps = CB.load_rig(os.path.join(out, 'rig', 'sim_rig.json'))
     assert CB.Bridge(fc, doc, remaps, out, TS._args(doc, out), None, None).run()['status'] == 'ok'

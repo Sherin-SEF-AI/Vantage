@@ -172,7 +172,8 @@ SUMO's pedestrians, and SUMO's vehicles do not see CARLA's walkers.
 | `output.lidar_noise_cm` | range noise (1 σ) along each lidar ray |
 | `output.drop_self_hits` | drop lidar points inside the ego's own box (5 cm margin) |
 | `output.gt_range_m` | actors are annotated within this horizontal distance of the ego (60 m) |
-| `output.exposure`, `exposure_ev` | **CARLA**: manual exposure (every view of a camera alike) or CARLA's histogram auto exposure; exposure compensation |
+| `output.exposure`, `exposure_ev` | **CARLA**: the mode CARLA is given (manual: every view of a camera alike; histogram: CARLA's auto exposure per view) and its compensation (with `exposure_meter`: a bias on each camera's metered value) |
+| `output.exposure_meter.target_level`, `per`, `fixed` | **CARLA**, present when the rig meters its exposure (the default since round 15): before recording each camera's views are rendered as small probes at manual EV +3, 0 and −3 and the camera records in manual mode at the compensation that puts its image's mean 8-bit level at `target_level` (118); one value `per` camera, `fixed` for the drive; `exposure_ev` is then a bias on it. Absent: the rig records as `exposure` says |
 
 ### Cameras
 
@@ -456,12 +457,16 @@ which fields an `ok` report must have; fields marked **CARLA** may be left out b
 
 | key | meaning |
 |---|---|
-| `schema`, `status` | `vantage.sim_run/1`; `ok`, `failed` or `cancelled` |
+| `schema`, `status` | `vantage.sim_run/1`; `ok`, `failed` or `cancelled`; `running`: the bridge's start marker, written as it starts and replaced by its report (still there, the run is going or was killed before reporting: `core.simrig.read_run` reads it as no report, never as a drive) |
+| `recorded_utc.start`, `end` | **CARLA**: when the bridge ran, UTC (ISO 8601, seconds): `start` as it started (null when the bridge ran in-process without its command line), `end` as it wrote the finished report; the fleet twin dates drives by it |
 | `error`, `traceback` | a failure: `<Exception>: <message>` and the traceback |
 | `exit_code` | written by Vantage, not the bridge, when a bridge it started ended without a report: its exit code (negative for a signal) |
 | `project`, `variant`, `out_dir` | the rig's names; the output folder as the bridge saw it |
 | `town`, `traffic`, `walkers` | the map; the vehicles and pedestrians spawned |
 | `weather.preset`, `vantage`, `params` | the weather applied: a preset by name, or a condition's label with its parameters |
+| `exposure.mode`, `target_level`, `exposure_ev`, `carla_exposure_mode`, `method`, `probe_ev`, `probe_px`, `probe_ticks` | **CARLA**: what exposure the cameras were recorded with: `metered` (or the rig's `manual` / `histogram`), the metered target level, the bias, what CARLA was given, how the meter worked and its probes (EV steps, size in px, ticks). A report without it is from before round 15: manual at the rig's `exposure_ev` (`core.simrig.exposure_of`) |
+| `exposure.cameras.{tag}.metered_ev`, `compensation_ev`, `at_limit`, `mean_level_ev0`, `mean_level_predicted` | **CARLA**: per camera, the meter's value, what it recorded with (metered + bias), whether the meter hit its ±8 EV range, the image's mean level at EV 0 and the level predicted at the compensation |
+| `exposure.cameras.{tag}.views[].view`, `weight`, `mean_level_ev0` | **CARLA**: each view of the camera, its share of the output image and its mean level at EV 0 |
 | `client_version`, `server_version` | **CARLA**: the client's and server's versions |
 | `vehicle.blueprint`, `bounding_box_lwh_m`, `rig_choice`, `project` | the simulated ego: what it is, its box [l, w, h] m, what the rig asked for, the project body's sizes |
 | `vehicle.ego_origin_in_actor_m` | **CARLA**: where the vehicle frame's origin lies in the actor's frame (CARLA axes), measured from its wheels and box |

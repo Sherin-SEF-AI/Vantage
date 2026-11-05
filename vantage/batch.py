@@ -1135,7 +1135,17 @@ def _run_plan(project, eng, res, issues, args) -> int:
         print(f'run plan: step {i + 1} of {len(rec["steps"])}: {CP.KIND_LABEL.get(kind, kind)}'
               + (f' · {s.get("label")}' if s.get('label') else ''), file=sys.stderr)
         rc = 0
-        if kind == 'carla_run':
+        if kind in CP.STUDY_KINDS:          # round 14's studies: the module headless, gated again by the record
+            r = CP.run_study_kind(project, kind, settings, step_out, eng, tk,
+                                  progress=_progress_line(CP.KIND_LABEL[kind].lower()),
+                                  log=lambda m: print(f'  {m}', file=sys.stderr))
+            print(file=sys.stderr)
+            for pth in r.files:
+                print(pth)
+            print(f'  {CP.KIND_LABEL[kind]}: {r.message}', file=sys.stderr)
+            st_run['summary'] = r.summary   # the read tools cite it once the project is saved (--save)
+            rc = r.rc
+        elif kind == 'carla_run':
             ns.carla_run = step_out
             rc = _carla_run(project, ns)
         elif kind == 'campaign':
@@ -2281,8 +2291,10 @@ def add_round14_arguments(g):
     g.add_argument('--fleet-twin-watch', action='store_true',
                    help='read every new drive in the vehicles\' watch folders (Calibrate ▸ Fleet twin), once each, '
                         'and save the project after each: every --watch-interval seconds, --watch-runs rounds '
-                        '(default until stopped); a drive is read once it has not changed for the project\'s quiet '
-                        'time')
+                        '(default until stopped); a drive is read once nothing in it has changed for the project\'s '
+                        'quiet time and it is complete (its tables, every file they name, the writer\'s last files: a '
+                        'drive still being written, copied or aborted is never read); each drive\'s state is logged '
+                        'and the twin is run after each read')
     g.add_argument('--as-of', metavar='YYYY-MM-DD', help='with --fleet-twin: the date taken as today (reproducible '
                                                          'runs)')
 
@@ -2853,12 +2865,24 @@ def _fleet_twin_watch(project, eng, args) -> int:
         return 0
     state = FT.WatchState()
     runs = 0
+    last = {}                                  # each drive's state as last logged (arriving, quiet, incomplete, …)
+
+    def log(m):
+        print(f'fleet twin: {time.strftime("%H:%M:%S")} {m}', file=sys.stderr, flush=True)
     try:
         while True:
-            got = FT.watch_once(project, state, eng, log=lambda m: print(f'fleet twin: {m}', file=sys.stderr))
+            got = FT.watch_once(project, state, eng, log=log, last=last)
             if got:
                 project.save(dest)
-                print(f'fleet twin: {len(got)} drive{"s" * (len(got) != 1)} read; saved {dest}', file=sys.stderr)
+                log(f'{len(got)} drive{"s" * (len(got) != 1)} read; saved {dest}')
+                try:                           # the twin with the new drives: what the page and Issues now say
+                    res = FT.run(project, eng, FT.settings_of(project))
+                except (ValueError, FT.TwinError) as e:
+                    res = None
+                    log(f'the twin cannot run yet: {e}')
+                for f in (res.findings if res is not None else []):
+                    if f['severity'] not in ('good', 'note'):
+                        log(f'{f["severity"]}: {f["message"]}')
             runs += 1
             if args.watch_runs and runs >= args.watch_runs:
                 return 0

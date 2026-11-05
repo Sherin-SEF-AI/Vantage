@@ -877,6 +877,8 @@ vantage --ground-truth-summary run/</code></pre>
       <li>"A fault campaign: turn F and ML by 0.1 to 1°, three seeds, plus clean drives."</li>
       <li>"An experiment: F pitch 25–45° by 5° × the two lenses, blind area."</li>
       <li>"Start the live rig and freeze QR after 10 s."</li>
+      <li>"How far can F see a cyclist?", "What if the mounts are 2 mm off?", "Train the detection model." The
+        perception studies are plan steps too: approved, they run in the background and land on their page.</li>
     </ul>
     <p>An approved plan can be run again headless, exactly as approved: <code>vantage rig.vantage --run-plan ID out/</code>.
       <a href="docs.html#copilot">Reference</a></p>
@@ -886,8 +888,9 @@ vantage --ground-truth-summary run/</code></pre>
     <h3>Recommended actions</h3>
     <p>Without any AI, the panel recommends what to look at next, worked out on your computer from Vantage's own results. A
       live strip follows what you are doing. For a selected camera it might say "QR alone sees 3.00 m²: check what its loss or a mounting
-      error costs", and after an edit "Your last change added 0.155 m² blind ground: undo it". <b>Recommended (n)</b> opens the
-      full list. <a href="docs.html#recommended">Reference</a></p>
+      error costs", and after an edit "Your last change added 0.155 m² blind ground: undo it". On every page it leads with
+      that page's next step: what is missing first, the page's Run, its findings, the next page and its export.
+      <b>Recommended (n)</b> opens the full list. <a href="docs.html#recommended">Reference</a></p>
 
     <h3>Claude over MCP</h3>
     <p>Vantage is an MCP server, so Claude Code or Claude Desktop can read and change rig designs. Register it once:</p>

@@ -301,6 +301,22 @@ def nuscenes_root(path) -> tuple[str, str] | None:
     return None
 
 
+def rig_file(path) -> str | None:
+    """The rig file a CARLA recording was made with: its own rig/sim_rig.json (a single run), else, for a drive of a
+    core.simcampaign campaign (drives/<id>/ beside rigs/<rig id>/, as core.perception_scenes records them), the
+    campaign's rig file its campaign_drive.json names. None when there is none (a nuScenes folder)."""
+    own = os.path.join(path, 'rig', 'sim_rig.json')
+    if os.path.isfile(own):
+        return own
+    doc = _load_json(os.path.join(path, 'campaign_drive.json'))
+    rid = ((doc or {}).get('drive') or {}).get('rig') if isinstance(doc, dict) else None
+    if isinstance(rid, str) and rid and os.sep not in rid and rid not in ('.', '..'):
+        f = os.path.join(os.path.dirname(os.path.dirname(path)), 'rigs', rid, 'sim_rig.json')
+        if os.path.isfile(f):
+            return f
+    return None
+
+
 class PerceptionRecording:
     """A recording as the study reads it: its cameras (calibration, exact lens when the rig file has it), frames, ego
     poses, annotated objects and the cameras' per-frame ground truth (who sees what)."""
@@ -330,7 +346,7 @@ class PerceptionRecording:
         self._ego_T = [self.ego[k] for k in order]
         self.samples = sorted(((r['token'], int(r['timestamp'])) for r in table('sample') if isinstance(r, dict)),
                               key=lambda x: x[1])
-        self.rig_doc = _load_json(os.path.join(path, 'rig', 'sim_rig.json')) or {}
+        self.rig_doc = _load_json(rig_file(path) or '') or {}
         self.run_doc = _load_json(os.path.join(path, 'run.json')) or {}
         rig_cams = {c.get('channel'): c for c in self.rig_doc.get('cameras', []) if isinstance(c, dict)}
         # cameras and every sensor's frames

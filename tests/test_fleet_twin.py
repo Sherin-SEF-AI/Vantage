@@ -10,6 +10,7 @@ import math
 import os
 import shutil
 import sys
+import threading
 import time
 
 import numpy as np
@@ -493,10 +494,21 @@ def test_watch_folder_adds_observations_once_per_new_drive(drive):
     assert len(reps) == 1 and reps[0][1]['status'] == 'ok'
     obs = FT.observations(p)
     assert {o['tag'] for o in obs} == {'F', 'MR', 'QR'} and all(o['vehicle'] == veh['id'] for o in obs)
-    assert obs[0]['date'].startswith('2026-01-01')                               # the drive's own clock
+    # the drive's clock is the simulator's sync pulse (2026-01-01 12:00, core.dataset.EPOCH_US), not the calendar:
+    # dated by its newest file (local time), the day it was written
+    newest = max(os.path.getmtime(os.path.join(r, n)) for r, _, ns in os.walk(os.path.join(folder, 'drive_a'))
+                 for n in ns)
+    when = dt.datetime.fromisoformat(min(o['date'] for o in obs)).timestamp()   # the drive's start: its end less
+    assert newest - 3.5 <= when <= newest                                         # its 2 s (whole seconds)
     now[0] += 10.0
     assert FT.watch_once(p, ws, drive['eng']) == [] and len(FT.observations(p)) == len(obs)   # once per drive
-    shutil.copytree(drive['src'], os.path.join(folder, 'drive_b'))
+    shutil.copytree(drive['src'], os.path.join(folder, 'drive_dup'))            # the same drive again (times kept)
+    now[0] += 1.0
+    ws.poll(p)
+    now[0] += 6.0
+    assert FT.watch_once(p, ws, drive['eng']) == [] and len(FT.observations(p)) == len(obs)  # read before
+    time.sleep(1.1)                                                              # (file times in whole seconds)
+    shutil.copytree(drive['src'], os.path.join(folder, 'drive_b'), copy_function=shutil.copyfile)  # a new drive
     now[0] += 1.0
     ws.poll(p)
     now[0] += 6.0
@@ -510,6 +522,318 @@ def test_watch_folder_adds_observations_once_per_new_drive(drive):
     res = FT.run(p, drive['eng'], FT.FleetTwinSettings(limit_source='fleet'))
     c = res.cells[(veh['id'], 'F')]
     assert set(c['axes']) <= {'yaw', 'pitch', 'roll'} and c['observations'] == 2
+
+
+# ----------------------------------------------------------------- drives arriving (round 15): a fake writer
+def _files_of(src):
+    """The drive's files relative to its root, in the CARLA recorder's order (vantage.sim.record): the marker and
+    the empty version folder first, the images and point clouds as the drive runs, the tables at the end, then
+    dataset.json, then the bridge's run.json."""
+    rel = sorted(os.path.relpath(os.path.join(r, n), src) for r, _, ns in os.walk(src) for n in ns)
+    data = [r for r in rel if os.sep + 'v1.0-' not in os.sep + r and r.startswith('nuscenes' + os.sep)
+            and not r.endswith(FT.DRIVE_MARKER)]
+    tables = [r for r in rel if os.sep + 'v1.0-' in os.sep + r]
+    return data, tables
+
+
+def _copy(src, dst, r):
+    os.makedirs(os.path.dirname(os.path.join(dst, r)), exist_ok=True)
+    shutil.copyfile(os.path.join(src, r), os.path.join(dst, r))       # new file times, as a writer makes them
+
+
+class Writer(threading.Thread):
+    """Writes a drive into dst over time as the CARLA bridge does (or stops half way: kill_after = 'data' / 'tables'
+    / 'dataset'). pause: seconds between phases (longer than the watch's quiet time, as a slow tick or the world
+    loading); log: [(monotonic time, event)]."""
+
+    def __init__(self, src, dst, pause=0.8, kill_after=None, status='ok', per_file=0.0):
+        super().__init__(daemon=True)
+        self.src, self.dst, self.pause, self.kill_after, self.status = src, dst, pause, kill_after, status
+        self.per_file = per_file
+        self.log = []
+        self.done = threading.Event()
+
+    def note(self, what):
+        self.log.append((time.monotonic(), what))
+
+    def run(self):
+        data, tables = _files_of(self.src)
+        nus = os.path.join(self.dst, 'nuscenes')
+        os.makedirs(os.path.join(nus, 'v1.0-vantage'), exist_ok=True)
+        open(os.path.join(nus, FT.DRIVE_MARKER), 'w').write('Written by Vantage (test writer)\n')
+        self.note('prepared')
+        time.sleep(self.pause)                                     # the world loading: nothing written
+        for i, r in enumerate(data):
+            _copy(self.src, self.dst, r)
+            if i == len(data) // 2:
+                time.sleep(self.pause)                             # a slow stretch of the drive
+            elif self.per_file:
+                time.sleep(self.per_file)
+        self.note('data written')
+        if self.kill_after == 'data':
+            return self.note('killed')
+        for r in tables:
+            _copy(self.src, self.dst, r)
+        self.note('tables written')
+        if self.kill_after == 'tables':
+            return self.note('killed')
+        time.sleep(self.pause)
+        doc = json.load(open(os.path.join(self.src, 'dataset.json')))
+        doc['generator'] = 'carla'
+        json.dump(doc, open(os.path.join(self.dst, 'dataset.json'), 'w'))
+        self.note('dataset.json written')
+        if self.kill_after == 'dataset':
+            return self.note('killed')
+        time.sleep(self.pause)
+        json.dump({'schema': 'vantage.sim_run/1', 'status': self.status}, open(os.path.join(self.dst, 'run.json'), 'w'))
+        self.note('run.json written')
+        self.done.set()
+
+
+def _watch_project(drive, folder, quiet):
+    p = copy.deepcopy(drive['p'])
+    veh = FL.add_vehicle(p.fleet, 'V1')
+    os.makedirs(folder, exist_ok=True)
+    FT.set_watch(p, veh['id'], folder)
+    FT.set_settings(p, watch_quiet_s=1.0)
+    return p, veh['id']
+
+
+def _poll_until(p, ws, seconds, quiet, stop=None):
+    """Poll every 50 ms for `seconds` (or until stop()); [(time, ready list)] of every poll that returned something."""
+    got = []
+    t_end = time.monotonic() + seconds
+    while time.monotonic() < t_end and not (stop and stop()):
+        r = ws.poll(p, quiet)
+        if r:
+            got.append((time.monotonic(), r))
+        time.sleep(0.05)
+    return got
+
+
+def test_a_drive_being_written_is_never_read_and_is_read_once_when_complete(drive):
+    """The recorder's order (images over time with pauses longer than the quiet time, the tables, dataset.json, then
+    run.json): never ready before run.json, ready within the quiet time after it, read once, dated by its files."""
+    folder = str(drive['base'] / 'arrive')
+    p, vid = _watch_project(drive, folder, 0.5)
+    w = Writer(drive['src'], os.path.join(folder, 'drive_live'), pause=0.8)
+    ws = FT.WatchState()
+    states = set()
+    w.start()
+    first = None
+    t_end = time.monotonic() + 30
+    while time.monotonic() < t_end:
+        r = ws.poll(p, 0.5)
+        states |= {s for (_, _), (s, _) in ws.status.items()}
+        if r:
+            first = (time.monotonic(), r)
+            break
+        time.sleep(0.05)
+    assert first is not None and w.done.is_set()                                  # only after run.json
+    t_run = next(t for t, e in w.log if e == 'run.json written')
+    assert first[0] - t_run < 2.0                                                 # the quiet time and a poll
+    assert {'arriving', 'quiet', 'incomplete'} <= states                          # it said so while waiting
+    reps = FT.watch_once(p, ws, drive['eng'], quiet=0.5)
+    assert len(reps) == 1 and reps[0][1]['status'] == 'ok' and reps[0][1]['observations']
+    assert all(o['vehicle'] == vid for o in FT.observations(p))
+    newest = max(os.path.getmtime(os.path.join(r_, n)) for r_, _, ns in os.walk(os.path.join(folder, 'drive_live'))
+                 for n in ns)
+    when = dt.datetime.fromisoformat(reps[0][1]['date']).timestamp()            # its end less its 2 s
+    assert newest - 3.5 <= when <= newest
+    n = len(FT.observations(p))
+    for _ in range(5):                                                            # read once
+        time.sleep(0.15)
+        assert FT.watch_once(p, ws, drive['eng'], quiet=0.5) == []
+    assert len(FT.observations(p)) == n and len(FT.seen(p)[vid]) == 1
+    assert ws.status[(vid, os.path.join(folder, 'drive_live', 'nuscenes'))][0] == 'read'
+
+
+@pytest.mark.parametrize('kill_after, status, why', [
+    ('data', 'ok', 'no sample_data.json yet'),                 # the bridge killed while driving: never tables
+    ('tables', 'ok', 'dataset.json not written yet'),          # killed while writing its last files
+    ('dataset', 'ok', 'run.json not written yet'),
+    (None, 'failed', "the run ended 'failed'"),                 # a run that failed after the tables (left over)
+])
+def test_a_drive_aborted_half_way_is_never_read(drive, kill_after, status, why):
+    folder = str(drive['base'] / f'abort-{kill_after}-{status}')
+    p, vid = _watch_project(drive, folder, 0.4)
+    w = Writer(drive['src'], os.path.join(folder, 'drive_x'), pause=0.6, kill_after=kill_after, status=status)
+    ws = FT.WatchState()
+    w.start()
+    w.join(30)
+    got = _poll_until(p, ws, 2.0, 0.4)
+    assert got == []
+    (state, text), = ws.status.values()
+    assert state == 'incomplete' and why in text
+
+
+def test_slow_copy_stall_rename_and_aborted_copy(drive, tmp_path):
+    """A copy that puts the tables first and stalls longer than the quiet time with images missing is not read
+    until every file is there; a copy cut short (half the images, or a JPEG cut) stays incomplete; a folder renamed
+    into place from a hidden or .part name is read once, and renamed again it is not read again."""
+    src = drive['src']
+    data, tables = _files_of(src)
+    folder = str(drive['base'] / 'copies')
+    p, vid = _watch_project(drive, folder, 0.4)
+    ws = FT.WatchState()
+    # tables first, half the images, a stall
+    dst = os.path.join(folder, 'drive_slow')
+    for r in tables + ['dataset.json'] + data[:len(data) // 2]:
+        _copy(src, dst, r)
+    shutil.copyfile(os.path.join(src, 'nuscenes', FT.DRIVE_MARKER), os.path.join(dst, 'nuscenes', FT.DRIVE_MARKER))
+    assert _poll_until(p, ws, 1.2, 0.4) == []
+    (state, text), = ws.status.values()
+    assert state == 'incomplete' and 'missing' in text
+    # a JPEG cut short at the end of the copy
+    for r in data[len(data) // 2:]:
+        _copy(src, dst, r)
+    jpg = next(r for r in data if r.endswith('.jpg'))
+    with open(os.path.join(dst, jpg), 'r+b') as fh:
+        fh.truncate(os.path.getsize(os.path.join(src, jpg)) // 2)
+    assert _poll_until(p, ws, 1.2, 0.4) == []
+    assert 'cut short' in ws.status[(vid, os.path.join(dst, 'nuscenes'))][1]
+    _copy(src, dst, jpg)                                                          # the copy finished
+    got = _poll_until(p, ws, 2.0, 0.4, stop=lambda: False)
+    assert got and got[0][1][0][1] == os.path.join(dst, 'nuscenes')
+    shutil.rmtree(dst)
+    ws.poll(p, 0.4)
+    assert ws.status == {}
+    # renamed into place from a hidden name and from .part: never looked at before the rename
+    for tmpname in ('.incoming-drive', 'drive_r.part'):
+        q = os.path.join(folder, tmpname)
+        shutil.copytree(src, q)
+        assert FT.drive_paths(folder, partial=True) == [] and _poll_until(p, ws, 0.6, 0.4) == []
+        shutil.rmtree(q)
+    q = os.path.join(folder, '.incoming-drive')
+    shutil.copytree(src, q)
+    os.rename(q, os.path.join(folder, 'drive_r'))
+    got = _poll_until(p, ws, 1.5, 0.4, stop=lambda: bool(ws.status) and
+                      next(iter(ws.status.values()))[0] == 'ready')
+    reps = FT.watch_once(p, ws, drive['eng'], quiet=0.4)
+    assert len(reps) == 1 and reps[0][1]['status'] == 'ok'
+    os.rename(os.path.join(folder, 'drive_r'), os.path.join(folder, 'drive_r2'))   # moved again: the same drive
+    time.sleep(0.5)
+    for _ in range(3):
+        assert FT.watch_once(p, ws, drive['eng'], quiet=0.4) == []
+        time.sleep(0.3)
+    assert ws.status[(vid, os.path.join(folder, 'drive_r2', 'nuscenes'))] == ('read', 'read before')
+    assert len(FT.seen(p)[vid]) == 1
+
+
+def test_a_drive_changing_while_it_is_read_is_not_added(drive, monkeypatch):
+    from vantage.core import online_calib as OC
+    folder = str(drive['base'] / 'changing')
+    p, vid = _watch_project(drive, folder, 0.3)
+    shutil.copytree(drive['src'], os.path.join(folder, 'drive_c'))
+    ws = FT.WatchState()
+    assert _poll_until(p, ws, 1.0, 0.3, stop=lambda: ws.status and next(iter(ws.status.values()))[0] == 'ready')
+    real = OC.run
+
+    def writer_still_busy(*a, **k):
+        open(os.path.join(folder, 'drive_c', 'nuscenes', 'late.bin'), 'wb').write(b'x' * 10)
+        raise ValueError('a table is being rewritten')
+    monkeypatch.setattr(OC, 'run', writer_still_busy)
+    lines = []
+    assert FT.watch_once(p, ws, drive['eng'], quiet=0.3, log=lines.append) == []
+    assert FT.observations(p) == [] and FT.seen(p) == {} and 'changed while it was read' in lines[-1]
+    monkeypatch.setattr(OC, 'run', real)
+    assert ws.poll(p, 0.3) == [] and next(iter(ws.status.values()))[0] == 'arriving'   # looked at afresh
+    time.sleep(0.4)
+    reps = FT.watch_once(p, ws, drive['eng'], quiet=0.3)
+    assert len(reps) == 1 and reps[0][1]['status'] == 'ok'
+
+
+def test_bags_complete_only_when_closed(tmp_path):
+    from vantage.core import rosbag as RB
+    folder = tmp_path / 'bags'
+    folder.mkdir()
+    b = RB.BagWriter(str(folder / 'run1'), overwrite=True)
+    b.add_topic('/odom', 'nav_msgs/msg/Odometry')
+    assert FT.drive_paths(str(folder)) == [str(folder / 'run1')]
+    ok, why = FT.drive_complete(str(folder / 'run1'))
+    assert not ok and 'metadata.yaml' in why
+    b.close()
+    assert FT.drive_complete(str(folder / 'run1')) == (True, '')
+    mcap = next(x for x in os.listdir(folder / 'run1') if x.endswith('.mcap'))
+    single = folder / 'single.mcap'
+    shutil.copyfile(folder / 'run1' / mcap, single)
+    assert FT.drive_complete(str(single)) == (True, '')
+    data = single.read_bytes()
+    single.write_bytes(data[:-20])                                                # still being written
+    assert FT.drive_complete(str(single))[0] is False
+    (folder / 'run1' / 'metadata.yaml').unlink()
+    assert not FT.drive_complete(str(folder / 'run1'))[0]
+    # a simulator's drive recorded as a bag only: <drive>/rosbag/<name>/
+    os.makedirs(folder / 'sim' / 'rosbag')
+    shutil.copytree(folder / 'run1', folder / 'sim' / 'rosbag' / 'drv')
+    assert str(folder / 'sim' / 'rosbag' / 'drv') in FT.drive_paths(str(folder))
+    assert FT.drive_root(str(folder / 'sim' / 'rosbag' / 'drv')) == str(folder / 'sim')
+
+
+def test_drive_dates_calendar_clock_or_files(tmp_path):
+    ex_real = {'start_ns': int(dt.datetime(2026, 9, 14, 8, 30, tzinfo=dt.timezone.utc).timestamp() * 1e9)}
+    assert FT.drive_date('/nonexistent', ex_real) == '2026-09-14T08:30:00'          # a real calendar clock
+    assert not FT.synthetic_clock('/nonexistent', FT.SYNC_EPOCH_US * 1000)          # no Vantage marker: calendar
+    nus = tmp_path / 'drv' / 'nuscenes'                                            # a simulated drive
+    nus.mkdir(parents=True)
+    (nus / FT.DRIVE_MARKER).write_text('x')
+    (nus / 'a.bin').write_bytes(b'1')
+    os.utime(nus / 'a.bin', (1_790_000_000, 1_790_000_000))
+    (nus / FT.DRIVE_MARKER).touch()
+    os.utime(nus / FT.DRIVE_MARKER, (1_789_000_000, 1_789_000_000))
+    ex_sim = {'start_ns': FT.SYNC_EPOCH_US * 1000 + 50_000_000}
+    assert FT.synthetic_clock(str(nus), ex_sim['start_ns'])
+    assert FT.drive_date(str(nus), ex_sim) == dt.datetime.fromtimestamp(1_790_000_000).isoformat(timespec='seconds')
+    (tmp_path / 'drv' / 'run.json').write_text(json.dumps({'status': 'ok', 'recorded_utc': {
+        'start': '2026-11-05T05:00:00+00:00'}}))                                     # the bridge says when (proposed)
+    want = dt.datetime(2026, 11, 5, 5, 0, tzinfo=dt.timezone.utc).astimezone().replace(tzinfo=None)
+    assert FT.drive_date(str(nus), ex_sim) == want.isoformat(timespec='seconds')
+
+
+def test_headless_watch_reads_a_drive_arriving_during_the_run(drive, tmp_path, capsys):
+    """--fleet-twin-watch with --watch-runs N while a fake writer writes a drive: read once, saved, the twin run."""
+    from vantage import batch
+    folder = str(tmp_path / 'watch')
+    p, vid = _watch_project(drive, folder, 1.0)
+    path = str(tmp_path / 'twin.vantage')
+    p.save(path)
+    w = Writer(drive['src'], os.path.join(folder, 'drive_h'), pause=1.2)
+    w.start()
+    rc = batch.run(batch.parser().parse_args([path, '--fleet-twin-watch', '--watch-runs', '60',
+                                               '--watch-interval', '0.25']))
+    assert rc == 0 and w.done.is_set()
+    err = capsys.readouterr().err
+    assert 'drive_h: arriving' in err and 'drive_h: incomplete' in err and 'drive_h: ok' in err
+    assert err.index('drive_h: ok') > err.index('drive_h: incomplete') and err.count('drive_h: ok') == 1
+    q = Project.load(path)
+    assert len(FT.seen(q)[vid]) == 1 and FT.observations(q)
+    assert all(o['vehicle'] == vid for o in FT.observations(q))
+
+
+@pytest.mark.skipif(not os.environ.get('VANTAGE_CARLA_DRIVE'), reason='needs VANTAGE_CARLA_DRIVE: a finished CARLA '
+                    'drive folder (nuscenes/, dataset.json, run.json) of the sample\'s Data rig')
+def test_real_carla_drive_arriving(tmp_path):
+    """A real CARLA drive written into a watch folder by the fake writer in the bridge's order (and a stall), read
+    once when complete, its observations on the right vehicle, dated by its files."""
+    src = os.environ['VANTAGE_CARLA_DRIVE']
+    p = rig_project()
+    p.analysis.online_calib = {'window_s': 2.5, 'stride_s': 2.5}
+    veh = FL.add_vehicle(p.fleet, 'V9')
+    folder = str(tmp_path / 'watch')
+    os.makedirs(folder)
+    FT.set_watch(p, veh['id'], folder)
+    w = Writer(src, os.path.join(folder, 'real'), pause=1.5, per_file=0.002)
+    ws = FT.WatchState()
+    w.start()
+    t_end = time.monotonic() + 600
+    while time.monotonic() < t_end and not ws.poll(p, 1.0):
+        time.sleep(0.1)
+    assert w.done.is_set()                                                        # ready only after run.json
+    reps = FT.watch_once(p, ws, None, quiet=1.0)
+    assert len(reps) == 1 and reps[0][1]['status'] == 'ok'
+    obs = FT.observations(p)
+    assert obs and all(o['vehicle'] == veh['id'] for o in obs) and 'F' in {o['tag'] for o in obs}
+    assert FT.watch_once(p, ws, None, quiet=1.0) == []
 
 
 # =========================================================================== the page
@@ -616,3 +940,83 @@ def test_page_runs_shows_edits_imports_watches_exports_and_undoes(app, win, tmp_
     pump(app, 0.3)
     assert pg.result is None or pg.result.cells == {}
     _wait(app, lambda: not pg.busy, 60)
+
+
+def _page_watch_run(app, win, project, vid, folder, src, quiet=1.0, timeout=600):
+    """The page watching `folder` while a Writer writes `src` into it: the page's own poll timer and job; returns
+    (page, writer, the status lines shown while it waited, the first time a read started)."""
+    from vantage.ui.workspaces.fleet_twin_ws import FleetTwinPage
+    store = win.ctx.store
+    store.set_project(project)
+    pump(app, 0.3)
+    pg = _open(win, 'fleet_twin', FleetTwinPage)
+    pg.activate()
+    pg.sel_vehicle = vid
+    assert pg.set_watch_folder(folder)
+    store.edit('analysis', lambda pr: FT.set_settings(pr, watch_quiet_s=quiet), 'quiet')
+    pg.poll_timer.setInterval(100)
+    w = Writer(src, os.path.join(folder, 'drive_p'), pause=quiet + 0.5)
+    w.start()
+    shown = set()
+    t_end = time.monotonic() + timeout
+    started = None
+    while time.monotonic() < t_end:
+        pump(app, 0.05)
+        shown.add(pg.watch_status.text())
+        if pg.reading is not None and started is None:
+            started = time.monotonic()
+            done_at_start = w.done.is_set()
+        if started is not None and pg.reading is None:
+            break
+    assert started is not None and done_at_start                                  # read only once it was complete
+    return pg, w, shown
+
+
+def test_page_watch_reads_an_arriving_drive_once(app, win, drive, tmp_path):
+    p = copy.deepcopy(drive['p'])
+    veh = FL.add_vehicle(p.fleet, 'V1')
+    folder = str(tmp_path / 'pwatch')
+    os.makedirs(folder)
+    pg, w, shown = _page_watch_run(app, win, p, veh['id'], folder, drive['src'])
+    store = win.ctx.store
+    text = '\n'.join(shown)
+    assert 'arriving' in text and 'not finished' in text                          # what it said while waiting
+    obs = FT.observations(store.project)
+    assert obs and {o['vehicle'] for o in obs} == {veh['id']} and len(FT.seen(store.project)[veh['id']]) == 1
+    assert 'drive_p: ok' in pg.watch_status.text()
+    for _ in range(10):                                                           # never read again
+        pump(app, 0.1)
+        assert pg.reading is None
+    assert len(FT.observations(store.project)) == len(obs)
+    store.undo.undo()                                                             # one undo step
+    assert FT.observations(store.project) == [] and FT.seen(store.project) == {}
+    pg.poll_timer.setInterval(2000)
+    store.set_project(samples.tigor_sample_project())
+    pump(app, 0.3)
+
+
+@pytest.mark.skipif(not os.environ.get('VANTAGE_CARLA_DRIVE'), reason='needs VANTAGE_CARLA_DRIVE (a finished CARLA '
+                    'drive of the sample\'s Data rig) and VANTAGE_TWIN_PROJECT (a project whose fleet has its history)')
+def test_real_page_reads_an_arriving_carla_drive(app, win, tmp_path):
+    """The page with a real CARLA drive arriving in the bridge's order: read once when complete, the twin runs, its
+    knocks are on the page and in the Issues list."""
+    p = Project.load(os.environ['VANTAGE_TWIN_PROJECT'])
+    for vid in list(FT.watches(p)):
+        FT.set_watch(p, vid, None)
+    veh = next(v for v in FL.vehicles(p) if v['name'] == os.environ.get('VANTAGE_TWIN_VEHICLE', 'V2'))
+    folder = str(tmp_path / 'watch')
+    os.makedirs(folder)
+    before = {o['id'] for o in FT.observations(p)}
+    pg, w, shown = _page_watch_run(app, win, p, veh['id'], folder, os.environ['VANTAGE_CARLA_DRIVE'], quiet=2.0)
+    store = win.ctx.store
+    assert 'not finished' in '\n'.join(shown)
+    new = [o for o in FT.observations(store.project) if o['id'] not in before]
+    assert new and {o['vehicle'] for o in new} == {veh['id']}
+    _wait(app, lambda: pg.result is not None and not pg.busy and not pg.stale, 300)
+    knocks = [k for k in pg.result.knocks if k['vehicle'] == veh['id']]
+    assert any(k['tag'] == 'F' for k in knocks), knocks
+    win.ctx.analysis.run_now()
+    _wait(app, lambda: any(i.objects == f'{veh["name"]} · F' for i in win.ctx.analysis.issues), 120)
+    pg.poll_timer.setInterval(2000)
+    store.set_project(samples.tigor_sample_project())
+    pump(app, 0.3)

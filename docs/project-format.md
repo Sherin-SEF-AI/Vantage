@@ -248,7 +248,8 @@ created: `option`, `variant`, `variant_uid`, `date`, `why`) and `approvals` (the
 `min_records`, `min_rows`, `sparse_n`, `inducing`, `cv` and `cv_max_folds`, `objective` (class → weight), `max_range_m`,
 `kappa`, `mode` (`ei`, `std`, `ucb`) and `k` (active learning), `reference` (a variant uid), `detector`,
 `store_in_project` (the perception records beside the project file instead of the user's data folder), `occlusion`,
-`scene_effects`, `seed`. The records and the trained model are not in the project file.
+`scene_effects` (random offsets per scene set and scene set × region), `town_effects` (also per town and town ×
+region; off: the round-14 model), `seed`. The records and the trained model are not in the project file.
 
 `analysis.foundation` (`FoundationSettings` in `foundation_range.py`): `source` (`recordings` or `sweep`), `recordings`,
 `detectors`, `depth_model`, `opt_in` (models whose licence does not allow commercial use), `classes` (each `name`,
@@ -269,14 +270,16 @@ the range sweep's `sweep_cameras`, `sweep_classes`, `ranges_m`, `offsets_deg`, `
 
 `analysis.risk_coverage` (`RiskSettings` in `risk_coverage.py`): `weight` (`frequency`, `cost`, `fatal`, `fyl`,
 `ncap`), `dataset` (`swanson2019` or `najm2007`), `metric` (`resolved`, `seen`, `redundant`), `ttc_min`, `ttc_max`,
-`ttc_samples`, `extended`, `cell_m`, `area_m`, `map_m`.
+`ttc_samples`, `extended`, `cell_m`, `area_m`, `map_m`, `issue_min` (per class, the % below which the Issues list
+flags it; not part of the result).
 
 `analysis.fleet_twin` (`fleet_twin.py`): `settings` (`FleetTwinSettings`: `variant`, `horizon_days`, `false_alarm`,
 `glr_window`, `min_step`, `risk`, `limit_source` (`auto`, `critical`, `analysis`, `fleet`, `user`), `user_mm`,
 `user_deg`, `pool` (`sensor` or `kind`), `online_obs` (`segments` or `windows`), `tol_horizon_days`, `outlier_z`,
 `as_of`, `watch_quiet_s`), `observations` (online self-calibration segments per vehicle and sensor, with their σ and
 the plan they were measured against), `events` (rig-health drift: shown, never measured), `watch` (per vehicle id its
-`folder` and `enabled`) and `seen` (the drives already read from a watch folder).
+`folder` and `enabled`) and `seen` (the drives already read from a watch folder, each with its `id`: the drive's
+identity without its path, so a drive renamed or moved into place is not read again).
 
 `analysis.drivelog` (`DriveLogSettings` in `drivelog.py`): `path` (the bag or nuScenes folder last checked),
 `variant_uid` (empty: the active variant), `camera_stamp` (what a camera's header stamp marks: `mid_exposure`,
@@ -298,7 +301,8 @@ mirror partner follows), `name`), `responses` (each: `metric` (a requirements me
 `analysis.sim` (`SimSettings` in `simrig.py`, the CARLA run): `town`, `weather` (`project`: the selected weather
 condition, `vantage:<id>` or a CARLA preset), `duration_s`, `traffic`, `seed`, `vehicle` (`auto` or a CARLA
 blueprint), `camera_rate` (`lidar` or `module`), `image_scale`, `face_oversample`, `undistort`, `jpeg_quality`,
-`exposure` (`manual` or `histogram`), `exposure_ev`, `keyframe_hz`, `channel_names` (`tags` or `nuscenes`),
+`exposure` (`metered`, the default since round 15: each camera metered once before the drive; `manual`; or
+`histogram`), `exposure_target` (the mean 8-bit level `metered` aims at, 118), `exposure_ev` (a bias in EV), `keyframe_hz`, `channel_names` (`tags` or `nuscenes`),
 `nuscenes`, `rosbag`, `lidar_noise_cm`, `drop_self_hits`, `max_lidar_channels`, `radar_points`, `tick_hz` (0: chosen),
 `min_tick_hz`, `max_tick_hz`, `warmup_s`, `quality` (`Epic` or `Low`), `memory_gb` (the server's memory cap), `port`,
 `tm_port`, `timeout_s`, `walkers` (pedestrians on CARLA's walker AI), `ground_truth` (`semantic`, `instance`,

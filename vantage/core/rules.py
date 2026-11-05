@@ -208,6 +208,8 @@ def collect_issues(project: Project, result, vg, mounts: dict | None = None, eng
     out += automation.issues(project, vg)         # dropped automation settings, the last automated run failing
     from . import fleet_twin
     out += fleet_twin.issues(project, vg)         # sensors beyond, due or soon, knocks, outliers (its cached result only)
+    from . import risk_coverage
+    out += risk_coverage.issues(project, vg)      # a road user's pre-crash exposure covered below its threshold (cached)
     out.sort(key=lambda i: SEVERITY_ORDER.get(i.severity, 9))
     return out
 

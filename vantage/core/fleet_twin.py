@@ -49,9 +49,15 @@ the measured distributions as tolerance inputs: for a new vehicle, the installat
 `tol_horizon_days` (rate prior × time plus the random walks) and both together, with a core.tolerance TolSettings
 built from them (normal, ± = 2 σ).
 
-Live. A watch folder per vehicle: every new drive (a ROS 2 bag folder or a nuScenes folder) that has been quiet for
-watch_quiet_s is calibrated by core.online_calib in the background and its segments added as observations, once per
-drive (keyed on its path and size); rig-health snapshots add drift events.
+Live. A watch folder per vehicle: every new drive (a ROS 2 bag folder or a nuScenes folder) is calibrated by
+core.online_calib in the background and its segments added as observations, once per drive, when it is finished:
+everything under the drive's root (images, point clouds, tables, the writer's own files) unchanged for watch_quiet_s,
+then checked complete (drive_complete: the tables whole, every file they name present and whole, a Vantage drive's
+dataset.json and the CARLA bridge's run.json written last with status ok, a bag's metadata.yaml and MCAP footers).
+A drive still being written, copied in slowly, or aborted half way (a killed run, a copy cut short) is never read; a
+drive renamed or moved into place is read once (its identity without the path). A drive that changes while it is
+read is not added and is looked at afresh. Dates: the drive's own clock when it is a calendar time, else (a
+simulator's sync pulse, core.dataset.EPOCH_US) the newest file's time. Rig-health snapshots add drift events.
 
 Frames: the vehicle frame (ISO 8855, rear axle); angles intrinsic Z-Y-X, pitch positive down; dates ISO 8601, time in
 days.
@@ -2139,13 +2145,31 @@ def seen(project) -> dict:
 def mark_seen(project, vehicle: str, key: str, info: dict) -> None:
     d = ensure_slot(project)
     s = d.get('seen') if isinstance(d.get('seen'), dict) else {}
-    s.setdefault(vehicle, {})[key] = {k: info.get(k) for k in ('drive', 'date', 'status', 'observations', 'message')}
+    s.setdefault(vehicle, {})[key] = {k: info.get(k) for k in ('drive', 'id', 'date', 'status', 'observations',
+                                                               'message')}
     d['seen'] = s
 
 
-def drive_paths(folder: str) -> list:
+TEMP_SUFFIXES = ('.tmp', '.part', '.partial', '.incomplete', '.crdownload', '.download', '.filepart', '.writing', '~')
+NUS_TABLES = ('sample_data', 'sample', 'scene', 'calibrated_sensor', 'sensor', 'ego_pose', 'log')
+DRIVE_MARKER = '.vantage-dataset'            # core.dataset / vantage.sim.record write it into the nuscenes/ they made
+SYNC_EPOCH_US = 1_767_268_800_000_000        # core.dataset.EPOCH_US: the simulators' t = 0 (2026-01-01 12:00 UTC)
+
+
+def _temp_name(n: str) -> bool:
+    """A name a copy or a writer uses while the file or folder is not finished (hidden, rsync's .name.XXXX, a
+    browser's .part, an editor's ~): never a drive."""
+    low = n.lower()
+    return n.startswith(('.', '~')) or low.endswith(TEMP_SUFFIXES)
+
+
+def drive_paths(folder: str, partial: bool = False) -> list:
     """The drives directly in a folder: nuScenes folders (or a folder holding one, as a simulator writes them),
-    ROS 2 bag folders (metadata.yaml or .mcap / .db3 files) and single .mcap / .db3 files; sorted by name."""
+    ROS 2 bag folders (metadata.yaml or .mcap / .db3 files; also one bag under <drive>/rosbag/ when the drive has no
+    nuScenes tables) and single .mcap / .db3 files; sorted by name. Names a writer uses while it is not finished
+    (hidden, *.part, *.tmp, …) are left out. partial: also the folders that look like a drive being written (a
+    nuscenes/ folder with Vantage's marker or a version folder but no sample_data.json yet), so the watch can say
+    so; they are never read until they are complete (drive_complete)."""
     from . import drivelog as DL
     out = []
     try:
@@ -2153,7 +2177,7 @@ def drive_paths(folder: str) -> list:
     except OSError:
         return out
     for n in names:
-        if n.startswith('.'):
+        if _temp_name(n):
             continue
         q = os.path.join(folder, n)
         if os.path.isfile(q):
@@ -2175,7 +2199,237 @@ def drive_paths(folder: str) -> list:
             continue
         if 'metadata.yaml' in inner or any(x.lower().endswith(('.mcap', '.db3')) for x in inner):
             out.append(q)
+            continue
+        bags = _bag_dirs(os.path.join(q, 'rosbag'))
+        if os.path.isdir(sub):                      # a simulator's drive whose tables are not written yet
+            if partial:
+                out.append(sub)
+            continue
+        if len(bags) == 1:
+            out.append(bags[0])
+        elif partial and _looks_partial(q, inner):
+            out.append(q)
     return out
+
+
+def _bag_dirs(folder) -> list:
+    try:
+        names = sorted(os.listdir(folder))
+    except OSError:
+        return []
+    out = []
+    for n in names:
+        q = os.path.join(folder, n)
+        if _temp_name(n) or not os.path.isdir(q):
+            continue
+        try:
+            inner = os.listdir(q)
+        except OSError:
+            continue
+        if 'metadata.yaml' in inner or any(x.lower().endswith(('.mcap', '.db3')) for x in inner):
+            out.append(q)
+    return out
+
+
+def _looks_partial(q, inner) -> bool:
+    """A nuScenes layout without its tables yet: samples/ or sweeps/ or a v1.0-* folder."""
+    return any(x in ('samples', 'sweeps') or x.startswith('v1.0') for x in inner) or DRIVE_MARKER in inner
+
+
+def drive_root(path: str) -> str:
+    """The folder that holds the whole drive: the parent of a simulator's nuscenes/ (its rosbag/, ground_truth/,
+    dataset.json and run.json are part of it), the drive folder itself, or the file."""
+    p = path.rstrip(os.sep)
+    if os.path.basename(p) == 'nuscenes':
+        return os.path.dirname(p)
+    par = os.path.dirname(p)
+    if os.path.basename(par) == 'rosbag':           # <drive>/rosbag/<bag>
+        return os.path.dirname(par)
+    return p
+
+
+def settle_signature(path: str) -> tuple:
+    """(files, bytes, newest modification in ns) of everything under the drive's root, temporary files included:
+    any file written, grown, renamed in or removed changes it (the tables-only drive_key does not see images)."""
+    root = drive_root(path)
+    n = size = newest = 0
+    if os.path.isfile(root):
+        try:
+            s = os.stat(root)
+            return 1, s.st_size, s.st_mtime_ns
+        except OSError:
+            return 0, 0, 0
+    stack = [root]
+    while stack:
+        d = stack.pop()
+        try:
+            it = os.scandir(d)
+        except OSError:
+            continue
+        with it:
+            for e in it:
+                try:
+                    if e.is_dir(follow_symlinks=False):
+                        stack.append(e.path)
+                        continue
+                    s = e.stat()
+                except OSError:
+                    continue
+                n += 1
+                size += s.st_size
+                newest = max(newest, s.st_mtime_ns)
+    return n, size, newest
+
+
+def drive_id(path: str) -> str:
+    """A drive's identity without its path (the tables' names relative to the drive, sizes and times): a drive renamed
+    or moved into place keeps it, so it is read once."""
+    from . import drivelog as DL
+    return hashlib.sha256(repr(DL.log_key(path)[1]).encode()).hexdigest()[:20]
+
+
+def _mcap_complete(path) -> bool:
+    from . import rosbag as RB
+    try:
+        with open(path, 'rb') as fh:
+            head = fh.read(8)
+            fh.seek(0, os.SEEK_END)
+            if fh.tell() < 16:
+                return False
+            fh.seek(-8, os.SEEK_END)
+            return head == RB.MCAP_MAGIC and fh.read(8) == RB.MCAP_MAGIC
+    except OSError:
+        return False
+
+
+def _image_complete(path) -> bool:
+    """A JPEG ends with its EOI marker, a PNG with its IEND chunk (a file cut short by an aborted copy does not)."""
+    low = path.lower()
+    try:
+        with open(path, 'rb') as fh:
+            fh.seek(0, os.SEEK_END)
+            n = fh.tell()
+            if n < 12:
+                return False
+            fh.seek(max(0, n - 32))
+            tail = fh.read()
+    except OSError:
+        return False
+    if low.endswith(('.jpg', '.jpeg')):
+        return b'\xff\xd9' in tail[-4:] or tail.rstrip(b'\x00').endswith(b'\xff\xd9')
+    if low.endswith('.png'):
+        return tail.endswith(b'IEND\xaeB`\x82')
+    return True
+
+
+def drive_complete(path: str) -> tuple:
+    """(True, '') when the drive is finished, else (False, why). Read only after the drive has been quiet; checks what
+    a finished drive must have, whoever wrote it:
+    * nuScenes: the tables online calibration needs (sample_data, sample, scene, calibrated_sensor, sensor,
+      ego_pose, log) present and whole JSON; every file sample_data names present, non-empty, and a JPEG / PNG whole
+      (its end marker); and for a drive Vantage wrote (core.dataset or the CARLA bridge: the .vantage-dataset marker,
+      in <drive>/nuscenes/), the writer's last files: dataset.json, and when the bridge wrote it (generator carla,
+      or a run.json there) run.json with status ok, both counting the sample_data this drive has (not a report an
+      earlier run left); a cancelled or failed run removes its tables, a killed one never writes them: never
+      complete;
+    * a ROS 2 bag folder: metadata.yaml (rosbag2 writes it on close) and every .mcap closed (its footer magic), no
+      SQLite journal beside a .db3; a single .mcap: closed; a single .db3: no journal."""
+    from . import drivelog as DL
+    p = path.rstrip(os.sep)
+    if os.path.isfile(p):
+        if p.lower().endswith('.mcap'):
+            return (True, '') if _mcap_complete(p) else (False, 'the MCAP file is not closed (no footer yet)')
+        for suf in ('-journal', '-wal'):
+            if os.path.exists(p + suf):
+                return False, f'{os.path.basename(p)}{suf} is still open'
+        return True, ''
+    dirs = DL._nus_dirs(p)
+    if dirs is None:
+        if not os.path.isdir(p):
+            return False, 'not found'
+        names = os.listdir(p)
+        if any(n.lower().endswith(('.mcap', '.db3')) for n in names) or 'metadata.yaml' in names:
+            if 'metadata.yaml' not in names:
+                return False, 'no metadata.yaml yet (rosbag2 writes it when the bag is closed)'
+            for n in names:
+                q = os.path.join(p, n)
+                if n.lower().endswith('.mcap') and not _mcap_complete(q):
+                    return False, f'{n} is not closed (no MCAP footer yet)'
+                if n.endswith(('-journal', '-wal')):
+                    return False, f'{n}: the bag is still open'
+            return True, ''
+        return False, 'no sample_data.json yet: the tables are written last'
+    ver, dataroot = dirs
+    rows = {}
+    for t in NUS_TABLES:
+        q = os.path.join(ver, f'{t}.json')
+        if not os.path.isfile(q):
+            return False, f'{t}.json not written yet'
+        try:
+            with open(q, encoding='utf-8') as fh:
+                rows[t] = json.load(fh)
+        except (OSError, ValueError):
+            return False, f'{t}.json is not whole yet'
+        if not isinstance(rows[t], list):
+            return False, f'{t}.json is not a table'
+    if not rows['sample_data']:
+        return False, 'sample_data.json is empty'
+    missing = cut = 0
+    first = ''
+    for r in rows['sample_data']:
+        fn = r.get('filename') if isinstance(r, dict) else None
+        if not fn:
+            continue
+        q = os.path.join(dataroot, fn)
+        try:
+            ok = os.path.getsize(q) > 0
+        except OSError:
+            ok = False
+        if not ok:
+            missing += 1
+            first = first or fn
+        elif fn.lower().endswith(('.jpg', '.jpeg', '.png')) and not _image_complete(q):
+            cut += 1
+            first = first or fn
+    if missing:
+        return False, f'{missing} of the files sample_data names are missing ({first} …)'
+    if cut:
+        return False, f'{cut} images are cut short ({first} …)'
+    n_sd = len(rows['sample_data'])
+
+    def same_drive(doc):                       # the writer's report counts the sample_data this drive has (a report
+        c = (doc.get('counts') or {}).get('sample_data') if isinstance(doc, dict) else None   # left by an earlier
+        try:                                                                                   # run differs)
+            return c is None or int(c) == n_sd
+        except (TypeError, ValueError):
+            return True
+    root = os.path.dirname(p) if os.path.basename(p) == 'nuscenes' else ''
+    if root and os.path.exists(os.path.join(p, DRIVE_MARKER)):    # a drive Vantage wrote: <drive>/nuscenes/
+        ds = os.path.join(root, 'dataset.json')
+        if not os.path.isfile(ds):
+            return False, 'dataset.json not written yet (the writer\'s last file but run.json)'
+        run = os.path.join(root, 'run.json')
+        try:
+            with open(ds, encoding='utf-8') as fh:
+                ddoc = json.load(fh)
+        except (OSError, ValueError):
+            return False, 'dataset.json is not whole yet'
+        if not same_drive(ddoc):
+            return False, 'dataset.json is an earlier run\'s (its counts differ): not written yet'
+        if (isinstance(ddoc, dict) and ddoc.get('generator') == 'carla') or os.path.isfile(run):
+            if not os.path.isfile(run):
+                return False, 'run.json not written yet (the CARLA bridge writes it last)'
+            try:
+                with open(run, encoding='utf-8') as fh:
+                    rdoc = json.load(fh)
+            except (OSError, ValueError):
+                return False, 'run.json is not whole yet'
+            status = rdoc.get('status') if isinstance(rdoc, dict) else None
+            if status != 'ok':
+                return False, f'the run ended {status!r} (run.json)'
+            if not same_drive(rdoc):
+                return False, 'run.json is an earlier run\'s (its counts differ): not written yet'
+    return True, ''
 
 
 def drive_key(path: str) -> str:
@@ -2185,31 +2439,99 @@ def drive_key(path: str) -> str:
     return hashlib.sha256(repr(DL.log_key(path)).encode()).hexdigest()[:20]
 
 
+def synthetic_clock(path: str, start_ns=None) -> bool:
+    """Whether a drive's clock is a simulator's sync pulse rather than the calendar: a nuScenes folder Vantage wrote
+    (its marker) whose clock starts within an hour of core.dataset's EPOCH_US (every simulated drive starts there)."""
+    p = path.rstrip(os.sep)
+    v = _fnum(start_ns)
+    if v is None or not os.path.exists(os.path.join(p, DRIVE_MARKER)):
+        return False
+    return abs(v / 1e3 - SYNC_EPOCH_US) < 3600e6
+
+
 def drive_date(path: str, ex: dict | None = None) -> str:
-    """When a drive was recorded: its own clock when that is a UTC epoch, else the newest file's modification time."""
-    if ex is not None:
+    """When a drive was recorded (local time): its own clock when that is a calendar time (not a simulator's sync
+    pulse), else the start the CARLA bridge states in run.json (recorded_utc.start, when it does), else the newest
+    file's modification time anywhere in the drive (a simulated drive's end; a copy that keeps file times keeps it)
+    less the drive's duration (ex['duration_s']): its start, as a drive's own clock gives it."""
+    if ex is not None and not synthetic_clock(path, ex.get('start_ns')):
         d = _drive_epoch_date(ex.get('start_ns'))
         if d:
             return d
-    newest = 0.0
-    for root, _, names in os.walk(path) if os.path.isdir(path) else [(os.path.dirname(path), [], [os.path.basename(
-            path)])]:
-        for n in names:
-            try:
-                newest = max(newest, os.path.getmtime(os.path.join(root, n)))
-            except OSError:
-                pass
-    return _dt.datetime.fromtimestamp(newest or time.time()).isoformat(timespec='seconds')
+    try:                                       # the bridge's own wall clock, when its run.json states it
+        with open(os.path.join(drive_root(path), 'run.json'), encoding='utf-8') as fh:
+            t = (json.load(fh).get('recorded_utc') or {}).get('start')
+        when = _dt.datetime.fromisoformat(str(t))
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=_dt.timezone.utc)
+        return when.astimezone().replace(tzinfo=None).isoformat(timespec='seconds')
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    _, _, newest = settle_signature(path)
+    t = newest / 1e9 if newest else time.time()
+    dur = _fnum((ex or {}).get('duration_s'))
+    if dur is not None and 0 < dur < 86400:    # the newest file is the drive's end: its start is a duration before
+        t -= dur
+    return _dt.datetime.fromtimestamp(t).isoformat(timespec='seconds')
+
+
+def _top_stamp(path) -> tuple:
+    """A cheap stamp of a drive already read (its folders' times and the tables' sizes and times): unchanged means
+    the drive is still the one read, without walking its files."""
+    out = []
+    p = path.rstrip(os.sep)
+    for q in (drive_root(p), p):
+        try:
+            out.append(os.stat(q).st_mtime_ns)
+        except OSError:
+            out.append(None)
+    try:
+        for n in sorted(os.listdir(p)):
+            q = os.path.join(p, n)
+            if os.path.isdir(q) and n.startswith('v1.0'):
+                for m in sorted(os.listdir(q)):
+                    s = os.stat(os.path.join(q, m))
+                    out.append((m, s.st_size, s.st_mtime_ns))
+            elif n.endswith(('.json', '.yaml', '.mcap', '.db3')):
+                s = os.stat(q)
+                out.append((n, s.st_size, s.st_mtime_ns))
+    except OSError:
+        pass
+    return tuple(out)
 
 
 class WatchState:
-    """Signatures of the drives seen arriving, and when they last changed (in memory: the page or the batch keep
-    one). poll() returns the drives ready to read: not read before, unchanged for `quiet` seconds."""
+    """What the watch has seen arriving (in memory: the page or the batch keep one). poll() returns the drives ready
+    to read: not read before (by path and size, or by content when renamed or moved in), everything under the
+    drive's root unchanged for `quiet` seconds (files, bytes and the newest time: images too), and complete
+    (drive_complete). status: {(vehicle, path): (state, text)} with state one of 'arriving' (still changing),
+    'quiet' (waiting out the quiet time), 'incomplete' (quiet but not finished: an aborted copy or run stays here),
+    'ready', 'reading', 'read'."""
 
     def __init__(self, clock=time.monotonic):
         self.clock = clock
         self.pending = {}            # (vehicle, path) -> (signature, since)
         self.busy = set()            # (vehicle, key) being read
+        self.status = {}             # (vehicle, path) -> (state, text)
+        self._checked = {}           # (vehicle, path) -> (signature, (complete, why))
+        self._done = {}              # (vehicle, path) -> top stamp of a drive already read
+
+    def _set(self, k, state, text):
+        self.status[k] = (state, text)
+
+    def changes(self, last: dict) -> list:
+        """[(vehicle, path, state, text)] whose state differs from `last` ({(vehicle, path): state}, updated)."""
+        out = []
+        for k, (s, t) in self.status.items():
+            if last.get(k) != s:
+                last[k] = s
+                out.append((k[0], k[1], s, t))
+        return out
+
+    def forget(self, vehicle, path):
+        """Look at this drive afresh (after a read was abandoned because it changed)."""
+        for d in (self.pending, self._checked, self._done, self.status):
+            d.pop((vehicle, path), None)
 
     def poll(self, project, quiet: float | None = None) -> list:
         """[(vehicle id, path, key)] ready now."""
@@ -2222,47 +2544,90 @@ class WatchState:
         for vid, w in watches(project).items():
             if not w['enabled']:
                 continue
-            for path in drive_paths(w['folder']):
+            ids = {i.get('id') for i in done.get(vid, {}).values() if i.get('id')}
+            for path in drive_paths(w['folder'], partial=True):
+                k = (vid, path)
+                live.add(k)
+                stamp = self._done.get(k)
+                if stamp is not None and stamp == _top_stamp(path):
+                    continue
+                self._done.pop(k, None)
+                sig = settle_signature(path)
+                old, since = self.pending.get(k, (None, now))
+                if sig != old:
+                    self.pending[k] = (sig, now)
+                    self._set(k, 'arriving', f'{sig[0]} files, {sig[1] / 1e6:.1f} MB so far')
+                    continue
+                if now - since < quiet:
+                    self._set(k, 'quiet', f'unchanged for {now - since:.0f} of {quiet:g} s')
+                    continue
+                chk = self._checked.get(k)
+                if chk is None or chk[0] != sig:
+                    chk = (sig, drive_complete(path))
+                    self._checked[k] = chk
+                ok, why = chk[1]
+                if not ok:
+                    self._set(k, 'incomplete', why)
+                    continue
                 key = drive_key(path)
-                live.add((vid, path))
-                if key in done.get(vid, {}) or (vid, key) in self.busy:
+                if key in done.get(vid, {}) or drive_id(path) in ids:
+                    self._done[k] = _top_stamp(path)
+                    self.pending.pop(k, None)
+                    self._set(k, 'read', 'read before')
                     continue
-                sig, since = self.pending.get((vid, path), (None, now))
-                if sig != key:
-                    self.pending[(vid, path)] = (key, now)
+                if (vid, key) in self.busy:
+                    self._set(k, 'reading', 'being calibrated')
                     continue
-                if now - since >= quiet:
-                    ready.append((vid, path, key))
-        for k in list(self.pending):
-            if k not in live:
-                del self.pending[k]
+                self._set(k, 'ready', f'{sig[0]} files, {sig[1] / 1e6:.1f} MB, quiet for {now - since:.0f} s')
+                ready.append((vid, path, key))
+        for d in (self.pending, self.status, self._checked, self._done):
+            for k in list(d):
+                if k not in live:
+                    del d[k]
         return ready
+
+    def mark_read(self, vehicle, path):
+        """The drive at path has been read (the caller marked it seen): poll() skips it cheaply from now on."""
+        self._done[(vehicle, path)] = _top_stamp(path)
+        self.pending.pop((vehicle, path), None)
+        self._set((vehicle, path), 'read', 'read')
 
 
 def read_drive(project, vehicle: str, path: str, engine=None, progress=None, cancel=None, settings=None,
                date: str = '') -> dict:
     """Calibrate one drive (core.online_calib with the project's settings, against the twin's plan) and return
-    {'observations', 'drive', 'date', 'status', 'message', 'seconds'}: the observations are not added (the caller
-    adds them, as one undo step in the app). The date: `date` when given, else the drive's own clock when it is a
-    calendar time (a simulator's may not be the day it was driven), else its newest file's time. None when
-    cancelled."""
+    {'observations', 'drive', 'id', 'date', 'status', 'message', 'seconds'}: the observations are not added (the
+    caller adds them, as one undo step in the app). The date: `date` when given, else the drive's own clock when it
+    is a calendar time (a simulator's sync pulse is not: core.dataset's EPOCH_US), else its newest file's time.
+    status 'changed' (no observations): the drive changed while it was read (something still writes it): the caller
+    neither adds nor marks it, and the watch looks at it afresh. None when cancelled."""
     from . import online_calib as OC
     st = settings or settings_of(project)
     v = plan_variant(project, st)
     oc = OC.OnlineCalibSettings.from_dict(dict(OC.settings_of(project).to_dict(), path=path, variant_uid=v.uid))
     t0 = time.perf_counter()
-    try:
-        res = OC.run(project, engine, oc, v, progress, cancel)
-    except (ValueError, FileNotFoundError, OSError) as e:
-        return {'observations': [], 'drive': os.path.basename(path.rstrip(os.sep)), 'date': '', 'status': 'error',
-                'message': str(e), 'seconds': time.perf_counter() - t0}
-    if res is None:
-        return None
-    ex = OC.extrinsics_doc(res)
-    date = date or _drive_epoch_date(ex.get('start_ns')) or drive_date(path)
     name = os.path.basename(path.rstrip(os.sep))
     if name == 'nuscenes':
         name = os.path.basename(os.path.dirname(path.rstrip(os.sep)))
+    sig0 = settle_signature(path)
+    did = drive_id(path)
+    try:
+        res = OC.run(project, engine, oc, v, progress, cancel)
+    except (ValueError, FileNotFoundError, OSError) as e:
+        if settle_signature(path) != sig0:
+            return {'observations': [], 'drive': name, 'id': did, 'date': '', 'status': 'changed',
+                    'message': 'the drive changed while it was read: read again once it is quiet',
+                    'seconds': time.perf_counter() - t0}
+        return {'observations': [], 'drive': name, 'id': did, 'date': '', 'status': 'error',
+                'message': str(e), 'seconds': time.perf_counter() - t0}
+    if res is None:
+        return None
+    if settle_signature(path) != sig0:
+        return {'observations': [], 'drive': name, 'id': did, 'date': '', 'status': 'changed',
+                'message': 'the drive changed while it was read: read again once it is quiet',
+                'seconds': time.perf_counter() - t0}
+    ex = OC.extrinsics_doc(res)
+    date = date or drive_date(path, ex)
     try:
         obs = online_observations(ex, vehicle, date, st.online_obs, drive=drive_key(path),
                                   source=f'online self-calibration of {name}')
@@ -2272,23 +2637,44 @@ def read_drive(project, vehicle: str, path: str, engine=None, progress=None, can
     knocks = [e['message'] for e in res.events if e['kind'] == 'knock']
     if knocks:
         msg += '; ' + '; '.join(knocks)
-    return {'observations': obs, 'drive': name, 'date': date, 'status': status, 'message': msg,
+    return {'observations': obs, 'drive': name, 'id': did, 'date': date, 'status': status, 'message': msg,
             'seconds': time.perf_counter() - t0}
 
 
-def watch_once(project, state: WatchState, engine=None, progress=None, cancel=None, quiet=None, log=None) -> list:
+def watch_once(project, state: WatchState, engine=None, progress=None, cancel=None, quiet=None, log=None,
+               last=None) -> list:
     """One round of the watch, headless (batch): every ready drive read, its observations added and the drive marked
-    seen, in place. Returns the reports [(vehicle id, report)]."""
+    seen, in place. Returns the reports [(vehicle id, report)]. log: called with a line per drive read and, with
+    `last` (a dict kept between rounds), per change of a drive's state (arriving, quiet, incomplete, ready)."""
     out = []
-    for vid, path, key in state.poll(project, quiet):
+    ready = state.poll(project, quiet)
+    if log and last is not None:
+        for vid, path, s, t in state.changes(last):
+            if s != 'read':
+                log(f'{vid}: {_drive_name(path)}: {s}: {t}')
+    for vid, path, key in ready:
         if cancel is not None and cancel():
             break
         rep = read_drive(project, vid, path, engine, progress, cancel)
         if rep is None:
             break
+        if rep['status'] == 'changed':
+            state.forget(vid, path)
+            if log:
+                log(f'{vid}: {rep["drive"]}: {rep["message"]}')
+            continue
         add_observations(project, rep['observations'])
         mark_seen(project, vid, key, dict(rep, observations=len(rep['observations'])))
+        state.mark_read(vid, path)
+        if last is not None:
+            last[(vid, path)] = 'read'
         if log:
-            log(f'{vid}: {rep["drive"]}: {rep["status"]}: {rep["message"]}')
+            log(f'{vid}: {rep["drive"]}: {rep["status"]}: {rep["message"]} (dated {rep["date"]}, '
+                f'{rep["seconds"]:.0f} s)')
         out.append((vid, rep))
     return out
+
+
+def _drive_name(path) -> str:
+    n = os.path.basename(path.rstrip(os.sep))
+    return os.path.basename(os.path.dirname(path.rstrip(os.sep))) if n == 'nuscenes' else n

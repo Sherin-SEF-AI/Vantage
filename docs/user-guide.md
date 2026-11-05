@@ -800,7 +800,7 @@ An approved plan can be run again headless, exactly as approved: `vantage rig.va
 
 ### Recommended actions
 
-Without any AI, the panel recommends what to look at next, worked out on your computer from Vantage's own results. A live strip follows what you are doing. For a selected camera it might say "QR alone sees 3.00 m²: check what its loss or a mounting error costs", and after an edit "Your last change added 0.155 m² blind ground: undo it". **Recommended (n)** opens the full list. [Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#recommended)
+Without any AI, the panel recommends what to look at next, worked out on your computer from Vantage's own results. A live strip follows what you are doing. For a selected camera it might say "QR alone sees 3.00 m²: check what its loss or a mounting error costs", and after an edit "Your last change added 0.155 m² blind ground: undo it". On every page it leads with that page's next step: what is missing first, the page's Run, its findings, the next page and its export. **Recommended (n)** opens the full list. [Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#recommended)
 
 ### Claude over MCP
 

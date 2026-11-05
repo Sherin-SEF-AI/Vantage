@@ -293,7 +293,8 @@ class AnalysisController(QObject):
                 except Exception:
                     pass
             self.secondary.emit('mounts', mounts)
-            self.secondary.emit('issues', rules.collect_issues(project, res, vg, mounts, self.engine))
+            issues = rules.collect_issues(project, res, vg, mounts, self.engine)
+            self.secondary.emit('issues', issues)
             if project.targets:
                 from ..core.targets import evaluate_targets
                 with self._lock:
@@ -304,6 +305,13 @@ class AnalysisController(QObject):
                     w = worst_single_camera(self.engine, project, project.analysis.tol_deg, project.analysis.tol_mm / 1000.0,
                                             cell=max(project.analysis.cell_m, 0.05))
                 self.secondary.emit('worst', (gen, w))
+            if not self._pending:                 # risk-weighted coverage (~1 s) for the Issues list, cached on the design
+                from ..core import risk_coverage as RC
+                if RC.wants_prime(project):
+                    with self._lock:
+                        got = RC.prime(project, self.engine, cancel=lambda: self._pending)
+                    if got is not None and not self._pending:
+                        self.secondary.emit('issues', RC.merge_issues(issues, project, vg))
         except Exception as e:
             if _closed(e):              # the window closed while this run was finishing
                 return

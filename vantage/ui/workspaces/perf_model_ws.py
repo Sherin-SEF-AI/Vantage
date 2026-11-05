@@ -31,11 +31,13 @@ EMPTY = ('No perception records yet. Run Simulate ▸ Perception in the loop on 
          'record), or import records another team exported, then Train.')
 STORE_COLS = (('Source', ''), ('Scene set', 'Town · scenario · seed'), ('Rig', 'The rig\'s label or hash'),
               ('Cameras', ''), ('Detector', ''), ('Objects', 'Ground-truth objects counted, all classes and regions'))
-CV_COLS = (('Class', ''), ('Check', 'Leave one scene set out, or leave rigs out (whole rigs per fold)'),
+CV_COLS = (('Class', ''), ('Check', 'Leave one town out (every scene set of a town held out: a town the model has '
+                                    'not seen), leave one scene set out, or leave rigs out (whole rigs per fold)'),
            ('Method', 'The Gaussian process, or a baseline with the same noise model'),
            ('Rows', 'Held-out class × region rows'), ('68 %', 'Share of held-out rows inside the 68 % interval'),
            ('95 %', 'Share inside the 95 % interval'), ('RMSE', 'Recall error on held-out rows'),
            ('NLPD', 'Mean negative log predictive density (lower is better)'))
+CV_TEXT = {'town': 'towns', 'scene': 'scene sets', 'rig': 'rigs'}
 AL_COLS = (('#', 'Pick order'), ('Variant', ''), ('Objective', 'Predicted weighted recall'), ('± std', ''),
            ('EI', 'Expected improvement over the best evaluated rig'), ('Why', ''))
 METHOD_TEXT = {'gp': 'Gaussian process', 'logistic': 'Logistic in pixels', 'constant': 'Constant'}
@@ -204,7 +206,7 @@ class CalibrationChart(ChartBase):
     def __init__(self, by='scene'):
         super().__init__()
         self.by = by
-        self.title = 'Leave one scene set out' if by == 'scene' else 'Leave rigs out'
+        self.title = PM.CV_TITLE.get(by, by).capitalize()
         self.curves = {}
         self.empty = 'No cross-validation yet.'
         self.setMinimumSize(240, 240)
@@ -444,7 +446,8 @@ class PerfModelPage(QWidget):
         self.t_obj = Tile('Objective', 'Predicted weighted recall of the variant ± its std')
         self.t_ped = Tile('Pedestrian', 'Predicted mean pedestrian recall over the regions that count')
         self.t_veh = Tile('Vehicle', 'Predicted mean vehicle recall over the regions that count')
-        self.t_cov = Tile('95 % coverage', 'Leave-one-scene-out: share of held-out rows inside the 95 % interval')
+        self.t_cov = Tile('95 % coverage', 'Leave one town out (else one scene set out): share of held-out rows inside '
+                                           'the 95 % interval')
         for t in (self.t_records, self.t_obj, self.t_ped, self.t_veh, self.t_cov):
             tiles.addWidget(t)
         rl.addLayout(tiles)
@@ -476,8 +479,10 @@ class PerfModelPage(QWidget):
         cw = QWidget()
         cl = QVBoxLayout(cw)
         ch = QHBoxLayout()
+        self.cal_town = CalibrationChart('town')
         self.cal_scene = CalibrationChart('scene')
         self.cal_rig = CalibrationChart('rig')
+        ch.addWidget(self.cal_town)
         ch.addWidget(self.cal_scene)
         ch.addWidget(self.cal_rig)
         cl.addLayout(ch, 1)
@@ -920,13 +925,14 @@ class PerfModelPage(QWidget):
 
     def _fill_calibration(self):
         m = self.model
+        self.cal_town.set(m)
         self.cal_scene.set(m)
         self.cal_rig.set(m)
         rows = PM.cv_table(m) if m is not None else []
         self.cv_table.setRowCount(len(rows))
         for i, r in enumerate(rows):
             _cell(self.cv_table, i, 0, r['class'])
-            _cell(self.cv_table, i, 1, 'scene sets' if r['cv'] == 'scene' else 'rigs')
+            _cell(self.cv_table, i, 1, CV_TEXT.get(r['cv'], r['cv']))
             _cell(self.cv_table, i, 2, METHOD_TEXT.get(r['method'], r.get('note', '')))
             _cell(self.cv_table, i, 3, str(r.get('n', 0)), num=True)
             for c, k, nd in ((4, 'coverage68', 3), (5, 'coverage95', 3), (6, 'rmse', 3), (7, 'nlpd', 2)):
@@ -934,11 +940,14 @@ class PerfModelPage(QWidget):
                 if k == 'coverage95' and r.get(k) is not None:
                     col = QColor(STATUS['good'] if 0.88 <= r[k] <= 0.99 else STATUS['warning'])
                 _cell(self.cv_table, i, c, _fmt(r.get(k), nd), num=True, color=col)
-        cov = [r for r in rows if r.get('method') == 'gp' and r['cv'] == 'scene' and r.get('coverage95') is not None]
-        if cov:
-            n = sum(r['n'] for r in cov)
-            v = sum(r['coverage95'] * r['n'] for r in cov) / max(n, 1)
-            self.t_cov.set(f'{v * 100:.0f}', '%', f'{n} held-out rows', 'good' if 0.88 <= v <= 0.99 else 'warning')
+        for by in ('town', 'scene'):           # the honest check first: towns the model has not seen
+            cov = [r for r in rows if r.get('method') == 'gp' and r['cv'] == by and r.get('coverage95') is not None]
+            if cov:
+                n = sum(r['n'] for r in cov)
+                v = sum(r['coverage95'] * r['n'] for r in cov) / max(n, 1)
+                self.t_cov.set(f'{v * 100:.0f}', '%', f'{n} rows of held-out {CV_TEXT[by]}',
+                               'good' if 0.88 <= v <= 0.99 else 'warning')
+                break
         else:
             self.t_cov.set('—', '', 'needs two scene sets')
 

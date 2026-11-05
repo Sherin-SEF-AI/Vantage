@@ -28,7 +28,18 @@ they compare rigs, cameras and models, and are not a stack's absolute performanc
   and Depth Anything V2, downloaded on request from a pinned revision (SHA-256 per file, licence shown; models without
   a commercial-use licence only on an opt-in). Detection range per camera, class and model (R50, R90 with
   cluster-bootstrap intervals, the pixel height needed) beside the geometric range, and the usable depth. On the front
-  fisheye YOLOX-S finds half the pedestrians out to 43 m where the pixel rule promises 68 m.
+  fisheye YOLOX-S finds half the pedestrians out to 49 m [44–54] where the pixel rule promises 68 m (it needs about
+  34 px, not 24); on the side camera 27 m [23–35] against 60 m. Cyclists are found at 50 % only to about 12–14 m
+  against 58–64 m (a lower bound: bike and rider are matched as one). OWLv2's flat pedestrian curve comes from
+  missing near pedestrians close to the camera's axis.
+- **Metered camera exposure in CARLA** (the new default): each camera is metered once before the drive and recorded at
+  that fixed exposure, every view alike (no seams), so its image's mean level is 118 of 255 (a field on the CARLA
+  page). Measured in four towns at noon and sunset: the bridge's old manual exposure rendered the road near white
+  (level 241–247 at noon in Town01–03), and CARLA's own auto exposure sits at its clamp in daylight (1.4 EV under
+  manual) or, widened, adds 0.1–1.3 EV seams between a fisheye's views. On the same frames YOLOX-S finds 144 of 440
+  vehicles instead of 129, pedestrians unchanged. Manual and auto stay selectable; earlier drives read as manual.
+  run.json gives each camera's compensation, and is written as `status: running` when a drive starts, so a drive that
+  is killed never counts as finished.
 - **Robust perception** (Simulate ▸ Robust perception…): mounting, thermal, vibration and calibration tolerances
   carried to detection on recordings: rig recall, BEV error, out-of-view and ghosts per class and region with the band
   over builds, Sobol indices for the source and camera that matter. The mounting tolerance can be the fleet twin's
@@ -49,13 +60,41 @@ they compare rigs, cameras and models, and are not a stack's absolute performanc
   sensor counts and mounting tolerances as constraints.
 - **Learned detection model** (Analysis ▸ Learned detection model…): a Gaussian process per class that predicts a
   rig's detection per region from its geometry, trained on perception records (`vantage.perception_record/1`), its
-  intervals' coverage measured by cross-validation; active learning ranks the rigs to simulate next. The placement
-  optimiser has a *Learned detection* weight (the predicted recall less its standard deviation).
+  intervals' coverage measured by cross-validation (a whole town, a scene set or a rig left out); active learning
+  ranks the rigs to simulate next. The placement optimiser has a *Learned detection* weight (the predicted recall less
+  its standard deviation). On a 54-drive campaign (1050 records, 136 rigs, six towns, noon and sunset), leaving a town
+  out: pedestrian RMSE 0.230 against the logistic baseline's 0.307, vehicle 0.239 against 0.281, 95 % intervals
+  covering 0.965 and 0.959. Pixels are counted at the detector's input (1280 px wide); a campaign's drives read their
+  own rig file.
 - **Fleet twin** (Calibrate ▸ Fleet twin…): every vehicle's sensors over time from the fleet's records, online
   self-calibrations (imported or from a watch folder per vehicle) and rig-health drift; drift fitted across the fleet,
   knocks by a likelihood-ratio test with a stated false-alarm rate, first-passage forecasts of when each sensor leaves
   its limit, a recalibration schedule, and the measured drift as tolerance inputs for the design. Its findings are in
-  the Issues list.
+  the Issues list. A watch folder reads a drive only when it is complete (every file quiet, the tables whole, image
+  files ended, a bag's footer written, a Vantage drive's run.json finished) and only once, by its contents, so a
+  renamed or moved drive is not read again. On real CARLA drives, killed and cancelled drives were never read,
+  finished ones were read once about 10 s after their last file, and a +1.0° pitch knock on F was found as +1.00 ±
+  0.09°.
+- **Risk-weighted coverage in Issues**: a class whose pre-crash exposure covered is below its minimum (a requirement
+  row, else `analysis.risk_coverage.issue_min`, else 80 / 75 / 85 / 70 % for pedestrians, cyclists, vehicles and
+  motorcyclists) is an issue, serious when a requirement fails or it is 10 points or more below. Worked out in the
+  background after the analysis and cached (0.8 s, then under 1 ms).
+
+**The assistant**
+
+- **The Copilot plans and runs the perception studies**: rig perception (recordings, or a scene set driven in CARLA),
+  foundation-model range (recordings or a CARLA sweep), robust perception, re-drive (optionally re-shot), the design
+  agent (from the brief; it never creates a variant), training the learned model, a learned-model campaign,
+  risk-weighted coverage and the fleet twin (or one watch of its folders): 18 plan kinds. Each step carries the page's
+  settings with every value's source, its limits, an estimate (time, CARLA, GPU, PyTorch, models, disk) and a clear
+  refusal when something is missing. Approved, it runs in the background and can be cancelled; its result appears on
+  the page and in the read tools, which cite the plan. Batch `--run-plan` runs them headless. Vantage's own planner
+  maps plain requests to these kinds without a model (*/plan how far can F see a cyclist*).
+- **A page-aware assistant**: on every page (47) the panel knows what the page is for, what it needs first and where
+  its result is, and the strip leads with that page's next step: a missing prerequisite and where to fix it, its Run
+  (a plan for CARLA, GPU and training pages), up to three of its findings to ask about, the next page of the workflow,
+  its export and *What can I do here?*. It refreshes 60 ms after a page change. The model reads the same through the
+  new `get_page_context` tool.
 
 **Everywhere**
 
@@ -68,16 +107,18 @@ they compare rigs, cameras and models, and are not a stack's absolute performanc
   modifiers, each with its exit codes in `--help`.
 - The assistant and Claude over MCP: `get_rig_perception`, `plan_perception_scene_set`, `get_redrive`,
   `get_foundation_range`, `get_robust_perception`, `get_risk_coverage`, `get_fleet_twin`, `get_fleet_tolerances`,
-  `get_perf_model`, `predict_detection`, `suggest_simulations`, `read_requirements` and `design_rig`. The long studies
-  are read from their pages' last results, never started by the assistant; a design option is created only by you.
+  `get_perf_model`, `predict_detection`, `suggest_simulations`, `read_requirements`, `design_rig` and
+  `get_page_context`. The long studies run only from a Copilot plan you approve; a design option is created only by
+  you.
 
 **Known limits**
 
 - No real fleet data, no real third-party log and no pretrained BEV model with a commercial-use licence were
   available: the fleet twin's long-term figures use a labelled fixture of dates over real CARLA calibrations, re-drive
   was validated on CARLA drives, and rig perception ships the lifted and external detectors only.
-- The learned model was trained on 100 records from 3 scene sets; the logistic in pixels alone does about as well
-  there, and active learning did not beat random selection.
+- The learned model was calibrated on CARLA renders only (six towns, noon and sunset, no cyclists, to 60 m, one
+  detector); with one training town it is no better than the baseline, and active learning did not beat random
+  selection. Vantage ships no trained model.
 - The design agent's measured run used prices entered for that test; Vantage ships no prices. Its LLM path was tested
   against fake servers only.
 

@@ -17,6 +17,9 @@ What a run does
 3. Reads where the project's ego origin (the rear-axle centre on the ground) lies in the CARLA vehicle: the rear
    wheels' centre (VehiclePhysicsControl.wheels, world centimetres) and the bounding box's bottom; attaches every
    sensor there by its rig pose (cameras as their pinhole views, each radar zone as a radar).
+   When the rig meters its exposure (output.exposure_meter, the default from round 15), each camera's views are first
+   rendered as small probes at manual EV +3, 0 and −3 and the camera's compensation chosen so its image's mean level
+   is the target (see EXPOSURE_MODES); run.json exposure says what each camera was recorded with.
 4. Steps a whole number of lidar rotations of warm-up (the radar's and IMU's first steps are garbage), the sync pulse
    t = 0 falling where the lidar's angle is back at its start; each camera is spawned so its first frame lands one
    period before its planned exposure centre. Then steps --duration seconds, writing as it goes:
@@ -70,6 +73,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures as cf
+import datetime
 import json
 import math
 import os
@@ -108,8 +112,118 @@ SIGNAL_GRACE_S = 15.0            # after SIGINT / SIGTERM: this long to tidy up,
 ROLE_PREFIX = 'vantage_'
 ROLE_SENSOR, ROLE_TRAFFIC, ROLE_WALKER, ROLE_TARGET = 'vantage_sensor', 'vantage_traffic', 'vantage_walker', \
     'vantage_target'
+ROLE_PROBE = 'vantage_exposure_probe'      # the metering probes (destroyed before the recording starts)
 ROLE_SUMO = 'vantage_sumo'          # the vehicles SUMO drives (sumo_cosim.ROLE_SUMO)
 TRAFFIC_SOURCES = ('carla', 'sumo')
+# Exposure (round 15). CARLA's exposure_mode takes 'manual' (shutter 1/200 s, ISO 100, f/1.4: EV100 8.6, whatever the
+# scene) or 'histogram' (Unreal's auto exposure per view, clamped by default to EV100 10–12, so in daylight it sits at
+# its clamp: 1.40 EV under manual in every town and weather measured). A rig's output.exposure_meter asks for a metered
+# exposure instead: before recording, each camera's views are rendered once at manual EV +3, 0 and −3 (small probes from
+# the same poses), merged in linear light through the measured camera response (vantage.sim.tonemap), and the camera
+# is then recorded in manual mode at the exposure compensation that puts the mean output level of its image at
+# target_level: fixed for the drive, the same for every view of the camera (no seams), one value per camera.
+EXPOSURE_MODES = ('manual', 'histogram')       # what CARLA's exposure_mode takes
+METER_TARGET = 118.0             # mean 8-bit output level aimed at (18 % grey in sRGB: an averaging auto exposure's)
+METER_PROBE_EV = (3.0, 0.0, -3.0)   # the probes' manual compensations (each darker one reads what a brighter clips)
+METER_PROBE_PX = 320             # a probe view's longer side
+METER_TICKS = 4                  # steps rendered before the probes' frame is read (anti-aliasing history settled)
+METER_LIMITS_EV = (-8.0, 8.0)
+METER_LUMA = (0.114, 0.587, 0.299)            # Rec. 601 weights in raw_data's channel order (B, G, R)
+
+
+def hdr_ln(probes) -> np.ndarray:
+    """(n, 3) ln of each pixel's linear exposure at compensation 0, from probes [(ev, (h, w, 3) uint8 B, G, R)] of one
+    view: per pixel and channel the brightest probe whose level lies in 1…250, else the darkest (a white still
+    clipped there: its level is a lower bound) or, for a black, the brightest."""
+    probes = sorted(probes, key=lambda p: -p[0])
+    resp = np.asarray(TM.RESPONSE_LN, np.float64)
+    out = None
+    done = None
+    for ev, img in probes:
+        z = np.asarray(img, np.uint8).reshape(-1, 3)
+        ln = np.stack([resp[c][z[:, c]] for c in range(3)], axis=1) - ev * math.log(2.0)
+        if out is None:
+            out = ln.copy()
+            done = (z >= 1) & (z <= 250)
+            black = z < 1
+        else:
+            take = ~done & ~black
+            out[take] = ln[take]
+            done |= take & (z <= 250)
+    return out if out is not None else np.zeros((0, 3))
+
+
+def mean_level(ln0, ev: float, weights=None) -> float:
+    """The mean 8-bit luma of pixels with linear exposures exp(ln0) (hdr_ln) at compensation ev, through the response."""
+    resp = np.asarray(TM.RESPONSE_LN, np.float64)
+    lv = np.arange(256, dtype=np.float64)
+    x = np.asarray(ln0, np.float64) + ev * math.log(2.0)
+    y = sum(METER_LUMA[c] * np.interp(x[:, c], resp[c], lv) for c in range(3))
+    if weights is None:
+        return float(y.mean()) if len(y) else 0.0
+    w = np.asarray(weights, np.float64)
+    return float((y * w).sum() / max(w.sum(), 1e-12))
+
+
+def meter_ev(ln0, weights=None, target: float = METER_TARGET, limits=METER_LIMITS_EV) -> tuple[float, bool]:
+    """The compensation (EV) at which mean_level reaches target (bisection: the level rises with ev), and whether it
+    hit a limit (then the limit)."""
+    lo, hi = float(limits[0]), float(limits[1])
+    if not len(ln0):
+        return 0.0, False
+    if mean_level(ln0, hi, weights) <= target:
+        return hi, True
+    if mean_level(ln0, lo, weights) >= target:
+        return lo, True
+    for _ in range(40):
+        mid = 0.5 * (lo + hi)
+        if mean_level(ln0, mid, weights) < target:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi), False
+
+
+def view_weights(cam: dict, remaps: dict) -> list:
+    """The share of a camera's output pixels that read each of its views (through its remap tables)."""
+    views = cam['views']
+    if len(views) == 1:
+        return [1.0]
+    try:
+        mx = np.asarray(remaps[cam['remap']['x']], np.float32)
+        my = np.asarray(remaps[cam['remap']['y']], np.float32)
+    except (KeyError, TypeError):
+        return [1.0 / len(views)] * len(views)
+    seen = mx >= -0.5
+    n = []
+    for y0, v in zip(cam['atlas']['offsets'], views):
+        n.append(float((seen & (my >= y0 - 0.5) & (my < y0 + int(v['height']) - 0.5)).sum()))
+    tot = sum(n)
+    return [x / tot for x in n] if tot > 0 else [1.0 / len(views)] * len(views)
+
+
+def probe_weights(cam: dict, remaps: dict, vi: int, w: int, h: int) -> np.ndarray | None:
+    """(h·w,) how many of the camera's output pixels read each pixel of a w × h probe of view vi (its remap tables
+    scaled to the probe), summing to the view's share of the output; None without remap tables (then uniform)."""
+    try:
+        mx = np.asarray(remaps[cam['remap']['x']], np.float32).ravel()
+        my = np.asarray(remaps[cam['remap']['y']], np.float32).ravel()
+    except (KeyError, TypeError):
+        return None
+    v = cam['views'][vi]
+    y0 = float(cam['atlas']['offsets'][vi])
+    sel = (mx >= -0.5) & (my >= y0 - 0.5) & (my < y0 + int(v['height']) - 0.5)
+    tot = max(int((mx >= -0.5).sum()), 1)
+    u = np.clip(((mx[sel] + 0.5) * w / int(v['width'])).astype(np.int64), 0, w - 1)
+    q = np.clip(((my[sel] - y0 + 0.5) * h / int(v['height'])).astype(np.int64), 0, h - 1)
+    return np.bincount(q * w + u, minlength=w * h).astype(np.float64) / tot
+
+
+def exposure_meter(rig: dict) -> dict | None:
+    """The rig's metering request (output.exposure_meter), or None: a rig without one records as its output.exposure
+    says (every rig written before round 15: manual, or histogram when chosen)."""
+    m = (rig.get('output') or {}).get('exposure_meter')
+    return m if isinstance(m, dict) else None
 
 
 class Cancelled(Exception):
@@ -866,6 +980,14 @@ class Bridge:
         self._mount_check(world)
         if mode == 'actors':
             self._place_actors(world, lib, rng)
+        # ---- the cameras' exposure: metered once here (the rig asks for it), else as the rig says
+        if exposure_meter(rig) is not None and rig['cameras'] and not a.no_cameras:
+            self.progress(0.035, 'Metering the cameras\' exposure')
+            self._meter_exposure(world, lib, rig['cameras'])
+        else:
+            ex = rig['output']
+            self.report['exposure'] = {'mode': ex.get('exposure', 'manual') if ex.get('exposure') in EXPOSURE_MODES
+                                       else 'manual', 'exposure_ev': float(ex.get('exposure_ev', 0.0) or 0.0)}
         # ---- sensors (cameras later, at their spawn steps)
         P = plan(rig, float(a.duration), cameras=not a.no_cameras, faults=self.faults, seed=seed)
         self.P = P
@@ -1337,10 +1459,10 @@ class Bridge:
         self.report['mounts'] = out
 
     # ------------------------------------------------------------------ sensors
-    def _attach(self, world, bp, loc_rel, rotation):
+    def _attach(self, world, bp, loc_rel, rotation, role=None):
         """Spawn a sensor at a rig location (CARLA axes, relative to the ego origin) on the ego."""
         if bp.has_attribute('role_name'):
-            bp.set_attribute('role_name', ROLE_SENSOR)  # (what tidy_server knows the bridge's sensors by)
+            bp.set_attribute('role_name', role or ROLE_SENSOR)  # (what tidy_server knows the bridge's sensors by)
         loc = np.asarray(loc_rel, float) + self.O
         a = world.spawn_actor(bp, _tf(self.carla, loc, rotation), attach_to=self.ego)
         self.actors.append(a)
@@ -1391,17 +1513,125 @@ class Bridge:
         self.queues[key] = q
         act.listen(q.put)
 
+    @staticmethod
+    def _rgb_attrs(w, h, fov, tick, mode, ev) -> dict:
+        """An RGB view's blueprint attributes: CARLA's lens effect, blur, bloom and flare off; the exposure given."""
+        return {'image_size_x': w, 'image_size_y': h, 'fov': fov, 'sensor_tick': tick, 'lens_k': 0.0,
+                'lens_kcube': 0.0, 'lens_circle_multiplier': 0.0, 'lens_circle_falloff': 0.0,
+                'motion_blur_intensity': 0.0, 'motion_blur_max_distortion': 0.0, 'lens_flare_intensity': 0.0,
+                'bloom_intensity': 0.0, 'chromatic_aberration_intensity': 0.0, 'blur_amount': 0.0, 'blur_radius': 0.0,
+                'exposure_mode': mode, 'exposure_compensation': round(float(ev), 4)}
+
+    def _exposure_of(self, c) -> tuple[str, float]:
+        """(CARLA exposure_mode, exposure_compensation) a camera records with: the metered value when the rig meters
+        (plus the rig's exposure_ev as a bias), else the rig's output.exposure and exposure_ev."""
+        ex = self.rig['output']
+        mode = ex.get('exposure', 'manual')
+        mode = mode if mode in EXPOSURE_MODES else 'manual'
+        ev = float(ex.get('exposure_ev', 0.0) or 0.0)
+        m = getattr(self, 'meter', {}).get(c['tag'])
+        if m is not None:
+            return 'manual', ev + m['metered_ev']
+        return mode, ev
+
+    def _meter_exposure(self, world, lib, cams):
+        """A metered exposure per camera (exposure_meter): probes of every view at manual EV +3, 0 and −3, rendered
+        METER_TICKS steps, merged in linear light (hdr_ln), the views weighted by their share of the camera's output
+        image (view_weights); meter_ev gives the compensation that puts the image's mean level at the target. The
+        probes are destroyed before the recording's sensors are spawned. Each probe pixel counts as often as the camera's
+        output image reads it (probe_weights: the fisheye's own sampling) and without Unreal's vignette (as the
+        recording takes it out). Fills self.meter and report['exposure']."""
+        em = exposure_meter(self.rig) or {}
+        target = float(em.get('target_level', METER_TARGET))
+        target = min(max(target, 20.0), 235.0)
+        self.meter = {}
+        probes = []
+        for c in cams:
+            for vi, v in enumerate(c['views']):
+                s = min(1.0, METER_PROBE_PX / max(int(v['width']), int(v['height']), 1))
+                w, h = max(16, int(round(v['width'] * s))), max(16, int(round(v['height'] * s)))
+                for ev in METER_PROBE_EV:
+                    bp = self._bp(lib, 'sensor.camera.rgb', self._rgb_attrs(w, h, v['fov_deg'], 0.0, 'manual', ev))
+                    act = self._attach(world, bp, v['carla']['location'], v['carla']['rotation'], ROLE_PROBE)
+                    q = queue.Queue()
+                    act.listen(q.put)
+                    probes.append({'tag': c['tag'], 'view': vi, 'ev': ev, 'actor': act, 'q': q, 'w': w, 'h': h})
+        frame = None
+        try:
+            for _ in range(METER_TICKS):
+                self._check()
+                frame = self._tick(world)
+            end = time.monotonic() + float(self.a.timeout)
+            for p in probes:
+                img = None
+                while img is None:
+                    left = end - time.monotonic()
+                    if left <= 0:
+                        raise RuntimeError(f'No exposure probe image from {p["tag"]} for frame {frame}.')
+                    try:
+                        item = p['q'].get(timeout=min(left, 0.5))
+                    except queue.Empty:
+                        self._check()
+                        continue
+                    if item.frame >= frame:
+                        img = item
+                a = np.frombuffer(img.raw_data, np.uint8).reshape(int(img.height), int(img.width), 4)[:, :, :3]
+                p['img'] = np.ascontiguousarray(a)
+        finally:
+            ids = {id(p['actor']) for p in probes}
+            for p in probes:
+                try:
+                    p['actor'].stop()
+                except Exception:                      # noqa: BLE001 (a probe is tidied whatever happened)
+                    pass
+                try:
+                    p['actor'].destroy()
+                except Exception:                      # noqa: BLE001
+                    pass
+            self.actors = [x for x in self.actors if id(x) not in ids]
+        rep = {}
+        for c in cams:
+            wv = view_weights(c, self.remaps)
+            lns, ws, views = [], [], []
+            for vi in range(len(c['views'])):
+                pv = [(p['ev'], p['img']) for p in probes if p['tag'] == c['tag'] and p['view'] == vi]
+                ln = hdr_ln(pv)
+                h, w = pv[0][1].shape[:2]
+                if not getattr(self.a, 'keep_vignette', False):     # the recording takes the vignette out: so here
+                    uu, vv = np.meshgrid(np.arange(w), np.arange(h))
+                    ln = ln - np.log(TM.vignette_mask(TM.vignette_radius(uu, vv, w, h))).reshape(-1, 1)
+                pw = probe_weights(c, self.remaps, vi, w, h)
+                lns.append(ln)
+                ws.append(pw if pw is not None and len(pw) == len(ln) else np.full(len(ln), wv[vi] / max(len(ln), 1)))
+                views.append({'view': c['views'][vi].get('name', vi), 'weight': round(wv[vi], 4),
+                              'mean_level_ev0': round(mean_level(ln, 0.0), 2)})
+            ln0, w0 = np.concatenate(lns), np.concatenate(ws)
+            ev, at_limit = meter_ev(ln0, w0, target)
+            ev = round(ev, 3)
+            self.meter[c['tag']] = {'metered_ev': ev}
+            bias = float(self.rig['output'].get('exposure_ev', 0.0) or 0.0)
+            rep[c['tag']] = {'metered_ev': ev, 'compensation_ev': round(ev + bias, 3), 'at_limit': at_limit,
+                             'mean_level_ev0': round(mean_level(ln0, 0.0, w0), 2),
+                             'mean_level_predicted': round(mean_level(ln0, ev + bias, w0), 2), 'views': views}
+        self.report['exposure'] = {
+            'mode': 'metered', 'carla_exposure_mode': 'manual', 'target_level': target,
+            'exposure_ev': float(self.rig['output'].get('exposure_ev', 0.0) or 0.0), 'cameras': rep,
+            'probe_ev': list(METER_PROBE_EV), 'probe_px': METER_PROBE_PX, 'probe_ticks': METER_TICKS,
+            'method': 'each view rendered at manual EV +3, 0 and -3 from the camera\'s pose, merged in linear light '
+                      'through the measured camera response (vantage.sim.tonemap), the vignette taken out; each probe '
+                      'pixel weighted by how many output pixels read it; the compensation found that puts the mean '
+                      '8-bit luma at target_level; the camera then records in manual mode at it plus exposure_ev, '
+                      'fixed for the drive'}
+        lo, hi = min(r['compensation_ev'] for r in rep.values()), max(r['compensation_ev'] for r in rep.values())
+        self._note(f'Cameras: metered exposure, fixed for the drive (mean level {target:g}): compensation '
+                   + (f'{lo:+.2f} EV' if abs(hi - lo) < 0.005 else f'{lo:+.2f} … {hi:+.2f} EV') + ' (manual mode).')
+
     def _spawn_camera(self, world, lib, c):
         n = int(c['capture']['every_ticks'])
         tick = n * self.dt - self.dt * 1e-4           # a hair under the period: Unreal carries the remainder over
-        ex = self.rig['output']
+        mode, ev = self._exposure_of(c)
         for vi, v in enumerate(c['views']):
-            attrs = {'image_size_x': v['width'], 'image_size_y': v['height'], 'fov': v['fov_deg'],
-                     'sensor_tick': tick, 'lens_k': 0.0, 'lens_kcube': 0.0, 'lens_circle_multiplier': 0.0,
-                     'lens_circle_falloff': 0.0, 'motion_blur_intensity': 0.0, 'motion_blur_max_distortion': 0.0,
-                     'lens_flare_intensity': 0.0, 'bloom_intensity': 0.0, 'chromatic_aberration_intensity': 0.0,
-                     'blur_amount': 0.0, 'blur_radius': 0.0,
-                     'exposure_mode': ex.get('exposure', 'manual'), 'exposure_compensation': ex.get('exposure_ev', 0.0)}
+            attrs = self._rgb_attrs(v['width'], v['height'], v['fov_deg'], tick, mode, ev)
             bp = self._bp(lib, 'sensor.camera.rgb', attrs)
             act = self._attach(world, bp, v['carla']['location'], v['carla']['rotation'])
             self._listen(act, ('camera', c['tag'], vi))
@@ -2463,6 +2693,7 @@ class Bridge:
         self.report['counts'] = doc['counts']
         self.report['bytes'] = doc['bytes']
         self.report['channels'] = doc['channels']
+        self.report['recorded_utc'] = {'start': getattr(self, 'started_utc', None), 'end': _utc_now()}
         _write_json(os.path.join(self.out_dir, 'run.json'), self.report)
         self.progress(1.0, 'Done')
 
@@ -2933,6 +3164,10 @@ def _png(a) -> bytes:
     return buf.tobytes()
 
 
+def _utc_now() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')
+
+
 def _write_json(path, doc):
     tmp = path + '.tmp'
     with open(tmp, 'w', encoding='utf-8') as fh:
@@ -3266,6 +3501,11 @@ def main(argv=None) -> int:
     b = Bridge(carla, rig, remaps, a.out, a, progress, lambda: stop['flag'])
     b.life = life
     os.makedirs(b.out_dir, exist_ok=True)
+    # a start marker: a run killed from here on leaves 'running', never an earlier run's report (and the fleet twin's
+    # watch folder dates drives by recorded_utc)
+    b.started_utc = _utc_now()
+    _write_json(os.path.join(b.out_dir, 'run.json'), {'schema': RUN_SCHEMA, 'status': 'running',
+                                                      'recorded_utc': {'start': b.started_utc}})
     import threading
     threading.Thread(target=_watchdog, args=(b, stop, life, sigs if waited else None, float(a.timeout)),
                      daemon=True).start()

@@ -241,3 +241,180 @@ def test_page(app, win, tmp_path):
     assert pg.result.classes['pedestrian']['weighted'] == pytest.approx(w0)
     paths = pg.export(str(tmp_path))
     assert any(p.endswith('risk_coverage.json') for p in paths)
+
+
+# =========================================================================== round 15: the cache and the Issues list
+@pytest.fixture(scope='module')
+def cached_rig():
+    """The sample's Data rig with its result computed once and cached."""
+    from vantage.core import samples
+    from vantage.core.analysis import Engine
+    p = samples.tigor_sample_project()
+    p.active_uid = next(v for v in p.variants if v.sensors).uid
+    eng = Engine()
+    RC.clear_cache()
+    res = RC.run(p, eng)
+    return p, eng, res
+
+
+def test_cache_hit_and_miss_on_each_input(cached_rig, monkeypatch):
+    import time
+    from vantage.core.project import RigPart
+    p, eng, res = cached_rig
+    assert RC.cached(p) is res and RC.cached(p.snapshot()) is res               # a worker's snapshot: the same key
+    t = time.perf_counter()
+    assert RC.run(p, eng) is res and time.perf_counter() - t < 0.05             # a second run: from the cache
+    assert res.variant_uid == p.variant.uid
+    cam = p.variant.cameras[0]
+
+    def miss(change, undo):
+        q = p.snapshot()
+        change(q)
+        assert RC.cached(q) is None, change
+        undo(q)
+        assert RC.cached(q) is res, undo
+    c0 = lambda q: q.variant.cameras[0]                                          # noqa: E731
+    miss(lambda q: setattr(c0(q), 'yaw', cam.yaw + 1.0), lambda q: setattr(c0(q), 'yaw', cam.yaw))
+    miss(lambda q: setattr(c0(q), 'z', cam.z + 0.01), lambda q: setattr(c0(q), 'z', cam.z))
+    miss(lambda q: setattr(c0(q), 'visible', False), lambda q: setattr(c0(q), 'visible', True))
+    other_lens = next(k for k in p.lenses if k != cam.lens_id)
+    miss(lambda q: setattr(c0(q), 'lens_id', other_lens), lambda q: setattr(c0(q), 'lens_id', cam.lens_id))
+    other_mod = next(k for k in p.modules if k != cam.module_id)
+    miss(lambda q: setattr(c0(q), 'module_id', other_mod), lambda q: setattr(c0(q), 'module_id', cam.module_id))
+    miss(lambda q: setattr(c0(q), 'calib', {'fx': 300.0}), lambda q: setattr(c0(q), 'calib', cam.calib))
+    mesh = p.vehicle.mesh                                                         # the body
+    miss(lambda q: setattr(q.vehicle, 'mesh', mesh.transformed(scale=1.02)), lambda q: setattr(q.vehicle, 'mesh', mesh))
+    occ = p.vehicle.occluder_target
+    miss(lambda q: setattr(q.vehicle, 'occluder_target', occ // 2), lambda q: setattr(q.vehicle, 'occluder_target', occ))
+    miss(lambda q: q.rig.append(RigPart(name='bar', kind='box', x=1.0, y=0.0, z=1.7)), lambda q: q.rig.pop())
+    st = RC.settings_of(p)                                                        # the study's settings
+    miss(lambda q: setattr(q.analysis, 'risk_coverage', {'weight': 'fatal'}),
+         lambda q: setattr(q.analysis, 'risk_coverage', st.to_dict()))
+    miss(lambda q: setattr(q.analysis, 'risk_coverage', {'ttc_max': 3.0}),
+         lambda q: setattr(q.analysis, 'risk_coverage', {}))
+    q = p.snapshot()                                                              # the Issues thresholds: no
+    q.analysis.risk_coverage = {'issue_min': {'pedestrian': 99}}
+    assert RC.cached(q) is res
+    per = getattr(p.analysis, 'perception', None)                                 # the perception's classes
+    miss(lambda q: setattr(q.analysis, 'perception', {'classes': [{'name': 'Pedestrian', 'height': 1.2,
+                                                                     'width': 0.5, 'min_px': 40.0}]}),
+         lambda q: setattr(q.analysis, 'perception', per))
+    other = next(v for v in p.variants if v.uid != p.active_uid)                  # another variant
+    miss(lambda q: setattr(q, 'active_uid', other.uid), lambda q: setattr(q, 'active_uid', p.active_uid))
+    key = RC.cache_key(p)                                                         # the hazard tables
+    monkeypatch.setattr(RC, 'NCAP', RC.NCAP[:-1])
+    monkeypatch.setattr(RC, '_TABLES_VERSION', [])
+    assert RC.cache_key(p) != key and RC.cached(p) is None
+    monkeypatch.undo()
+    assert RC.cache_key(p) == key and RC.cached(p) is res
+
+
+def test_a_fake_coverage_is_never_cached(cached_rig):
+    p, eng, res = cached_rig
+
+    class All:
+        def covered(self, xy, cls, metric='resolved'):
+            return np.ones(len(np.asarray(xy).reshape(-1, 2)), bool)
+
+        def inside_body(self, xy):
+            return np.zeros(len(np.asarray(xy).reshape(-1, 2)), bool)
+    q = p.snapshot()
+    q.analysis.risk_coverage = {'ttc_samples': 4}
+    r = RC.run(q, settings=RC.settings_of(q), coverage=All())
+    assert r.classes['pedestrian']['weighted'] == pytest.approx(1.0) and RC.cached(q) is None
+    assert RC.cached(p) is res
+
+
+def test_issues_from_the_cache_timing_severities_and_selection(cached_rig):
+    import time
+    from vantage.core import rules
+    p, eng, res = cached_rig
+    q = p.snapshot()
+    q.variant.cameras[0].yaw += 2.0                                               # not cached: nothing, at once
+    t = time.perf_counter()
+    assert RC.issues(q) == []
+    assert time.perf_counter() - t < 0.03
+    assert RC.issues(p) == []                                                     # the defaults: the sample passes
+    assert RC.thresholds(p)['pedestrian'] == {'pct': 80.0, 'source': 'the default threshold', 'priority': ''}
+    ped = 100 * res.classes['pedestrian']['weighted']
+    moto = 100 * res.classes['motorcyclist']['weighted']
+    q = p.snapshot()
+    q.analysis.risk_coverage = {'issue_min': {'pedestrian': ped + 3, 'motorcyclist': moto + 12}}
+    times = []
+    for _ in range(20):
+        t = time.perf_counter()
+        iss = RC.issues(q)
+        times.append(time.perf_counter() - t)
+    assert sorted(times)[10] < 0.03                                               # median well under 30 ms
+    by = {i.message.split(':')[0]: i for i in iss}
+    assert set(by) == {'Pedestrians', 'Motorcyclists'}
+    assert by['Pedestrians'].severity == 'warning' and by['Motorcyclists'].severity == 'serious'   # 3 vs 12 points
+    g = res.classes['pedestrian']['gaps'][0]
+    assert g['name'] in by['Pedestrians'].message and "the risk page's threshold" in by['Pedestrians'].message
+    sr = res.grid.parse_id(g['region'])
+    assert by['Pedestrians'].where == pytest.approx(tuple(res.grid.centre_xy(*sr)))
+    uids = {c.uid for c in p.variant.cameras}
+    for i in iss:
+        assert i.uids and set(i.uids) <= uids and i.action == 'risk_coverage'
+    gv = res.classes['motorcyclist']['gaps'][0]                                    # cameras looking at the gap
+    assert by['Motorcyclists'].uids == [x['uid'] for x in gv['cameras_looking']] and gv['cameras_looking']
+    assert 'too small in the image' in by['Motorcyclists'].message
+    # a requirements scorecard row takes precedence; a must is serious however close
+    q.analysis.requirements = {'items': [{'id': 'R7', 'text': 'peds', 'metric': 'risk_coverage.weighted_pct',
+                                          'params': {'cls': 'pedestrian'}, 'op': '>=', 'target': round(ped + 1, 1),
+                                          'priority': 'must'}]}
+    th = RC.thresholds(q)
+    assert th['pedestrian']['source'] == 'requirement R7' and th['pedestrian']['priority'] == 'must'
+    i = next(x for x in RC.issues(q) if x.message.startswith('Pedestrians'))
+    assert i.severity == 'serious' and 'requirement R7' in i.message
+    q.analysis.requirements = {'items': [{'id': 'R8', 'text': 'all', 'metric': 'risk_coverage.weighted_pct',
+                                          'params': {}, 'op': '>=', 'target': 50.0, 'priority': 'should'}]}
+    assert RC.issues(q) == []                                                     # every class ≥ 50 %: none
+    # the Issues list collects them (the rules hook) and merge_issues refreshes only these rows
+    q.analysis.requirements = {}
+    out = rules.collect_issues(q, eng.analyse(q), eng.vg, {}, None)
+    assert sum(x.action == 'risk_coverage' for x in out) == 2
+    q.analysis.risk_coverage = {}
+    other = [x for x in out if x.action != 'risk_coverage']
+    assert RC.merge_issues(out, q) == other
+
+
+def test_background_run_after_an_analysis(cached_rig):
+    """What the analysis worker does (proposed for ui/store.py): wants_prime, prime, then merge_issues."""
+    p, eng, res = cached_rig
+    q = p.snapshot()
+    q.variant.cameras[1].pitch += 3.0
+    assert RC.wants_prime(q) and not RC.wants_prime(p)
+    assert RC.prime(q, eng, cancel=lambda: True) is None and RC.wants_prime(q)    # a new edit cancels it
+    r = RC.prime(q, eng)
+    assert r is not None and RC.cached(q) is r and not RC.wants_prime(q)
+    q.analysis.risk_coverage = {'issue_min': {'cyclist': 100.0}}
+    assert [i.message.split(':')[0] for i in RC.merge_issues([], q)] == ['Cyclists']
+    q.variant.cameras.clear()
+    assert not RC.wants_prime(q) and RC.prime(q, eng) is None and RC.issues(q) == []
+
+
+def test_page_thresholds_push_the_issues_list(app, win):
+    from vantage.ui.workspaces.risk_ws import RiskPage
+    store = win.ctx.store
+    pg = _open(win, 'risk_coverage', RiskPage)
+    pg.activate()
+    _wait(app, lambda: pg.result is not None and not pg.busy and not pg.stale, timeout=120)
+    assert RC.cached(store.project) is pg.result
+    assert pg.th_fields['pedestrian'].value() == pytest.approx(RC.ISSUE_MIN_DEFAULT['pedestrian'])
+    ped = 100 * pg.result.classes['pedestrian']['weighted']
+    an = win.ctx.analysis
+    assert pg.set_threshold('pedestrian', math.ceil(ped) + 2)
+    pump(app, 0.2)
+    rows = [i for i in an.issues if i.action == 'risk_coverage']
+    assert len(rows) == 1 and rows[0].message.startswith('Pedestrians') and rows[0].severity == 'warning'
+    assert RC.settings_of(store.project).issue_min == {'pedestrian': math.ceil(ped) + 2}
+    assert pg.result is not None and not pg.stale                                 # a threshold is not an input
+    store.undo.undo()
+    pump(app, 0.2)
+    assert RC.settings_of(store.project).issue_min == {}
+    pg.push_issues()
+    pump(app, 0.1)
+    assert not [i for i in an.issues if i.action == 'risk_coverage']
+    pg._sync_fields()
+    assert pg.th_fields['pedestrian'].value() == pytest.approx(RC.ISSUE_MIN_DEFAULT['pedestrian'])

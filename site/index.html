@@ -1352,7 +1352,7 @@ does not match)</span></pre>
           <li><b>Rig perception:</b> 3D detection per class in each of 48 regions around the car, rig against rig on
             the same scenes, with paired intervals. With every camera pitched 20° up, the data rig finds 5.1 points
             more vehicles [2.8, 7.1] on its fisheye images; on rectified views of the same images the gain disappears.</li>
-          <li><b>Foundation models:</b> on the front fisheye, YOLOX-S finds half the pedestrians out to 43 m where the
+          <li><b>Foundation models:</b> on the front fisheye, YOLOX-S finds half the pedestrians out to 49 m where the
             pixel rule promises 68 m; monocular depth stays within 10 % only to about 5 m.</li>
           <li><b>Re-drive:</b> how much of a recorded drive a new rig can reuse, per camera and region, with an
             expected error that matched the real recording within 0.7 grey levels on five of six cameras.</li>
@@ -1365,7 +1365,7 @@ does not match)</span></pre>
         </ul>
         <p class="note">A COCO detector and two open-vocabulary detectors on CARLA renders. Use the figures to compare
           rigs, cameras and models; they are not a stack's absolute performance. Not validated: real fleet data, a
-          real third-party log, a qualifying pretrained BEV model. The learned model has 100 training records.</p>
+          real third-party log, a qualifying pretrained BEV model. The learned model was calibrated on six CARLA towns, noon and sunset.</p>
       </div>
       <div class="media">
         <div class="frame">

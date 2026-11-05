@@ -65,7 +65,20 @@ SCENE_SETS = {
              'a cyclist crossing from the left 25 m ahead'),
             ('free_drive', {}, 'traffic and walkers all round'),
         ]},
+    'campaign': {
+        'label': 'Model training campaign (2 scenes per town, weather and seed)',
+        'about': 'A free drive in dense traffic with walkers on both pavements, then a pedestrian crossing from the '
+                 'right with the same background: many objects in many regions for little CARLA time. For training '
+                 'the learned detection model (core.perf_model) over many towns, weathers and seeds, driven with '
+                 'camera banks (many cameras on one drive, rigs evaluated as subsets).',
+        'town': 'Town03', 'duration_s': 15.0, 'traffic': 40, 'walkers': 60,
+        'scenes': [
+            ('free_drive', {}, 'traffic and walkers all round (the seed\'s)'),
+            ('pedestrian_crossing', {'side': 'right', 'distance_m': 20.0, 'walker': 'adult', 'traffic': 30.0},
+             'an adult crossing from the right 20 m ahead; traffic and walkers around'),
+        ]},
 }
+TOWNS = ('Town01', 'Town02', 'Town03', 'Town04', 'Town05', 'Town10HD')   # CARLA 0.9.16's packaged towns
 DEFAULT_SET = 'standard'
 LIMITS = {'duration_s': (2.0, 120.0), 'traffic': (0, 150), 'walkers': (0, 150), 'port': (1024, 65000),
           'tm_port': (1024, 65000)}
