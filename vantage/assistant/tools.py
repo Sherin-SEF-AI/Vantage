@@ -71,6 +71,7 @@ class ToolContext:
     splat: dict | None = None            # the Log replay page's last result (core.splat_reproject.summary)
     online_calib: dict | None = None     # the Online self-calibration page's last result (core.online_calib.summary)
     carla_live: dict | None = None       # the CARLA page's live rig panel (summary(): state, cameras, faults; no URLs)
+    studies: dict = field(default_factory=dict)   # the round-14 pages' last results by page name (their summary())
     working_dir: str = ''                # where outputs go (workdir.get of the settings); never sent to the model
     plan: object = None                  # the Copilot plan on screen (copilot.Plan), which a follow-up revises
     request: str = ''                    # the user's words this turn (recorded with a plan)
@@ -2456,7 +2457,8 @@ TOOLS = [
          'exposure | isp | fleet | brackets | dataset | drivelog | asbuilt | online_calib | requirements | '
          'lidar_calib | critical | materials | automation | '
          'terrain | thermo_vib | harness | observability | experiments | sim | detection | splat | campaign | '
-         'critical_carla).',
+         'critical_carla | rig_perception | foundation | robust_perception | risk_coverage | designer | perf_model | '
+         'fleet_twin; splat holds the Re-drive tab).',
          {'action': {'type': 'string', 'enum': list(UI_ACTIONS)}, 'cameras': {'type': 'array', 'items': {'type': 'string'}},
           'x': {'type': 'number'}, 'y': {'type': 'number'}, 'heatmap': {'type': 'string'}, 'overlay': {'type': 'string'},
           'on': {'type': 'boolean'}, 'page': {'type': 'string'}}, show_in_app, 'ui', ('action',)),
@@ -2513,6 +2515,18 @@ except Exception as _e:                     # noqa: BLE001 — a broken rig_tool
         _logging.getLogger(__name__).warning('the whole-rig tools are not available: %s: %s', type(_e).__name__, _e)
     _RIG = []
 TOOLS += [t for t in _RIG if t.name not in {x.name for x in TOOLS}]
+# round 14's study tools (assistant/r14_tools.py: perception in the loop, re-drive, the design agent, the learned
+# model, foundation models, robust perception, risk-weighted coverage, the fleet twin)
+try:
+    from .r14_tools import TOOLS_R14 as _R14
+except Exception as _e:                     # noqa: BLE001 — a broken module never takes the assistant down
+    import logging as _logging
+    _half = isinstance(_e, ImportError) and ('partially initialized' in str(_e) or 'cannot import name' in str(_e))
+    if not _half:
+        _logging.getLogger(__name__).warning('the round-14 study tools are not available: %s: %s', type(_e).__name__,
+                                             _e)
+    _R14 = []
+TOOLS += [t for t in _R14 if t.name not in {x.name for x in TOOLS}]
 BY_NAME = {t.name: t for t in TOOLS}
 
 

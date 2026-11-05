@@ -122,6 +122,21 @@ class OptimiserPage(QWidget):
         self.crit_note = label('', muted=True, small=True, wrap=True)
         ll.addWidget(self.crit_note)
         ll.addSpacing(4)
+        ph = QHBoxLayout()
+        ph.setSpacing(4)
+        ph.addWidget(label('Learned detection', bold=True), 1)
+        self.perf_w = ScrubSpinBox('w', 'plain', 2, '', step=0.1)
+        self.perf_w.set_value(0.0)
+        self.perf_w.setFixedWidth(84)
+        self.perf_w.setToolTip('The learned detection model (Analysis ▸ Learned detection model) joins the search: '
+                               'w × its predicted recall, less its std, is taken off each candidate\'s objective (m² '
+                               'of blind area, cameras or px/cm per unit of recall); 0 = off')
+        self.perf_w.committed.connect(lambda *_: self._perf_mode())
+        ph.addWidget(self.perf_w)
+        ll.addLayout(ph)
+        self.perf_note = label('', muted=True, small=True, wrap=True)
+        ll.addWidget(self.perf_note)
+        ll.addSpacing(4)
         fh = QHBoxLayout()
         fh.addWidget(label('Free variables', bold=True))
         fh.addStretch(1)
@@ -297,6 +312,7 @@ class OptimiserPage(QWidget):
             self.delta.label = ''
         self.cable.set_value(max(max((c.cable_m for c in v.cameras), default=3.0), 3.0))
         self._crit_mode()
+        self._perf_mode()
         self.refiner.load()
 
     def _crit_mode(self, *_):
@@ -308,6 +324,26 @@ class OptimiserPage(QWidget):
         self.crit_note.setText(f'{n} target{"s" * (n != 1)} from Analysis ▸ Critical targets; the cameras\' '
                                f'requirement only (the lidars do not move).' if n else
                                'No critical targets yet: place them in Analysis ▸ Critical targets.')
+
+    def _perf_mode(self, *_):
+        """Whether a trained learned model is there to weigh in (read when the page shows and the weight changes)."""
+        import os
+        from ...core import perf_model as PM
+        path = PM.default_model_path()
+        try:
+            stamp = (path, os.path.getmtime(path))
+        except OSError:
+            stamp = (path, None)
+        if getattr(self, '_perf_seen', (None, None))[0] != stamp:        # read again only when the file changed
+            self._perf_seen = (stamp, PM.load_model() if stamp[1] is not None else None)
+        m = self._perf_seen[1]
+        on = float(self.perf_w.value()) > 0
+        if m is None or not m.trained:
+            why = m.reason() if m is not None else 'no model saved'
+            self.perf_note.setText(f'Off: {why} (Analysis ▸ Learned detection model trains one on perception records).')
+        else:
+            self.perf_note.setText(f'Trained on {m.n_records} records' + (f' ({m.detector})' if m.detector else '') +
+                                   ('; weighs in.' if on else '; weight 0 leaves it out.'))
 
     def _fill_vars(self):
         self._busy = True
@@ -366,7 +402,8 @@ class OptimiserPage(QWidget):
                            height=(self.h_lo.value(), self.h_hi.value()), cable_max=self.cable.value(),
                            count=(int(self.c_lo.value()), int(self.c_hi.value())), generations=int(max(1, self.gens.value())),
                            population=int(max(6, self.pop.value())), vars=self.vars, critical=crit,
-                           critical_weight=max(0.0, float(self.crit_w.value())))
+                           critical_weight=max(0.0, float(self.crit_w.value())),
+                           perf_weight=max(0.0, float(self.perf_w.value())))
 
     # ------------------------------------------------------------------ run
     def toggle(self):

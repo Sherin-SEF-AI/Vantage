@@ -252,7 +252,138 @@ def _detection_names(p, v):
                                                'detection_ranges.csv', 'detection_rig.csv', 'detection_quality.png')]
 
 
-GROUPS = ['Documents', 'Extrinsics', 'Calibration and robotics', 'Datasets', 'Research', 'AV stack', 'Surround view',
+# ---- round 14: perception in the loop, re-driven logs, the design agent, the learned rig model, foundation models,
+# tolerances carried to detection, risk-weighted coverage and the fleet twin. Each heavy one is listed only when it
+# can run here (its inputs set up on its page, its model downloaded); the files listed are the ones always written
+# (a heavy study also writes a figure per class, rig or camera: "N files or more", as the campaign).
+def _rig_perception_why(p) -> str:
+    """'' when Simulate ▸ Rig perception can run on the project's recordings here, else why not."""
+    from . import detection as DT
+    from . import rig_perception as RP
+    st = RP.settings_of(p)
+    if not st.recordings:
+        return 'no recording chosen: add CARLA drives with ground truth on Simulate ▸ Rig perception.'
+    bad = [os.path.basename(r['path']) for r in st.recordings
+           if not os.path.isdir(r['path']) or RP.nuscenes_root(r['path']) is None]
+    if bad:
+        return f'{", ".join(bad)}: not a recording with annotations (nuscenes/v1.0-*/sample_annotation.json).'
+    if st.backend == 'lifted':
+        if not DT.status(st.model)['verified']:
+            return 'the 2D detector is not downloaded: Simulate ▸ Detection quality ▸ Download.'
+        return ''
+    try:
+        from PyQt6.QtCore import QSettings
+        from . import bev_backends as BB
+        if BB.ExternalStore(QSettings('Vantage', 'Vantage')).approved(st.backend[9:]) is None:
+            return f'the external detector {st.backend[9:]!r} is not set up and approved on this computer.'
+    except Exception as e:                                  # noqa: BLE001 — no settings to read it from
+        return f'the external detector cannot be read ({type(e).__name__}).'
+    return ''
+
+
+def _rig_perception_names(p, v):
+    if _rig_perception_why(p):
+        return []
+    return [f'rig_perception/{n}' for n in ('rig_perception.json', 'rig_perception_regions.csv',
+                                            'rig_perception_comparisons.csv', 'rig_perception_findings.txt')]
+
+
+def _perception_records_names(p, v):
+    """The perception records of the learned model's store (Analysis ▸ Learned detection model), anonymised; a note
+    when the store has none."""
+    from . import perf_model as PM
+    try:
+        n = len(PM.store_for(p).records())
+    except Exception:                                       # noqa: BLE001 — an unreadable store has no records
+        n = 0
+    return ['perception_records/perception_records.jsonl'] if n else ['perception_records/NOT_WRITTEN.txt']
+
+
+def _perf_model_names(p, v):
+    """The saved learned model (the page trains and saves it) on this variant: calibration and predictions; a note
+    when there is no saved model or no visible camera."""
+    from . import perf_model as PM
+    if not os.path.isfile(PM.default_model_path()) or not any(c.visible for c in v.cameras):
+        return ['perf_model/NOT_WRITTEN.txt']
+    return ['perf_model/perf_model.json', 'perf_model/perf_model_calibration.csv',
+            'perf_model/perf_model_predictions.csv']
+
+
+def _foundation_why(p) -> str:
+    from . import foundation_range as FR
+    st = FR.settings_of(p)
+    if st.source == 'sweep':
+        return ('the range sweep drives CARLA: run it on Simulate ▸ Foundation models (an export reads recordings '
+                'only).')
+    if not st.recordings:
+        return 'no recording chosen: add CARLA drives with ground truth on Simulate ▸ Foundation models.'
+    try:
+        FR._check_models(st, verify=False)
+    except (ValueError, FileNotFoundError) as e:
+        return str(e)
+    return ''
+
+
+def _foundation_names(p, v):
+    if _foundation_why(p):
+        return []
+    return [f'foundation_range/{n}' for n in ('foundation_range.json', 'foundation_range.csv',
+                                              'foundation_trials.csv')]
+
+
+def _robust_why(p) -> str:
+    from . import detection as DT
+    from . import detection_eval as DE
+    from . import robust_perception as RB
+    from .groundtruth import INDEX
+    st = RB.settings_of(p)
+    if not st.recordings:
+        return 'no recording chosen: add CARLA drives with ground truth on Simulate ▸ Robust perception.'
+    if not all(os.path.isfile(os.path.join(r, INDEX)) for r in st.recordings):
+        return 'a recording has no ground truth (ground_truth/index.json).'
+    if st.detect and not DT.status(DE.settings_of(p).model)['verified']:
+        return 'the detector model is not downloaded: Simulate ▸ Detection quality ▸ Download.'
+    return ''
+
+
+def _robust_names(p, v):
+    if _robust_why(p):
+        return []
+    from . import robust_perception as RB
+    n = len(RB.settings_of(p).recordings)
+    return [f'robust_perception/{x}' for x in ('robust_perception.json', 'robust_perception_regions.csv',
+                                               'robust_perception_sensitivity.csv')] + \
+        [f'robust_perception/robust_perception_{i + 1}.png' for i in range(n)]
+
+
+def _redrive_names(p, v):
+    """With a recorded drive chosen on Simulate ▸ Log replay and PyTorch: the Re-drive tab's report (the reconstruction
+    and the confidence calibration run when exported, as the log replay's)."""
+    from . import splat_reproject as SP
+    st = SP.settings_of(p)
+    if not st.drive or not SP.is_drive(st.drive) or SP.torch_missing():
+        return []
+    return [f'redrive/{n}' for n in ('redrive.json', 'redrive_cameras.csv', 'redrive_regions.csv')]
+
+
+def _risk_names(p, v):
+    from . import risk_coverage as RC
+    if not any(c.visible for c in v.cameras):
+        return []
+    return [f'risk_coverage/{n}' for n in ('risk_coverage.json', 'risk_coverage_regions.csv',
+                                           'risk_coverage_weights.csv')] + \
+        [f'risk_coverage/risk_coverage_{c}.png' for c in RC.CLASSES]
+
+
+def _design_names(p, v):
+    """The design agent (Analysis ▸ Design agent) on the accepted requirements: run when exported (minutes)."""
+    from . import rig_designer as RD
+    if not RD.settings_of(p).items() or not any(c.visible for c in v.cameras):
+        return []
+    return [f'design_options/{n}' for n in RD.file_names(p)[:3]]
+
+
+GROUPS =['Documents', 'Extrinsics', 'Calibration and robotics', 'Datasets', 'Research', 'AV stack', 'Surround view',
           'Images', 'Mount points']
 
 FORMATS: list[ExportFormat] = [
@@ -329,6 +460,27 @@ FORMATS: list[ExportFormat] = [
                  _detection_names, 'binary', multi=True, default=False),
     ExportFormat('log_replay', 'Documents', 'Log replay: reconstruction, validation and rig A/B',
                  'JSON, CSV, PNG, 3DGS .ply', _log_replay_names, 'binary', multi=True, default=False),
+    ExportFormat('rig_perception', 'Documents', 'Rig perception: 3D detection per class and region (CARLA drives)',
+                 'JSON, CSV, TXT, PNG, JSONL', _rig_perception_names, 'binary', multi=True, default=False),
+    ExportFormat('redrive', 'Documents', 'Re-drive: how much of a recorded drive a proposed rig can reuse',
+                 'JSON, CSV, PNG', _redrive_names, 'binary', multi=True, default=False),
+    ExportFormat('foundation_range', 'Documents', 'Foundation-model detection and depth range (CARLA frames)',
+                 'JSON, CSV, PNG, JPG', _foundation_names, 'binary', multi=True, default=False),
+    ExportFormat('robust_perception', 'Documents', 'Robust perception: tolerances carried to detection',
+                 'JSON, CSV, PNG', _robust_names, 'binary', multi=True, default=False),
+    ExportFormat('risk_coverage', 'Documents', 'Risk-weighted coverage (NHTSA pre-crash scenarios, Euro NCAP)',
+                 'JSON, CSV, PNG', _risk_names, 'binary', multi=True),
+    ExportFormat('design_options', 'Documents', 'Design agent: trade-off rigs from the requirements', 'JSON, CSV, PNG',
+                 _design_names, 'binary', multi=True, default=False),
+    ExportFormat('perf_model', 'Documents', 'Learned detection model: calibration and predictions', 'JSON, CSV, PNG',
+                 _perf_model_names, 'binary', multi=True, default=False),
+    ExportFormat('fleet_twin', 'Documents', 'Fleet twin: drift, forecasts and knocks', 'JSON, CSV, PNG',
+                 lambda p, v: ['fleet_twin/fleet_twin.json', 'fleet_twin/fleet_twin.csv', 'fleet_twin/fleet_twin.png'],
+                 'binary', multi=True),
+    ExportFormat('fleet_twin_schedule', 'Documents', 'Fleet twin: recalibration schedule', 'CSV',
+                 lambda p, v: 'fleet_twin/fleet_twin_schedule.csv', 'text'),
+    ExportFormat('fleet_twin_tolerances', 'Documents', 'Fleet twin: measured drift as tolerance inputs', 'JSON',
+                 lambda p, v: 'fleet_twin/fleet_twin_tolerances.json', 'text'),
     ExportFormat('ci_templates', 'Documents', 'CI templates (GitHub Actions, GitLab CI)', 'YAML, MD',
                  lambda p, v: ['ci/github/vantage.yml', 'ci/gitlab/vantage.gitlab-ci.yml', 'ci/README.md'],
                  'text', multi=True),
@@ -415,7 +567,9 @@ FORMATS: list[ExportFormat] = [
     ExportFormat('stack_lerobot', 'AV stack', 'LeRobot dataset features and calibration sidecar', 'JSON',
                  lambda p, v: ['lerobot/meta/info.json', 'lerobot/meta/vantage_calibration.json'], 'text',
                  multi=True, default=False),
-    ExportFormat('foxglove_mcap', 'Research', 'Foxglove scene (frustums, blind volume, ego masks, TF)', 'MCAP',
+    ExportFormat('perception_records', 'Research', 'Perception records of the learned model (anonymised)', 'JSONL',
+                 _perception_records_names, 'binary', multi=True, default=False),
+    ExportFormat('foxglove_mcap', 'Research','Foxglove scene (frustums, blind volume, ego masks, TF)', 'MCAP',
                  lambda p, v: 'foxglove/vantage_scene.mcap', 'binary', default=False),
     ExportFormat('dxf', 'Mount points', 'Mount points', 'DXF', lambda p, v: 'mount-points.dxf', 'text'),
     ExportFormat('step', 'Mount points', 'Mount points', 'STEP', lambda p, v: 'mount-points.step', 'text'),
@@ -3302,6 +3456,8 @@ def _render_files(fmt_id: str, ctx: _Ctx) -> list:
             return []
         res = SP.run(ctx.project, ctx.opts.engine or Engine(), variant=ctx.variant)
         return [(f'log_replay/{n}', d) for n, d in SP.files(res, ctx.project)] if res is not None else []
+    if fmt_id in _R14:
+        return _r14_files(fmt_id, ctx)
     if fmt_id == 'sim_rig':
         from . import simrig as SR
         if not _sim_rig_names(ctx.project, ctx.variant):
@@ -3315,6 +3471,93 @@ def _render_files(fmt_id: str, ctx: _Ctx) -> list:
         return [(name(), _dxf(ctx).encode('cp1252', errors='replace'))]
     if fmt_id == 'step':
         return [(name(), t(_step(ctx)))]
+    raise ValueError(f'Unknown export format {fmt_id!r}')
+
+
+# round 14 formats: format id -> its folder
+_R14 = {'rig_perception': 'rig_perception', 'redrive': 'redrive', 'foundation_range': 'foundation_range',
+        'robust_perception': 'robust_perception', 'risk_coverage': 'risk_coverage', 'design_options': 'design_options',
+        'perf_model': 'perf_model', 'fleet_twin': 'fleet_twin', 'fleet_twin_schedule': 'fleet_twin',
+        'fleet_twin_tolerances': 'fleet_twin', 'perception_records': 'perception_records'}
+_FLEET_TWIN_FILES = {'fleet_twin': ('fleet_twin.json', 'fleet_twin.csv', 'fleet_twin.png'),
+                     'fleet_twin_schedule': ('fleet_twin_schedule.csv',),
+                     'fleet_twin_tolerances': ('fleet_twin_tolerances.json',)}
+
+
+def _not_written(fmt_id: str, text: str) -> list:
+    return [(f'{_R14[fmt_id]}/NOT_WRITTEN.txt', f'{format_by_id(fmt_id).label}: {text}\n'.encode('utf-8'))]
+
+
+def _r14_files(fmt_id: str, ctx: _Ctx) -> list:
+    """[(relative path, bytes)] of a round-14 format. A heavy study runs here only when its names say it can (the
+    detection-quality pattern); the cheap ones always run."""
+    from .analysis import Engine
+    p, v, sub = ctx.project, ctx.variant, _R14[fmt_id]
+    eng = ctx.opts.engine or Engine()
+    put = lambda files: [(f'{sub}/{n}', d) for n, d in files]          # noqa: E731
+    if fmt_id == 'risk_coverage':
+        from . import risk_coverage as RC
+        if not _risk_names(p, v):
+            return []
+        return put(RC.files(RC.run(p, eng, variant=v), p))
+    if fmt_id in _FLEET_TWIN_FILES:
+        from . import fleet_twin as FT
+        res = FT.run(p, eng)
+        if res is None:
+            return _not_written(fmt_id, 'the fleet twin could not run.')
+        keep = _FLEET_TWIN_FILES[fmt_id]
+        # the schedule CSV's \r\n as \n, as the other text formats write (their preview is the text itself)
+        return put([(n, d.replace(b'\r\n', b'\n') if n.endswith('.csv') and fmt_id != 'fleet_twin' else d)
+                    for n, d in FT.files(res, p) if n in keep])
+    if fmt_id == 'perception_records':
+        from . import perf_model as PM
+        if _perception_records_names(p, v)[0].endswith('NOT_WRITTEN.txt'):
+            return _not_written(fmt_id, 'the learned model\'s record store holds no perception record yet (Rig '
+                                        'perception, Foundation models and Robust perception write them).')
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix='vantage-export-') as td:
+            path = os.path.join(td, 'perception_records.jsonl')
+            PM.export_records(path, anonymise=True, store=PM.store_for(p))
+            with open(path, 'rb') as fh:
+                return put([('perception_records.jsonl', fh.read())])
+    if fmt_id == 'perf_model':
+        from . import perf_model as PM
+        model = PM.load_model() if not _perf_model_names(p, v)[0].endswith('NOT_WRITTEN.txt') else None
+        if model is None:
+            return _not_written(fmt_id, f'no saved model to describe {v.name} with: train one on Analysis ▸ '
+                                        'Learned detection model (it needs perception records).')
+        res = PM.run(p, eng, variant=v, model=model)
+        return put(PM.files(res, p)) if res is not None else []
+    if fmt_id == 'rig_perception':
+        from . import rig_perception as RP
+        if not _rig_perception_names(p, v):
+            return []
+        res = RP.run(p, eng, RP.settings_of(p), variant=v)
+        return put(RP.files(res, p)) if res is not None else []
+    if fmt_id == 'foundation_range':
+        from . import foundation_range as FR
+        if not _foundation_names(p, v):
+            return []
+        res = FR.run(p, eng, FR.settings_of(p), variant=v)
+        return put(FR.files(res, p)) if res is not None else []
+    if fmt_id == 'robust_perception':
+        from . import robust_perception as RB
+        if not _robust_names(p, v):
+            return []
+        res = RB.run(p, eng, RB.settings_of(p), variant=v)
+        return put(RB.files(res, p)) if res is not None else []
+    if fmt_id == 'redrive':
+        from . import redrive as RDV
+        if not _redrive_names(p, v):
+            return []
+        res = RDV.run(p, eng, RDV.settings_of(p))
+        return put(RDV.files(res, p)) if res is not None else []
+    if fmt_id == 'design_options':
+        from . import rig_designer as DSG
+        if not _design_names(p, v):
+            return []
+        res = DSG.run(p, eng, DSG.settings_of(p), variant=v)
+        return put(DSG.files(res, p)) if res is not None else []
     raise ValueError(f'Unknown export format {fmt_id!r}')
 
 
@@ -3707,6 +3950,8 @@ def preview(fmt_id: str, project: Project, result, opts: ExportOptions) -> tuple
                        'figure and the recordings compared, with bootstrap intervals. The detector runs when exported '
                        '(minutes per drive; its detections are cached in each recording, a second export takes '
                        f'seconds) · {len(names)} files or more: ' + ', '.join(os.path.basename(x) for x in names), 0)
+    if fmt_id in _R14:
+        return _r14_preview(fmt_id, project, ctx, names, first, base)
     if fmt_id == 'sim_rig':
         if not names:
             return first, 'Nothing to simulate: no visible camera, lidar or radar in this variant.', 0
@@ -3745,6 +3990,69 @@ def preview(fmt_id: str, project: Project, result, opts: ExportOptions) -> tuple
             parts.append(f'{nimg} image' + ('' if nimg == 1 else 's'))
         desc = f'A4 portrait · {pg} · ' + ', '.join(parts)
     return first, f'{desc} · {_size_text(len(data))}', len(data)
+
+
+def _r14_preview(fmt_id, project, ctx, names, first, base) -> tuple[str, str, int]:
+    """The preview of a round-14 format: the cheap ones rendered, the heavy ones described (they run when exported)."""
+    listing = ', '.join(os.path.basename(x) for x in names)
+    if fmt_id in ('risk_coverage', 'fleet_twin', 'perception_records', 'perf_model') and names and not (
+            fmt_id == 'perf_model' and not names[0].endswith('NOT_WRITTEN.txt')):
+        files = _render(fmt_id, ctx)
+        total = sum(len(d) for _, d in files)
+        head = files[0][1]
+        path0 = f'{base}/{files[0][0]}'
+        if files[0][0].endswith('NOT_WRITTEN.txt'):
+            return path0, head.decode('utf-8'), total
+        if fmt_id == 'risk_coverage':
+            doc = json.loads(head)
+            lines = [d.get('text') or f'{c}: {100 * (d.get("weighted") or 0):.0f} % of the pre-crash exposure'
+                     for c, d in (doc.get('classes') or {}).items() if isinstance(d, dict)]
+            return (path0, f'{doc["weight"]["text"]}, {doc["metric"]["text"].lower()} · {len(files)} files · '
+                           f'{_size_text(total)}\n\n' + '\n'.join(lines), total)
+        if fmt_id == 'perception_records':
+            n_rec = head.count(b'\n')
+            return (path0, f'{n_rec} perception records (vantage.perception_record/1), anonymised: no '
+                           f'vehicle, project or variant names and no paths · {_size_text(total)}', total)
+        doc = json.loads(head)                          # the fleet twin
+        return (path0, f'{len(files)} files · {_size_text(total)}\n\n'
+                + _json({k: v for k, v in doc.items() if k in ('schema', 'project', 'plan', 'as_of', 'findings')}),
+                total)
+    if fmt_id == 'perf_model':
+        return (first, 'The saved learned model describes this variant when exported (a few seconds): predicted '
+                       'recall per class and region with its interval, the cross-validated calibration and the '
+                       f'variants ranked for a real evaluation · {listing}', 0)
+    why = {'rig_perception': _rig_perception_why, 'foundation_range': _foundation_why,
+           'robust_perception': _robust_why}.get(fmt_id)
+    if not names:
+        if why is not None:
+            return first, 'Nothing to evaluate: ' + why(project), 0
+        if fmt_id == 'redrive':
+            return first, ('No recorded drive chosen (or no PyTorch): open one on Simulate ▸ Log replay and set up '
+                           'the Re-drive tab.'), 0
+        if fmt_id == 'design_options':
+            return first, ('No accepted requirement: read the brief or documents on Analysis ▸ Design agent and '
+                           'accept the rows the search should meet.'), 0
+        return first, 'No visible camera in this variant.', 0
+    text = {
+        'rig_perception': 'The 3D detector (the lifted YOLOX boxes, or the approved external command) on the '
+                          'recordings of Simulate ▸ Rig perception, per class and region, rig against rig with paired '
+                          'intervals. It runs when exported (seconds with the 2D detections cached in the recordings, '
+                          'minutes without) and also writes a map per class and rig and the perception records',
+        'foundation_range': 'The foundation models of Simulate ▸ Foundation models on its recordings: detection range '
+                            'per camera, class and model, usable depth. They run when exported (minutes on a GPU, '
+                            'much longer on the CPU) and also write a P(detect) figure per camera and class, example '
+                            'images and the perception records',
+        'robust_perception': 'The tolerance builds of Simulate ▸ Robust perception through the detector: recall, '
+                             'BEV error and ghosts per region with the band over builds. It runs when exported (tens '
+                             'of minutes per recording with the detector on)',
+        'redrive': 'The recorded drive of Simulate ▸ Log replay re-shot through the Re-drive tab\'s rig: the share '
+                   'of each camera\'s field within the error budget, per region, and what is lost. The reconstruction '
+                   'and the confidence calibration run when exported (minutes on a GPU) and also write the polar '
+                   'maps',
+        'design_options': 'The design agent on the accepted requirements of Analysis ▸ Design agent: a Pareto set of '
+                          'complete rigs, each re-checked and critiqued. It runs when exported (2–3 minutes on the '
+                          'sample) and also writes the trade-off chart'}[fmt_id]
+    return first, f'{text} · {len(names)} files or more: {listing}', 0
 
 
 def export(fmt_ids, project: Project, result, opts: ExportOptions, progress=None) -> list[str]:

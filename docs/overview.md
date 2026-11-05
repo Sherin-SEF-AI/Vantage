@@ -813,6 +813,27 @@ Each study is a page under **Analysis**. Every study has these in common:
 | **Mount brackets** | Can I print a bracket that holds each camera at exactly its planned pose? | A 3D-printable bracket per camera: hole patterns, a surface-fitted base, VHB or screws, tube clamps for rig bars; checks for image blockage, pose accuracy, wall thickness and stiffness; watertight STL. | `--brackets` |
 | **Calibration observability** | How precisely will the planned calibration pin each sensor? | Fisher information per camera (checkerboard, ChArUco, AprilGrid), 1σ per axis, the weakest direction explained in plain words, suggested board moves with their gain, a Monte Carlo *Verify*, lidar–camera fusion density. | `--observability` |
 
+### Risk-weighted coverage (Analysis ▸ Risk-weighted coverage)
+
+**What it asks:** a rig can cover almost all of the ground and still miss where crashes start. The study places the
+other road user where it is in the 0.5–4 s before a conflict and tests the cameras there with the perception range's
+pixel rule.
+
+**Sources**, each figure traced to its table and page:
+
+- NHTSA's pre-crash scenario statistics: Najm et al. 2007 (DOT HS 810 767), Swanson et al. 2019 (DOT HS 812 745,
+  Table 12) and the 2016 pedestrian table (DOT HS 812 312), weighted by crash frequency, cost, fatal crashes or
+  functional years lost;
+- the 39 scenarios of Euro NCAP's 2026 Crash Avoidance protocols (Frontal, Low Speed, Lane Departure v1.2), with their
+  speeds, paths, impact points and turn paths, weighted equally.
+
+**Measured on the sample's data rig** (crash frequency, resolved by a camera): 99 % of the ground but 88 % of the
+pedestrian, 84 % of the cyclist, 93 % of the vehicle and 79 % of the motorcyclist pre-crash exposure. The gaps are
+front 0–10 m (turning-across-path pedestrians in the last second) and front 60–80+ m (the oncoming tests).
+
+**Limits:** cameras only, clear weather, constant speeds and typical sizes; NHTSA's rows are US crashes mapped to the
+Euro NCAP template of the same configuration. A scorecard metric, *risk-weighted coverage ≥ X % for C*, checks it.
+
 ---
 
 ## 11. Design exploration: tolerance, optimiser, variants, experiments
@@ -891,6 +912,44 @@ Mirror partners can follow.
 - in the background;
 - every point is cached, so a cancelled run resumes;
 - batch: `--experiment spec.json OUT`.
+
+### Design agent (Analysis ▸ Design agent)
+
+**In:** a typed brief and the programme's documents (.txt, .md, .pdf with a built-in reader, .docx, .html). Every
+sentence keeps its page and paragraph. Requirements and constraints (a budget, sensor counts, a mounting tolerance) are
+read by the brief parser, or by your Groq or Claude key with strict JSON; each row quotes its sentence, a figure that
+is not in the quote is rejected, and statements no study can check are listed.
+
+**Out:** 3–7 complete rigs on a Pareto front of cost (your prices: Vantage ships none), steady power, the worst
+requirement margin and detection (the learned model's prediction when one is trained, else the geometric resolved share,
+labelled so). The search swaps lenses and modules, adds or removes cameras, lidars and radars and re-aims, seeded from
+your variants and published reference rigs. Each option is re-checked by every study and in random builds within the
+stated tolerance, explains each sensor (what fails without it) and critiques itself. Creating one is one undo step,
+logged with why the others were not chosen; large change sets ask for an approval.
+
+**Measured on the sample** (brief: pedestrians at 80 m ahead and 30 m all round, under 300 W, a $6k budget, 2 mm
+tolerance; prices entered by a stated rule for the test only): five options, all passing every must requirement and
+the robust check; the cheapest drops the lidar and radars the brief does not need and gives F a narrow lens. With the
+ODD test fixture as a PDF, no option meets *no blind ground*: the agent says so rather than hiding it. A run of 160
+rigs takes 2–3 minutes. The LLM path was tested only against fake servers.
+
+### Learned detection model (Analysis ▸ Learned detection model)
+
+**What it is:** a model that predicts a rig's detection per class and region from its geometry alone, with an
+uncertainty that is checked. The features are physics (pixels on the object through the real lens, cameras seeing a
+region, body occlusion, lidar points, radar coverage); the model is a Gaussian process per class on the empirical logit
+of recall, over a monotone logistic prior in pixels.
+
+**Training data:** perception records (`vantage.perception_record/1`) from Rig perception, Foundation models and Robust
+perception, in a store in your data folder (or beside the project). Records export anonymised for pooling.
+
+**Calibration**, by leave-one-scene-out cross-validation on 100 records (92 rigs, 3 scene sets): pedestrian 95 %
+interval coverage 0.92, RMSE 0.24 (logistic baseline 0.23, constant 0.45); vehicle 0.88, 0.27 (0.28, 0.34). The set is
+small and the rigs are camera subsets of one drive: the logistic in pixels alone does about as well, and active
+learning did not beat random selection (RMSE 0.121 against 0.122 at 32 rigs).
+
+**Uses:** predict a variant without simulating it, rank which variants to simulate next (expected improvement), a term
+in the placement optimiser (*Learned detection* weight), and the design agent's detection axis.
 
 ---
 
@@ -1193,6 +1252,25 @@ sidecar bag. Batch `--online-calib DRIVE OUT_DIR` (exit 3 on a knock beyond the 
 
 **Export:** `vantage.fleet/1`.
 
+### 14.5 Fleet twin (Calibrate ▸ Fleet twin)
+
+**What it follows:** every vehicle's sensors over time, from the Fleet page's records, online self-calibrations of
+recorded drives (imported, or read from a watch folder per vehicle as drives arrive) and rig-health drift (an
+indicator, never a measurement).
+
+**The model:** per axis a smooth local linear trend (Harvey), Kalman filter and smoother, fitted across the fleet by
+maximum likelihood: each source's σ scale and offset, a drift-rate prior per sensor position. Knocks by a generalised
+likelihood-ratio test with a stated false-alarm rate. The forecast is a first-passage probability against the critical
+targets' inverse tolerances (else the mounting tolerance): a recalibrate-by date, a schedule, outlier vehicles.
+
+**Back into the design:** the measured drift as tolerance inputs (`fleet_twin_tolerances.json`); *Use as mounting
+tolerance* sets the tolerance studies to it, and Robust perception can draw its builds from it.
+
+**Measured:** on 50 real online calibrations of CARLA drives, knocks of 0.45–0.8° were found 9 of 12 times at the
+first drive after them, with no false knock; on a labelled long-term fixture using CARLA's real calibration errors,
+120-day forecasts covered the truth 92 % of the time at 90 %. The drives' dates and their order on a vehicle are a
+fixture: no real fleet data was used.
+
 ---
 
 ## 15. Simulation: synthetic datasets and CARLA
@@ -1379,6 +1457,64 @@ camera with the critical-targets study.
 - 30 of 30 views agree (95 % interval 88.6–100 %);
 - the median pixel error is +2.6 %.
 
+### 15.10 Rig perception (Simulate ▸ Rig perception)
+
+**What it measures:** how well a 3D detector finds each class in each region around the car (8 sectors × 0–10 … 80+ m),
+per rig, on the same CARLA scenes. Ground truth is every annotated object in range, so an object a rig cannot see
+counts against it. Matching and AP are nuScenes'; intervals come from a block bootstrap over time, paired when two
+rigs drove the same scene; only differences whose interval excludes zero are findings, with the count expected by
+chance.
+
+**Detectors:** YOLOX's boxes lifted to 3D through the exact lens model (ground contact and a class size prior, fused
+across cameras, triangulated where rays cross), or a team's own BEV detector as a command approved on this computer.
+No pretrained torch BEV model qualified: their weights are trained on non-commercial datasets.
+
+**Measured:** on the round-8 pair (data rig against cameras 20° up, Town10HD) the pitched rig finds 5.1 points more
+vehicles [2.8, 7.1] on the fisheye images; on pinhole views cut from the same images the difference disappears. On a
+fresh 6-scene set (12 drives, 56 min of CARLA), removing the quarter cameras costs 2.3 points of pedestrian recall
+[0.2, 4.9]: 5 of 64 comparisons significant where 3.2 are expected by chance, weak evidence and said so. A COCO
+detector on CARLA renders: compare rigs, not absolute performance.
+
+### 15.11 Re-drive (Simulate ▸ Log replay ▸ Re-drive)
+
+**What it answers:** do we lose our data if we change the rig? The recorded drive is re-rendered through the proposed
+rig; each pixel's expected error is predicted from nine evidence features (never seen, novel-view angle, distance to a
+recorded viewpoint, moving object, sky …) by an additive isotonic fit calibrated on frames the reconstruction never saw.
+Each camera gets its share within an error budget, a verdict, the reasons per region, and what the old rig saw that the
+new one no longer does. The re-shot drive is written as a nuScenes folder with ground truth, confidence maps and a ROS 2
+bag.
+
+**Measured** against the real recording of the 20°-up rig: the expected error matched within 0.7 grey levels on five
+of six cameras (the front camera, which sees the car's own shadow, under-predicts by half); vehicle recall on the
+re-shot drive 90 % against 86 % real, pedestrians 22 % against 83 % (people are rebuilt as rigid bodies). No real
+third-party log was used: none downloadable without registration had camera_info, point clouds, tf and odometry.
+
+### 15.12 Foundation models (Simulate ▸ Foundation models)
+
+**What it measures:** how far a modern detector finds each class with each camera, and how far monocular depth is
+usable, on rendered frames with ground truth, beside Vantage's geometric pixels-on-target range. OWLv2 and Grounding
+DINO (open vocabulary, your own class queries), YOLOX-S as the baseline and Depth Anything V2 Small, each downloaded on
+request from a pinned revision with every file SHA-256 checked (models without a commercial-use licence only on an
+opt-in). P(detect) against range by logistic regression with cluster-bootstrap intervals gives R50, R90 and the pixel
+height the detector needs.
+
+**Measured** in a CARLA range sweep on the sample's front fisheye (60 drives): YOLOX-S finds half the pedestrians out to
+43 m [37–51] where the pixel rule promises 68 m (it needs about 38 px, not 24); monocular depth stays within 10 % only to
+about 5 m. Models trained on photographs, measured on renders.
+
+### 15.13 Robust perception (Simulate ▸ Robust perception)
+
+**What it measures:** the rig's tolerances carried to detection. Each build draws every camera's true pose from the
+mounting tolerance (the installation check's, the analysis tolerance or the fleet twin's measured drift), the thermal
+study's drift, the road vibration and the calibration residual; the perception keeps its calibration. A rotation
+remaps the recorded image exactly through its lens; what lies beyond the recording is marked missing, never invented.
+YOLOX runs on every build: recall, BEV error, out-of-view and ghosts per class and region with the band over builds,
+optionally Rig perception's 3D metric, and Sobol indices for the source and camera that drive the spread.
+
+**Measured** on the paired CARLA drives (24 builds): with each car calibrated, vehicle rig recall varies 0.835–0.882
+between builds and the body's road pitch and heave drive the BEV error; on the design calibration the ghost rate goes
+from 0.12 to 0.63 and mounting dominates. One scenario and one seed: build variation, not scene sampling.
+
 ---
 
 ## 16. Exports and data hand-off
@@ -1498,7 +1634,12 @@ Providers are chosen in Preferences ▸ Assistant:
 - check a change on a copy;
 - run the read-only studies;
 - compare variants;
-- search a camera's pose.
+- search a camera's pose;
+- read the perception studies' last results (rig perception, re-drive, foundation models, robust perception) and
+  compute the cheap ones (risk-weighted coverage, the fleet twin and its tolerances, the learned model's predictions
+  and which rigs to simulate next);
+- read requirements from a brief and run the design agent on a copy (`read_requirements`, `design_rig`): an option is
+  created only by you, on the page.
 
 **What it can change:** nothing directly. It only **proposes** design changes. You apply a proposal as one undo step or
 as a new variant, and it is then measured against the prediction.
@@ -2032,6 +2173,16 @@ Vantage states its limits wherever they apply. The main ones:
 - The OS warnings are expected.
 
 ---
+
+**Round 14 (perception, re-drive, design agent, learned model, fleet twin)**
+
+- The detection figures are a COCO detector's (and two open-vocabulary detectors') on CARLA renders: they compare rigs,
+  cameras and models; they are not a stack's absolute performance. No qualifying pretrained BEV model was found.
+- The learned model is trained on 100 records from 3 scene sets: its intervals are checked, but it has seen little.
+- Re-drive was validated on CARLA drives only; no real third-party log was used.
+- The fleet twin's knock and forecast figures come from real CARLA online calibrations arranged in time by a labelled
+  fixture: no real fleet data was used.
+- The design agent's prices in the measured run were entered for the test by a stated rule; Vantage ships no prices.
 
 ## 25. Glossary
 

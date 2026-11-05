@@ -131,7 +131,10 @@ PAGES = {'viewports': '3D and top views', 'camviews': 'Camera views', 'tolerance
          'harness': 'Cable harness',
          'observability': 'Calibration observability', 'experiments': 'Experiments', 'sim': 'CARLA simulator',
          'detection': 'Detection quality', 'campaign': 'Simulation campaigns',
-         'critical_carla': 'Critical targets in CARLA', 'splat': 'Log replay'}
+         'critical_carla': 'Critical targets in CARLA', 'splat': 'Log replay',
+         'rig_perception': 'Rig perception', 'foundation': 'Foundation models',
+         'robust_perception': 'Robust perception', 'risk_coverage': 'Risk-weighted coverage',
+         'designer': 'Design agent', 'perf_model': 'Learned detection model', 'fleet_twin': 'Fleet twin'}
 
 
 # ============================================================================================ controller
@@ -640,7 +643,7 @@ class AssistantController(QObject):
                              critical_carla=self._page_summary('critical_carla'), carla_live=self._carla_live(),
                              splat=self._page_summary('splat'), online_calib=self._page_summary('online_calib'),
                              working_dir=workdir.get(self.ctx.settings), plan=self.current_plan,
-                             provider=self.provider, model=self.model)
+                             provider=self.provider, model=self.model, studies=self._studies())
 
     def _rig_health(self):
         w = self.ctx.window
@@ -667,6 +670,30 @@ class AssistantController(QObject):
         w = self.ctx.window
         pg = getattr(w, '_page_widgets', {}).get(name) if w is not None else None
         return pg.summary() if pg is not None and hasattr(pg, 'summary') else None
+
+    # the round-14 pages: page name -> (attribute of its last result, core module whose summary() reads it)
+    _STUDY_PAGES = {'rig_perception': ('result', 'rig_perception'), 'foundation': ('result', 'foundation_range'),
+                    'robust_perception': ('result', 'robust_perception'), 'risk_coverage': ('result', 'risk_coverage'),
+                    'designer': ('res', 'rig_designer'), 'perf_model': ('result', 'perf_model'),
+                    'fleet_twin': ('result', 'fleet_twin'), 'redrive': ('rd_result', 'redrive')}
+
+    def _studies(self) -> dict:
+        """The round-14 pages' last results in brief (their module's summary(): no paths), for the assistant's
+        study tools; a page never opened or never run is left out."""
+        import importlib
+        w = self.ctx.window
+        pages = getattr(w, '_page_widgets', {}) if w is not None else {}
+        out = {}
+        for name, (attr, mod) in self._STUDY_PAGES.items():
+            pg = pages.get('splat' if name == 'redrive' else name)
+            res = getattr(pg, attr, None) if pg is not None else None
+            if res is None:
+                continue
+            try:
+                out[name] = importlib.import_module(f'vantage.core.{mod}').summary(res)
+            except Exception:                           # noqa: BLE001 — a page's result never breaks a question
+                continue
+        return out
 
     def _carla_live(self):
         w = self.ctx.window

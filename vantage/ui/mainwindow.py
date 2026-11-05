@@ -59,6 +59,10 @@ PAGE_CLASSES = {
     'critical_carla': ('critical_carla_ws', 'CriticalCarlaPage'), 'clock_tree': ('clock_tree_ws', 'ClockTreePage'),
     'isp': ('isp_ws', 'IspPage'), 'thermo_vib': ('thermo_vib_ws', 'ThermoVibPage'),
     'splat': ('splat_ws', 'SplatPage'), 'online_calib': ('online_calib_ws', 'OnlineCalibPage'),
+    'fleet_twin': ('fleet_twin_ws', 'FleetTwinPage'), 'perf_model': ('perf_model_ws', 'PerfModelPage'),
+    'designer': ('designer_ws', 'DesignerPage'), 'robust_perception': ('robust_ws', 'RobustPage'),
+    'risk_coverage': ('risk_ws', 'RiskPage'), 'rig_perception': ('rig_perception_ws', 'RigPerceptionPage'),
+    'foundation': ('foundation_ws', 'FoundationPage'),
 }
 
 
@@ -169,6 +173,13 @@ class MainWindow(QMainWindow):
         'isp': (),
         'splat': (),
         'online_calib': (),
+        'fleet_twin': (),
+        'perf_model': (),
+        'designer': (),
+        'robust_perception': (),
+        'risk_coverage': (),
+        'rig_perception': (),
+        'foundation': (),
     }
 
     def set_page(self, name):
@@ -607,6 +618,9 @@ class MainWindow(QMainWindow):
         A('fleet', 'Fleet…', lambda: self.set_page('fleet'), None, 'fleet', category='Calibrate',
           tip='The same rig on every vehicle: measured poses against the plan, drift over months, and the vehicles '
               'that differ from the rest of the fleet')
+        A('fleet_twin', 'Fleet twin…', lambda: self.set_page('fleet_twin'), None, 'timeline', category='Calibrate',
+          tip='Every vehicle\'s sensors over time: drift with its uncertainty, the date each will leave its limit, '
+              'knocks, watch folders and the measured drift as tolerance inputs')
         A('lens_calib', 'Lens calibration…', self.lens_calibration, 'Ctrl+Shift+L', 'lens', category='Calibrate')
         A('calib_import', 'Import unit calibrations…', self.import_calibrations, None, 'file', category='Calibrate')
         A('calib_export', 'Export unit calibrations…', self.export_calibrations, None, 'export', category='Calibrate')
@@ -658,6 +672,28 @@ class MainWindow(QMainWindow):
           tip='Needs the rerun-sdk package (pip install rerun-sdk): opens the Rerun viewer with the scene')
         A('compare_rigs', 'Compare rigs…', self.compare_rigs, None, None, category='Analysis',
           tip='Cross-rig domain gap between two variants, a reference rig or a nuScenes/KITTI calibration folder')
+        A('perf_model', 'Learned detection model…', lambda: self.set_page('perf_model'), None, 'sparkle',
+          category='Analysis',
+          tip='Predict each rig\'s detection per class and region from its geometry, with checked uncertainty, and '
+              'pick which rigs to simulate for real')
+        A('designer', 'Design agent…', lambda: self.set_page('designer'), None, 'optimise', category='Analysis',
+          tip='Requirements in (typed or read from documents), a Pareto set of complete rigs out, each explained and '
+              'critiqued; nothing changes until you create one')
+        A('risk_coverage', 'Risk-weighted coverage…', lambda: self.set_page('risk_coverage'), None, 'critical',
+          category='Analysis',
+          tip='Coverage weighted by where hazards appear before a crash (NHTSA pre-crash scenarios, Euro NCAP tests)')
+        A('rig_perception', 'Rig perception…', lambda: self.set_page('rig_perception'), None, 'bev',
+          category='Simulate',
+          tip='3D detection of each class in each region around the car, per rig, on the same CARLA scenes; rig against '
+              'rig with paired intervals; drive a perception scene set')
+        A('foundation', 'Foundation models…', lambda: self.set_page('foundation'), None, 'sparkle',
+          category='Simulate',
+          tip='How far a modern detector finds each class with each camera, and how far monocular depth is usable, '
+              'measured on CARLA frames beside the geometric range')
+        A('robust_perception', 'Robust perception…', lambda: self.set_page('robust_perception'), None, 'tolerance',
+          category='Simulate',
+          tip='Tolerances (mounting, thermal, vibration, calibration) carried to detection: recall, BEV error and '
+              'ghosts per region with the band over builds')
         # window
         A('ws_placement', 'Placement', lambda: self.workspace('placement'), None, None, category='Window ▸ Workspaces')
         A('ws_analysis', 'Analysis', lambda: self.workspace('analysis'), None, None, category='Window ▸ Workspaces')
@@ -797,7 +833,9 @@ class MainWindow(QMainWindow):
                        a['power_budget'], a['cable_harness'], a['gnss_imu'], a['sun_dirt'], a['isp'],
                        a['materials'], a['mount_brackets']])
         an.addSeparator()
-        an.addActions([a['requirements'], a['experiments'], a['compare_rigs']])
+        an.addActions([a['requirements'], a['experiments'], a['compare_rigs'], a['risk_coverage']])
+        an.addSeparator()
+        an.addActions([a['designer'], a['perf_model']])
         an.addSeparator()
         an.addAction(a['an_settings'])
         cb = menu('Calibrate')
@@ -808,11 +846,13 @@ class MainWindow(QMainWindow):
         cb.addActions([a['lens_calib'], a['calib_import'], a['calib_export'], a['calib_clear']])
         cb.addSeparator()
         cb.addActions([a['install'], a['lidar_calib'], a['live_rig'], a['calib_coach'], a['drive_log'], a['asbuilt'],
-                       a['online_calib'], a['fleet']])
+                       a['online_calib'], a['fleet'], a['fleet_twin']])
         si = menu('Simulate')
         si.addActions([a['carla'], a['carla_live']])
         si.addSeparator()
         si.addActions([a['detection'], a['splat'], a['campaign'], a['critical_carla']])
+        si.addSeparator()
+        si.addActions([a['rig_perception'], a['foundation'], a['robust_perception']])
         ex = menu('Export')
         ex.addAction(a['export'])
         ex.addSeparator()

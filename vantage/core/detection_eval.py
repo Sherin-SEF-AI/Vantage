@@ -368,8 +368,10 @@ def open_recording(path) -> Recording:
         run = _load_json(os.path.join(path, 'run.json'))
     ds = _load_json(os.path.join(path, 'dataset.json')) or {}
     run = run if isinstance(run, dict) else None
-    sc = (run or {}).get('scene') or {}
-    scen = (run or {}).get('scenario')
+    rd = ds.get('redrive') if ds.get('generator') == 'redrive' else None   # a re-shot drive (core.redrive)
+    rd = rd if isinstance(rd, dict) else ({} if rd is not None else None)
+    sc = (run or {}).get('scene') or ((ds.get('scene') or {}) if rd is not None else {})
+    scen = (run or {}).get('scenario') or (rd or {}).get('scenario')
     scen_name = scen.get('name') if isinstance(scen, dict) else (scen if isinstance(scen, str) else '')
     rec = Recording(path, '', doc, cams, run, str((run or {}).get('project') or ds.get('project') or ''),
                     str((run or {}).get('variant') or ds.get('variant') or ''), str(scen_name or ''),

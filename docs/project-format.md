@@ -202,11 +202,81 @@ drop mm, rear axle drop mm]), `live` and `heatmap` (view settings), and one obje
 | `online_calib` | targetless self-calibration over a recorded drive (`online_calib.py`) |
 | `isp` | auto-exposure metering masks and HDR / photometric seams (`isp_photometrics.py`) |
 | `calib_coach` | the live calibration coach on the Live rig page (`calib_coach.py`) |
+| `rig_perception` | 3D detection per class and region around the car (`rig_perception.py`) |
+| `redrive` | re-shot drives through a proposed rig and data reuse (`redrive.py`) |
+| `designer` | the design agent: requirements to trade-off rigs (`rig_designer.py`) |
+| `perf_model` | the learned rig-performance model (`perf_model.py`) |
+| `foundation` | open-vocabulary detection and depth range (`foundation_range.py`) |
+| `robust_perception` | tolerances carried through to detection (`robust_perception.py`) |
+| `risk_coverage` | coverage weighted by where hazards appear (`risk_coverage.py`) |
+| `fleet_twin` | calibration drift across the fleet over time (`fleet_twin.py`) |
 | `copilot` | the Copilot's approval records: the plans the user approved and their runs (`vantage/assistant/copilot.py`) |
 | `assistant_log` | the design log: decisions, rejected ideas, constraints and notes the assistant remembers (`vantage/assistant/memory.py`) |
 
 Each module's settings class (its `from_dict`) reads its object tolerantly: unknown keys are dropped, numbers clamped
 to the module's `LIMITS`, missing ones defaulted.
+
+The round-14 studies' objects (each empty in older files: every field takes its default):
+
+`analysis.rig_perception` (`RigPerceptionSettings` in `rig_perception.py`): `recordings` (each `path`, `rig`: the
+first rig is the reference), `backend` (`lifted`, or `external:NAME`: a command kept in the user's own settings on
+this computer, never in the file), `model` (the 2D detector), `views` (`fisheye` or `pinhole`) with `view_fov_deg`,
+`view_pitch_deg`, `view_yaws`, `view_width`, `view_aspect`, `score` (the operating point), `match_m` (the centre
+distance recall and the centre error are quoted at), `instants` (`all` or `keyframes`), `frame_step`, `max_range_m`
+(0: the recordings' annotation range), `classes`, `group_nms_m`, the lift's `pitch_sigma_deg`, `yaw_sigma_deg`,
+`box_px_sigma`, `min_triangulation_deg` and `fuse`, the bootstrap's `bootstrap`, `block_s`, `confidence` and `seed`,
+`min_gt` and `min_objects` (a region with fewer is shown, never a finding), `cache` (`keep`, `read`, `off`: the 2D
+detections in the recording) and `scene_set` (`set_id`, `variants`, `seeds`, `town`, `duration_s`, `traffic`,
+`walkers`, `weather`, `out_dir`, `port`, `tm_port`).
+
+`analysis.redrive` (`RedriveSettings` in `redrive.py`): `variant` (the proposed rig's uid), `t_start`, `t_end`,
+`schedule` (`recorded` or `rate`) with `rate_hz`, `image_scale` (0: the drive's), `rolling_shutter`, `lidar`, `rosbag`,
+`ground_truth` (`auto`, `always`, `never`), `jpeg_quality`, `keyframe_hz`, `conf_scale`, `error_budget` (grey levels),
+`reuse_share`, `collect_share`, `sources` (`holdout`, `paired`, `loo`), `paired_drive`, `loo_camera`, `calib_views`,
+`calib_pixels`, `bins`, `max_views`, `report_instants`, `val_frames`, `seed`. The drive itself is `analysis.splat`'s.
+
+`analysis.designer` (`DesignerSettings` in `rig_designer.py`): `brief`, `documents` (each `tag`, `name`, `path`, `kind`,
+`pages`, `sentences`, `problems`, `sha256`: the path stays in the file and never reaches an export), `requirements`
+(each `item`: a scorecard row, `source`: the sentence's id, page and quote, `accepted`, `origin`), `constraints`
+(`kind`, `op`, `value`, `unit`, `priority`, `text`, `source`, `accepted`, `origin`), `not_checkable`, `rejected`,
+`extraction` (`method`, `model`, `usage`, `seconds`, `documents`, `notes`), `prices` (yours: `module:<id>`,
+`lens:<id>`, `sensor:<id>` → price) and `currency`, `options`, `evaluations`, `budget_s`, `seed`, `axes`,
+`vary_lenses`, `vary_count`, `vary_lidar`, `vary_radar`, `placement`, `reference_seeds`, `accepted` (the options
+created: `option`, `variant`, `variant_uid`, `date`, `why`) and `approvals` (the approval records of large change sets).
+
+`analysis.perf_model` (`PerfModelSettings` in `perf_model.py`): `classes`, `metrics`, the fit's `restarts`, `max_iter`,
+`min_records`, `min_rows`, `sparse_n`, `inducing`, `cv` and `cv_max_folds`, `objective` (class → weight), `max_range_m`,
+`kappa`, `mode` (`ei`, `std`, `ucb`) and `k` (active learning), `reference` (a variant uid), `detector`,
+`store_in_project` (the perception records beside the project file instead of the user's data folder), `occlusion`,
+`scene_effects`, `seed`. The records and the trained model are not in the project file.
+
+`analysis.foundation` (`FoundationSettings` in `foundation_range.py`): `source` (`recordings` or `sweep`), `recordings`,
+`detectors`, `depth_model`, `opt_in` (models whose licence does not allow commercial use), `classes` (each `name`,
+`query`, `coco`, `carla`, `categories`, `gt_classes`, `also`, `height`, `width`, `min_px`), `scores` (per model family),
+`iou`, `iou_small`, `small_px`, `max_occluded`, `max_truncated`, `views` (`fisheye`, `pinhole`, `both`) with
+`view_fov_deg`, `view_pitch_deg`, `view_yaws`, `view_width`, `view_aspect`, `depth_edges`, `abs_rel_max`,
+`depth_min_px`, `frame_step`, `max_frames`, `cameras`, `bootstrap`, `confidence`, `seed`, `device`, `gpu_mem_gb`, and
+the range sweep's `sweep_cameras`, `sweep_classes`, `ranges_m`, `offsets_deg`, `road_lateral_m`, `seeds`, `town`,
+`weather`, `image_scale`, `duration_s`, `sweep_frames`.
+
+`analysis.robust_perception` (`RobustSettings` in `robust_perception.py`): `recordings`, `mode` (`per_vehicle` or
+`design`), the sources `mounting` (`mount_from`: `install`, `analysis`, `fleet_twin` or `custom`, with `mount_deg`,
+`mount_mm`, `mount_dist`), `thermal` (`thermal_from`, `thermal_deg`, `thermal_mm`), `vibration` (`vib_from`,
+`vib_body_deg`, `vib_heave_mm`, `vib_flex_deg`, `vib_flex_mm`) and `calibration` (`calib_from`, `calib_deg`,
+`calib_mm`), the budget `samples`, `sobol_n`, `oat_samples`, `frame_step`, `bev_frame_step`, `max_slots`, `detect`,
+`sobol_detect`, `score`, `iou`, `lift` (`contact` or `box`), `gate_m`, `gate_frac`, `seed`, `boot`,
+`records_per_sample` and `bev3d` (also Rig perception's 3D metric on every build).
+
+`analysis.risk_coverage` (`RiskSettings` in `risk_coverage.py`): `weight` (`frequency`, `cost`, `fatal`, `fyl`,
+`ncap`), `dataset` (`swanson2019` or `najm2007`), `metric` (`resolved`, `seen`, `redundant`), `ttc_min`, `ttc_max`,
+`ttc_samples`, `extended`, `cell_m`, `area_m`, `map_m`.
+
+`analysis.fleet_twin` (`fleet_twin.py`): `settings` (`FleetTwinSettings`: `variant`, `horizon_days`, `false_alarm`,
+`glr_window`, `min_step`, `risk`, `limit_source` (`auto`, `critical`, `analysis`, `fleet`, `user`), `user_mm`,
+`user_deg`, `pool` (`sensor` or `kind`), `online_obs` (`segments` or `windows`), `tol_horizon_days`, `outlier_z`,
+`as_of`, `watch_quiet_s`), `observations` (online self-calibration segments per vehicle and sensor, with their σ and
+the plan they were measured against), `events` (rig-health drift: shown, never measured), `watch` (per vehicle id its
+`folder` and `enabled`) and `seen` (the drives already read from a watch folder).
 
 `analysis.drivelog` (`DriveLogSettings` in `drivelog.py`): `path` (the bag or nuScenes folder last checked),
 `variant_uid` (empty: the active variant), `camera_stamp` (what a camera's header stamp marks: `mid_exposure`,

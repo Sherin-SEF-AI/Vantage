@@ -632,6 +632,32 @@ vantage rig.vantage --perception-range fog.json --condition fog     # one condit
 <pre><code>vantage rig.vantage --experiment spec.json exp/</code></pre>
     <p><a href="docs.html#experiments">Reference</a></p>
 
+    <h3>Risk-weighted coverage</h3>
+    <p><b>Where:</b> <b>Analysis ▸ Risk-weighted coverage</b>. Choose the weighting (crash frequency, cost, fatal crashes,
+      functional years lost, or the Euro NCAP scenarios equally). <b>Answers:</b> of where pedestrians, cyclists, vehicles
+      and motorcyclists are in the seconds before a crash, how much do the cameras cover, and where is the gap? The
+      sample's data rig covers 99 % of the ground but 88 % of the pedestrian exposure. Add the proposed row to the
+      scorecard to keep it there.</p>
+<pre><code>vantage rig.vantage --risk-coverage risk.json --risk-min pedestrian=85   # exit 3 below 85 %</code></pre>
+    <p><a href="docs.html#risk-coverage">Reference</a></p>
+
+    <h3>Design agent</h3>
+    <p><b>Where:</b> <b>Analysis ▸ Design agent</b>. Type the brief or add the programme's documents, press <b>Read
+      requirements</b>, untick what you do not want, enter your prices, press <b>Run</b>. <b>Answers:</b> three to seven complete rigs that
+      trade cost, power, margin and detection, each checked, explained sensor by sensor and critiqued. Pick one and
+      <b>Create variant</b>: a new variant in one undo step, with the reasons in the design log.</p>
+<pre><code>vantage rig.vantage --read-requirements rows.json odd.pdf --design design/ --save rig.vantage</code></pre>
+    <p><a href="docs.html#designer">Reference</a></p>
+
+    <h3>Learned detection model</h3>
+    <p><b>Where:</b> <b>Analysis ▸ Learned detection model</b>. Collect perception records (Rig perception, Foundation
+      models and Robust perception write them), press <b>Train</b> and read the calibration table before trusting a
+      prediction. <b>Answers:</b> the predicted recall per class and region of every variant with its interval, and which
+      variants are worth simulating next. Set its weight on the Optimise page to let the search use it.</p>
+<pre><code>vantage rig.vantage --perf-model model/ --perf-save
+vantage rig.vantage --suggest-simulations 4</code></pre>
+    <p><a href="docs.html#perf-model">Reference</a></p>
+
     <!-- ======================================================== surround -->
     <h2 id="f-surround">Every feature: surround view</h2>
     <h3>Bird's-eye view, seams and remap tables</h3>
@@ -716,6 +742,13 @@ vantage rig.vantage --calib-coach coach/          # how many views the coach nee
 <pre><code>vantage rig.vantage --fleet-import car-07 install.json --save rig.vantage
 vantage rig.vantage --fleet fleet/</code></pre>
     <p><a href="docs.html#fleet">Reference</a></p>
+
+    <h3>Fleet twin</h3>
+    <p><b>Where:</b> <b>Calibrate ▸ Fleet twin</b>. Import online self-calibrations or set a watch folder per vehicle.
+      <b>Answers:</b> each sensor's drift with its uncertainty, knocks the day they happen, the date each sensor should be
+      recalibrated, and the measured drift as the tolerance for the design (<b>Use as mounting tolerance</b>).</p>
+<pre><code>vantage rig.vantage --fleet-twin-online car-07 online.json --fleet-twin twin/   # exit 3: a sensor is due</code></pre>
+    <p><a href="docs.html#fleet-twin">Reference</a></p>
     <figure><div class="frame natural"><img src="media/asbuilt.jpg" alt="The as-built check comparing each camera's outline of the vehicle with the plan" loading="lazy" width="1600" height="900"></div>
       <figcaption>The as-built check.</figcaption></figure>
 
@@ -770,6 +803,36 @@ vantage --ground-truth-summary run/</code></pre>
     <p><b>Where:</b> <b>Simulate ▸ Critical targets in CARLA…</b>. It stands the critical targets in CARLA and compares what each camera
       sees with the study, in another renderer. <code>--critical-carla crit/</code> exits 3 when a view disagrees.
       <a href="docs.html#critical-carla">Reference</a></p>
+
+    <h3>Rig perception</h3>
+    <p><b>Where:</b> <b>Simulate ▸ Rig perception…</b>. Add a CARLA drive of each rig (or drive a perception scene set:
+      the same scenes and seeds for every variant), press <b>Run</b>. <b>Answers:</b> how well a 3D detector finds each
+      class in each region around the car, rig against rig, with only the differences the data support listed as
+      findings.</p>
+<pre><code>vantage rig.vantage --rig-perception perception/ --perception-recording a/:A --perception-recording b/:B</code></pre>
+    <p><a href="docs.html#rig-perception">Reference</a></p>
+
+    <h3>Re-drive</h3>
+    <p><b>Where:</b> <b>Simulate ▸ Log replay ▸ Re-drive</b>. Open a recorded drive, choose the proposed rig as rig B, press
+      <b>Calibrate &amp; report</b>. <b>Answers:</b> how much of each new camera's field the existing drive can provide
+      within your error budget, why the rest cannot, and what the old rig saw that the new one will not. <b>Export
+      re-shot drive</b> writes the drive as the new rig would have recorded it.</p>
+<pre><code>vantage rig.vantage --redrive drive/ redrive/ --redrive-variant 2   # exit 3: re-collect</code></pre>
+    <p><a href="docs.html#redrive">Reference</a></p>
+
+    <h3>Foundation models</h3>
+    <p><b>Where:</b> <b>Simulate ▸ Foundation models…</b>. Download the models you want (the licence is shown), add a
+      recording or set up a range sweep, type your own classes. <b>Answers:</b> how far each detector really finds each
+      class with each camera, against the pixel rule, and how far monocular depth is usable.</p>
+<pre><code>vantage rig.vantage --foundation-range fm/ --foundation-recording drive/ --foundation-models yolox_s</code></pre>
+    <p><a href="docs.html#foundation">Reference</a></p>
+
+    <h3>Robust perception</h3>
+    <p><b>Where:</b> <b>Simulate ▸ Robust perception…</b>. Add a recording with ground truth, choose the sources and the
+      calibration mode, press <b>Run</b> (tens of minutes). <b>Answers:</b> how much the mounting, thermal, vibration
+      and calibration tolerances change detection, per region, and which source and camera matter.</p>
+<pre><code>vantage rig.vantage --robust-perception robust/ --robust-recording drive/ --robust-min-recall 0.8</code></pre>
+    <p><a href="docs.html#robust-perception">Reference</a></p>
     <figure><div class="frame natural"><img src="media/carla.jpg" alt="The CARLA page with the planned rig recorded in a CARLA town" loading="lazy" width="1600" height="900"></div>
       <figcaption>The planned rig driven in CARLA.</figcaption></figure>
 
@@ -925,6 +988,10 @@ vantage rig.vantage --fleet-import car-07 install.json --save rig.vantage</code>
     <h3>Find the drive where a camera moved</h3>
 <pre><code>vantage rig.vantage --online-calib drive_0412/ online/   # exit 3: a camera was knocked beyond the tolerance</code></pre>
 
+    <h3>Ask whether a new rig keeps the data you have</h3>
+<pre><code>vantage rig.vantage --redrive drive_0412/ reuse/ --redrive-variant "Cameras 20° up"</code></pre>
+    <p>The report gives each camera's share of its field within the error budget; exit 3 means re-collect.</p>
+
     <h3>Ask Claude to optimise and report</h3>
     <p>In the Claude Code panel: "Without moving locked cameras, raise the minimum density above 3.5 px/cm with no new blind ground.
       Simulate first, apply the best as one change, and write what you did in the design log." Every change is one undo step.</p>
@@ -939,11 +1006,11 @@ vantage rig.vantage --fleet-import car-07 install.json --save rig.vantage</code>
       <tr><td><code>2</code></td><td>Done, but the plan has critical issues or the study's own failure condition is met (a cable too long, a camera inside a housing, a wheel lifted…).</td></tr>
       <tr><td><code>3</code></td><td>A camera or sensor has to be re-mounted or could not be checked (drive log, as-built, online calibration, rig health, clock tree, CARLA comparisons).</td></tr>
       <tr><td><code>4</code></td><td>An input could not be read, an output not written, or a calibration matched no camera.</td></tr>
-      <tr><td><code>5</code></td><td>The requirements check failed (<code>--check</code>).</td></tr>
+      <tr><td><code>5</code></td><td>The requirements check failed (<code>--check</code>), or no design option meets every must requirement (<code>--design</code>).</td></tr>
       <tr><td><code>6</code></td><td>A validation check failed, or a result does not reproduce.</td></tr>
       <tr><td><code>7</code></td><td>No CARLA server answered, or the run failed.</td></tr>
-      <tr><td><code>8</code></td><td>The detector model is missing (<code>--detection-download</code> fetches it).</td></tr>
-      <tr><td><code>9</code></td><td>A campaign drive failed (run again to resume).</td></tr>
+      <tr><td><code>8</code></td><td>The detector model is missing (<code>--detection-download</code> fetches it), or a foundation model (<code>--foundation-download</code>).</td></tr>
+      <tr><td><code>9</code></td><td>A campaign or scene-set drive failed (run again to resume), or an external detector is not approved on this computer (<code>--rig-perception</code>).</td></tr>
       <tr><td><code>10</code></td><td>No approved, intact Copilot plan of that id, or a step no longer validates.</td></tr>
     </table>
 

@@ -14,7 +14,15 @@ density against the nominal pose. With units on, cameras are switched on and off
 never a kept camera, and a hidden camera stays off; fewer cameras are tried whenever count allows them, whatever the
 objective. With tol_seed every candidate is scored under the same tolerance draws (common random numbers), so two
 candidates differ by their poses and not by their luck. Every one of these is off by default, so the Optimise page
-searches exactly as before."""
+searches exactly as before.
+
+The learned detection model (core.perf_model, Analysis ▸ Learned detection model) can join the objective: with
+perf_weight > 0 and a trained model saved, each candidate's predicted detection objective (the model's weighted mean
+recall over its classes and regions, minus perf_kappa × its std: an optimistic guess is not rewarded) is computed from
+the candidate's geometry (perf_model.describe_rig, about 15 ms with the occlusion maps the search already built), and
+perf_weight × that term is taken off its objective (in the objective's own unit per unit of recall: m² of blind area,
+cameras or px/cm) and off the Pareto ordering's first axis, as 'weigh' does for the critical targets. Without a
+trained model the term is off and the search says why (perf_note)."""
 from __future__ import annotations
 
 import copy
@@ -80,6 +88,8 @@ class OptSettings:
     need_blind: float = -1.0          # m² of blind ground at most (worst under tolerance when scored so; < 0 = none)
     units: bool = False               # switch cameras as units: mirrored pairs together, kept ones never, hidden off
     tol_seed: int = -1                # >= 0: every candidate scored with the same tolerance draws (from this seed)
+    perf_weight: float = 0.0          # > 0: the learned model's predicted detection joins the objective (see above)
+    perf_kappa: float | None = None   # its penalty on the prediction's std (None: the model's own setting)
 
 
 CRITICAL_MODES = ('off', 'require', 'weigh')
@@ -100,6 +110,7 @@ class Candidate:
     crit_unmet: int = 0              # critical targets no camera resolves at the candidate's pose
     crit_tol: int = 0                # ... in its worst tolerance sample (= crit_unmet without the tolerance score)
     crit_missing: list = field(default_factory=list)   # their names (at the candidate's pose)
+    perf: float = 0.0                # the learned model's term (predicted mean − κ·std of the objective; 0: off)
 
 
 def default_vars(project: Project, variant: Variant) -> list[FreeVar]:
@@ -162,6 +173,20 @@ class Optimiser:
             from .critical import TargetCheck
             tc = TargetCheck(project, self.vg, self.variant)
             self.crit = tc if tc else None
+        self.perf, self.perf_note, self._perf_grid = None, '', None
+        if st.perf_weight > 0:
+            from . import perf_model as PM
+            from . import regions as RG
+            m = PM.load_model()
+            if m is not None and m.trained:
+                self.perf = m
+                self._perf_grid = RG.RegionGrid.from_dict(m.grid) if m.grid else RG.default_grid(project)
+                self.perf_note = (f'learned detection model ({m.n_records} records, {m.detector or "detector"}) '
+                                  f'weighted {st.perf_weight:g}')
+            else:
+                self.perf_note = ('learned detection term off: ' +
+                                  (m.reason() if m is not None else 'no model saved (Analysis ▸ Learned detection '
+                                                                    'model trains one)'))
 
     # ---------------------------------------------------------- genes
     def nominal(self) -> Candidate:
@@ -303,6 +328,8 @@ class Optimiser:
                 if self.crit is not None and cand.crit_tol < len(self.crit.targets):
                     cand.crit_tol = max(cand.crit_tol, int((~self.crit.met(cams, poses)).sum()))
         cand.worst = worst
+        if self.perf is not None:
+            cand.perf = self._perf_term(cams)
         cables = [route_length(self.project, c, routed=False) for c in cams]     # the estimate: fast in the loop
         cand.cable_max = max(cables)
         cand.cable_ok = all(r <= max(c.cable_m, self.st.cable_max) + 1e-6 for r, c in zip(cables, cams))
@@ -311,6 +338,22 @@ class Optimiser:
             cand.worst += 10.0
         self.evals += 1
         return cand
+
+    def _perf_term(self, cams) -> float:
+        """The learned model's objective term of the cameras (with the variant's lidars and radars); 0 when the model
+        cannot predict it."""
+        from . import perf_model as PM
+        v = Variant(name=self.variant.name, cameras=cams, sensors=self.variant.sensors)
+        try:
+            f = PM.describe_rig(self.project, v, self._perf_grid, self.engine)
+            t = float(self.perf.objective_term(f, self.st.perf_kappa))
+        except (ValueError, KeyError, np.linalg.LinAlgError):
+            return 0.0
+        return t if math.isfinite(t) else 0.0
+
+    def perf_bonus(self, c: Candidate) -> float:
+        """What the learned term takes off the candidate's objective (0 when it is off)."""
+        return self.st.perf_weight * c.perf if self.perf is not None else 0.0
 
     def _common_draws(self):
         """With tol_seed: one mounting error per tolerance sample and camera, the same for every candidate (a camera
@@ -351,7 +394,7 @@ class Optimiser:
 
     def objectives(self, c: Candidate):
         pen = self.crit_penalty(c)
-        w = self.st.critical_weight * pen if self.st.critical == 'weigh' else 0.0
+        w = (self.st.critical_weight * pen if self.st.critical == 'weigh' else 0.0) - self.perf_bonus(c)
         if self.st.objective == 'cameras':
             out = (c.cams + (0 if self._blind_ok(c, 0.01) else 10) + w, c.worst, -c.min_density)
         elif self.st.objective == 'density':
@@ -380,9 +423,10 @@ class Optimiser:
                 near = min(self.shortfall(c) for c in ok)
                 ok = [c for c in ok if self.shortfall(c) <= near + 1e-9]
         key = None
-        if self.st.critical == 'weigh' and self.crit is not None:
-            w = self.st.critical_weight
-            key = lambda c: (c.worst + w * self.crit_penalty(c), -c.min_density, c.cams)   # noqa: E731
+        if (self.st.critical == 'weigh' and self.crit is not None) or self.perf is not None:
+            w = self.st.critical_weight if (self.st.critical == 'weigh' and self.crit is not None) else 0.0
+            key = lambda c: (c.worst + w * self.crit_penalty(c) - self.perf_bonus(c), -c.min_density,   # noqa: E731
+                             c.cams)
         return pareto(ok, key)
 
     # ---------------------------------------------------------- loop
@@ -425,7 +469,7 @@ class Optimiser:
         for c in front:
             if nom is not None and c is nom:
                 continue
-            key = (round(c.worst, 3), round(c.min_density, 1), c.cams, c.crit_tol, c.crit_unmet)
+            key = (round(c.worst, 3), round(c.min_density, 1), c.cams, c.crit_tol, c.crit_unmet, round(c.perf, 3))
             if key in seen:
                 continue
             seen.add(key)
@@ -481,6 +525,8 @@ class Optimiser:
         note = f'Optimiser {cand.label}: worst {cand.worst:.3f} m² under tolerance'
         if self.crit is not None:
             note += f'; critical targets resolved {self.targets_text(cand)}'
+        if self.perf is not None:
+            note += f'; learned detection term {cand.perf:.3f}'
         v = Variant(name=name, note=note)
         uid_map = {}
         for uid, gene in cand.genes.items():

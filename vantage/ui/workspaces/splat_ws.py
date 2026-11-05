@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QComboBox, QFileDialog, QGridLay
 
 from ... import workdir
 from ...core import detection as DT
+from ...core import redrive as RD
 from ...core import splat_reproject as SP
 from ..theme import STATUS, THEME, sans
 from ..widgets import fit_width, ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label
@@ -130,6 +131,7 @@ class _Sig(QObject):
     done = pyqtSignal(int, object)
     failed = pyqtSignal(int, str)
     progress = pyqtSignal(int, float, str)
+    nudge = pyqtSignal(int, object)
 
 
 class SplatPage(QWidget):
@@ -151,6 +153,15 @@ class SplatPage(QWidget):
         self.sig.done.connect(self._thread_done)
         self.sig.failed.connect(self._failed)
         self.sig.progress.connect(self._progress)
+        self.sig.nudge.connect(self._nudge_done)
+        self.rd_result: RD.RedriveResult | None = None   # the data-reuse report (Re-drive tab)
+        self.rd_prepared: dict | None = None             # its scene, evidence and calibration (the nudge renders on it)
+        self.rd_export: dict | None = None               # the last re-shot export
+        self.nudge_out: dict | None = None
+        self._nudge_lock = threading.Lock()
+        self._nudge_req = None                           # the latest nudge render asked for (older ones are dropped)
+        self._nudge_running = False
+        self._nudge_gen = 0
         self.setObjectName('base')
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -406,8 +417,396 @@ class SplatPage(QWidget):
         fs.setWidgetResizable(True)
         fs.setWidget(fw)
         self.tabs.addTab(fs, 'Findings')
+        self.tabs.addTab(self._redrive_tab(), 'Re-drive')
         rl.addWidget(self.tabs, 1)
         return w
+
+    # ------------------------------------------------------------------ re-drive (core.redrive)
+    def _redrive_tab(self):
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 4, 0, 0)
+        lay.addWidget(label('If we change the rig, do we lose our data? The proposed rig (rig B) re-shoots the drive; '
+                            'every re-rendered pixel gets an expected error calibrated on views the reconstruction '
+                            'never saw.', muted=True, small=True, wrap=True))
+        row = QHBoxLayout()
+        row.addWidget(label('Budget', ink2=True))
+        self.rd_budget = ScrubSpinBox('', 'plain', 1, 'grey', step=0.5, width=96)
+        self.rd_budget.setToolTip('A pixel is reusable when its mean absolute error is within this many grey levels '
+                                  '(0–255)')
+        self.rd_budget.committed.connect(lambda v: self._rd_set(f'error budget {v:g}', error_budget=v))
+        row.addWidget(self.rd_budget)
+        self.rd_paired_label = label('', small=True)
+        b = button('Second recording…', 'ghost', 'folder', 'A recording of the same drive by another rig: it '
+                                                        'calibrates and tests the confidence')
+        b.clicked.connect(lambda: self._rd_pick_paired())
+        row.addWidget(b)
+        row.addWidget(self.rd_paired_label, 1)
+        self.b_rd_run = button('Calibrate & report', 'primary', 'play', 'Calibrate the confidence and report what '
+                                                                       'of the drive the proposed rig can reuse (a '
+                                                                       'background job)')
+        self.b_rd_run.clicked.connect(lambda: self.redrive())
+        row.addWidget(self.b_rd_run)
+        self.b_rd_export = button('Export re-shot drive…', 'ghost', 'export', 'Write the drive re-rendered through '
+                                                                              'the proposed rig as a nuScenes folder '
+                                                                              'with confidence sidecars')
+        self.b_rd_export.clicked.connect(lambda: self.reshoot())
+        row.addWidget(self.b_rd_export)
+        lay.addLayout(row)
+        self.rd_table = _table((('Camera', ''), ('Within budget', 'Expected share of the camera\'s field within '
+                                                                    'the budget'),
+                                ('Expected error', 'Mean expected error, grey levels'), ('Verdict', ''),
+                                ('Mostly', 'The main reason for the rest')))
+        self.rd_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.rd_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.rd_table.itemSelectionChanged.connect(lambda: self._rd_show_overlay())
+        self.rd_table.setMaximumHeight(190)
+        lay.addWidget(self.rd_table)
+        self.rd_text = label('', small=True, wrap=True)
+        lay.addWidget(self.rd_text)
+        g = QGridLayout()
+        self.rd_polar = ImageView('Calibrate & report to see the regions.')
+        self.rd_lost = ImageView('')
+        self.rd_overlay = ImageView('')
+        g.addWidget(self.rd_polar, 0, 0)
+        g.addWidget(self.rd_lost, 0, 1)
+        g.addWidget(self.rd_overlay, 0, 2)
+        lay.addLayout(g, 1)
+        # the nudge
+        lay.addWidget(hline())
+        nrow = QHBoxLayout()
+        nrow.addWidget(label('Nudge', ink2=True))
+        self.nudge_cam = QComboBox()
+        self.nudge_cam.setToolTip('A camera of the proposed rig, re-rendered at the preview\'s time')
+        self.nudge_cam.currentIndexChanged.connect(lambda _: self._nudge_reset_fields())
+        nrow.addWidget(self.nudge_cam)
+        self.nudge_f = {}
+        for k, axis, kind, unit in (('dx', 'X', 'plain', 'm'), ('dy', 'Y', 'plain', 'm'), ('dz', 'Z', 'plain', 'm'),
+                                    ('dyaw', 'Yaw', 'plain', '°'), ('dpitch', 'Pitch', 'plain', '°')):
+            f = ScrubSpinBox(axis, kind, 3 if unit == 'm' else 1, unit, step=0.01 if unit == 'm' else 0.5, width=86)
+            f.setToolTip(f'Move the camera: {"Δ" + k[1:]} ({"pitch positive down" if k == "dpitch" else unit})')
+            f.scrubbed.connect(lambda v, kk=k: self._nudge_changed(kk, v, True))
+            f.committed.connect(lambda v, kk=k: self._nudge_changed(kk, v, False))
+            f.scrub_finished.connect(lambda: self.nudge(full=True))
+            f.set_value(0.0)
+            nrow.addWidget(f)
+            self.nudge_f[k] = f
+        self.nudge_lens = QComboBox()
+        self.nudge_lens.setToolTip('Another lens for the camera')
+        self.nudge_lens.currentIndexChanged.connect(lambda _: self.nudge(full=True))
+        nrow.addWidget(self.nudge_lens)
+        self.b_nudge_apply = button('Apply to variant', None, 'check', 'Apply the nudge to the proposed variant\'s '
+                                                                      'camera (one undoable edit)')
+        self.b_nudge_apply.clicked.connect(lambda: self.apply_nudge())
+        nrow.addWidget(self.b_nudge_apply)
+        b = button('Reset', 'ghost', None, 'Back to the camera as it is')
+        b.clicked.connect(lambda: self._nudge_reset_fields(render=True))
+        nrow.addWidget(b)
+        nrow.addStretch(1)
+        lay.addLayout(nrow)
+        ng = QGridLayout()
+        self.nudge_view = ImageView('Calibrate & report, then move a camera.')
+        self.nudge_conf = ImageView('')
+        ng.addWidget(self.nudge_view, 0, 0)
+        ng.addWidget(self.nudge_conf, 0, 1)
+        lay.addLayout(ng, 1)
+        self.nudge_label = label('', small=True, wrap=True)
+        lay.addWidget(self.nudge_label)
+        return w
+
+    @property
+    def rd_settings(self) -> RD.RedriveSettings:
+        return RD.settings_of(self.ctx.store.project)
+
+    def _rd_set(self, text, **kw):
+        if self._syncing:
+            return False
+        st = self.rd_settings
+        for k, v in kw.items():
+            setattr(st, k, v)
+        new = RD.RedriveSettings.from_dict(st.to_dict()).to_dict()
+        if new == self.rd_settings.to_dict():
+            return False
+
+        def fn(p):
+            p.analysis.redrive = new
+        self.ctx.store.edit('analysis', fn, f'Re-drive · {text}')
+        return True
+
+    def _rd_pick_paired(self):
+        d = QFileDialog.getExistingDirectory(self, 'A second recording of the same drive')
+        if d:
+            self.set_paired(d)
+
+    def set_paired(self, path) -> bool:
+        """The second recording of the drive (undoable); it becomes a calibration source as well."""
+        p = os.path.abspath(os.path.expanduser(str(path)))
+        if not SP.is_drive(p):
+            self.ctx.msg(f'{os.path.basename(p)} is neither a nuScenes folder nor a ROS 2 bag.', 6000)
+            return False
+        src = list(self.rd_settings.sources)
+        if 'paired' not in src:
+            src.append('paired')
+        return self._rd_set(f'second recording {os.path.basename(p)}', paired_drive=p, sources=src) or True
+
+    def _proposed(self):
+        p = self.ctx.store.project
+        return RD.proposed_variant(p, self.rd_settings, self.settings)
+
+    def redrive(self) -> bool:
+        """Calibrate the confidence and report the proposed rig's data reuse: a background job."""
+        if self.busy:
+            return False
+        st, sst = self.rd_settings, self.settings
+        if not sst.drive:
+            self.status_text = 'Choose a drive first.'
+            self.refresh()
+            return False
+        p, eng, root = self.ctx.store.project, self._engine(), self._cache_root()
+        drive, scene, bk = self.drive, self.scene, self._build_key()
+        v = self._proposed()
+
+        def work(progress, cancel):
+            res = RD.run(p, eng, st, v, progress, cancel, root, drive, scene)
+            if res is not None:
+                res._prepared['scene'].info.setdefault('build_key', bk)
+            return res
+        self._begin('redrive', 'Calibrating the confidence…')
+        ok = self._start('redrive', 'Log replay · re-drive', work)
+        if not ok:
+            self.busy = ''
+        self.refresh()
+        return ok
+
+    def reshoot(self, folder=None) -> bool:
+        """Export the re-shot drive into folder (a background job; asks for one when None)."""
+        if self.busy:
+            return False
+        if not self.settings.drive:
+            self.status_text = 'Choose a drive first.'
+            self.refresh()
+            return False
+        if folder is None:
+            folder = QFileDialog.getExistingDirectory(self, 'Write the re-shot drive into')
+            if not folder:
+                return False
+            folder = os.path.join(folder, f'reshot-{workdir.slug(self._proposed().name)}')
+        p, eng, root, st = self.ctx.store.project, self._engine(), self._cache_root(), self.rd_settings
+        prepared, v = self.rd_prepared, self._proposed()
+
+        def work(progress, cancel):
+            return RD.export_dataset(p, folder, st, v, eng, prepared, root, progress, cancel)
+        self._begin('reshoot', 'Re-shooting the drive…')
+        ok = self._start('reshoot', 'Log replay · re-shot drive', work)
+        if not ok:
+            self.busy = ''
+        self.refresh()
+        return ok
+
+    def _rd_done(self, kind, out):
+        if kind == 'redrive':
+            self.rd_result = out
+            self.rd_prepared = out._prepared
+            self.drive, self.scene = self.rd_prepared['drive'], self.rd_prepared['scene']
+            rg = out.report.get('rig') or {}
+            self.status_text = rg.get('text', 'Re-drive done')
+            self.ctx.store.project.add_log('redrive', f'Re-drive {out.variant}: {rg.get("text", "")}')
+            self._nudge_fill()
+            self.nudge(full=True)
+        elif kind == 'reshoot':
+            self.rd_export = out
+            self.status_text = f'Re-shot drive written: {out.get("out_dir", "")}'
+            self.ctx.msg(f'Log replay · {self.status_text}', 6000)
+
+    def _rd_show(self):
+        res = self.rd_result
+        st = self.rd_settings
+        self.rd_budget.set_value(st.error_budget)
+        self.rd_paired_label.setText(os.path.basename(os.path.normpath(st.paired_drive)) if st.paired_drive else
+                                     'none')
+        t = self.rd_table
+        sel = t.currentRow()
+        t.setRowCount(0)
+        if res is None:
+            self.rd_text.setText('')
+            for v in (self.rd_polar, self.rd_lost, self.rd_overlay):
+                v.set_image(None)
+            return
+        for c in res.report.get('cameras') or []:
+            r = t.rowCount()
+            t.insertRow(r)
+            _cell(t, r, 0, c['camera'])
+            _cell(t, r, 1, _pc(c['within_share']), True)
+            _cell(t, r, 2, f'{c["mean_expected_error"]:.1f}', True)
+            _cell(t, r, 3, c['verdict'])
+            _cell(t, r, 4, RD.REASON_TEXT.get(c['top_reason'], c['top_reason']))
+        if 0 <= sel < t.rowCount():
+            t.selectRow(sel)
+        rg = res.report.get('rig') or {}
+        inv = res.report.get('inverse') or {}
+        rel = (res.calibration or {}).get('reliability_out_of_fold') or {}
+        bits = [rg.get('text', '')]
+        if inv.get('old_pixels'):
+            bits.append(f'{100 * inv["lost_share"]:.0f} % of what the recorded rig saw is no longer seen.')
+        if rel:
+            bits.append(f'Calibration (out of fold): predicted {rel["mean_pred"]:.1f}, measured {rel["mean_meas"]:.1f} '
+                        f'grey levels; rank correlation {rel.get("spearman") or 0:.2f}.')
+        pv = res.paired or {}
+        if pv.get('reliability'):
+            pr = pv['reliability']
+            bits.append(f'Second recording: within budget {_pc(pr.get("within_pred"))} predicted, '
+                        f'{_pc(pr.get("within_meas"))} measured.')
+        self.rd_text.setText(' '.join(b for b in bits if b))
+        import cv2
+        for view, inverse, cap in ((self.rd_polar, False, 'Share within budget per region'),
+                                   (self.rd_lost, True, 'Share of the recorded rig\'s view lost')):
+            png = RD.polar_png(res, 360, inverse)
+            img = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR) if png else None
+            view.set_image(cv2.cvtColor(img, cv2.COLOR_BGR2RGB) if img is not None else None, cap)
+        self._rd_show_overlay()
+
+    def _rd_show_overlay(self):
+        res = self.rd_result
+        ov = (res.report.get('_overlays') or {}) if res is not None else {}
+        if not ov:
+            self.rd_overlay.set_image(None)
+            return
+        r = self.rd_table.currentRow()
+        tag = self.rd_table.item(r, 0).text() if 0 <= r < self.rd_table.rowCount() else next(iter(ov))
+        o = ov.get(tag) or next(iter(ov.values()))
+        self.rd_overlay.set_image(RD.overlay_rgb(o['rgb'], o['reason'], o['valid']),
+                                  f'{tag} · t = {o["t"]:.2f} s · outside budget by reason')
+
+    # ---- the nudge
+    def _nudge_fill(self):
+        v = self._proposed()
+        cur = self.nudge_cam.currentData()
+        self.nudge_cam.blockSignals(True)
+        self.nudge_cam.clear()
+        for c in (v.cameras if v is not None else []):
+            if c.visible:
+                self.nudge_cam.addItem(c.tag, c.uid)
+        self.nudge_cam.setCurrentIndex(max(self.nudge_cam.findData(cur), 0))
+        self.nudge_cam.blockSignals(False)
+        self._nudge_reset_fields()
+
+    def _nudge_camera(self):
+        v = self._proposed()
+        uid = self.nudge_cam.currentData()
+        c = v.cam(uid) if (v is not None and uid) else None
+        return v, c
+
+    def _nudge_reset_fields(self, render=False):
+        v, c = self._nudge_camera()
+        for f in self.nudge_f.values():
+            f.set_value(0.0)
+        self.nudge_lens.blockSignals(True)
+        self.nudge_lens.clear()
+        if c is not None:
+            p = self.ctx.store.project
+            for lid, l in p.lenses.items():
+                if not l.module_id or l.module_id == c.module_id:
+                    self.nudge_lens.addItem(f'{l.name} · {l.label}' if l.label else l.name, lid)
+            self.nudge_lens.setCurrentIndex(max(self.nudge_lens.findData(c.lens_id), 0))
+        self.nudge_lens.blockSignals(False)
+        if render:
+            self.nudge(full=True)
+
+    def nudge_values(self) -> dict:
+        return {k: float(f.value()) for k, f in self.nudge_f.items()}
+
+    def _nudge_changed(self, k, v, dragging):
+        self.nudge_f[k].set_value(v) if not dragging else None
+        self.nudge(full=not dragging, override={k: v})
+
+    def nudged(self, override=None):
+        """(variant, the camera as nudged) or (None, None)."""
+        v, c = self._nudge_camera()
+        if c is None:
+            return None, None
+        d = self.nudge_values()
+        d.update(override or {})
+        lens = self.nudge_lens.currentData()
+        return v, RD.nudged_camera(c, d['dx'], d['dy'], d['dz'], d['dyaw'], d['dpitch'], lens)
+
+    def nudge(self, full=True, override=None) -> bool:
+        """Re-render the nudged camera with its confidence (reduced scale while dragging, full on release); the
+        newest request replaces any that has not started."""
+        if self.rd_prepared is None:
+            return False
+        v, c = self.nudged(override)
+        if c is None:
+            return False
+        t = self.slider.value() / 1000.0 * self.rd_prepared['drive'].duration()
+        req = (self.ctx.store.project, v, c, float(t), self.rd_settings, 1.0 if full else 0.5, self._nudge_gen)
+        with self._nudge_lock:
+            self._nudge_req = req
+            if self._nudge_running:
+                return True
+            self._nudge_running = True
+        threading.Thread(target=self._nudge_worker, daemon=True).start()
+        return True
+
+    def _nudge_worker(self):
+        while True:
+            with self._nudge_lock:
+                req = self._nudge_req
+                self._nudge_req = None
+                if req is None:
+                    self._nudge_running = False
+                    return
+            p, v, c, t, st, scale, gen = req
+            try:
+                out = RD.nudge_view(p, v, c, self.rd_prepared, t, st, scale, self._engine())
+                out['camera'], out['t'], out['scale'] = c, t, scale
+            except Exception as e:                   # noqa: BLE001
+                out = {'error': f'{type(e).__name__}: {e}'}
+            try:
+                self.sig.nudge.emit(gen, out)
+            except RuntimeError:
+                return
+
+    def _nudge_done(self, gen, out):
+        if gen != self._nudge_gen:
+            return
+        self.nudge_out = out
+        if 'error' in out:
+            self.nudge_label.setText('Nudge failed: ' + out['error'])
+            return
+        c = out['camera']
+        self.nudge_view.set_image(out['rgb'], f'{c.tag} · t = {out["t"]:.2f} s · re-rendered'
+                                              + (' (reduced while dragging)' if out['scale'] < 1 else ''))
+        self.nudge_conf.set_image(RD.error_colour(out['expected'], self.rd_settings.error_budget),
+                                  'expected error: green 0, yellow the budget, red 3 × the budget')
+        w = out.get('within_share')
+        self.nudge_label.setText(f'{c.tag}: {_pc(w)} of the field within {self.rd_settings.error_budget:g} grey levels'
+                                 f' · {out["seconds"]:.2f} s to render at {out["size"][0]} × {out["size"][1]}'
+                                 + (f' · {out["note"]}' if out.get('note') else ''))
+
+    def apply_nudge(self) -> bool:
+        """Apply the nudge to the proposed variant's camera as one undoable edit."""
+        v, c0 = self._nudge_camera()
+        _, c = self.nudged()
+        if c is None:
+            return False
+        if c0.locked:
+            self.ctx.msg(f'{c0.tag} is locked: unlock it to move it.', 5000)
+            return False
+        d = self.nudge_values()
+        if all(abs(x) < 1e-12 for x in d.values()) and c.lens_id == c0.lens_id:
+            return False
+        uid, vuid = c0.uid, v.uid
+
+        def fn(p):
+            vv = p.variant_by_uid(vuid)
+            cam = vv.cam(uid)
+            for k in ('x', 'y', 'z', 'yaw', 'pitch', 'lens_id', 'calib'):
+                setattr(cam, k, getattr(c, k))
+        self.ctx.store.edit(f'variant:{vuid}', fn, f'Re-drive nudge {c0.tag}: Δ {d["dx"]:+.3f}, {d["dy"]:+.3f}, '
+                                                   f'{d["dz"]:+.3f} m, yaw {d["dyaw"]:+.1f}°, pitch '
+                                                   f'{d["dpitch"]:+.1f}°')
+        self._nudge_reset_fields(render=True)
+        return True
 
     # ------------------------------------------------------------------ settings
     @property
@@ -497,6 +896,9 @@ class SplatPage(QWidget):
             self.drive, self.scene, self.preview_out = None, None, None
         if self.scene is not None and self.scene.info.get('build_key') not in (None, self._build_key()):
             self.scene = None
+        if self.rd_prepared is not None and (self.drive is None or self.scene is None
+                                             or self.rd_prepared['scene'] is not self.scene):
+            self.rd_prepared = None                       # another drive or scene: the confidence is not its own
         self._sync_fields()
         self.refresh()
 
@@ -506,6 +908,8 @@ class SplatPage(QWidget):
     def _on_replaced(self, *_):
         self._gen += 1
         self.drive = self.scene = self.result = self.preview_out = None
+        self.rd_result = self.rd_prepared = self.rd_export = self.nudge_out = None
+        self._nudge_gen += 1
         self._for, self.busy, self.status_text = None, '', ''
         self._sync_fields()
         self.refresh()
@@ -717,6 +1121,8 @@ class SplatPage(QWidget):
         elif kind == 'preview':
             self.preview_out = out
             self.status_text = f'Preview at t = {out["t"]:.2f} s'
+        elif kind in ('redrive', 'reshoot'):
+            self._rd_done(kind, out)
         elif kind == 'run':
             key, self.drive, self.scene, self.result = out
             self._for = key
@@ -758,6 +1164,9 @@ class SplatPage(QWidget):
         self.b_preview.setEnabled(not busy and self.scene is not None)
         self.b_cancel.setVisible(busy)
         self.b_export.setEnabled(self.result is not None and not busy)
+        self.b_rd_run.setEnabled(not busy and bool(st.drive))
+        self.b_rd_export.setEnabled(not busy and bool(st.drive))
+        self.b_nudge_apply.setEnabled(self.rd_prepared is not None)
         self.bar.setVisible(busy)
         txt = self.status_text
         if self.stale and not busy:
@@ -783,6 +1192,7 @@ class SplatPage(QWidget):
     def _show(self):
         self._time_label()
         self._show_preview()
+        self._rd_show()
         res = self.result
         t = self.val_table
         t.setRowCount(0)

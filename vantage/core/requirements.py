@@ -1998,6 +1998,53 @@ def _m_obs_mm(ev, prm):
     return float(v), _ev([], tag)
 
 
+# =========================================================================== risk-weighted coverage
+def _run_risk(ev):
+    rc = _mod('risk_coverage')
+    if not any(c.visible for c in ev.v.cameras):
+        raise NotEvaluated('No visible camera in the variant.')
+    res = rc.run(ev.p, ev.engine, rc.settings_of(ev.p), variant=ev.v, progress=ev.sub_progress('risk_coverage'),
+                 cancel=ev.cancel)
+    if res is None:
+        raise _Cancelled()
+    return res
+
+
+def _risk_figures(res, ev):
+    return [_fig(f'{c} (ground {100 * (d.get("area") or 0):.0f} %)', 100 * d['weighted'], '%', 1)
+            for c, d in res.classes.items() if d.get('weighted') is not None]
+
+
+def _risk_classes(p, v):
+    from .risk_coverage import CLASSES
+    return [(EVERY, 'the least covered class')] + [(c, c) for c in CLASSES]
+
+
+P_RISK_CLASS = Param('cls', 'Road user', _risk_classes)
+
+_study(id='risk_coverage', label='Risk-weighted coverage', page='risk_coverage',
+       menu='Analysis ▸ Risk-weighted coverage…', cost='study', run=_run_risk, figures=_risk_figures,
+       module='risk_coverage', weight=0.5,
+       assumptions=lambda r: _mod('risk_coverage').ASSUMPTIONS)
+
+
+@_metric('risk_coverage.weighted_pct', 'Risk-weighted coverage', '%', 'risk_coverage', '>=', 1, (P_RISK_CLASS,),
+         'The share of the road user\'s pre-crash exposure (where it is 0.5–4 s before a crash: NHTSA pre-crash '
+         'scenarios, Euro NCAP tests, weighted as Analysis ▸ Risk-weighted coverage is set) the cameras cover')
+def _m_risk(ev, prm):
+    res = ev.study('risk_coverage')
+    rows = [(100.0 * d['weighted'], c, d) for c, d in res.classes.items() if d.get('weighted') is not None]
+    want = prm.get('cls') or EVERY
+    if want != EVERY:
+        rows = [r for r in rows if r[1] == str(want).lower()]
+        if not rows:
+            raise NotEvaluated(f'No pre-crash exposure of {want!r} in the weighting.')
+    if not rows:
+        raise NotEvaluated('No class has a pre-crash exposure in this weighting.')
+    v, c, d = min(rows, key=lambda r: r[0])
+    return float(v), _ev(_risk_figures(res, ev), d.get('text') or f'{c}: {v:.1f} %')
+
+
 # =========================================================================== items and settings
 def _new_id(taken=()) -> str:
     taken = set(taken)
@@ -2697,20 +2744,40 @@ def parse_brief(text, project=None) -> list:
     pnames = [c['name'] for c in (PerceptionSettings.from_dict(project.analysis.perception).classes
                                   if project is not None else DEFAULT_CLASSES)]
     out = []
-    parts = []
-    for sent in re.split(r'[;\n•]+|\.(?!\d)', text):
-        parts += [f.strip() for f in re.split(r',|\band\b|\bwith\b', sent) if f.strip()]
     carry = ''
-    for frag in parts:
-        phrase = f'{carry} {frag}'.strip() if carry else frag
-        got = _parse_phrase(phrase, pnames, project)
-        if got:
-            out += got
-            carry = ''
-        elif not _quantities(frag) and len(phrase) < 160:
-            carry = phrase                 # 'pedestrians, cyclists to 30 m': the class list runs into the number
-        else:
-            carry = ''
+    for sent in re.split(r'[;\n•]+|\.(?!\d)', text):
+        frags = [f.strip() for f in re.split(r',|\band\b|\bwith\b', sent) if f.strip()]
+        context = []                       # the object classes named last in this sentence
+        last = []                          # the range proposals of the fragment before
+        for frag in frags:
+            phrase = f'{carry} {frag}'.strip() if carry else frag
+            got = _parse_phrase(phrase, pnames, project)
+            if not got and context and _quantities(frag):
+                # 'pedestrians at 80 m forward, 360° up to 30 m': a range and a direction with no class of their own
+                # take the class named before them in the same sentence
+                got = _parse_phrase(phrase, pnames, project, context_cls=context)
+            if not got and last and not _quantities(frag) and any(re.search(pt, frag.lower())
+                                                                   for _, pt in _SECTOR_WORDS):
+                # 'cyclists to 40 m in the front-left and the front-right': the range of the fragment before, in the
+                # sectors this one names
+                for o in last:
+                    for sec in _sectors_in(frag):
+                        src = f'{o["source"]} {frag}'.strip()
+                        it = dict(o['item'], params=dict(o['item']['params'], sector=sec), id='',
+                                  text=src[0].upper() + src[1:])
+                        got.append({'item': clean_item(it, project), 'source': src,
+                                    'metric_label': o['metric_label']})
+            cls_here = _classes_in(phrase, pnames)
+            if cls_here:
+                context = cls_here
+            last = [o for o in got if o['item']['metric'] in ('perception.range', 'sensor_coverage.range')]
+            if got:
+                out += got
+                carry = ''
+            elif not _quantities(frag) and not _MONEY.search(frag) and len(phrase) < 160:
+                carry = phrase                 # 'pedestrians, cyclists to 30 m': the class list runs into the number
+            else:
+                carry = ''
     seen, uniq = set(), []
     for o in out:
         it = o['item']
@@ -2721,7 +2788,7 @@ def parse_brief(text, project=None) -> list:
     return uniq
 
 
-def _parse_phrase(phrase, pnames, project) -> list:
+def _parse_phrase(phrase, pnames, project, context_cls=None) -> list:
     low = phrase.lower()
     qs = _quantities(phrase)
     prio = 'should' if _SHOULD.search(phrase) else 'must'
@@ -2743,7 +2810,12 @@ def _parse_phrase(phrase, pnames, project) -> list:
         return next(((v, u) for v, u, _, _ in qs if u in units), None)
     # ---- ranges: an object class and a length
     lng = q('m')
-    cls = _classes_in(phrase, pnames)
+    # 'around the vehicle', 'ahead of the car': the own vehicle, not an object class
+    cls = _classes_in(re.sub(r'\b(?:around|of|from|on|behind|beside|ahead\s+of|in\s+front\s+of)\s+the\s+(?:own\s+)?'
+                             r'(?:car|vehicle)\b', ' ', phrase, flags=re.I), pnames)
+    if not cls and context_cls and lng and (re.search(r'\b(up\s+to|to|at|out\s+to|reach)\b', low)
+                                            or _sectors_in(phrase) != [EVERY] or re.search(r'360|all\s+round', low)):
+        cls = list(context_cls)
     if lng and cls and not re.search(r'\bblind\b|\bwithin\b.*\bbody\b', low):
         mod = 'lidar' if re.search(r'\blidars?\b', low) else 'radar' if re.search(r'\bradars?\b', low) else None
         for c in cls:
@@ -2789,6 +2861,11 @@ def _parse_phrase(phrase, pnames, project) -> list:
         elif re.search(r'dc[\s-]*dc|converter', low):
             prop('power.dcdc_load_pct', {}, pct[0])
         return props
+    # ---- the rig's power draw ('under 300 W', 'at most 250 watts')
+    wt = q('w')
+    if wt and not re.search(r'\b(alternator|converter|dc[\s-]*dc|heat|enclosure|battery)\b', low):
+        prop('power.steady_w', {}, wt[0])
+        return props
     # ---- densities, blur, heading, areas, volumes
     d = q('pxcm')
     if d:
@@ -2822,6 +2899,94 @@ def _parse_phrase(phrase, pnames, project) -> list:
         elif re.search(r'\bno\s+(serious|major)\s+(issues?|findings?|problems?)\b', low):
             prop('issues.count', {'severity': 'serious'}, 0.0)
     return props
+
+
+# the brief's constraints that are not metrics of a study: what the rig may cost, how many sensors of a kind, the
+# mounting tolerance it must survive (the design agent, core.rig_designer, takes them as constraints of its search)
+CONSTRAINT_KINDS = ('budget', 'max_cameras', 'min_cameras', 'max_lidars', 'max_radars', 'max_sensors', 'tolerance_mm',
+                    'tolerance_deg')
+CONSTRAINT_LABEL = {'budget': 'Cost of the rig', 'max_cameras': 'Cameras at most', 'min_cameras': 'Cameras at least',
+                    'max_lidars': 'Lidars at most', 'max_radars': 'Radars at most', 'max_sensors': 'Sensors at most',
+                    'tolerance_mm': 'Mounting tolerance (position)', 'tolerance_deg': 'Mounting tolerance (angle)'}
+_WORDNUM = {'no': 0, 'zero': 0, 'one': 1, 'a single': 1, 'single': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
+            'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10, 'eleven': 11, 'twelve': 12}
+_CUR = r'(?:US\$|\$|USD|€|EUR|£|GBP)'
+_MONEY = re.compile(r'(?P<c1>' + _CUR + r')\s*(?P<v1>\d[\d,]*(?:\.\d+)?)\s*(?P<k1>k|K|thousand|M|million|mn)?\b'
+                    r'|(?P<v2>\d[\d,]*(?:\.\d+)?)\s*(?P<k2>k|K|thousand|M|million)?\s*(?P<c2>USD|EUR|GBP|dollars?|'
+                    r'euros?|pounds?)\b')
+_COUNT = re.compile(r'(?P<op>at\s+most|no\s+more\s+than|not\s+more\s+than|max(?:imum)?(?:\s+of)?|up\s+to|≤|<=|'
+                    r'fewer\s+than|less\s+than|at\s+least|min(?:imum)?(?:\s+of)?|≥|>=)\s*(?P<n>\d+|'
+                    + '|'.join(sorted(_WORDNUM, key=len, reverse=True)) + r')\s+(?:\w+\s+)?'
+                    r'(?P<what>cameras?|lidars?|radars?|sensors?)\b', re.I)
+_COUNT_AFTER = re.compile(r'(?P<n>\d+|' + '|'.join(sorted(_WORDNUM, key=len, reverse=True)) + r')\s+'
+                          r'(?P<what>cameras?|lidars?|radars?|sensors?)\s+(?P<op>or\s+fewer|or\s+less|at\s+most|max(?:imum)?'
+                          r'|or\s+more|at\s+least)\b', re.I)
+
+
+def money_value(mt) -> tuple[float, str]:
+    """(amount, currency code) of a _MONEY match ('$6k' -> 6000, 'USD')."""
+    v = float((mt.group('v1') or mt.group('v2')).replace(',', ''))
+    k = (mt.group('k1') or mt.group('k2') or '').lower()
+    v *= 1000.0 if k in ('k', 'thousand') else 1e6 if k in ('m', 'million', 'mn') else 1.0
+    c = (mt.group('c1') or mt.group('c2') or '').upper()
+    code = 'EUR' if c in ('€', 'EUR', 'EURO', 'EUROS') else 'GBP' if c in ('£', 'GBP', 'POUND', 'POUNDS') else 'USD'
+    return v, code
+
+
+def parse_constraints(text, project=None) -> list:
+    """The brief's constraints that no study measures, from simple phrasings: a budget ('budget under $6k', 'at most
+    5,000 EUR'), sensor counts ('at most 8 cameras', 'no more than one lidar', '2 radars or fewer'), a mounting
+    tolerance to survive ('survives a 2 mm mounting tolerance', '±0.5° mounting error'). Each: {'kind', 'op', 'value',
+    'unit', 'priority', 'source' (the phrase), 'text'}; proposed, never applied, as parse_brief."""
+    if not isinstance(text, str) or not text.strip():
+        return []
+    out = []
+    for sent in re.split(r'[;\n•]+|\.(?!\d)', text):
+        for frag in [f.strip() for f in re.split(r',(?!\d{3})|\band\b', sent) if f.strip()]:
+            low = frag.lower()
+            prio = 'should' if _SHOULD.search(frag) else 'must'
+            strict = bool(re.search(r'\b(under|below|less than|fewer than)\b|<(?!=)', low))
+
+            def add(kind, op, value, unit):
+                out.append({'kind': kind, 'op': op, 'value': float(value), 'unit': unit, 'priority': prio,
+                            'source': frag, 'text': frag[0].upper() + frag[1:]})
+            for mt in _MONEY.finditer(frag):
+                v, code = money_value(mt)
+                if v > 0:
+                    add('budget', '<' if strict else '<=', v, code)
+            for rx in (_COUNT, _COUNT_AFTER):
+                for mt in rx.finditer(frag):
+                    n = mt.group('n').lower()
+                    n = float(n) if n.isdigit() else float(_WORDNUM.get(n, -1))
+                    if n < 0:
+                        continue
+                    what = mt.group('what').lower().rstrip('s')
+                    op = mt.group('op').lower()
+                    lo = bool(re.search(r'least|min|≥|>=|or\s+more', op))
+                    if re.search(r'fewer|less', op) and not re.search(r'or\s+(fewer|less)', op):
+                        n -= 1                                     # 'fewer than 8 cameras' = at most 7
+                    if lo:
+                        if what == 'camera':
+                            add('min_cameras', '>=', n, '')
+                    else:
+                        add(f'max_{what}s', '<=', n, '')
+            if re.search(r'toleran|mounting|misalign|install(?:ation)?\s+error|placement\s+error|survive', low):
+                for v, u, _, _ in _quantities(frag):
+                    if u == 'm' and v < 0.5:                       # '0.2 cm' arrives as metres
+                        add('tolerance_mm', '==', round(v * 1000.0, 6), 'mm')
+                    elif u == 'mm':
+                        add('tolerance_mm', '==', v, 'mm')
+                for mt in re.finditer(r'(\d+(?:[.,]\d+)?)\s*(?:°|deg\b|degrees?\b)', frag):
+                    v = float(mt.group(1).replace(',', '.'))
+                    if v <= 20:
+                        add('tolerance_deg', '==', v, '°')
+    seen, uniq = set(), []
+    for c in out:
+        k = (c['kind'], c['op'], c['value'])
+        if k not in seen:
+            seen.add(k)
+            uniq.append(c)
+    return uniq
 
 
 # =========================================================================== the Issues list

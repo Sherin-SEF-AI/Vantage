@@ -73,6 +73,9 @@
     <a href="#materials">Materials, glass and wipers</a>
     <a href="#brackets">Mount brackets</a>
     <a href="#requirements">Requirements scorecard</a>
+    <a href="#risk-coverage">Risk-weighted coverage</a>
+    <a href="#designer">Design agent</a>
+    <a href="#perf-model">Learned detection model</a>
     <a href="#experiments">Experiments</a>
     <a href="#stitched">Objects in the stitched view</a>
     <p>Surround view</p>
@@ -90,6 +93,7 @@
     <a href="#as-built">As-built check</a>
     <a href="#online-calib">Online self-calibration</a>
     <a href="#fleet">Fleet</a>
+    <a href="#fleet-twin">Fleet twin</a>
     <p>Assistant</p>
     <a href="#assistant">Setting up</a>
     <a href="#assistant-use">Asking and proposals</a>
@@ -110,6 +114,10 @@
     <a href="#log-replay">Log replay</a>
     <a href="#campaigns">Simulation campaigns</a>
     <a href="#critical-carla">Critical targets in CARLA</a>
+    <a href="#rig-perception">Rig perception</a>
+    <a href="#redrive">Re-drive</a>
+    <a href="#foundation">Foundation models</a>
+    <a href="#robust-perception">Robust perception</a>
     <p>Reference</p>
     <a href="#validation">Validation and methods</a>
     <a href="#provenance">Provenance and reproducing</a>
@@ -1207,6 +1215,76 @@ vantage project.vantage            # open a project</code></pre>
       <code>vantage project.vantage --check review/</code> writes the same files and exits with 5 when a must requirement
       fails or cannot be evaluated.</p>
 
+    <h2 id="risk-coverage">Risk-weighted coverage</h2>
+    <p><b>Analysis ▸ Risk-weighted coverage</b> asks whether the rig covers where crashes start, not only the ground. It
+      places the other road user where it is in the 0.5–4 s before a conflict and tests the cameras there with the
+      perception range's pixel rule. Two sources, each figure traced to its table and page:</p>
+    <ul>
+      <li>NHTSA's pre-crash scenario statistics (Najm et al. 2007, DOT HS 810 767; Swanson et al. 2019, DOT HS 812 745,
+        Table 12; the 2016 pedestrian table, DOT HS 812 312), weighted by crash frequency, cost, fatal crashes or
+        functional years lost;</li>
+      <li>the 39 scenarios of Euro NCAP's 2026 Crash Avoidance protocols (Frontal, Low Speed, Lane Departure v1.2) with
+        their speeds, paths, impact points and turn paths, weighted equally.</li>
+    </ul>
+    <p>The result is the share of each class's pre-crash exposure the rig covers, next to the share of the ground, the
+      regions where the gap is and the scenarios behind it. On the sample's data rig, weighted by crash frequency and
+      counting what a camera resolves: 99 % of the ground but 88 % of the pedestrian, 84 % of the cyclist, 93 % of the
+      vehicle and 79 % of the motorcyclist exposure. The pedestrian and cyclist gaps are front 0–10 m in the last second
+      (turning-across-path scenarios, the target within a metre of the bumper, seen but not its full height); the vehicle
+      and motorcyclist gaps are front 60–80+ m (the oncoming lane-departure and head-on tests). It runs in about a
+      second.</p>
+    <p>Limits, stated on the page: cameras only, clear weather, constant speeds and typical target sizes; NHTSA gives
+      frequencies, not speeds or impact points, so each row takes the speeds of the Euro NCAP template of the same
+      configuration; NHTSA's rows are US crashes. The scorecard has the metric <i>risk-weighted coverage ≥ X % for C</i>
+      (<code>risk_coverage.weighted_pct</code>), and the page proposes rows at the measured figure less 5 %. Export:
+      <code>vantage.risk_coverage/1</code> JSON, region and weight CSVs and a hazard map per class. Batch:
+      <code>--risk-coverage [OUT.json|DIR]</code> with <code>--risk-weight</code>, <code>--risk-metric</code> and
+      <code>--risk-min CLASS=PCT</code> (exit 3 below it).</p>
+
+    <h2 id="designer">Design agent</h2>
+    <p><b>Analysis ▸ Design agent</b> turns requirements into complete rigs. Type the brief or add the programme's
+      documents (.txt, .md, .pdf, .docx, .html; the PDF reader is built in). Vantage reads them sentence by sentence, each
+      with its page and paragraph, and proposes requirements and constraints (a budget, sensor counts, a mounting
+      tolerance) that quote their source. They are read by the brief parser, or by your Groq or Claude key with strict
+      JSON; a figure that does not appear in the quoted sentence is rejected, and statements no study can check are
+      listed, not dropped. Accept or reject each row and enter your prices: Vantage ships none, and an unpriced item makes
+      a cost incomplete and the budget not evaluated.</p>
+    <p><b>Run</b> searches lens and module swaps, camera count, lidars, radars and aim, starting from your variants and
+      the published reference rigs, and returns three to seven rigs on the Pareto front of cost, steady power, the worst
+      requirement margin and detection: the learned model's prediction when one is trained, else the geometric resolved
+      share, labelled so. Each option is evaluated by every study, checked in random builds within your mounting
+      tolerance, explained sensor by sensor (what fails or how much margin is lost without it) and critiqued, worst first.
+      Nothing changes until you press <b>Create variant</b>; the option becomes a new variant in one undo step, and the design log records why the
+      others were not chosen. A large change set (more than six changes, or a lidar added or removed) asks for an
+      approval.</p>
+    <p>On the sample, with the brief "pedestrians at 80 m forward, 360° up to 30 m, budget under $6k, under 300 W,
+      survives a 2 mm mounting tolerance" and prices entered by a stated rule for that run only, it found five options
+      that pass every must requirement and the robust check; the current rig fails the 80 m requirement and the budget. A
+      run of 160 rigs takes 2–3 minutes. The LLM path was tested only against fake servers. Batch:
+      <code>--read-requirements OUT.json FILE…</code> (the brief parser) and <code>--design OUT_DIR</code> (exit 5 when
+      no option meets every must requirement and constraint).</p>
+
+    <h2 id="perf-model">Learned detection model</h2>
+    <p><b>Analysis ▸ Learned detection model</b> predicts how well a detector finds each class in each region around
+      the car from the rig's description alone, with an uncertainty that is checked, not assumed. The features are
+      physics: pixels on the object through each camera's real lens, the share of a region seen, cameras seeing it,
+      the body's occlusion, the stereo baseline, lidar points on the object, radar coverage. The model is a Gaussian
+      process per class on the empirical logit of recall over a monotone logistic prior in pixels.</p>
+    <p>It learns from perception records (<code>vantage.perception_record/1</code>) that Rig perception, Foundation
+      models and Robust perception write: one rig evaluated on one scene set by one detector, per class and region. Its
+      calibration is measured by leaving one scene set out and by leaving one rig out, against two baselines (the
+      logistic in pixels alone and a constant). On 100 records (92 rigs, 3 scene sets), leaving a scene set out:
+      pedestrian 95 % interval coverage 0.92 and RMSE 0.24 (logistic 0.23, constant 0.45); vehicle 0.88 and 0.27 (0.28,
+      0.34). That is a small set, and its rigs are camera subsets of one drive: the logistic in pixels does about as
+      well, and choosing the rigs to simulate by expected improvement did not beat random choice (RMSE 0.121 against
+      0.122 at 32 rigs).</p>
+    <p>A trained model predicts a variant without simulating it, ranks which variants to simulate next, joins the
+      placement optimiser's objective (the <i>Learned detection</i> weight: the predicted recall less its standard
+      deviation, so an optimistic guess is not rewarded) and gives the design agent its detection axis. The records are
+      kept in your data folder (or beside the project) and export anonymised for pooling. Batch:
+      <code>--perf-model OUT_DIR</code> (with <code>--perf-save</code>), <code>--perf-records-import</code>,
+      <code>--perf-records-export</code>, <code>--suggest-simulations K</code>.</p>
+
     <h2 id="experiments">Experiments: sensitivity and uncertainty</h2>
     <p><b>Analysis ▸ Experiments</b> evaluates many designs of the rig at once. Add the <b>factors</b> to vary — a camera's or
       a sensor's position or angles (set to a value, or offset from the design), a camera's lens, a sensor's model, every
@@ -1511,6 +1589,31 @@ vantage project.vantage            # open a project</code></pre>
       <code>vantage.fleet/1</code> JSON (every record and the analysis), a CSV of the matrix and a PNG. Batch:
       <code>--fleet-import VEHICLE FILE…</code> adds records (keep them with <code>--save</code>), and
       <code>--fleet [OUT.json|DIR]</code> writes the report, exiting with 3 when a sensor needs re-mounting.</p>
+
+    <h2 id="fleet-twin">Fleet twin</h2>
+    <p><b>Calibrate ▸ Fleet twin</b> follows every vehicle's sensors over time. It reads what the fleet already has: the
+      Fleet page's records, online self-calibrations of recorded drives (imported, or read from a <b>watch folder</b> per
+      vehicle as new drives arrive, once each) and rig-health drift, which is shown and flagged but never taken as a
+      measurement. Each measurement carries a σ: the source's own where it states one, a stated typical figure
+      otherwise; the fit scales each source's σ, and estimates the offset between sources (an online calibration is
+      relative to the lidar, an installation check to the floor boards).</p>
+    <p>Each axis is a smooth trend: a level that moves with a drift rate, the rate itself wandering slowly (Kalman filter
+      and smoother, fitted across the fleet by maximum likelihood). A new vehicle's rate starts from the fleet's for that
+      sensor position. A knock is found by a likelihood-ratio test on the last few observations with at most the stated
+      false-alarm rate per axis and observation on step-free data. The forecast gives the probability that each sensor
+      has left its limit by each date (once out counts as out), against the critical targets' inverse tolerances where
+      targets exist, else the mounting tolerance; the recalibrate-by date is where that probability reaches your risk
+      (10 %).</p>
+    <p>The measured drift goes back into the design: <code>fleet_twin_tolerances.json</code> gives each sensor's
+      installation spread and drift after a chosen time, <b>Use as mounting tolerance</b> sets the tolerance studies to
+      it, and Robust perception can draw its builds from it. On 50 real online calibrations of CARLA drives with known
+      injected rotations, knocks of 0.45–0.8° were found 9 of 12 times at the first drive after them, with no false
+      knock; on a labelled long-term fixture using CARLA's real calibration errors, 120-day forecasts covered the truth
+      92 % of the time at 90 %. The drives' dates and their order on a vehicle are that fixture: no real fleet data was
+      used. Export: <code>vantage.fleet_twin/1</code> JSON, a CSV, the schedule CSV, a PNG and the tolerance JSON.
+      Batch: <code>--fleet-twin OUT_DIR</code> (exit 3 when a sensor is due or beyond its limit),
+      <code>--fleet-twin-online VEHICLE FILE…</code> with <code>--fleet-twin-date</code>, <code>--fleet-twin-watch</code>
+      and <code>--as-of</code>.</p>
 
     <h2 id="assistant">Assistant: setting up</h2>
     <p>The assistant is a chat about the open design, and the Copilot that plans runs for your approval, with a cloud
@@ -2078,6 +2181,90 @@ vantage project.vantage            # open a project</code></pre>
       never count as one; the real comparison's nine drives, opened from their per-seed folders, give the same 30 of 30.
       Batch: <code>--critical-carla OUT [--critical-carla-drives DRIVES]</code> (exit 3 when a view disagrees).</p>
 
+    <h2 id="rig-perception">Rig perception</h2>
+    <p><b>Simulate ▸ Rig perception</b> measures how well a 3D detector finds each class in each region around the car,
+      for each rig, on the same CARLA scenes. Regions are 8 sectors × 0–10, 10–20, 20–40, 40–60, 60–80 and 80+ m about the
+      middle of the vehicle. The ground truth is every object the simulator annotated within range, whether or not a
+      camera sees it: a rig that cannot see the left side misses what is there. Matching and average precision are
+      nuScenes': centre distance at 0.5, 1, 2 and 4 m; recall, precision and the centre error are quoted at a score of
+      0.3 and 2 m.</p>
+    <p>Intervals come from a block bootstrap over time, stratified by scene; two rigs driven on the same scene share the
+      draws, so their difference is paired. Only differences whose interval excludes zero are findings, a region counts
+      only with enough object-instants of enough distinct objects, and the page says how many comparisons would exclude
+      zero by chance alone. The built-in detector is YOLOX's 2D boxes lifted to 3D through the exact lens model (the
+      class's typical size stood on the ground until its projection meets the box), fused across cameras and
+      triangulated where rays cross far enough apart. A team's own BEV detector can run instead, as a command approved
+      on this computer that reads the recording's nuScenes folder and writes the nuScenes submission format. No
+      pretrained BEV network was shipped: those checked are trained on datasets whose terms are non-commercial.</p>
+    <p>On the round-8 pair (the data rig against its cameras pitched 20° up, the same Town10HD drive), the pitched rig
+      finds 5.1 points more vehicles [2.8, 7.1] on the fisheye images (25 more at front-left 10–20 m); on pinhole views cut
+      from the same images both find about 15 points more and the difference disappears. On a fresh 6-scene set (12
+      drives, 56 minutes of CARLA), removing the quarter cameras costs 2.3 points of pedestrian recall [0.2, 4.9], with 5
+      of 64 comparisons significant where 3.2 are expected by chance: weak evidence, said so. These are a COCO detector's
+      figures on CARLA renders, for comparing rigs. A perception scene set puts every class in every region and is driven
+      with the same seeds for each variant; its yield table says where the statistics are thin. Export:
+      <code>vantage.rig_perception/1</code> JSON, CSVs, findings, polar maps and perception records. Batch:
+      <code>--rig-perception OUT_DIR</code> with <code>--perception-recording DIR[:RIG]</code>,
+      <code>--perception-backend</code> and <code>--perception-records</code>; <code>--perception-scene-set SET OUT_DIR</code>
+      with <code>--scene-variants</code> and <code>--scene-seeds</code> drives a set.</p>
+
+    <h2 id="redrive">Re-drive</h2>
+    <p>Changing the rig does not have to mean throwing away the data you have. On <b>Simulate ▸ Log replay</b>, the
+      <b>Re-drive</b> tab works out, for every pixel each new camera would record, how well the existing drive pins it
+      down: whether any recorded frame saw that surface, from how far away and at what angle, whether it is a moving
+      object or sky. It turns that into an expected error in grey levels, calibrated by an additive isotonic fit on frames
+      the reconstruction never saw (held-out frames, a second recording or a left-out camera). Each camera gets its
+      share within your error budget, a verdict (reuse, partly reusable, re-collect) and the reasons for the rest, per
+      region; a second map shows what the old rig saw that the new one does not. <b>Export re-shot drive</b> writes the
+      drive as the new rig would have recorded it: a nuScenes folder with ground truth, a confidence map per image and,
+      as set, a ROS 2 bag, which Detection quality and Rig perception open like a CARLA run. <b>Nudge</b> moves one camera
+      and re-renders it with its confidence.</p>
+    <p>Against the real recording of the 20°-up rig, on a CARLA drive re-shot from the data rig, the expected error
+      matched the measured one within 0.7 grey levels on five of six cameras; the front camera sees the car's own shadow,
+      which the reconstruction cannot render, and its error is under-predicted by half. Vehicle recall on the re-shot
+      drive was 90 % against 86 % real, but pedestrians 22 % against 83 %: moving people are rebuilt as rigid bodies, so
+      a re-shot drive is not valid for them. No real third-party log was used: none downloadable without registration
+      had the camera calibration, point clouds, transforms and odometry needed. Batch: <code>--redrive DRIVE_DIR
+      OUT_DIR</code> with <code>--redrive-variant</code> and <code>--reshoot</code> (exit 3 when the verdict is
+      re-collect).</p>
+
+    <h2 id="foundation">Foundation models</h2>
+    <p><b>Simulate ▸ Foundation models</b> measures how far a modern detector finds each class with each camera, and how
+      far a monocular depth model stays usable, on rendered frames with ground truth. The models are downloaded on
+      request: each file from a pinned revision, kept only when its size and SHA-256 match; the licence is shown, and
+      models whose licence does not allow commercial use are offered only when you tick the opt-in. OWLv2 and Grounding
+      DINO answer your own text queries (a child, a stroller, debris); YOLOX-S runs beside them; Depth Anything V2 Small
+      gives depth, scaled per frame from the ground plane under the camera's calibrated pose.</p>
+    <p>Frames come from a CARLA recording, or from a range sweep that stands objects at the distances you list along each
+      camera's axis and down the road. The fit of P(detect) against the logarithm of range gives R50 and R90 with
+      bootstrap intervals that resample objects, and the same fit against height in pixels the pixel height the
+      detector needs; the geometric range is Vantage's pixel rule for the same camera, class and line, so a ratio below 1
+      means geometry over-promises. In a 60-drive CARLA sweep on the sample's front fisheye, YOLOX-S finds half the
+      pedestrians out to 43 m [37–51] where the pixel rule promises 68 m (it needs about 38 px, not 24), and monocular
+      depth stays within 10 % only to about 5 m. These are models trained on photographs measured on renders: compare
+      cameras, classes and models. Batch: <code>--foundation-range OUT_DIR</code> with
+      <code>--foundation-recording</code>, <code>--foundation-models</code>, <code>--foundation-depth</code> and
+      <code>--foundation-download</code>.</p>
+
+    <h2 id="robust-perception">Robust perception</h2>
+    <p>Every build of a car is a little different, and the perception does not know how: it keeps its calibration.
+      <b>Simulate ▸ Robust perception</b> draws builds from four sources, each from the app's own models: the mounting
+      tolerance (the installation check's 1° / 10 mm, the analysis tolerance, or the fleet twin's measured spread and
+      drift), the thermal study's hour-by-hour drift, the road vibration (the body's pitch and heave on the suspension,
+      each mount's flex) and the calibration residual (the observability study's predicted σ). Per-car calibration means
+      the calibration measured the build; design calibration means every car uses the planned poses.</p>
+    <p>A rotation of a camera about its optical centre is an exact remap of the recorded image through its lens model;
+      pixels the turned camera would see outside the recording are marked missing, never filled in. On each build the
+      study measures YOLOX's rig recall, the BEV error of the objects lifted to the ground through the calibration, the
+      share pushed out of view and the ghost rate (two cameras' lifts of one object farther apart than the fusion gate),
+      per class and region with the band over builds; optionally Rig perception's 3D metric on every build. Sobol
+      indices say which source and which camera drive the spread. On the paired CARLA drives (24 builds), with each car
+      calibrated, vehicle rig recall varies 0.835–0.882 between builds and the body's road pitch and heave drive the BEV
+      error; on the design calibration the ghost rate goes from 0.12 to 0.63 and mounting dominates. One scenario and one
+      seed: the bands are build variation, not scene sampling. Batch: <code>--robust-perception OUT_DIR</code> with
+      <code>--robust-recording</code>, <code>--robust-mode</code>, <code>--robust-samples</code>,
+      <code>--robust-sobol</code>, <code>--robust-no-detect</code> and <code>--robust-min-recall</code>.</p>
+
     <!-- ======================================================== reference -->
     <h2 id="validation">Validation and the technical reference</h2>
     <p><b>Help ▸ Validate the models…</b> (or <code>vantage --validate report/</code>) checks every model against an
@@ -2155,6 +2342,15 @@ vantage project.vantage            # open a project</code></pre>
       <tr><td></td><td>Designed experiment (sensitivity, uncertainty)</td><td>JSON, CSV, PNG</td><td><code>experiment</code></td></tr>
       <tr><td></td><td>Simulation campaign (CARLA)</td><td>JSON, CSV, PNG, HTML</td><td><code>sim_campaign</code></td></tr>
       <tr><td></td><td>Detection quality (CARLA drives)</td><td>JSON, CSV, PNG</td><td><code>detection_quality</code></td></tr>
+      <tr><td></td><td>Rig perception: 3D detection per class and region</td><td>JSON, CSV, TXT, PNG, JSONL</td><td><code>rig_perception</code></td></tr>
+      <tr><td></td><td>Re-drive: how much of a recorded drive a proposed rig can reuse</td><td>JSON, CSV, PNG</td><td><code>redrive</code></td></tr>
+      <tr><td></td><td>Foundation-model detection and depth range</td><td>JSON, CSV, PNG, JPG</td><td><code>foundation_range</code></td></tr>
+      <tr><td></td><td>Robust perception: tolerances carried to detection</td><td>JSON, CSV, PNG</td><td><code>robust_perception</code></td></tr>
+      <tr><td></td><td>Risk-weighted coverage</td><td>JSON, CSV, PNG</td><td><code>risk_coverage</code></td></tr>
+      <tr><td></td><td>Design agent: trade-off rigs</td><td>JSON, CSV, PNG</td><td><code>design_options</code></td></tr>
+      <tr><td></td><td>Learned detection model: calibration and predictions</td><td>JSON, CSV, PNG</td><td><code>perf_model</code></td></tr>
+      <tr><td></td><td>Fleet twin; its schedule; its tolerance inputs</td><td>JSON, CSV, PNG; CSV; JSON</td><td><code>fleet_twin</code>, <code>fleet_twin_schedule</code>, <code>fleet_twin_tolerances</code></td></tr>
+      <tr><td>Research</td><td>Perception records of the learned model (anonymised)</td><td>JSONL</td><td><code>perception_records</code></td></tr>
       <tr><td></td><td>CI templates (GitHub Actions, GitLab CI)</td><td>YAML, MD</td><td><code>ci_templates</code></td></tr>
       <tr><td>Extrinsics</td><td>Camera, lidar, radar, GNSS and IMU poses</td><td>JSON</td><td><code>extrinsics_json</code></td></tr>
       <tr><td></td><td>Camera, lidar and radar poses</td><td>YAML</td><td><code>extrinsics_yaml</code></td></tr>
@@ -2182,8 +2378,10 @@ vantage project.vantage            # open a project</code></pre>
     <p>The drive-log and as-built checks need a recording, so they export from their own pages (<b>Export…</b>) and
       their batch flags; the sample dataset is a page of its own (<b>Export ▸ Sample dataset…</b>). The experiment (it
       runs the project's experiment, which can take minutes), the CARLA rig (tens of MB of remap tables), the simulation
-      campaign, the detection quality, the calibration coach, the gradient refinement and the log replay are written only when
-      named: batch <code>--export</code> without
+      campaign, the detection quality, the calibration coach, the gradient refinement, the log replay, rig perception,
+      re-drive, foundation models, robust perception, the design agent, the learned model and the perception records
+      are written only when named (each runs only when its page has what it needs, and the heavy ones run for minutes
+      when exported; the learned model needs a saved model and writes a note otherwise): batch <code>--export</code> without
       <code>--formats</code> leaves them out. The last two drive nothing: the campaign is analysed from the drives and
       checks in its folder (nothing is written until one drive is done), the detection quality is evaluated on the
       page's recordings (the detector runs for minutes the first time; its detections are cached in each recording) and
@@ -2276,13 +2474,22 @@ vantage project.vantage --detection-quality det/ --detection-recording drive/ --
 vantage project.vantage --campaign campaign/ --campaign-template weather_sweep
 vantage project.vantage --critical-carla critical/  # critical targets stood in CARLA, compared with the study
 vantage project.vantage --log-replay drive/ replay/ --replay-variant 2   # a recorded drive through another rig
-vantage project.vantage --run-plan P3F9A21C plan-run/  # a Copilot plan approved in the app, from its record</code></pre>
+vantage project.vantage --run-plan P3F9A21C plan-run/  # a Copilot plan approved in the app, from its record
+vantage project.vantage --rig-perception perception/ --perception-recording a/:A --perception-recording b/:B
+vantage project.vantage --redrive drive/ redrive/ --redrive-variant 2 --reshoot   # data reuse for a new rig
+vantage project.vantage --read-requirements extraction.json odd.pdf --design design/   # requirements to rigs
+vantage project.vantage --perf-model model/ --perf-save   # train the learned detection model
+vantage project.vantage --suggest-simulations 4      # which variants to evaluate for real next
+vantage project.vantage --foundation-range fm/ --foundation-recording drive/ --foundation-models yolox_s
+vantage project.vantage --robust-perception robust/ --robust-recording drive/ --robust-min-recall 0.8
+vantage project.vantage --risk-coverage risk.json --risk-weight fatal --risk-min pedestrian=85
+vantage project.vantage --fleet-twin-online V3 online.json --fleet-twin twin/ --as-of 2026-11-01</code></pre>
     <table>
       <tr><th>Option</th><th>Meaning</th></tr>
       <tr><td><code>--variant NAME|N</code></td><td>Variant by name or 1-based index (default: the active one).</td></tr>
       <tr><td><code>--frame</code></td><td>Export frame: <code>rear_axle</code>, <code>front_axle</code>, <code>front_bumper</code>, <code>ground_centre</code>, <code>custom</code>.</td></tr>
       <tr><td><code>--units m|mm</code>, <code>--angles deg|rad</code></td><td>Export conventions.</td></tr>
-      <tr><td><code>--formats</code></td><td>Comma-separated format ids (default: every non-image format but <code>experiment</code>, <code>sim_rig</code>, <code>sim_campaign</code> and <code>detection_quality</code>).</td></tr>
+      <tr><td><code>--formats</code></td><td>Comma-separated format ids (default: every non-image format but those written only when named: see <a href="#formats">Export formats</a>).</td></tr>
       <tr><td><code>--pos-tol</code>, <code>--ang-tol</code></td><td>Installation tolerances, mm and degrees (default 10 and 1).</td></tr>
       <tr><td><code>--min-boards</code></td><td>Boards a camera must see (default 1).</td></tr>
       <tr><td><code>--no-joint</code>, <code>--board-tol MM</code></td><td>Solve each camera alone; how far a board may lie off its place (default 20).</td></tr>
@@ -2305,6 +2512,17 @@ vantage project.vantage --run-plan P3F9A21C plan-run/  # a Copilot plan approved
       <tr><td><code>--campaign OUT_DIR</code></td><td>The project's simulation campaign (or <code>--campaign-template fault_detectability|weather_sweep|rig_ab</code>): its drives in the campaign's folder when it names one, else OUT_DIR/drives; the analysis into OUT_DIR. <code>--campaign-phase drive|evaluate|analyse</code> runs part of it; a run again resumes.</td></tr>
       <tr><td><code>--critical-carla OUT_DIR</code></td><td>The critical targets stood in CARLA and compared with the study (drives in OUT_DIR/drives, reused); <code>--critical-carla-drives DIR</code> compares drives recorded before, without CARLA.</td></tr>
       <tr><td><code>--run-plan ID[:VERSION] [OUT_DIR]</code></td><td>Run a Copilot plan approved in the app from its approval record in the project (its stored settings; no model is asked), each step through the option that runs that kind into OUT_DIR/step-&lt;n&gt;-&lt;kind&gt; (default: the plan's folder in the working folder); every output's provenance names the plan. CARLA steps need a server already running, as <code>--carla-run</code> does.</td></tr>
+      <tr><td><code>--rig-perception OUT_DIR</code></td><td>3D detection per class and region, rig against rig (Simulate ▸ Rig perception): <code>--perception-recording DIR[:RIG]</code> (repeatable, the first rig the reference; default the project's), <code>--perception-backend lifted|external:NAME</code>, <code>--perception-records</code> (add the records to the learned model's store).</td></tr>
+      <tr><td><code>--perception-scene-set SET OUT_DIR</code></td><td>Drive a perception scene set (<code>standard</code>, <code>quick</code>) in CARLA for <code>--scene-variants</code> with <code>--scene-seeds</code> (drives already there are reused).</td></tr>
+      <tr><td><code>--redrive DRIVE_DIR OUT_DIR</code></td><td>The data-reuse report of a proposed rig (<code>--redrive-variant</code>, else the tab's) on a recorded drive; <code>--reshoot</code> also writes the re-shot drive into OUT_DIR/reshot.</td></tr>
+      <tr><td><code>--read-requirements OUT.json FILE…</code>, <code>--design OUT_DIR</code></td><td>Requirements and constraints from the brief and documents (the brief parser, each quoting its sentence), set as the design agent's rows; the design agent's options (<code>--design-evaluations N</code>, <code>--design-seed S</code>).</td></tr>
+      <tr><td><code>--perf-model OUT_DIR</code>, <code>--perf-save</code></td><td>Train the learned detection model on the perception records and describe the variant; keep the model for the page and the optimiser.</td></tr>
+      <tr><td><code>--perf-records-import FILE</code>, <code>--perf-records-export FILE</code>, <code>--no-anonymise</code>, <code>--suggest-simulations K</code></td><td>Records into or out of the learned model's store (anonymised unless asked); which K variants to evaluate for real next, JSON on stdout.</td></tr>
+      <tr><td><code>--foundation-range OUT_DIR</code></td><td>Foundation models' detection and depth range on recordings: <code>--foundation-recording</code> (repeatable), <code>--foundation-models IDS</code>, <code>--foundation-depth ID|none</code>, <code>--foundation-download</code>.</td></tr>
+      <tr><td><code>--robust-perception OUT_DIR</code></td><td>Tolerances carried to detection: <code>--robust-recording</code> (repeatable), <code>--robust-mode per_vehicle|design</code>, <code>--robust-samples N</code>, <code>--robust-sobol N</code>, <code>--robust-no-detect</code>, <code>--robust-min-recall X</code>.</td></tr>
+      <tr><td><code>--risk-coverage [OUT.json|DIR]</code></td><td>Risk-weighted coverage: <code>--risk-weight frequency|cost|fatal|fyl|ncap</code>, <code>--risk-metric resolved|seen|redundant</code>, <code>--risk-min CLASS=PCT</code> (repeatable).</td></tr>
+      <tr><td><code>--fleet-twin OUT_DIR</code>, <code>--as-of DATE</code></td><td>The fleet twin and its tolerance inputs, with the date taken as today.</td></tr>
+      <tr><td><code>--fleet-twin-online VEHICLE FILE…</code>, <code>--fleet-twin-date DATE</code>, <code>--fleet-twin-watch</code></td><td>Online self-calibrations added to a fleet vehicle (keep them with <code>--save</code>); the vehicles' watch folders read headless, the project saved after each drive (<code>--watch-runs</code>, <code>--watch-interval</code>).</td></tr>
       <tr><td><code>--save OUT.vantage</code></td><td>Save the project afterwards: with imported or fitted calibrations, fleet records, the suspension data read by <code>--suspension-data</code>, or the as-built variant of <code>--as-built-check</code>.</td></tr>
     </table>
     <p>Captures are matched to cameras by the tag in the file name (<code>F.png</code>, <code>cam_QR.jpg</code>,
@@ -2322,6 +2540,18 @@ vantage project.vantage --run-plan P3F9A21C plan-run/  # a Copilot plan approved
       <tr><td><code>8</code></td><td>With <code>--detection-quality</code> (or a <code>--campaign</code> whose checks include detection), the detector model is missing or does not verify, or its download failed.</td></tr>
       <tr><td><code>9</code></td><td>With <code>--campaign</code>, a drive failed or is still to do: run it again, and what is done is reused.</td></tr>
       <tr><td><code>10</code></td><td>With <code>--run-plan</code>, the project holds no approved, intact plan of that ID, or a step no longer validates: approve it again in the app. Otherwise <code>--run-plan</code> returns the first failing step's own code; a step that reports findings (3, 5 or 6) lets the plan go on, any other stops it.</td></tr>
+    </table>
+    <table>
+      <tr><th>Option</th><th>Exit codes besides 0</th></tr>
+      <tr><td><code>--rig-perception</code></td><td>4 no recording or one cannot be read; 8 the 2D detector model is missing; 9 the external detector is not set up or not approved on this computer.</td></tr>
+      <tr><td><code>--perception-scene-set</code></td><td>2 the set does not fit the variants; 7 no CARLA server; 9 a drive failed.</td></tr>
+      <tr><td><code>--redrive</code></td><td>3 the proposed rig's verdict is re-collect; 4 the drive cannot be read or PyTorch is missing.</td></tr>
+      <tr><td><code>--read-requirements</code>, <code>--design</code></td><td>2 nothing to read, or no accepted requirement; 4 a document cannot be read; 5 no option meets every must requirement and constraint.</td></tr>
+      <tr><td><code>--perf-model</code>, <code>--perf-records-import</code>, <code>--perf-records-export</code>, <code>--suggest-simulations</code></td><td>3 too few records to train, or no trained model; 4 the store or the file cannot be read; 2 no record to export.</td></tr>
+      <tr><td><code>--foundation-range</code></td><td>2 nothing to evaluate (the sweep drives CARLA: run it on the page); 4 PyTorch or transformers missing; 8 a model missing.</td></tr>
+      <tr><td><code>--robust-perception</code></td><td>2 no recording; 3 a 5th-percentile rig recall below <code>--robust-min-recall</code>; 8 the detector model missing.</td></tr>
+      <tr><td><code>--risk-coverage</code></td><td>3 a class below its <code>--risk-min</code>.</td></tr>
+      <tr><td><code>--fleet-twin</code>, <code>--fleet-twin-online</code></td><td>3 a sensor due or beyond its limit, or knocked beyond it; 4 the twin cannot run, a file cannot be read or the vehicle is not in the fleet.</td></tr>
     </table>
     <p>When several apply, the highest is returned. Ctrl+C during a CARLA run returns 130 once CARLA is tidied up. <code>--watch</code> exits with its last run's code: the command's own
       when it ran, else 5 when the requirements check fails, 4 when the project could not be read or a format not

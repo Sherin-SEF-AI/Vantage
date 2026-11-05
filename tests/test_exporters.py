@@ -103,13 +103,17 @@ def _cams(p):
 # ----------------------------------------------------------------------------- registry
 def test_formats_registry():
     ids = [f.id for f in CLASSIC]
-    assert len(ids) == len(set(ids)) == 53
+    assert len(ids) == len(set(ids)) == 64
     # written only when named (batch --export without --formats leaves them out): an experiment runs for minutes,
     # the CARLA rig's remap tables are tens of MB, a campaign's analysis and the detector's evaluation take minutes, the
     # calibration coach simulates technicians for seconds per camera (a live tool), the gradient refinement runs 10–40 s
-    # and the log replay needs a recorded drive and minutes
+    # and the log replay needs a recorded drive and minutes; round 14's detectors, reconstructions, tolerance builds and
+    # design search run for minutes, the learned model reads the user's saved model and the records the user's store
     assert [f.id for f in CLASSIC if not f.default] == ['calib_coach', 'diff_optim', 'experiment', 'sim_campaign',
-                                                            'detection_quality', 'log_replay', 'sim_rig']
+                                                            'detection_quality', 'log_replay', 'rig_perception',
+                                                            'redrive', 'foundation_range', 'robust_perception',
+                                                            'design_options', 'perf_model', 'sim_rig',
+                                                            'perception_records']
     assert {f.group for f in CLASSIC} | {'Research', 'AV stack'} == set(ex.GROUPS)
     for f in CLASSIC:
         assert f.kind in ('text', 'binary')
@@ -138,8 +142,13 @@ def test_export_writes_every_file(sample, exported):
     # targets (json, 2 csv, 2 png), the materials (json, 2 csv, png), the weather comparison (json, 2 csv, png),
     # the CI templates (2 yml, md), no experiment (none set up), no simulation campaign (no drive on disk), no
     # detection quality (no recording) and the CARLA rig (json, npz)
+    # + round 14: the risk-weighted coverage (json, 2 csv, a map per class: 4), the fleet twin (json, csv, png), its
+    # schedule (csv) and its tolerance inputs (json), the learned model's and the perception records' notes (no model
+    # saved, no record: NOT_WRITTEN.txt each); rig perception, re-drive, foundation models, robust perception and the
+    # design agent write nothing (no recording, no drive, no accepted requirement)
     assert len(paths) == (11 + 2 * n + 2 + (2 * n + 4) + 5 + 5 + 2 + 2 * n + 2 + 2 + 3 + 3 + n + 1 + 2 + 2 + 2
-                          + 3 + 3 + 2 + 3 + 3 + 4 + 2 + 4 + 3 + 3 + 2 + 5 + 4 + 4 + 3 + 0 + 2 + 4 + (4 + n) + 2 + 3 + 6 + 0)
+                          + 3 + 3 + 2 + 3 + 3 + 4 + 2 + 4 + 3 + 3 + 2 + 5 + 4 + 4 + 3 + 0 + 2 + 4 + (4 + n) + 2 + 3 + 6 + 0
+                          + 7 + 3 + 1 + 1 + 1 + 1)
     for path in paths:
         assert os.path.isabs(path) and os.path.isfile(path) and os.path.getsize(path) > 0
         assert os.path.commonpath([path, str(out)]) == str(out)
@@ -645,9 +654,12 @@ def test_exports_without_analysis_result(sample, tmp_path, qapp, monkeypatch):
     # comparison: four; the CI templates: three; the experiment: none (the sample has none set up); the simulation
     # campaign and the detection quality: none (no drive, no recording); the CARLA rig: two; the clock tree: four;
     # the exposure metering: four and a mask per camera; the calibration coach: two;
-    # the gradient refinement: three; the thermal and vibration drift: six; the log replay: none (no drive)
-    assert len(paths) == ((len(ids) - 35) + 2 * len(_cams(p)) + 2 + 2 + 2 + 2 + 2 + 2 + 3 + 3
-                          + 3 + 3 + 3 + 3 + 2 + 4 + 2 + 4 + 3 + 3 + 2 + 5 + 4 + 4 + 3 + 0 + 2 + 4 + (4 + len(_cams(p))) + 2 + 3 + 6 + 0)
+    # the gradient refinement: three; the thermal and vibration drift: six; the log replay: none (no drive); round 14:
+    # the risk-weighted coverage seven, the fleet twin three, its schedule, its tolerances and the two notes one each,
+    # the five heavy studies none (11 formats, 14 files)
+    assert len(paths) == ((len(ids) - 35 - 11) + 2 * len(_cams(p)) + 2 + 2 + 2 + 2 + 2 + 2 + 3 + 3
+                          + 3 + 3 + 3 + 3 + 2 + 4 + 2 + 4 + 3 + 3 + 2 + 5 + 4 + 4 + 3 + 0 + 2 + 4 + (4 + len(_cams(p))) + 2 + 3 + 6 + 0
+                          + 14)
     html_text = (tmp_path / 'report.html').read_text('utf-8')
     assert 'No analysis result' in html_text
     _, desc, _ = ex.preview('report_pdf', p, None, ex.ExportOptions(out_dir=str(tmp_path)))

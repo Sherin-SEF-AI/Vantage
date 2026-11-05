@@ -24,6 +24,12 @@ DENY = {'--carla-run': 'starts CARLA: propose a Copilot plan (propose_plan) for 
         '--detection-download': 'downloads a model: the user does it on the Detection quality page',
         '--watch': "runs the user's automation command", '--on-change': "the user's automation command",
         '--watch-runs': 'a watcher that never ends', '--watch-interval': 'a watcher that never ends',
+        '--perception-scene-set': 'runs CARLA drives: the user drives a scene set from Simulate ▸ Rig perception',
+        '--foundation-download': 'downloads models: the user does it on the Foundation models page',
+        '--fleet-twin-watch': 'a watcher that never ends',
+        '--perception-records': "writes into the user's own record store: the user adds records on the page",
+        '--perf-records-import': "writes into the user's own record store: the user imports on the page",
+        '--perf-save': "replaces the user's saved model: the user trains and saves it on the page",
         '--sample': 'the run is on this project', '--template': 'the run is on this project',
         '--self-test': 'not a job on the project'}
 EXIT = {0: 'done: fine',
@@ -32,8 +38,12 @@ EXIT = {0: 'done: fine',
         3: 'done: a camera or sensor has to be re-mounted or could not be checked (a drive log, as-built check, '
            'online calibration, lidar calibration or rig health found a fault)',
         4: 'a calibration failed or matched no camera, or an input could not be read or an output not written',
-        5: 'done: the requirements check failed', 6: 'done, with findings (see the output)', 1: 'failed: an error '
-        '(see the output)', 130: 'stopped', -9: 'stopped: it ran longer than timeout_s'}
+        5: 'done: the requirements check failed (or no design option meets every must requirement)',
+        6: 'done, with findings (see the output)',
+        7: 'no CARLA server answered (or CARLA\'s Python is missing)',
+        8: 'a model the job needs is not downloaded (the detector, a foundation model)',
+        9: 'an external detector is not set up or approved here, or a drive failed',
+        1: 'failed: an error (see the output)', 130: 'stopped', -9: 'stopped: it ran longer than timeout_s'}
 JSON_MAX = 60_000                       # characters of JSON outputs returned in full, all together
 TAIL = 4000
 

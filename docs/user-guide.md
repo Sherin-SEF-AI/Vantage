@@ -520,6 +520,37 @@ vantage rig.vantage --experiment spec.json exp/
 
 [Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#experiments)
 
+### Risk-weighted coverage
+
+**Where:** **Analysis ▸ Risk-weighted coverage**. Choose the weighting (crash frequency, cost, fatal crashes, functional years lost, or the Euro NCAP scenarios equally). **Answers:** of where pedestrians, cyclists, vehicles and motorcyclists are in the seconds before a crash, how much do the cameras cover, and where is the gap? The sample's data rig covers 99 % of the ground but 88 % of the pedestrian exposure. Add the proposed row to the scorecard to keep it there.
+
+```bash
+vantage rig.vantage --risk-coverage risk.json --risk-min pedestrian=85   # exit 3 below 85 %
+```
+
+[Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#risk-coverage)
+
+### Design agent
+
+**Where:** **Analysis ▸ Design agent**. Type the brief or add the programme's documents, press **Read requirements**, untick what you do not want, enter your prices, press **Run**. **Answers:** three to seven complete rigs that trade cost, power, margin and detection, each checked, explained sensor by sensor and critiqued. Pick one and **Create variant**: a new variant in one undo step, with the reasons in the design log.
+
+```bash
+vantage rig.vantage --read-requirements rows.json odd.pdf --design design/ --save rig.vantage
+```
+
+[Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#designer)
+
+### Learned detection model
+
+**Where:** **Analysis ▸ Learned detection model**. Collect perception records (Rig perception, Foundation models and Robust perception write them), press **Train** and read the calibration table before trusting a prediction. **Answers:** the predicted recall per class and region of every variant with its interval, and which variants are worth simulating next. Set its weight on the Optimise page to let the search use it.
+
+```bash
+vantage rig.vantage --perf-model model/ --perf-save
+vantage rig.vantage --suggest-simulations 4
+```
+
+[Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#perf-model)
+
 ## Every feature: surround view
 
 ### Bird's-eye view, seams and remap tables
@@ -606,6 +637,16 @@ vantage rig.vantage --fleet fleet/
 
 [Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#fleet)
 
+### Fleet twin
+
+**Where:** **Calibrate ▸ Fleet twin**. Import online self-calibrations or set a watch folder per vehicle. **Answers:** each sensor's drift with its uncertainty, knocks the day they happen, the date each sensor should be recalibrated, and the measured drift as the tolerance for the design (**Use as mounting tolerance**).
+
+```bash
+vantage rig.vantage --fleet-twin-online car-07 online.json --fleet-twin twin/   # exit 3: a sensor is due
+```
+
+[Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#fleet-twin)
+
 ![The as-built check comparing each camera's outline of the vehicle with the plan](https://sherin-sef-ai.github.io/Vantage/media/asbuilt.jpg)
 
 *The as-built check.*
@@ -669,6 +710,46 @@ vantage rig.vantage --campaign camp/ --campaign-template fault_detectability   #
 ### Critical targets in CARLA
 
 **Where:** **Simulate ▸ Critical targets in CARLA…**. It stands the critical targets in CARLA and compares what each camera sees with the study, in another renderer. `--critical-carla crit/` exits 3 when a view disagrees. [Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#critical-carla)
+
+### Rig perception
+
+**Where:** **Simulate ▸ Rig perception…**. Add a CARLA drive of each rig (or drive a perception scene set: the same scenes and seeds for every variant), press **Run**. **Answers:** how well a 3D detector finds each class in each region around the car, rig against rig, with only the differences the data support listed as findings.
+
+```bash
+vantage rig.vantage --rig-perception perception/ --perception-recording a/:A --perception-recording b/:B
+```
+
+[Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#rig-perception)
+
+### Re-drive
+
+**Where:** **Simulate ▸ Log replay ▸ Re-drive**. Open a recorded drive, choose the proposed rig as rig B, press **Calibrate & report**. **Answers:** how much of each new camera's field the existing drive can provide within your error budget, why the rest cannot, and what the old rig saw that the new one will not. **Export re-shot drive** writes the drive as the new rig would have recorded it.
+
+```bash
+vantage rig.vantage --redrive drive/ redrive/ --redrive-variant 2   # exit 3: re-collect
+```
+
+[Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#redrive)
+
+### Foundation models
+
+**Where:** **Simulate ▸ Foundation models…**. Download the models you want (the licence is shown), add a recording or set up a range sweep, type your own classes. **Answers:** how far each detector really finds each class with each camera, against the pixel rule, and how far monocular depth is usable.
+
+```bash
+vantage rig.vantage --foundation-range fm/ --foundation-recording drive/ --foundation-models yolox_s
+```
+
+[Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#foundation)
+
+### Robust perception
+
+**Where:** **Simulate ▸ Robust perception…**. Add a recording with ground truth, choose the sources and the calibration mode, press **Run** (tens of minutes). **Answers:** how much the mounting, thermal, vibration and calibration tolerances change detection, per region, and which source and camera matter.
+
+```bash
+vantage rig.vantage --robust-perception robust/ --robust-recording drive/ --robust-min-recall 0.8
+```
+
+[Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#robust-perception)
 
 ![The CARLA page with the planned rig recorded in a CARLA town](https://sherin-sef-ai.github.io/Vantage/media/carla.jpg)
 
@@ -837,6 +918,14 @@ The campaign's report gives, per check, the smallest turn it detects. If none ca
 vantage rig.vantage --online-calib drive_0412/ online/   # exit 3: a camera was knocked beyond the tolerance
 ```
 
+### Ask whether a new rig keeps the data you have
+
+```bash
+vantage rig.vantage --redrive drive_0412/ reuse/ --redrive-variant "Cameras 20° up"
+```
+
+The report gives each camera's share of its field within the error budget; exit 3 means re-collect.
+
 ### Ask Claude to optimise and report
 
 In the Claude Code panel: "Without moving locked cameras, raise the minimum density above 3.5 px/cm with no new blind ground. Simulate first, apply the best as one change, and write what you did in the design log." Every change is one undo step.
@@ -852,11 +941,11 @@ Batch mode returns a code that a CI job can act on:
 | `2` | Done, but the plan has critical issues or the study's own failure condition is met (a cable too long, a camera inside a housing, a wheel lifted…). |
 | `3` | A camera or sensor has to be re-mounted or could not be checked (drive log, as-built, online calibration, rig health, clock tree, CARLA comparisons). |
 | `4` | An input could not be read, an output not written, or a calibration matched no camera. |
-| `5` | The requirements check failed (`--check`). |
+| `5` | The requirements check failed (`--check`), or no design option meets every must requirement (`--design`). |
 | `6` | A validation check failed, or a result does not reproduce. |
 | `7` | No CARLA server answered, or the run failed. |
-| `8` | The detector model is missing (`--detection-download` fetches it). |
-| `9` | A campaign drive failed (run again to resume). |
+| `8` | The detector model is missing (`--detection-download` fetches it), or a foundation model (`--foundation-download`). |
+| `9` | A campaign or scene-set drive failed (run again to resume), or an external detector is not approved on this computer (`--rig-perception`). |
 | `10` | No approved, intact Copilot plan of that id, or a step no longer validates. |
 
 ## Shortcuts to learn first

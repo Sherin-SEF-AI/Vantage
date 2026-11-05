@@ -12,7 +12,7 @@ window goes through the session) and in the MCP process on a file (vantage.mcp.s
     activity(limit)      what happened lately: the undo history with who did what, the page, the selection
     show(req), proposal(prop), plan(plan), log(entry)   the window only (file sessions say so)
 
-The assistant's 66 tools come along as they are (reading the design, studies, simulate, compare, look, the Copilot's
+The assistant's tools come along as they are (reading the design, studies, simulate, compare, look, the Copilot's
 plan tools), except two that only make sense inside the app's own chat (update_plan, suggest_next). Then
 edit_project changes anything the user can change in the design, one undo step per call; undo, save, export and
 activity complete it."""
@@ -260,6 +260,8 @@ MCP_TOOLS = [
          '--exposure, --terrain, --harness …), checks on files (--drive-log RECORDING, --as-built-check, '
          '--install-check IMAGES, --online-calib DRIVE, --lidar-calib, --log-replay, --detection-quality), '
          'calibration (--calibrate-lens, --import-calib, then --save OUT.vantage), --refine-rig, --experiment, '
+         'perception and the fleet (--risk-coverage, --fleet-twin, --rig-perception, --robust-perception, --redrive, '
+         '--foundation-range, --perf-model, --read-requirements, --design), '
          '--validate, --reproduce, --export with --formats, --rig-health. Runs in a folder of its own beside the '
          'project; returns the exit code and its meaning, the output\'s end, the files written and the small JSON ones. '
          'help: true lists every option with its arguments. CARLA runs, downloads and the automation command are not '

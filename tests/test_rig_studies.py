@@ -25,7 +25,12 @@ PAGES = {'power_budget': ('power', 'Analysis'), 'gnss_imu': ('gnss', 'Analysis')
          'cable_harness': ('harness', 'Analysis'), 'observability': ('observability', 'Calibrate'),
          'experiments': ('experiments', 'Analysis'), 'carla': ('sim', 'Simulate'),
          'carla_live': ('sim', 'Simulate'), 'detection': ('detection', 'Simulate'), 'campaign': ('campaign', 'Simulate'),
-         'critical_carla': ('critical_carla', 'Simulate')}
+         'critical_carla': ('critical_carla', 'Simulate'),
+         # round 14
+         'rig_perception': ('rig_perception', 'Simulate'), 'foundation': ('foundation', 'Simulate'),
+         'robust_perception': ('robust_perception', 'Simulate'), 'risk_coverage': ('risk_coverage', 'Analysis'),
+         'designer': ('designer', 'Analysis'), 'perf_model': ('perf_model', 'Analysis'),
+         'fleet_twin': ('fleet_twin', 'Calibrate')}
 FORMATS = {'power_budget': ['power_budget/power_budget.json', 'power_budget/power_budget.csv',
                             'power_budget/power_circuits.csv'],
            'gnss_imu': ['gnss_imu/gnss_imu.json', 'gnss_imu/ins_lever_arms.txt', 'gnss_imu/gnss_sky.png'],
@@ -46,7 +51,13 @@ FORMATS = {'power_budget': ['power_budget/power_budget.json', 'power_budget/powe
            'harness': ['harness/harness.json', 'harness/harness.csv', 'harness/harness.png'],
            'observability': ['observability/observability.json', 'observability/observability.csv',
                              'observability/observability.png', 'observability/fusion_density.png'],
-           'sim_rig': ['carla/sim_rig.json', 'carla/sim_remap.npz']}
+           'sim_rig': ['carla/sim_rig.json', 'carla/sim_remap.npz'],
+           'risk_coverage': ['risk_coverage/risk_coverage.json', 'risk_coverage/risk_coverage_regions.csv',
+                             'risk_coverage/risk_coverage_weights.csv', 'risk_coverage/risk_coverage_pedestrian.png',
+                             'risk_coverage/risk_coverage_cyclist.png', 'risk_coverage/risk_coverage_vehicle.png',
+                             'risk_coverage/risk_coverage_motorcyclist.png'],
+           'fleet_twin': ['fleet_twin/fleet_twin.json', 'fleet_twin/fleet_twin.csv', 'fleet_twin/fleet_twin.png'],
+           'fleet_twin_tolerances': ['fleet_twin/fleet_twin_tolerances.json']}
 
 
 def _rig():

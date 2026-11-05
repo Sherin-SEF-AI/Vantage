@@ -53,6 +53,15 @@
     vantage project.vantage --critical-carla critical/
     vantage project.vantage --log-replay drive/ replay/ --replay-variant 2
     vantage project.vantage --run-plan P3F9A21C plan-run/
+    vantage project.vantage --rig-perception perception/ --perception-recording drive-a/:A --perception-recording drive-b/:B
+    vantage project.vantage --redrive drive/ redrive/ --redrive-variant 2 --reshoot
+    vantage project.vantage --read-requirements extraction.json odd.pdf --design design/ --save designed.vantage
+    vantage project.vantage --perf-model model/ --perf-save
+    vantage project.vantage --suggest-simulations 4
+    vantage project.vantage --foundation-range foundation/ --foundation-recording drive/ --foundation-models yolox_s
+    vantage project.vantage --robust-perception robust/ --robust-recording drive/ --robust-min-recall 0.8
+    vantage project.vantage --risk-coverage risk.json --risk-weight fatal --risk-min pedestrian=85
+    vantage project.vantage --fleet-twin-online V3 online.json --fleet-twin twin/ --as-of 2026-11-01
 
 Every JSON object a batch run writes (and every JSON the exporters write) carries a "provenance" block
 (core.provenance): the version and code, the libraries, the project's and variant's content hashes, the study's
@@ -99,7 +108,20 @@ and it is missing, 9 when a drive failed or is still to do (run it again: what i
 compare (no target can be stood in CARLA, no drive in --critical-carla-drives). With --log-replay: 3 when the
 reconstruction does not validate (held-out PSNR under analysis.splat.min_psnr_db), 4 when the drive cannot be read. With --run-plan: 10 when the project
 holds no approved, intact plan of that ID or a step no longer validates (approve it again in the app), else the first
-failing step's own code (a step reporting findings, 3, 5 or 6, lets the plan go on; any other stops it). Ctrl+C during
+failing step's own code (a step reporting findings, 3, 5 or 6, lets the plan go on; any other stops it). With
+--rig-perception: 4 when there is no recording or one cannot be read, 8 when the 2D detector model is missing, 9 when
+the external detector is not set up or not approved on this computer. With --perception-scene-set: 2 when the set does
+not fit the variants, 7 when no CARLA server answers, 9 when a drive failed. With --redrive: 3 when the proposed rig's
+verdict is re-collect, 4 when the drive cannot be read (or PyTorch is missing). With --design: 5 when no option meets
+every must requirement and constraint, 2 when there is no accepted requirement; --read-requirements: 4 when a document
+cannot be read, 2 when there is nothing to read. With --perf-model: 3 when there are too few perception records to
+train, 4 when the store cannot be read; --perf-records-import: 4 when the file cannot be read; --perf-records-export: 2
+when the store has no record; --suggest-simulations: 3 when there is no trained model. With --foundation-range: 2 when
+there is nothing to evaluate (or the sweep, which drives CARLA), 4 when PyTorch or transformers are missing, 8 when a
+model is missing. With --robust-perception: 3 when the 5th percentile of the pedestrian or vehicle rig recall is below
+--robust-min-recall, 2 when there is no recording, 8 when the detector model is missing. With --risk-coverage: 3 when a
+class is below its --risk-min. With --fleet-twin: 3 when a sensor is due or beyond its limit (or knocked beyond it), 4
+when it cannot run; --fleet-twin-online: 4 when a file cannot be read or the vehicle is not in the fleet. Ctrl+C during
 a CARLA run returns 130 after CARLA was tidied up.
 """
 from __future__ import annotations
@@ -501,8 +523,10 @@ def _run(args) -> int:
         raise SystemExit('--verify checks the predictions of --observability.')
     if (args.validate_models or args.validate_quick) and args.validate is None:
         raise SystemExit('--validate-models and --validate-quick go with --validate.')
-    if args.carla_python and not (args.carla_run or args.carla_live or args.campaign or args.critical_carla):
-        raise SystemExit('--carla-python goes with --carla-run, --carla-live, --campaign or --critical-carla.')
+    if args.carla_python and not (args.carla_run or args.carla_live or args.campaign or args.critical_carla or
+                                  args.perception_scene_set):
+        raise SystemExit('--carla-python goes with --carla-run, --carla-live, --campaign, --critical-carla or '
+                         '--perception-scene-set.')
     _modifiers(args)
     if args.ground_truth_summary and not (args.path or args.sample or args.template):
         return _ground_truth_summary(args)              # a drive's folder: no project needed
@@ -1014,6 +1038,8 @@ def _run(args) -> int:
                     print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
             if any(f['kind'] == 'validation' and f['severity'] == 'serious' for f in sres.findings):
                 code = max(code, 3)
+    if any(getattr(args, k) not in (None, False) for k in ROUND14_OPTIONS):
+        code = max(code, _round14(project, eng, args))
     if args.campaign:
         code = max(code, _campaign(project, args))
     if args.run_plan:
@@ -1231,6 +1257,18 @@ _GOES_WITH = {
     ('live_cameras', 'live_scale', 'live_fault'): ('carla_live',),
     ('install_picks',): ('install_check',),
     ('refine_from',): ('refine_rig',),
+    ('perception_recording', 'perception_backend', 'perception_records'): ('rig_perception',),
+    ('scene_variants', 'scene_seeds'): ('perception_scene_set',),
+    ('redrive_variant', 'reshoot'): ('redrive',),
+    ('design_evaluations', 'design_seed'): ('design',),
+    ('perf_save',): ('perf_model',),
+    ('no_anonymise',): ('perf_records_export',),
+    ('foundation_recording', 'foundation_models', 'foundation_depth', 'foundation_download'): ('foundation_range',),
+    ('robust_recording', 'robust_mode', 'robust_samples', 'robust_sobol', 'robust_no_detect',
+     'robust_min_recall'): ('robust_perception',),
+    ('risk_weight', 'risk_metric', 'risk_min'): ('risk_coverage',),
+    ('fleet_twin_date',): ('fleet_twin_online',),
+    ('as_of',): ('fleet_twin',),
 }
 
 
@@ -2104,6 +2142,731 @@ def reproduce(args) -> int:
     return 0 if ok else PV.EXIT_NOT_REPRODUCED
 
 
+# ============================================================================ round 14
+# perception in the loop, re-driven logs, the design agent, the learned rig model, foundation models, tolerances to
+# detection, risk-weighted coverage and the fleet twin
+ROUND14_OPTIONS = ('rig_perception', 'perception_scene_set', 'redrive', 'design', 'read_requirements', 'perf_model',
+                   'perf_records_import', 'perf_records_export', 'suggest_simulations', 'foundation_range',
+                   'robust_perception', 'risk_coverage', 'fleet_twin', 'fleet_twin_online', 'fleet_twin_watch')
+
+
+def add_round14_arguments(g):
+    g.add_argument('--rig-perception', metavar='OUT_DIR',
+                   help='rig perception (Simulate ▸ Rig perception): 3D detection per class and per region around the '
+                        'car on the project\'s recordings (or --perception-recording), rig against rig with paired '
+                        'intervals; writes rig_perception.json, CSVs, the findings, a map per class and rig and the '
+                        'perception records into OUT_DIR; exit 4 when there is no recording or one cannot be read, 8 '
+                        'when the 2D detector model is missing, 9 when the external detector is not set up or not '
+                        'approved on this computer')
+    g.add_argument('--perception-recording', metavar='DIR[:RIG]', action='append',
+                   help='with --rig-perception: a recording with ground truth and the rig\'s name (repeatable; the '
+                        'first rig is the reference); default: the project\'s list')
+    g.add_argument('--perception-backend', metavar='lifted|external:NAME',
+                   help='with --rig-perception: the 3D detector (default the project\'s: lifted YOLOX boxes)')
+    g.add_argument('--perception-records', action='store_true',
+                   help='with --rig-perception: also add its perception records to the learned model\'s store')
+    g.add_argument('--perception-scene-set', nargs=2, metavar=('SET', 'OUT_DIR'),
+                   help='drive a perception scene set (standard | quick) in CARLA for --scene-variants with '
+                        '--scene-seeds, the drives in OUT_DIR/drives (drives already there are reused); exit 2 when '
+                        'the set does not fit the variants, 7 when no CARLA server answers, 9 when a drive failed')
+    g.add_argument('--scene-variants', metavar='NAMES',
+                   help='with --perception-scene-set: comma-separated variant names, uids or 1-based indices '
+                        '(default: the active one)')
+    g.add_argument('--scene-seeds', metavar='SEEDS', help='with --perception-scene-set: comma-separated seeds '
+                                                         '(default 1)')
+    g.add_argument('--redrive', nargs=2, metavar=('DRIVE_DIR', 'OUT_DIR'),
+                   help='re-drive (Simulate ▸ Log replay ▸ Re-drive): how much of the recorded drive in DRIVE_DIR a '
+                        'proposed rig (--redrive-variant, else the Re-drive tab\'s) can reuse, per camera and region, '
+                        'with the confidence calibrated on frames the reconstruction never saw; writes redrive.json, '
+                        'CSVs and PNGs into OUT_DIR (needs PyTorch); exit 3 when the rig\'s verdict is re-collect, 4 '
+                        'when the drive cannot be read')
+    g.add_argument('--redrive-variant', metavar='NAME|N', help='with --redrive: the proposed rig')
+    g.add_argument('--reshoot', action='store_true',
+                   help='with --redrive: also write the re-shot drive (a nuScenes folder with ground truth, '
+                        'confidence maps and, as set on the tab, a ROS 2 bag) into OUT_DIR/reshot')
+    g.add_argument('--design', metavar='OUT_DIR',
+                   help='the design agent (Analysis ▸ Design agent) on the project\'s accepted requirements and '
+                        'constraints: a Pareto set of complete rigs, each re-checked and critiqued; writes the design '
+                        'options (JSON, CSV, PNG) into OUT_DIR; nothing in the project changes; exit 5 when no option '
+                        'meets every must requirement and constraint, 2 when there is no accepted requirement')
+    g.add_argument('--design-evaluations', type=int, metavar='N', help='with --design: rigs scored (default the '
+                                                                      'project\'s, 160)')
+    g.add_argument('--design-seed', type=int, metavar='S', help='with --design: the search\'s seed')
+    g.add_argument('--read-requirements', nargs='+', metavar=('OUT.json', 'FILE'),
+                   help='read requirements and constraints from the design brief and documents (.txt, .md, .pdf, '
+                        '.docx, .html) with the brief parser (no model is asked), each quoting its sentence; writes the '
+                        'extraction to OUT.json (- = stdout) and sets it as the design agent\'s rows (--save keeps '
+                        'them; --design uses them); exit 4 when a document cannot be read, 2 when there is nothing '
+                        'to read')
+    g.add_argument('--perf-model', metavar='OUT_DIR',
+                   help='train the learned detection model (Analysis ▸ Learned detection model) on the perception '
+                        'records and describe the variant: calibration by cross-validation and predictions per class '
+                        'and region; writes perf_model.json, CSVs and a PNG into OUT_DIR; exit 3 when there are too '
+                        'few records to train, 4 when the store cannot be read')
+    g.add_argument('--perf-save', action='store_true',
+                   help='with --perf-model: save the trained model where the page, --suggest-simulations and the '
+                        'optimiser find it')
+    g.add_argument('--perf-records-import', metavar='FILE',
+                   help='add the perception records of a JSON-lines file to the learned model\'s store (duplicates '
+                        'and invalid records are left out and counted); exit 4 when the file cannot be read')
+    g.add_argument('--perf-records-export', metavar='FILE',
+                   help='write the store\'s perception records as JSON lines, anonymised (no vehicle, project or '
+                        'variant names, no paths) unless --no-anonymise; exit 2 when there is none')
+    g.add_argument('--no-anonymise', action='store_true', help='with --perf-records-export: keep the names')
+    g.add_argument('--suggest-simulations', type=int, metavar='K',
+                   help='which K of the project\'s variants to evaluate for real next (the learned model\'s expected '
+                        'improvement), as JSON on stdout; exit 3 when there is no trained model')
+    g.add_argument('--foundation-range', metavar='OUT_DIR',
+                   help='foundation models (Simulate ▸ Foundation models): how far each detector finds each class '
+                        'with each camera and how far monocular depth is usable, on the project\'s recordings (or '
+                        '--foundation-recording); writes foundation_range.json, CSVs, PNGs, examples and perception '
+                        'records into OUT_DIR; exit 2 when there is nothing to evaluate (or the sweep source, which '
+                        'drives CARLA: run it on the page), 4 when PyTorch or transformers are missing, 8 when a model '
+                        'is missing (--foundation-download fetches the commercial-use ones)')
+    g.add_argument('--foundation-recording', metavar='RUN_DIR', action='append',
+                   help='with --foundation-range: a recording with ground truth (repeatable)')
+    g.add_argument('--foundation-models', metavar='IDS',
+                   help='with --foundation-range: comma-separated detector ids (yolox_s, owlv2_b16_ens, gdino_tiny)')
+    g.add_argument('--foundation-depth', metavar='ID', help='with --foundation-range: the depth model (da2_small; '
+                                                           'none: no depth)')
+    g.add_argument('--foundation-download', action='store_true',
+                   help='with --foundation-range: download the missing models first (pinned revision, SHA-256 per '
+                        'file; models without a commercial-use licence only with the project\'s opt-in)')
+    g.add_argument('--robust-perception', metavar='OUT_DIR',
+                   help='robust perception (Simulate ▸ Robust perception): the mounting, thermal, vibration and '
+                        'calibration tolerances carried to detection on the project\'s recordings (or '
+                        '--robust-recording): recall, BEV error and ghosts per region with the band over builds, '
+                        'Sobol indices; writes robust_perception.json, CSVs and PNGs into OUT_DIR (tens of minutes '
+                        'per recording); exit 3 when --robust-min-recall is given and the 5th percentile of the '
+                        'pedestrian or vehicle rig recall is below it, 2 when there is no recording, 8 when the '
+                        'detector model is missing')
+    g.add_argument('--robust-recording', metavar='RUN_DIR', action='append',
+                   help='with --robust-perception: a recording with ground truth (repeatable)')
+    g.add_argument('--robust-mode', choices=('per_vehicle', 'design'),
+                   help='with --robust-perception: the calibration the perception uses (each car\'s own, or the '
+                        'design\'s)')
+    g.add_argument('--robust-samples', type=int, metavar='N', help='with --robust-perception: builds through the '
+                                                                  'detector')
+    g.add_argument('--robust-sobol', type=int, metavar='N', help='with --robust-perception: Sobol base samples (0: '
+                                                                'no indices)')
+    g.add_argument('--robust-no-detect', action='store_true',
+                   help='with --robust-perception: the BEV figures only (no detector)')
+    g.add_argument('--robust-min-recall', type=float, metavar='X',
+                   help='with --robust-perception: the lowest 5th-percentile rig recall (0–1) that passes')
+    g.add_argument('--risk-coverage', nargs='?', const='-', metavar='OUT.json|DIR',
+                   help='risk-weighted coverage (Analysis ▸ Risk-weighted coverage): the share of the pre-crash '
+                        'exposure per class (NHTSA pre-crash scenarios, Euro NCAP tests) the cameras cover, beside the '
+                        'share of the ground; a .json file or - (stdout), or a folder for the full export; exit 3 '
+                        'when a class is below its --risk-min')
+    g.add_argument('--risk-weight', choices=('frequency', 'cost', 'fatal', 'fyl', 'ncap'),
+                   help='with --risk-coverage: crash frequency, cost, fatal crashes, functional years lost or the '
+                        'NCAP scenarios equally (default the project\'s: frequency)')
+    g.add_argument('--risk-metric', choices=('resolved', 'seen', 'redundant'),
+                   help='with --risk-coverage: covered means resolved by a camera, in a camera\'s view, or resolved '
+                        'by two or more')
+    g.add_argument('--risk-min', action='append', metavar='CLASS=PCT',
+                   help='with --risk-coverage: the lowest risk-weighted coverage, %%, that passes for a class '
+                        '(pedestrian, cyclist, vehicle, motorcyclist; repeatable)')
+    g.add_argument('--fleet-twin', metavar='OUT_DIR',
+                   help='the fleet twin (Calibrate ▸ Fleet twin): every vehicle\'s sensors over time, drift with its '
+                        'uncertainty, the date each leaves its limit, knocks, the schedule and the measured drift as '
+                        'tolerance inputs; writes fleet_twin.json, CSVs, a PNG and fleet_twin_tolerances.json into '
+                        'OUT_DIR; exit 3 when a sensor is due or beyond its limit (or knocked beyond it), 4 when it '
+                        'cannot run')
+    g.add_argument('--fleet-twin-online', nargs='+', metavar=('VEHICLE', 'FILE'),
+                   help='add online self-calibration results (their JSON exports) to a fleet vehicle\'s twin (name or '
+                        'id; --save keeps them); exit 4 when a file cannot be read or the vehicle is not in the fleet')
+    g.add_argument('--fleet-twin-date', metavar='YYYY-MM-DD',
+                   help='with --fleet-twin-online: the drives\' date when their clock is not a calendar time')
+    g.add_argument('--fleet-twin-watch', action='store_true',
+                   help='read every new drive in the vehicles\' watch folders (Calibrate ▸ Fleet twin), once each, '
+                        'and save the project after each: every --watch-interval seconds, --watch-runs rounds '
+                        '(default until stopped); a drive is read once it has not changed for the project\'s quiet '
+                        'time')
+    g.add_argument('--as-of', metavar='YYYY-MM-DD', help='with --fleet-twin: the date taken as today (reproducible '
+                                                         'runs)')
+
+
+def _pick_variant(project, name, what):
+    """A variant by name, uid or 1-based index (SystemExit naming the variants when there is none)."""
+    v = next((v for i, v in enumerate(project.variants) if name in (v.name, v.uid, str(i + 1))), None)
+    if v is None:
+        raise SystemExit(f'{what}: no variant {name!r}. Variants: ' + ', '.join(x.name for x in project.variants))
+    return v
+
+
+def _progress_line(label):
+    last = [-1.0]
+
+    def progress(f, t=''):
+        if f - last[0] >= 0.005 or f >= 1.0:
+            last[0] = f
+            print(f'\r  {label} {f * 100:5.1f} % {str(t)[:50]:<50}', end='', file=sys.stderr)
+    return progress
+
+
+def _round14(project, eng, args) -> int:
+    """Every round-14 option given, in the order their inputs need: online calibrations and requirements read first,
+    the studies after."""
+    code = 0
+    if args.fleet_twin_online:
+        code = max(code, _fleet_twin_online(project, args))
+    if args.read_requirements:
+        code = max(code, _read_requirements(project, args))
+    if args.perf_records_import:
+        code = max(code, _perf_records_import(project, args))
+    if args.rig_perception:
+        code = max(code, _rig_perception(project, eng, args))
+    if args.perception_scene_set:
+        code = max(code, _perception_scene_set(project, args))
+    if args.redrive:
+        code = max(code, _redrive(project, eng, args))
+    if args.foundation_range:
+        code = max(code, _foundation_range(project, eng, args))
+    if args.robust_perception:
+        code = max(code, _robust_perception(project, eng, args))
+    if args.risk_coverage is not None:
+        code = max(code, _risk_coverage(project, eng, args))
+    if args.perf_model:
+        code = max(code, _perf_model(project, eng, args))
+    if args.perf_records_export:
+        code = max(code, _perf_records_export(project, args))
+    if args.suggest_simulations is not None:
+        code = max(code, _suggest_simulations(project, args))
+    if args.design:
+        code = max(code, _design(project, eng, args))
+    if args.fleet_twin:
+        code = max(code, _fleet_twin(project, eng, args))
+    if args.fleet_twin_watch:
+        code = max(code, _fleet_twin_watch(project, eng, args))
+    return code
+
+
+def _split_recording(spec: str) -> dict:
+    """'DIR' or 'DIR:RIG' (a drive letter's colon, or a colon inside the folder's name, stays with the path)."""
+    head, sep, tail = spec.rpartition(':')
+    if sep and tail and not any(c in tail for c in '/\\') and os.path.isdir(head):
+        return {'path': os.path.abspath(head), 'rig': tail}
+    return {'path': os.path.abspath(spec), 'rig': ''}
+
+
+def _rig_perception(project, eng, args) -> int:
+    """--rig-perception OUT_DIR (core.rig_perception). 4: no recording or one cannot be read; 8: the 2D detector is
+    missing; 9: the external detector is not set up or not approved here."""
+    from .core import detection as DT
+    from .core import rig_perception as RP
+    d = RP.settings_of(project).to_dict()
+    if args.perception_recording:
+        d['recordings'] = [_split_recording(s) for s in args.perception_recording]
+    if args.perception_backend:
+        d['backend'] = args.perception_backend
+    st = RP.RigPerceptionSettings.from_dict(d)
+    if args.perception_backend and st.backend != args.perception_backend:
+        raise SystemExit(f'--perception-backend {args.perception_backend!r}: lifted or external:NAME.')
+    if not st.recordings:
+        print('rig perception: no recording: give --perception-recording DIR[:RIG] (a CARLA run with ground truth)',
+              file=sys.stderr)
+        return 4
+    bad = [(r['path'], RP.recording_info(r['path'])) for r in st.recordings]
+    bad = [(p_, i) for p_, i in bad if not i['ok']]
+    for p_, i in bad:
+        print(f'rig perception: {os.path.basename(p_)}: {i["text"]}', file=sys.stderr)
+    if bad:
+        return 4
+    if st.backend == 'lifted' and not DT.status(st.model)['verified']:
+        print(f'rig perception: {DT.status(st.model)["text"]} (batch --detection-quality with --detection-download '
+              'fetches it)', file=sys.stderr)
+        return 8
+    try:
+        res = RP.run(project, eng, st, progress=_progress_line('rig perception'))
+    except FileNotFoundError as e:
+        print(f'\nrig perception: {e}', file=sys.stderr)
+        return 8
+    except RuntimeError as e:                         # the external command: missing, not approved, or it failed
+        print(f'\nrig perception: {e}', file=sys.stderr)
+        return 9
+    except ValueError as e:
+        print(f'\nrig perception: {e}', file=sys.stderr)
+        return 4
+    except KeyboardInterrupt:
+        print(file=sys.stderr)
+        return 130
+    print(file=sys.stderr)
+    if res is None:
+        return 130
+    out = os.path.abspath(args.rig_perception)
+    for pth in _stamped(RP.export(res, project, out), '--rig-perception', out):
+        print(pth)
+    if args.perception_records:
+        recs = RP.to_records(res, project, add=True)
+        print(f'rig perception: {len(recs)} perception records handed to the learned model\'s store', file=sys.stderr)
+    for f in RP.summary(res)['findings']:
+        print(f'  {f}', file=sys.stderr)
+    return 0
+
+
+def _perception_scene_set(project, args) -> int:
+    """--perception-scene-set SET OUT_DIR (core.perception_scenes through core.simcampaign's drives). 2: the set does
+    not fit; 7: no CARLA server; 9: a drive failed."""
+    from .core import perception_scenes as PS
+    from .core import rig_perception as RP
+    set_id, out = args.perception_scene_set
+    if set_id not in PS.SCENE_SETS:
+        print(f'scene set: no set {set_id!r} ({", ".join(PS.SCENE_SETS)})', file=sys.stderr)
+        return 2
+    uids = [_pick_variant(project, n.strip(), '--scene-variants').uid
+            for n in (args.scene_variants or '').split(',') if n.strip()]
+    try:
+        seeds = [int(x) for x in (args.scene_seeds or '1').split(',') if x.strip()]
+    except ValueError:
+        raise SystemExit('--scene-seeds: comma-separated whole numbers, e.g. 1,2')
+    st = PS.SceneSetSettings.from_dict(dict(RP.settings_of(project).scene_set, set_id=set_id, variants=uids,
+                                            seeds=seeds))
+    out = os.path.abspath(out)
+    est = PS.estimate(project, st, os.path.join(out, 'drives'))
+    for m in est.get('problems') or []:
+        print(f'scene set: {m}', file=sys.stderr)
+    if est.get('problems') and not est.get('drives'):
+        return 2
+    print(f'scene set: {set_id}, {est.get("text", "")}', file=sys.stderr)
+    try:
+        r = PS.run(project, st, os.path.join(out, 'drives'), progress=_progress_line('scene set'),
+                   python=_carla_python(args) or None)
+    except RuntimeError as e:
+        print(f'\nscene set: {e}', file=sys.stderr)
+        return 7
+    except KeyboardInterrupt:
+        print(file=sys.stderr)
+        return 130
+    print(file=sys.stderr)
+    _out(PS.to_doc(st, project, est=PS.estimate(project, st, r['out_dir'])), os.path.join(out, 'scene_set.json'))
+    for k, why in (r.get('errors') or {}).items():
+        print(f'scene set: {k}: {why}', file=sys.stderr)
+    print(f'scene set: {len(r["recordings"])} recordings for --rig-perception', file=sys.stderr)
+    return 9 if any(s != 'ok' for s in r['states'].values()) else 0
+
+
+def _redrive(project, eng, args) -> int:
+    """--redrive DRIVE_DIR OUT_DIR (core.redrive). 3: the rig's verdict is re-collect; 4: the drive cannot be read (or
+    PyTorch is missing)."""
+    from .core import redrive as RDV
+    drive_dir, out = args.redrive
+    project.analysis.splat = dict(project.analysis.splat or {}, drive=os.path.abspath(drive_dir))
+    st = RDV.settings_of(project)
+    vb = _pick_variant(project, args.redrive_variant, '--redrive-variant') if args.redrive_variant else None
+    try:
+        res = RDV.run(project, eng, st, variant=vb, progress=_progress_line('re-drive'))
+    except (ValueError, OSError, RuntimeError) as e:
+        print(f'\nre-drive: {e}', file=sys.stderr)
+        return 4
+    except KeyboardInterrupt:
+        print(file=sys.stderr)
+        return 130
+    print(file=sys.stderr)
+    if res is None:
+        return 130
+    out = os.path.abspath(out)
+    for pth in _stamped(RDV.export(res, project, out), '--redrive', out):
+        print(pth)
+    if args.reshoot:
+        try:
+            doc = RDV.export_dataset(project, os.path.join(out, 'reshot'), st, variant=vb, engine=eng,
+                                     prepared=getattr(res, '_prepared', None), progress=_progress_line('re-shoot'))
+        except (ValueError, OSError, RuntimeError) as e:
+            print(f'\nre-drive: the re-shot drive was not written: {e}', file=sys.stderr)
+            return 4
+        print(file=sys.stderr)
+        if doc is None:
+            return 130
+        print(os.path.join(out, 'reshot'))
+    s = RDV.summary(res)
+    print(f're-drive: {s["variant"]}: {s["rig_verdict"]}, {100 * (s["rig_within_share"] or 0):.0f} % within '
+          f'{s["budget"]:g} grey levels', file=sys.stderr)
+    for f in s['findings']:
+        print(f'  {f}', file=sys.stderr)
+    return 3 if s['rig_verdict'] == 're-collect' else 0
+
+
+def _design(project, eng, args) -> int:
+    """--design OUT_DIR (core.rig_designer). 5: no option meets every must requirement and constraint; 2: no accepted
+    requirement."""
+    from .core import rig_designer as DSG
+    d = DSG.settings_of(project).to_dict()
+    if args.design_evaluations is not None:
+        d['evaluations'] = args.design_evaluations
+    if args.design_seed is not None:
+        d['seed'] = args.design_seed
+    st = DSG.DesignerSettings.from_dict(d)
+    if not st.items():
+        print('design: no accepted requirement: read them first (--read-requirements, or Analysis ▸ Design agent)',
+              file=sys.stderr)
+        return 2
+    try:
+        res = DSG.run(project, eng, st, progress=_progress_line('design'))
+    except ValueError as e:
+        print(f'\ndesign: {e}', file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        print(file=sys.stderr)
+        return 130
+    print(file=sys.stderr)
+    if res is None:
+        return 130
+    out = os.path.abspath(args.design)
+    for pth in _stamped(DSG.export(res, project, out), '--design', out):
+        print(pth)
+    s = DSG.summary(res)
+    for o in s['options']:
+        print(f'design: option {o["label"]}: {o["verdict"]} · cost {o["cost"] if o["cost"] is not None else "incomplete"}'
+              f' · {o["power_w"]} W · {o["counts"]}', file=sys.stderr)
+    return 0 if any(o['verdict'] == 'pass' for o in s['options']) else 5
+
+
+def _read_requirements(project, args) -> int:
+    """--read-requirements OUT.json FILE... (core.docs_ingest + assistant.designer_llm, deterministic). 4: a document
+    cannot be read; 2: nothing to read."""
+    from .assistant import designer_llm as DL
+    from .core import docs_ingest as DI
+    from .core import rig_designer as DSG
+    out, paths = args.read_requirements[0], args.read_requirements[1:]
+    st = DSG.settings_of(project)
+    docs, added = [], []
+    if st.brief.strip():
+        docs.append(DI.from_text(st.brief))
+    tags = {d.get('tag') for d in st.documents}
+    k = 1
+    for pth in paths:
+        if not os.path.isfile(pth):
+            print(f'read requirements: {pth}: no such file', file=sys.stderr)
+            return 4
+        while f'D{k}' in tags:
+            k += 1
+        doc = DI.read(os.path.abspath(pth), f'D{k}')
+        tags.add(doc.tag)
+        for prob in doc.problems:
+            print(f'read requirements: {doc.name}: {prob}', file=sys.stderr)
+        docs.append(doc)
+        added.append({'tag': doc.tag, 'name': doc.name, 'path': os.path.abspath(pth), 'kind': doc.kind,
+                      'pages': doc.pages, 'sentences': len(doc.sentences), 'problems': list(doc.problems),
+                      'sha256': doc.sha256})
+    if not docs:
+        print('read requirements: no brief in the project and no document given', file=sys.stderr)
+        return 2
+    ex = DL.deterministic(docs, project)
+    keep_r = [r for r in st.requirements if r.get('origin') == 'user']
+    keep_c = [c for c in st.constraints if c.get('origin') == 'user']
+    st.documents = st.documents + added
+    st.requirements = keep_r + ex.requirements
+    st.constraints = keep_c + ex.constraints
+    st.not_checkable, st.rejected = ex.not_checkable, ex.rejected
+    st.extraction = {k_: v for k_, v in ex.to_dict().items() if k_ in ('method', 'model', 'usage', 'seconds',
+                                                                       'documents', 'notes')}
+    project.analysis.designer = st.to_dict()
+    _out(ex.to_dict(), out)
+    print(f'read requirements: {len(ex.requirements)} requirements, {len(ex.constraints)} constraints, '
+          f'{len(ex.not_checkable)} not checkable, {len(ex.rejected)} rejected', file=sys.stderr)
+    return 0
+
+
+def _perf_model(project, eng, args) -> int:
+    """--perf-model OUT_DIR (core.perf_model): train and describe. 3: too few records; 4: the store cannot be read."""
+    from .core import perf_model as PM
+    try:
+        res = PM.run(project, eng, progress=_progress_line('learned model'))
+    except (OSError, ValueError) as e:
+        print(f'\nlearned model: {e}', file=sys.stderr)
+        return 4
+    except KeyboardInterrupt:
+        print(file=sys.stderr)
+        return 130
+    print(file=sys.stderr)
+    if res is None:
+        return 130
+    out = os.path.abspath(args.perf_model)
+    for pth in _stamped(PM.export(res, project, out), '--perf-model', out):
+        print(pth)
+    if not res.model.trained:
+        print(f'learned model: {res.model.reason()}', file=sys.stderr)
+        return 3
+    if args.perf_save:
+        print(f'learned model: saved as {os.path.basename(PM.save_model(res.model))}', file=sys.stderr)
+    return 0
+
+
+def _perf_records_import(project, args) -> int:
+    from .core import perf_model as PM
+    try:
+        r = PM.import_records(args.perf_records_import, store=PM.store_for(project))
+    except (OSError, UnicodeDecodeError) as e:
+        print(f'perception records: cannot read {os.path.basename(args.perf_records_import)}: {e}', file=sys.stderr)
+        return 4
+    print(f'perception records: {r.get("added", 0)} added, {r.get("duplicates", 0)} duplicates, '
+          f'{r.get("rejected", 0)} rejected', file=sys.stderr)
+    for e in (r.get('errors') or [])[:5]:
+        print(f'  {e}', file=sys.stderr)
+    return 0
+
+
+def _perf_records_export(project, args) -> int:
+    from .core import perf_model as PM
+    try:
+        n = PM.export_records(args.perf_records_export, anonymise=not args.no_anonymise, store=PM.store_for(project))
+    except OSError as e:
+        print(f'perception records: {e}', file=sys.stderr)
+        return 4
+    print(f'perception records: {n} written to {args.perf_records_export}'
+          + (' (anonymised)' if not args.no_anonymise else ''), file=sys.stderr)
+    return 0 if n else 2
+
+
+def _suggest_simulations(project, args) -> int:
+    from .core import perf_model as PM
+    doc = PM.suggest_simulations(project, max(1, int(args.suggest_simulations)))
+    _out(dict(doc, schema='vantage.perf_model.suggestions/1'), '-')
+    return 0 if doc.get('ok') else 3
+
+
+def _foundation_range(project, eng, args) -> int:
+    """--foundation-range OUT_DIR (core.foundation_range on recordings). 2: nothing to evaluate (or the sweep); 4:
+    PyTorch or transformers missing; 8: a model missing."""
+    from .core import detection as DT
+    from .core import foundation_models as FM
+    from .core import foundation_range as FR
+    d = FR.settings_of(project).to_dict()
+    if args.foundation_recording:
+        d.update(source='recordings', recordings=[os.path.abspath(p) for p in args.foundation_recording])
+    if args.foundation_models:
+        d['detectors'] = [m.strip() for m in args.foundation_models.split(',') if m.strip()]
+    if args.foundation_depth is not None:
+        d['depth_model'] = '' if args.foundation_depth.strip().lower() in ('', 'none') else args.foundation_depth.strip()
+    st = FR.FoundationSettings.from_dict(d)
+    if st.source == 'sweep':
+        print('foundation models: the range sweep drives CARLA: run it on Simulate ▸ Foundation models, or give '
+              '--foundation-recording RUN_DIR', file=sys.stderr)
+        return 2
+    if not st.recordings:
+        print('foundation models: no recording: give --foundation-recording RUN_DIR (a CARLA run with ground truth)',
+              file=sys.stderr)
+        return 2
+    if any(m in FM.SPECS for m in st.detectors) or st.depth_model:
+        why = FM.torch_missing()
+        if why:
+            print(f'foundation models: {why}', file=sys.stderr)
+            return 4
+    if args.foundation_download:
+        for mid in list(st.detectors) + ([st.depth_model] if st.depth_model else []):
+            if (DT.status(mid) if mid in DT.MODELS else FM.status(mid))['verified']:
+                continue
+            print(f'foundation models: downloading {mid}', file=sys.stderr)
+            try:
+                if mid in DT.MODELS:
+                    DT.download(mid, progress=_progress_line(mid))
+                else:
+                    FM.download(mid, progress=_progress_line(mid), opt_in=st.opt_in)
+            except (OSError, ValueError) as e:
+                print(f'\nfoundation models: the download of {mid} failed: {e}', file=sys.stderr)
+                return 8
+            print(file=sys.stderr)
+    try:
+        res = FR.run(project, eng, st, progress=_progress_line('foundation models'))
+    except FileNotFoundError as e:
+        print(f'\nfoundation models: {e} (--foundation-download fetches it)', file=sys.stderr)
+        return 8
+    except ValueError as e:
+        print(f'\nfoundation models: {e}', file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        print(file=sys.stderr)
+        return 130
+    print(file=sys.stderr)
+    if res is None:
+        return 130
+    out = os.path.abspath(args.foundation_range)
+    for pth in _stamped(FR.export(res, project, out), '--foundation-range', out):
+        if not pth.lower().endswith('.jpg'):
+            print(pth)
+    return 0
+
+
+def _robust_perception(project, eng, args) -> int:
+    """--robust-perception OUT_DIR (core.robust_perception). 3: below --robust-min-recall; 2: no recording; 8: the
+    detector model is missing."""
+    from .core import robust_perception as RB
+    d = RB.settings_of(project).to_dict()
+    if args.robust_recording:
+        d['recordings'] = [os.path.abspath(p) for p in args.robust_recording]
+    for k, v in (('mode', args.robust_mode), ('samples', args.robust_samples), ('sobol_n', args.robust_sobol)):
+        if v is not None:
+            d[k] = v
+    if args.robust_no_detect:
+        d['detect'] = False
+    st = RB.RobustSettings.from_dict(d)
+    if not st.recordings:
+        print('robust perception: no recording: give --robust-recording RUN_DIR (a CARLA run with ground truth)',
+              file=sys.stderr)
+        return 2
+    try:
+        res = RB.run(project, eng, st, progress=_progress_line('robust perception'))
+    except FileNotFoundError as e:
+        print(f'\nrobust perception: {e}', file=sys.stderr)
+        return 8
+    except (ValueError, OSError) as e:
+        print(f'\nrobust perception: {e}', file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        print(file=sys.stderr)
+        return 130
+    print(file=sys.stderr)
+    if res is None:
+        return 130
+    out = os.path.abspath(args.robust_perception)
+    for pth in _stamped(RB.export(res, project, out), '--robust-perception', out):
+        print(pth)
+    low = []
+    for r in RB.summary(res)['recordings']:
+        for h in r.get('headline') or []:
+            print(f'  {r["recording"]}: {h}', file=sys.stderr)
+        for c in ('pedestrian', 'vehicle'):
+            p05 = (r.get(f'{c}_recall') or {}).get('p05')
+            if args.robust_min_recall is not None and p05 is not None and p05 < args.robust_min_recall:
+                low.append(f'{r["recording"]}: {c} rig recall p05 {p05:.3f} < {args.robust_min_recall:g}')
+    for m in low:
+        print(f'robust perception: {m}', file=sys.stderr)
+    return 3 if low else 0
+
+
+def _risk_coverage(project, eng, args) -> int:
+    """--risk-coverage [OUT.json|DIR] (core.risk_coverage). 3: a class below its --risk-min."""
+    from .core import risk_coverage as RC
+    mins = {}
+    for spec in args.risk_min or []:
+        cls, _, pct = spec.partition('=')
+        cls = cls.strip().lower()
+        try:
+            mins[cls] = float(pct.strip().rstrip('%'))
+        except ValueError:
+            raise SystemExit(f'--risk-min {spec!r}: CLASS=PCT, e.g. pedestrian=85')
+        if cls not in RC.CLASSES:
+            raise SystemExit(f'--risk-min {spec!r}: the classes are {", ".join(RC.CLASSES)}')
+    d = RC.settings_of(project).to_dict()
+    if args.risk_weight:
+        d['weight'] = args.risk_weight
+    if args.risk_metric:
+        d['metric'] = args.risk_metric
+    res = RC.run(project, eng, RC.RiskSettings.from_dict(d))
+    dest = args.risk_coverage
+    if dest == '-' or dest.lower().endswith('.json'):
+        _out(RC.to_doc(res, project), dest)
+    else:
+        for pth in _stamped(RC.export(res, project, dest), '--risk-coverage', dest):
+            print(pth)
+    code = 0
+    for cls, dd in res.classes.items():
+        print(f'risk coverage: {dd.get("text", cls)}', file=sys.stderr)
+        w = dd.get('weighted')
+        if cls in mins and (w is None or 100 * w < mins[cls]):
+            print(f'risk coverage: {cls} {100 * (w or 0):.1f} % < {mins[cls]:g} %', file=sys.stderr)
+            code = 3
+    return code
+
+
+def _fleet_vehicle(project, name):
+    from .core import fleet as FL
+    return next((v['id'] for v in FL.vehicles(project) if name in (v['id'], v['name'])), None)
+
+
+def _fleet_twin_online(project, args) -> int:
+    """--fleet-twin-online VEHICLE FILE...: online self-calibrations into the twin. 4: a file cannot be read or the
+    vehicle is not in the fleet."""
+    from .core import fleet as FL
+    from .core import fleet_twin as FT
+    if len(args.fleet_twin_online) < 2:
+        raise SystemExit('--fleet-twin-online needs a vehicle and at least one file.')
+    vid = _fleet_vehicle(project, args.fleet_twin_online[0])
+    if vid is None:
+        print(f'fleet twin: no vehicle {args.fleet_twin_online[0]!r} in the fleet (import its records with '
+              '--fleet-import first)', file=sys.stderr)
+        return 4
+    date = ''
+    if args.fleet_twin_date:
+        if FL.parse_date(args.fleet_twin_date) is None:
+            raise SystemExit(f'--fleet-twin-date {args.fleet_twin_date!r}: YYYY-MM-DD')
+        date = FL.normalise_date(args.fleet_twin_date)
+    code, total = 0, 0
+    mode = FT.settings_of(project).online_obs
+    for pth in args.fleet_twin_online[1:]:
+        try:
+            doc = FT.read_online_file(pth)
+            obs = FT.online_observations(doc, vid, date, mode, drive=os.path.basename(pth),
+                                         source=os.path.basename(pth))
+        except FT.TwinError as e:
+            print(f'fleet twin: {e}', file=sys.stderr)
+            code = 4
+            continue
+        n = FT.add_observations(project, obs)
+        total += n
+        print(f'fleet twin: {os.path.basename(pth)}: {n} observations', file=sys.stderr)
+    print(f'fleet twin: {total} observations added to {args.fleet_twin_online[0]}', file=sys.stderr)
+    return code
+
+
+def _fleet_twin_settings(project, args):
+    from .core import fleet as FL
+    from .core import fleet_twin as FT
+    if args.as_of:
+        if FL.parse_date(args.as_of) is None:
+            raise SystemExit(f'--as-of {args.as_of!r}: YYYY-MM-DD')
+        FT.set_settings(project, as_of=FL.normalise_date(args.as_of))
+    return FT.settings_of(project)
+
+
+def _fleet_twin(project, eng, args) -> int:
+    """--fleet-twin OUT_DIR (core.fleet_twin). 3: a sensor due or beyond its limit (or knocked beyond it); 4: no
+    result."""
+    from .core import fleet_twin as FT
+    st = _fleet_twin_settings(project, args)
+    try:
+        res = FT.run(project, eng, st)
+    except (ValueError, FT.TwinError) as e:
+        print(f'fleet twin: {e}', file=sys.stderr)
+        return 4
+    if res is None:
+        return 4
+    out = os.path.abspath(args.fleet_twin)
+    for pth in _stamped(FT.export(res, project, out), '--fleet-twin', out):
+        print(pth)
+    for f in res.findings:
+        if f['severity'] not in ('good', 'note'):
+            print(f'  {f["severity"]:<8} {f["message"]}', file=sys.stderr)
+    return FT.exit_code(res)
+
+
+def _fleet_twin_watch(project, eng, args) -> int:
+    """--fleet-twin-watch: the vehicles' watch folders read headless, the project saved after each round that added
+    something (to --save, else the project file)."""
+    from .core import fleet_twin as FT
+    dest = args.save or getattr(project, 'path', '') or ''
+    if not dest:
+        raise SystemExit('--fleet-twin-watch saves the project after each drive: give a project file or --save.')
+    if not FT.watches(project):
+        print('fleet twin: no watch folder set (Calibrate ▸ Fleet twin ▸ Watch)', file=sys.stderr)
+        return 0
+    state = FT.WatchState()
+    runs = 0
+    try:
+        while True:
+            got = FT.watch_once(project, state, eng, log=lambda m: print(f'fleet twin: {m}', file=sys.stderr))
+            if got:
+                project.save(dest)
+                print(f'fleet twin: {len(got)} drive{"s" * (len(got) != 1)} read; saved {dest}', file=sys.stderr)
+            runs += 1
+            if args.watch_runs and runs >= args.watch_runs:
+                return 0
+            time.sleep(max(0.05, float(args.watch_interval or 1.0)))
+    except KeyboardInterrupt:
+        return 130
+
+
 def add_arguments(ap):
     g = ap.add_argument_group('batch mode (no window)')
     g.add_argument('--analyse', nargs='?', const='-', metavar='OUT.json', help='write the analysis summary as JSON (- = stdout)')
@@ -2380,6 +3143,7 @@ def add_arguments(ap):
                         'validate (held-out PSNR under analysis.splat.min_psnr_db), 4 when the drive cannot be read')
     g.add_argument('--replay-variant', metavar='NAME|N',
                    help='with --log-replay: the proposed rig (rig B), a variant name or 1-based index')
+    add_round14_arguments(g)
     g.add_argument('--run-plan', nargs='+', metavar=('ID', 'OUT_DIR'),
                    help='run a Copilot plan approved in the app (its approval record in the project; ID or '
                         'ID:VERSION) from its stored settings, each step through the option that runs it, into OUT_DIR '
@@ -2417,4 +3181,4 @@ def wanted(args) -> bool:
                                                                'carla_run', 'carla_live', 'ground_truth_summary',
                                                                'detection_quality', 'campaign', 'critical_carla',
                                                                'log_replay',
-                                                               'run_plan'))
+                                                               'run_plan') + ROUND14_OPTIONS)

@@ -206,6 +206,8 @@ def collect_issues(project: Project, result, vg, mounts: dict | None = None, eng
                 for i in isp_photometrics.issues(project, engine)]
     out += observability.issues(project, vg, result)   # cameras the planned boards cannot pin, radars short of reflectors
     out += automation.issues(project, vg)         # dropped automation settings, the last automated run failing
+    from . import fleet_twin
+    out += fleet_twin.issues(project, vg)         # sensors beyond, due or soon, knocks, outliers (its cached result only)
     out.sort(key=lambda i: SEVERITY_ORDER.get(i.severity, 9))
     return out
 

@@ -4,6 +4,83 @@ Versions follow [semantic versioning](https://semver.org). The top entry is what
 
 ## Unreleased
 
+**Perception in the loop.** Vantage now measures how well the perception will work on a rig, not only what the rig
+can see, and feeds that back into the design: 3D detection per region around the car, re-driven logs, foundation
+models, tolerances carried to detection, coverage weighted by where crashes start, a twin of the fleet, a learned
+model of rig performance and a design agent. Every figure below was measured in CARLA or on recorded CARLA drives:
+they compare rigs, cameras and models, and are not a stack's absolute performance.
+
+**Perception**
+
+- **Rig perception** (Simulate ▸ Rig perception…): 3D detection per class in each of 48 regions around the car (8
+  sectors × 6 range bins, the same grid every new study uses), per rig on the same CARLA scenes, with paired
+  block-bootstrap intervals; only differences whose interval excludes zero are findings, and the count expected by
+  chance is stated. Objects a rig cannot see count against it; matching and AP are nuScenes'. YOLOX boxes are lifted
+  to 3D through the exact lens model (ground contact and a size prior, fused across cameras, triangulated where rays
+  cross), or a team's own BEV detector runs as a command approved on this computer. Perception scene sets drive the
+  same scenes and seeds for each variant. On the round-8 pair, cameras 20° up find 5.1 points more vehicles [2.8, 7.1]
+  on the fisheye images and no more on rectified views.
+- **Re-drive** (Simulate ▸ Log replay ▸ Re-drive): how much of a recorded drive a proposed rig can reuse. Each
+  re-rendered pixel's expected error is calibrated on frames the reconstruction never saw; each camera gets its share
+  within an error budget, a verdict and the reasons per region. The re-shot drive is written as a nuScenes folder with
+  ground truth, confidence maps and a ROS 2 bag. Nudge a camera and see its reusable share change.
+- **Foundation models** (Simulate ▸ Foundation models…): OWLv2 and Grounding DINO (your own class queries), YOLOX-S
+  and Depth Anything V2, downloaded on request from a pinned revision (SHA-256 per file, licence shown; models without
+  a commercial-use licence only on an opt-in). Detection range per camera, class and model (R50, R90 with
+  cluster-bootstrap intervals, the pixel height needed) beside the geometric range, and the usable depth. On the front
+  fisheye YOLOX-S finds half the pedestrians out to 43 m where the pixel rule promises 68 m.
+- **Robust perception** (Simulate ▸ Robust perception…): mounting, thermal, vibration and calibration tolerances
+  carried to detection on recordings: rig recall, BEV error, out-of-view and ghosts per class and region with the band
+  over builds, Sobol indices for the source and camera that matter. The mounting tolerance can be the fleet twin's
+  measured drift, and each build can be scored with Rig perception's 3D metric (`bev3d`).
+- **Risk-weighted coverage** (Analysis ▸ Risk-weighted coverage…): coverage weighted by where the other road user is
+  in the 0.5–4 s before a crash, from NHTSA's pre-crash scenario statistics (2007, 2019, the 2016 pedestrian table)
+  and Euro NCAP's 2026 Crash Avoidance scenarios, every weight traced to its table and page. The sample's data rig
+  covers 99 % of the ground but 88 % of the pedestrian exposure. A new scorecard metric,
+  `risk_coverage.weighted_pct`.
+
+**Design and the fleet**
+
+- **Design agent** (Analysis ▸ Design agent…): requirements and constraints read from a brief and documents (.txt,
+  .md, .pdf, .docx, .html), each quoting its sentence, by the brief parser or by your Groq or Claude key with every
+  figure checked against its quote; a search returns 3–7 complete rigs trading cost (your prices), power, margin and
+  detection, each re-checked, explained sensor by sensor and critiqued. Creating one is one undo step in the design
+  log. The brief parser reads power limits, sector lists and the class named earlier in a sentence, and budgets,
+  sensor counts and mounting tolerances as constraints.
+- **Learned detection model** (Analysis ▸ Learned detection model…): a Gaussian process per class that predicts a
+  rig's detection per region from its geometry, trained on perception records (`vantage.perception_record/1`), its
+  intervals' coverage measured by cross-validation; active learning ranks the rigs to simulate next. The placement
+  optimiser has a *Learned detection* weight (the predicted recall less its standard deviation).
+- **Fleet twin** (Calibrate ▸ Fleet twin…): every vehicle's sensors over time from the fleet's records, online
+  self-calibrations (imported or from a watch folder per vehicle) and rig-health drift; drift fitted across the fleet,
+  knocks by a likelihood-ratio test with a stated false-alarm rate, first-passage forecasts of when each sensor leaves
+  its limit, a recalibration schedule, and the measured drift as tolerance inputs for the design. Its findings are in
+  the Issues list.
+
+**Everywhere**
+
+- Exports: `rig_perception`, `redrive`, `foundation_range`, `robust_perception`, `risk_coverage`, `design_options`,
+  `perf_model`, `fleet_twin`, `fleet_twin_schedule`, `fleet_twin_tolerances` and `perception_records` (anonymised).
+  The heavy ones are written only when named and only when their page has what they need.
+- Batch: `--rig-perception`, `--perception-scene-set`, `--redrive`, `--read-requirements`, `--design`, `--perf-model`,
+  `--perf-records-import`, `--perf-records-export`, `--suggest-simulations`, `--foundation-range`,
+  `--robust-perception`, `--risk-coverage`, `--fleet-twin`, `--fleet-twin-online`, `--fleet-twin-watch` and their
+  modifiers, each with its exit codes in `--help`.
+- The assistant and Claude over MCP: `get_rig_perception`, `plan_perception_scene_set`, `get_redrive`,
+  `get_foundation_range`, `get_robust_perception`, `get_risk_coverage`, `get_fleet_twin`, `get_fleet_tolerances`,
+  `get_perf_model`, `predict_detection`, `suggest_simulations`, `read_requirements` and `design_rig`. The long studies
+  are read from their pages' last results, never started by the assistant; a design option is created only by you.
+
+**Known limits**
+
+- No real fleet data, no real third-party log and no pretrained BEV model with a commercial-use licence were
+  available: the fleet twin's long-term figures use a labelled fixture of dates over real CARLA calibrations, re-drive
+  was validated on CARLA drives, and rig perception ships the lifted and external detectors only.
+- The learned model was trained on 100 records from 3 scene sets; the logistic in pixels alone does about as well
+  there, and active learning did not beat random selection.
+- The design agent's measured run used prices entered for that test; Vantage ships no prices. Its LLM path was tested
+  against fake servers only.
+
 **Every library model is a real product.** The generic "typical" radars, GNSS antennas and INS/IMUs are gone. In
 their place are products whose figures come from their makers' public datasheets, manuals and product pages, each
 with its source and the date it was read. The camera library grows from 17 to 36 modules, and the generic vehicle

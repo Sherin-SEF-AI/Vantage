@@ -112,6 +112,10 @@ _SETTINGS = {
     'isp': ('isp_photometrics', 'settings_of'), 'calib_coach': ('calib_coach', 'settings_of'),
     'diff_optim': ('diff_optim', 'settings_of'), 'thermo_vib': ('thermo_vib', 'settings_of'),
     'splat': ('splat_reproject', 'settings_of'), 'online_calib': ('online_calib', 'settings_of'),
+    'rig_perception': ('rig_perception', 'settings_of'), 'redrive': ('redrive', 'settings_of'),
+    'designer': ('rig_designer', 'settings_of'), 'perf_model': ('perf_model', 'settings_of'),
+    'foundation': ('foundation_range', 'settings_of'), 'robust_perception': ('robust_perception', 'settings_of'),
+    'risk_coverage': ('risk_coverage', 'settings_of'), 'fleet_twin': ('fleet_twin', 'settings_of'),
 }
 # study (a schema's name or an export format id) -> the project.analysis settings it reads besides the base ones
 STUDY_SETTINGS = {
@@ -136,6 +140,16 @@ STUDY_SETTINGS = {
     'thermo_vib': ('thermo_vib', 'suspension', 'terrain', 'exposure', 'timing', 'observability', 'brackets'),
     'splat': ('splat', 'detection', 'timing', 'housings'), 'log_replay': ('splat', 'detection', 'timing', 'housings'),
     'online_calib': ('online_calib', 'drivelog', 'asbuilt', 'timing'),
+    'rig_perception': ('rig_perception', 'detection'), 'perception_record': ('rig_perception',),
+    'perception_records': ('perf_model',), 'redrive': ('redrive', 'splat', 'detection', 'timing', 'housings'),
+    'rig_designer': ('designer', 'requirements'), 'design_options': ('designer', 'requirements'),
+    'designer_extraction': ('designer',), 'perf_model': ('perf_model',),
+    'foundation_range': ('foundation', 'detection'), 'robust_perception': ('robust_perception', 'detection',
+                                                                           'thermo_vib', 'observability'),
+    'risk_coverage': ('risk_coverage', 'perception'), 'fleet_twin': ('fleet_twin', 'fleet', 'critical'),
+    'fleet_twin_schedule': ('fleet_twin', 'fleet', 'critical'), 'fleet_twin_tolerances': ('fleet_twin', 'fleet',
+                                                                                          'critical'),
+    'perception_scene_set': ('rig_perception', 'sim', 'campaign'),
 }
 # a batch output's schema name -> the option that writes it
 SCHEMA_OPTION = {
@@ -154,6 +168,10 @@ SCHEMA_OPTION = {
     'ground_truth_summary': 'ground_truth_summary', 'sim_live': 'carla_live', 'clock_tree': 'clock_tree',
     'isp': 'isp', 'calib_coach': 'calib_coach', 'diff_optim': 'refine_rig',
     'thermo_vib': 'thermo_vib', 'splat': 'log_replay', 'online_calib': 'online_calib',
+    'rig_perception': 'rig_perception', 'perception_scene_set': 'perception_scene_set', 'redrive': 'redrive',
+    'rig_designer': 'design', 'designer_extraction': 'read_requirements', 'perf_model': 'perf_model',
+    'perf_model.suggestions': 'suggest_simulations', 'foundation_range': 'foundation_range',
+    'robust_perception': 'robust_perception', 'risk_coverage': 'risk_coverage', 'fleet_twin': 'fleet_twin',
 }
 
 
@@ -616,7 +634,9 @@ def current_batch() -> dict | None:
 
 _NAME_ARGS = {'variant', 'frame', 'units', 'angles', 'condition', 'formats', 'camera', 'board', 'serial', 'blend',
               'lidar_calib_pair', 'template', 'validate_models', 'carla_scenario', 'carla_ground_truth',
-              'live_cameras', 'live_fault', 'campaign_template', 'campaign_phase'}
+              'live_cameras', 'live_fault', 'campaign_template', 'campaign_phase', 'perception_backend',
+              'scene_variants', 'scene_seeds', 'redrive_variant', 'foundation_models', 'foundation_depth',
+              'robust_mode', 'risk_weight', 'risk_metric', 'risk_min', 'fleet_twin_date', 'as_of'}
 _SKIP_ARGS = {'reproduce', 'tolerance', 'on_change', 'help', 'version'}
 # input options: which of their values are files or folders to hash
 INPUT_ARGS = {'path': 'all', 'install_check': 'all', 'calibrate_lens': 'all', 'import_calib': 'all',
@@ -625,7 +645,8 @@ INPUT_ARGS = {'path': 'all', 'install_check': 'all', 'calibrate_lens': 'all', 'i
               'detection_recording': 'all', 'critical_carla_drives': 'all', 'carla_faults': 'json',
               'carla_actors': 'json', 'carla_scenario_params': 'json', 'install_picks': 'all',
               'sumo_net': 'json', 'log_replay': 'first',
-              'online_calib': 'first'}
+              'online_calib': 'first', 'redrive': 'first', 'read_requirements': 'rest', 'perf_records_import': 'all',
+              'foundation_recording': 'all', 'robust_recording': 'all', 'fleet_twin_online': 'rest'}
 # ('json': a file or the JSON itself on the command line; only a file is an input to hash)
 
 
@@ -642,7 +663,8 @@ def command_of(args, parser) -> list:
             continue
         vals = list(v) if isinstance(v, (list, tuple)) else [v]
         if a.dest not in _NAME_ARGS:
-            keep_first = a.dest in ('fleet_import', 'rig_health', 'carla_live')     # a vehicle's name, seconds
+            keep_first = a.dest in ('fleet_import', 'rig_health', 'carla_live', 'fleet_twin_online',
+                                    'perception_scene_set')        # a vehicle's name, seconds, a scene set's id
             vals = [x if (keep_first and i == 0) else reduce_path(x) for i, x in enumerate(vals)]
         vals = [str(x) for x in vals]
         if not a.option_strings:

@@ -349,6 +349,14 @@ class AnalysisSettings:
     online_calib: dict = field(default_factory=dict)  # targetless self-calibration over a drive (core.online_calib)
     isp: dict = field(default_factory=dict)           # exposure metering masks and HDR seams (core.isp_photometrics)
     calib_coach: dict = field(default_factory=dict)   # the live calibration coach (core.calib_coach)
+    rig_perception: dict = field(default_factory=dict)   # 3D detection per region around the car (core.rig_perception)
+    redrive: dict = field(default_factory=dict)       # re-shot drives and data reuse for a new rig (core.redrive)
+    designer: dict = field(default_factory=dict)      # requirements to trade-off rigs (core.rig_designer)
+    perf_model: dict = field(default_factory=dict)    # the learned rig-performance model (core.perf_model)
+    foundation: dict = field(default_factory=dict)    # open-vocabulary detection and depth range (core.foundation_range)
+    robust_perception: dict = field(default_factory=dict)  # tolerances carried to detection (core.robust_perception)
+    risk_coverage: dict = field(default_factory=dict)  # coverage weighted by where hazards appear (core.risk_coverage)
+    fleet_twin: dict = field(default_factory=dict)    # calibration drift across the fleet over time (core.fleet_twin)
     copilot: dict = field(default_factory=dict)       # the Copilot's approval records: {'plans': [record, ...]}
                                                       # (vantage.assistant.copilot; an audit trail: undo keeps it)
     assistant_log: list = field(default_factory=list)  # the design log: decisions, rejected ideas, constraints,
