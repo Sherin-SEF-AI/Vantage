@@ -246,7 +246,7 @@ def world_to_optical(cam) -> np.ndarray:
     return BODY_TO_OPTICAL @ rot_zyx(cam.yaw, cam.pitch, cam.roll).T
 
 
-_w2o = world_to_optical          # the old name, still used by demo/youtube/calib_measure.py
+_w2o = world_to_optical          # the old name, kept for older scripts
 
 
 def plan_T(cam, lidar) -> np.ndarray:
@@ -1459,7 +1459,7 @@ def board_pnp(intr, sx, sy, model, rays, uv):
     return R, c, rms, cov
 
 
-_board_pnp = board_pnp           # the old name, still used by demo/youtube/calib_measure.py
+_board_pnp = board_pnp           # the old name, kept for older scripts
 
 
 def square_centres(st: LidarCalibSettings):

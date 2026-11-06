@@ -11,6 +11,8 @@ dist/
 exports/
 demo/out/
 demo/build/
+# the YouTube recording scripts stay local
+demo/youtube/
 *.mp4
 # ... except the website's demo clips
 !site/media/*.mp4

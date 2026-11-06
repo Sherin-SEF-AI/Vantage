@@ -67,13 +67,3 @@ reuses all 49 drives and their checks. `groundtruth.jpg`, `actors.jpg` and `carl
 by `demo/groundtruth_figure.py`, `demo/actors_figure.py` and `demo/live_figure.py`. The `experiments` clip runs a
 6-point factorial and a 512-point Sobol design live (about 10 s, shown as a time-lapse). The validation figure
 (`site/media/validation.jpg`) is drawn from the published report by `demo/validation_figure.py`.
-
-## YouTube tour
-
-`demo/youtube/` produces the full narrated tour (about 70 minutes, 1920 × 1080, 30 fps, every feature in 38
-chapters): `python3 demo/youtube/produce.py` renders the voice lines (Kokoro, as above), records each chapter that is
-missing or changed in its own capped, offscreen process (the app captured at 2× through the EGL shader renderer on a
-full-size offscreen screen, `offscreen-screen.json`), then assembles the chapter and part cards, transitions,
-synthesised music, the voice mix at −14 LUFS, subtitles, YouTube chapter timestamps, a description and a thumbnail
-into `demo/out/youtube/`. `demo/youtube/AUTHORING.md` documents the chapter API (`demo/youtube/chapters/`), the
-stage set-ups and the review tools (`review.py`). Every narrated figure is checked against the app while recording.
