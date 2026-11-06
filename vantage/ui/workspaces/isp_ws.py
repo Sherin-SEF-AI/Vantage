@@ -361,7 +361,7 @@ class SeamChart(ChartBase):
                 p.setPen(THEME.color('ink2'))
                 p.drawText(QRectF(r.left() + k * bw, r.bottom() + 3, bw, 14), Qt.AlignmentFlag.AlignCenter, key)
                 self._marks.append((QPointF(x0 + w, Y(max(a, b))), key, None, (b, a)))
-        p.setPen(QPen(STATUS['critical'], 1, Qt.PenStyle.DashLine))
+        p.setPen(QPen(QColor(STATUS['critical']), 1, Qt.PenStyle.DashLine))
         p.drawLine(QPointF(r.left(), Y(lim)), QPointF(r.right(), Y(lim)))
         # legend
         if self.scenario == 'campaign':

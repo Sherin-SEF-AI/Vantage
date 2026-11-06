@@ -38,7 +38,9 @@ class RigGapDialog(VDialog):
             if v.cameras:
                 self.a.addItem(v.name, ('variant', v.uid))
                 self.b.addItem(v.name, ('variant', v.uid))
-        self.a.setCurrentIndex(max(0, self.a.findData(('variant', p.active_uid))))
+        # findData cannot match a Python tuple stored as item data: look the active variant up by hand
+        self.a.setCurrentIndex(next((i for i in range(self.a.count())
+                                     if self.a.itemData(i) == ('variant', p.variant.uid)), 0))
         for rid, name in self._reference_rigs():
             self.b.addItem(f'Reference · {name}', ('reference', rid))
         self.b.addItem('From a nuScenes or KITTI calibration folder…', ('folder', ''))

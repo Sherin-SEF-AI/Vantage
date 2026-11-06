@@ -1518,7 +1518,7 @@ remaps the recorded image exactly through its lens; what lies beyond the recordi
 YOLOX runs on every build: recall, BEV error, out-of-view and ghosts per class and region with the band over builds,
 optionally Rig perception's 3D metric, and Sobol indices for the source and camera that drive the spread.
 
-**Measured** on the paired CARLA drives (24 builds): with each car calibrated, vehicle rig recall varies 0.835–0.882
+**Measured** on the paired CARLA drives (24 builds): with each car calibrated, vehicle rig recall varies 0.834–0.881
 between builds and the body's road pitch and heave drive the BEV error; on the design calibration the ghost rate goes
 from 0.12 to 0.63 and mounting dominates. One scenario and one seed: build variation, not scene sampling.
 

@@ -111,6 +111,12 @@ they compare rigs, cameras and models, and are not a stack's absolute performanc
   `get_page_context`. The long studies run only from a Copilot plan you approve; a design option is created only by
   you.
 
+**Fixed**
+
+- ISP: the seam chart draws its dashed limit line again (the pen was given a colour name, not a colour).
+- Rig gap: the first rig now opens on the active variant, not on the first variant in the list.
+- Robust perception: the documented vehicle-recall range is 0.834–0.881, the app's current output.
+
 **Known limits**
 
 - No real fleet data, no real third-party log and no pretrained BEV model with a commercial-use licence were
