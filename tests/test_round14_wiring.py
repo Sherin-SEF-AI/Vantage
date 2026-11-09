@@ -417,7 +417,7 @@ def test_requirements_scorecard_has_risk_weighted_coverage(rig):
 
 # ======================================================================= the documentation
 def test_docs_name_every_round14_setting_flag_and_section():
-    """docs/project-format.md names every key of the new settings; README and docs.html name every new batch flag;
+    """docs/project-format.md names every key of the new settings; docs/command-line.md and docs.html name every new batch flag;
     every new docs.html section has its id and its contents link; the public pages name no machine path."""
     import re
     from vantage import batch
@@ -434,7 +434,7 @@ def test_docs_name_every_round14_setting_flag_and_section():
     for st in (RP.RigPerceptionSettings(), RDV.RedriveSettings(), DSG.DesignerSettings(), PM.PerfModelSettings(),
                FR.FoundationSettings(), RB.RobustSettings(), RC.RiskSettings(), FT.FleetTwinSettings()):
         assert not [k for k in st.to_dict() if k not in named], type(st).__name__
-    readme = open(os.path.join(root, 'README.md'), encoding='utf-8').read()
+    readme = open(os.path.join(root, 'docs', 'command-line.md'), encoding='utf-8').read()   # the batch reference
     docs = open(os.path.join(root, 'site', 'docs.html'), encoding='utf-8').read()
     dests = set(batch.ROUND14_OPTIONS) | {d for mods, _ in batch._GOES_WITH.items() for d in mods
                                          if any(m in batch.ROUND14_OPTIONS for m in _)}
@@ -447,6 +447,7 @@ def test_docs_name_every_round14_setting_flag_and_section():
         assert f'id="{sec}"' in docs and f'href="#{sec}"' in docs, sec
     home = os.path.expanduser('~')
     for page in ('README.md', 'CHANGELOG.md', 'docs/overview.md', 'docs/user-guide.md', 'docs/project-format.md',
+                 'docs/features.md', 'docs/install.md', 'docs/command-line.md', 'docs/development.md',
                  'site/docs.html', 'site/guide.html', 'site/index.html'):
         text = open(os.path.join(root, page), encoding='utf-8').read()
         assert home not in text, page

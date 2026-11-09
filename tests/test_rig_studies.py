@@ -1574,7 +1574,7 @@ def test_round8_hooks_carla_guards_and_live_drift(app, win, gt_drive, tmp_path, 
 
 
 def test_format_page_and_docs_name_round8():
-    """docs/project-format.md names every key of the new settings; README and docs.html name every new batch flag
+    """docs/project-format.md names every key of the new settings; docs/command-line.md and docs.html name every new batch flag
     and exit codes 8 and 9."""
     import re
     from vantage import batch
@@ -1587,7 +1587,7 @@ def test_format_page_and_docs_name_round8():
     named = set(re.findall(r'`([A-Za-z_][\w]*)`', fmt))
     for st in (DE.DetectionSettings(), SC.CampaignSettings(), CC.CriticalCarlaSettings(), SR.SimSettings()):
         assert not [k for k in st.to_dict() if k not in named], type(st).__name__
-    readme = open(os.path.join(root, 'README.md'), encoding='utf-8').read()
+    readme = open(os.path.join(root, 'docs', 'command-line.md'), encoding='utf-8').read()   # the batch reference
     docs = open(os.path.join(root, 'site', 'docs.html'), encoding='utf-8').read()
     flags = [a.option_strings[-1] for a in batch.parser()._actions
              if a.option_strings and a.dest in ('carla_live', 'live_cameras', 'live_scale', 'live_fault',
