@@ -532,7 +532,8 @@ The renderer is a GLSL shader renderer. It falls back to fixed-function GL, then
 - **Geometry on the GPU**, with smooth normals and crease angles.
 - **Lighting in linear space.** Data colours (heat maps, camera light) keep their exact legend colours.
 - **Materials** from the mesh's parts:
-  - clear-coated paint reflecting a studio environment;
+  - clear-coated paint, with a broad metallic base lobe, reflecting a studio environment with three long overhead
+    softboxes;
   - see-through glass;
   - matte tyres;
   - black trim;
@@ -596,6 +597,12 @@ The overlays that need more explanation:
 
 - **Camera light** (Alt+3) evaluates every camera's real lens model and body occlusion per pixel. The body and the
   ground show what each camera sees, with overlaps hatched, live while a camera is dragged.
+  - **On the body**, the camera's colour tints the diffuse shading only. The clear-coat reflections and highlights
+    stay on top, so the panels keep their shape, and a thin rim in the camera's colour marks the silhouette.
+  - **Edges:** the image and field edges are anti-aliased over 1.5 screen pixels. Occlusion edges are soft over one
+    texel of the occlusion cube map.
+  - **On the ground:** inside the analysis ROI the colours are exactly the legend's. Outside it, the light fades over
+    6 m to 15 % of its strength, so the floor reads as floor again while you can still see where a camera reaches.
 - **Lidar points** shows one simulated sweep per lidar, coloured by range. Beams the vehicle stops are drawn in red;
   on the sample, 36 % of the roof lidar's beams.
 - **GNSS sky** draws a dome over each antenna, coloured where the sky is blocked.

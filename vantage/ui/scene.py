@@ -312,6 +312,15 @@ class MainScene(QObject):
             self._lights = (key, views)
         return self._lights[1]
 
+    def roi_fade(self, vp):
+        """The analysis ROI for the camera light on the floor (render_gl.Frame.roi): full strength inside it, fading
+        outside it. None until there is an analysis result."""
+        res = self.result
+        g = getattr(res, 'grid', None) if res is not None else None
+        if g is None or getattr(g, 'roi', None) is None:
+            return None
+        return (g.roi, g.x0, g.y0, g.cell)
+
     def bowl_draw(self, vp):
         return self.bowl.draw if self.bowl is not None and self.bowl.source != 'sectors' else None
 

@@ -1269,6 +1269,7 @@ if QOpenGLWidget is not None:
                       lines=prov.lines(self), tris=prov.tris_extra(self), clear=clear, ortho=self.cam.ortho)
             f.bowl = getattr(prov, 'bowl_draw', lambda vp: None)(self)
             f.cams = getattr(prov, 'camera_lights', lambda vp: [])(self)
+            f.roi = getattr(prov, 'roi_fade', lambda vp: None)(self) if f.cams else None
             f.points = scene_points(prov, self)
             f.style = self._render_style() or Style()
             self.renderer.dpr = scale

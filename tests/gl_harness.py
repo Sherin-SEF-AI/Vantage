@@ -253,6 +253,50 @@ def quality(out_dir):
     out['camlight_colour_err'] = float(np.median(errs)) if errs else 99.0
     out['camlight_colour_n'] = len(errs)
 
+    # 3b. with the analysis ROI given, the camera light keeps the legend colour inside it and fades to a trace
+    #     (ROI_FLOOR_K) beyond ROI_FADE_M outside it; the ROI here is the strip 0.9 <= y <= 2.5 m left of the car
+    roi = np.zeros((400, 400), bool)                                  # 0.05 m cells from (-10, -10)
+    roi[int((0.9 + 10) / 0.05):int((2.5 + 10) / 0.05), int((-1.0 + 10) / 0.05):int((4.0 + 10) / 0.05)] = True
+    wide = cam_at([1.5, 6.0, 0.0], 9.0, -90.0, 89.99, ortho=True, h=16.0)
+    fr = frame(wide, cams=views, style=Style(shadows=False, ao=False))
+    fr.roi = (roi, -10.0, -10.0, 0.05)
+    faded = r.render_offscreen(fr)
+    pts2 = np.c_[rng.uniform(-3.0, 6.0, 6000), rng.uniform(0.5, 13.5, 6000), np.zeros(6000)]
+    seen2 = seen_by(pts2, views)[:, 0]
+    full = np.abs(expect - gr * 255).max()
+    inside, far = [], []
+    for q, sflag in zip(pts2, seen2):
+        (x, y), = project(wide, W, H, q)
+        x, y = int(x), int(y)
+        if not (sflag and 3 <= x < W - 3 and 3 <= y < H - 3):
+            continue
+        nb = seen_by(np.array([q + [dx, dy, 0] for dx in (-0.06, 0.06) for dy in (-0.06, 0.06)]), views)[:, 0]
+        if not nb.all():
+            continue
+        if -0.8 <= q[0] <= 3.8 and 1.1 <= q[1] <= 2.3:
+            inside.append(np.abs(faded[y, x, :3] - expect).max())
+        elif q[1] >= 2.5 + 6.5:
+            far.append(np.abs(faded[y, x, :3].astype(float) - gr * 255).max() / full)
+    out['roi_inside_err'] = float(np.median(inside)) if inside else 99.0
+    out['roi_inside_n'] = len(inside)
+    out['roi_far_strength'] = float(np.median(far)) if far else 99.0
+    out['roi_far_n'] = len(far)
+    # 3c. a fresh renderer's first frame equals its second: textures first built mid-frame (the cube atlas, the ROI
+    #     fade map) must not unbind the shadow map (it used to darken the floor inside the shadow frustum once)
+    r2 = GLRenderer()
+    r2.init()
+    first_fr = frame(wide, mesh=car, cams=views, style=Style(ao=False))
+    first_fr.roi = (roi, -10.0, -10.0, 0.05)
+    f1 = r2.render_offscreen(first_fr).astype(int)
+    f2 = r2.render_offscreen(first_fr).astype(int)
+    r2.release()
+    out['first_frame_diff'] = int(np.abs(f1 - f2).max())
+    fr.roi = None
+    plain = r.render_offscreen(fr)
+    out['roi_off_far_strength'] = float(np.median([np.abs(plain[int(y), int(x), :3].astype(float) - gr * 255).max()
+                                                   / full for (x, y) in project(wide, W, H, pts2[seen2 & (pts2[:, 1] > 9.0)])
+                                                   if 3 <= x < W - 3 and 3 <= y < H - 3] or [99.0]))
+
     # 4. sky occlusion: a crevice (a slab meeting a wall) is darker than the open slab; without AO it is not
     s1, n1 = box([-1.5, -1.5, 0.4], [1.5, 1.5, 0.5])
     s2, n2 = box([-0.05, -1.5, 0.5], [0.05, 1.5, 1.1])

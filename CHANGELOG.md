@@ -110,9 +110,29 @@ they compare rigs, cameras and models, and are not a stack's absolute performanc
   `get_perf_model`, `predict_detection`, `suggest_simulations`, `read_requirements`, `design_rig` and
   `get_page_context`. The long studies run only from a Copilot plan you approve; a design option is created only by
   you.
+- The README is now a short introduction of about 1,500 words. Its long sections moved, unchanged, into new pages:
+  - [docs/install.md](docs/install.md): each system, running from source, building the downloads;
+  - [docs/command-line.md](docs/command-line.md): batch mode, exit codes and Claude over MCP;
+  - [docs/features.md](docs/features.md): every feature and its measured figures;
+  - [docs/development.md](docs/development.md): the tests and the code layout.
+
+**3D view**
+
+- **Camera light on the body:** the camera's colour now tints the diffuse shading only. The clear-coat reflections and
+  highlights stay on top, so the doors and panels keep their shape, and a thin rim in the camera's colour marks the
+  silhouette.
+- **Edges:** camera-light edges are anti-aliased. The image and field edges are feathered over 1.5 screen pixels, and
+  occlusion edges are soft over one texel of the occlusion cube map, instead of stair-stepped.
+- **On the floor:** inside the analysis ROI the camera light is exactly the legend colour, as before. Outside it, it
+  fades over 6 m to 15 % of its strength, instead of painting the floor to the horizon.
+- **Paint:** the studio environment has three long overhead softboxes, which sweep as bands over the bonnet and roof.
+  Paint has a broad metallic base lobe under its clear coat.
 
 **Fixed**
 
+- 3D view: a single render (*Render image*, stills, clips) with shadows and the camera light on no longer darkens
+  the floor inside the shadow map's square. Building the camera light's texture in the first frame unbound the shadow
+  map for that frame; textures are now uploaded on a spare unit.
 - ISP: the seam chart draws its dashed limit line again (the pen was given a colour name, not a colour).
 - Rig gap: the first rig now opens on the active variant, not on the first variant in the list.
 - Robust perception: the documented vehicle-recall range is 0.834–0.881, the app's current output.

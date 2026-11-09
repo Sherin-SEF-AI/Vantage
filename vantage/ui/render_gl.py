@@ -13,7 +13,10 @@ display frame's 0.5 m and 1 m marks and its x and y axes), the textured 3D surro
 round depth-tested point sprites, crisp screen-space outlines around selected triangles, and "camera light": every
 camera's real lens model and occlusion (the body, the rig and the sensor and camera housings: the cube maps the
 analysis uses, housings composited in) evaluated per pixel, so the body and the ground show exactly what each camera
-sees while it is being moved, housing shadows included.
+sees while it is being moved, housing shadows included. On the body the camera colour tints the diffuse shading only
+(reflections and highlights stay on top); its edges are anti-aliased (image and field edges over 1.5 screen pixels,
+occlusion edges over one cube texel); on the ground it is exact inside the analysis ROI and fades over ROI_FADE_M
+outside it (Frame.roi).
 
 Data colours stay true: the ground textures (coverage, density, redundancy, footprints), the bowl texture and the
 camera-light colours are not tone-mapped; they are shaded exactly as before (shadow and contact darkening only).
@@ -43,6 +46,8 @@ SKY_DRAG_TILES = 4           # sky maps per frame while only rig parts / housing
 LIGHT_DIR = np.array([0.35, 0.55, 0.76]) / np.linalg.norm([0.35, 0.55, 0.76])
 TONE_KNEE = 0.6              # linear luminance above which highlights roll off (sRGB ~0.80); identity below
 POINT_VBO_MIN = 20000        # point clouds at least this large are kept on the GPU between frames
+ROI_FADE_M = 6.0             # m: outside the analysis ROI the camera light fades out over this distance ...
+ROI_FLOOR_K = 0.15           # ... to this fraction of its strength (a trace: where a camera still reaches)
 
 
 # ---------------------------------------------------------------------------- inputs
@@ -95,6 +100,7 @@ class Frame:
     clear: tuple | None = None   # RGBA to clear to (off-screen); None keeps what is there (the widget's background)
     ortho: bool = False
     points: list = field(default_factory=list)     # [viewport3d.PointDraw]
+    roi: tuple | None = None     # (mask (ny, nx) bool, x0, y0, cell): the analysis ROI, for the camera light's fade
 
 
 # ---------------------------------------------------------------------------- shaders
@@ -224,7 +230,19 @@ float r_of(float th, float proj, vec4 k) {
     return th * (1.0 + t2 * (k.x + t2 * (k.y + t2 * (k.z + t2 * k.w))));
 }
 
-float cube_depth(int cam, vec3 d) {
+float cube_texel(int cam, float face, float px, float py) {
+    float N = uCubeInfo.x;
+    px = clamp(px, 0.0, N - 1.0);
+    py = clamp(py, 0.0, N - 1.0);
+    vec2 tc = vec2((face * N + px + 0.5) / uCubeInfo.y, (float(cam) * N + py + 0.5) / uCubeInfo.z);
+    vec4 t = texture2D(uCube, tc);
+    if (t.b < 0.5) return -1.0;
+    return (t.r * 255.0 * 256.0 + t.g * 255.0) / 1000.0;
+}
+
+float cube_vis(int cam, vec3 d, float dist) {
+    // how much of the camera's view of this point is clear: the occlusion test at the four cube texels around the
+    // ray, weighted bilinearly, so a shadow edge on the body is soft over one texel instead of stair-stepped
     vec3 a = abs(d);
     float face; float u; float v;
     if (a.x >= a.y && a.x >= a.z) {
@@ -238,54 +256,71 @@ float cube_depth(int cam, vec3 d) {
         else            { face = 5.0; u = d.x / -d.z; v = d.y / -d.z; }
     }
     float N = uCubeInfo.x;
-    float px = clamp(floor((u + 1.0) * 0.5 * N), 0.0, N - 1.0);
-    float py = clamp(floor((1.0 - v) * 0.5 * N), 0.0, N - 1.0);
-    vec2 tc = vec2((face * N + px + 0.5) / uCubeInfo.y, (float(cam) * N + py + 0.5) / uCubeInfo.z);
-    vec4 t = texture2D(uCube, tc);
-    if (t.b < 0.5) return -1.0;
-    return (t.r * 255.0 * 256.0 + t.g * 255.0) / 1000.0;
+    float fx = (u + 1.0) * 0.5 * N - 0.5;
+    float fy = (1.0 - v) * 0.5 * N - 0.5;
+    float x0 = floor(fx);
+    float y0 = floor(fy);
+    vec2 w = vec2(fx - x0, fy - y0);
+    float lim = dist - (0.02 + 0.01 * dist);          // 0 in the map: the camera is inside a housing
+    float o00 = cube_texel(cam, face, x0, y0);
+    float o10 = cube_texel(cam, face, x0 + 1.0, y0);
+    float o01 = cube_texel(cam, face, x0, y0 + 1.0);
+    float o11 = cube_texel(cam, face, x0 + 1.0, y0 + 1.0);
+    float v00 = (o00 >= 0.0 && o00 < lim) ? 0.0 : 1.0;
+    float v10 = (o10 >= 0.0 && o10 < lim) ? 0.0 : 1.0;
+    float v01 = (o01 >= 0.0 && o01 < lim) ? 0.0 : 1.0;
+    float v11 = (o11 >= 0.0 && o11 < lim) ? 0.0 : 1.0;
+    return mix(mix(v00, v10, w.x), mix(v01, v11, w.x), w.y);
 }
 
-bool cam_sees(int i, vec3 p) {
+float cam_w(int i, vec3 p) {
+    // how fully camera i sees p, 0..1: 1 well inside its image and its lens's field with nothing in the way; the
+    // image and field edges are feathered over 1.5 screen pixels and occlusion edges over one cube texel
     vec3 dw = p - uCamP[i];
     vec3 d = uCamR[i] * dw;
     float rho = length(d.xy);
     float th = atan(rho, d.z);
-    if (th > uCamS[i].z) return false;
-    if (uCamS[i].w < 0.5 && d.z <= 1e-6) return false;
     float r = uCamK[i].x * r_of(th, uCamS[i].w, uCamD[i]);
     vec2 dir = rho > 1e-9 ? d.xy / rho : vec2(0.0);
     float u = uCamK[i].y + dir.x * r;
     float v = uCamK[i].z + dir.y * r * uCamK[i].w;
-    if (u < 0.0 || u > uCamS[i].x || v < 0.0 || v > uCamS[i].y) return false;
-    if (uCubeInfo.w > 0.5) {
-        float dist = length(dw);
-        float occ = cube_depth(i, dw);
-        if (occ >= 0.0 && occ < dist - (0.02 + 0.01 * dist)) return false;   // 0: the camera is inside a housing
-    }
-    return true;
+    float m = min(min(u, uCamS[i].x - u), min(v, uCamS[i].y - v));    // camera pixels inside the image ...
+    m = min(m, (uCamS[i].z - th) * uCamK[i].x);                         // ... and inside the lens's field
+    float fw = clamp(fwidth(m), 1e-4, 24.0);                            // camera pixels per screen pixel here
+    float w = smoothstep(-0.75 * fw, 0.75 * fw, m);
+    if (uCamS[i].w < 0.5 && d.z <= 1e-6) w = 0.0;                      // behind a pinhole camera
+    if (w > 0.0 && uCubeInfo.w > 0.5) w *= cube_vis(i, dw, length(dw));
+    return w;
 }
 
+vec4 gCamTint = vec4(0.0);    // set by camlight: the seen cameras' mean colour and how fully the point is seen
+
 vec3 camlight(vec3 base, vec3 p) {
+    // the legend's formula: seen points mix toward the mean colour of the cameras that see them, scaled by the
+    // surface's own brightness (so its shading stays); unseen points are dimmed and desaturated
+    gCamTint = vec4(0.0);
     if (uNCam <= 0) return base;
     vec3 sum = vec3(0.0);
     float n = 0.0;
     for (int i = 0; i < 8; i++) {
         if (i >= uNCam) break;
-        if (cam_sees(i, p)) { sum += uCamC[i]; n += 1.0; }
+        float w = cam_w(i, p);
+        sum += uCamC[i] * w;
+        n += w;
     }
     float lum = dot(base, vec3(0.299, 0.587, 0.114));
-    if (n < 0.5) return mix(base, vec3(lum) * 0.55, 0.6);
-    vec3 c = mix(base, (sum / n) * (0.30 + 1.05 * lum), uCamMix);
-    if (n > 1.5) {
-        float h = step(0.5, fract((p.x + p.y + p.z) * 6.0));
-        c *= 0.90 + 0.10 * h;
-    }
-    return c;
+    vec3 unseen = mix(base, vec3(lum) * 0.55, 0.6);
+    if (n < 1e-3) return unseen;
+    vec3 tint = sum / n;
+    vec3 c = mix(base, tint * (0.30 + 1.05 * lum), uCamMix);
+    float h = step(0.5, fract((p.x + p.y + p.z) * 6.0));
+    c *= 1.0 - (0.10 - 0.10 * h) * smoothstep(1.25, 1.75, n);         // seen by two or more: faint stripes
+    gCamTint = vec4(tint, min(n, 1.0));
+    return mix(unseen, c, min(n, 1.0));
 }
 
 // the light rig, linear: a warm key along uLight, a sky dome, the ground's bounce, and a studio environment for
-// reflections (sky gradient, a bright horizon band, a dark floor, an overhead strip light and a softbox at the key)
+// reflections (sky gradient, a bright horizon band, a dark floor, three long overhead softboxes and one at the key)
 uniform vec3 uKeyL;
 uniform vec3 uSkyL;
 uniform vec3 uBounceL;
@@ -301,9 +336,13 @@ vec3 env(vec3 r) {
     vec3 c = z >= 0.0 ? mix(uEnvHor, uEnvTop, smoothstep(0.0, 0.55, z))
                       : mix(uEnvHor * 0.6, uEnvLow, smoothstep(0.0, 0.2, -z));
     c += uEnvHor * 0.9 * exp(-abs(z) * 22.0);                                       // horizon glow
-    float strip = smoothstep(0.62, 0.74, z) * (1.0 - smoothstep(0.12, 0.2, abs(r.y)));
+    // three long softboxes overhead, running along the car: on paint they read as bright bands sweeping over the
+    // bonnet, the roof and the shoulders as the view turns
+    float rows = (1.0 - smoothstep(0.035, 0.06, abs(r.y + 0.30))) + (1.0 - smoothstep(0.035, 0.06, abs(r.y)))
+               + (1.0 - smoothstep(0.035, 0.06, abs(r.y - 0.30)));
+    float strip = smoothstep(0.58, 0.66, z) * rows;
     float box = smoothstep(0.88, 0.95, dot(r, uLight));
-    return c + uEnvHor * (strip * 1.3 + box * 2.2);
+    return c + uEnvHor * (strip * 1.6 + box * 2.2);
 }
 
 vec3 view_dir(vec3 p) {
@@ -364,13 +403,26 @@ void main() {
     float NdV = max(dot(N, V), 0.0);
     float F = f0 + (1.0 - f0) * pow(1.0 - NdV, 5.0);
     vec3 amb = mix(uBounceL, uSkyL, N.z * 0.5 + 0.5) * ao;
-    vec3 c = alb * kd * (amb + uKeyL * ndl * sh * mix(1.0, ao, AO_KEY)) * (1.0 - F * min(coat, 1.0));
+    float keyv = sh * mix(1.0, ao, AO_KEY);
+    vec3 cd = alb * kd * (amb + uKeyL * ndl * keyv) * (1.0 - F * min(coat, 1.0));          // diffuse
     vec3 R = reflect(-V, N);
-    c += env(R) * tint * F * coat * mix(ao, 1.0, 0.25);
+    vec3 cs = env(R) * tint * F * coat * mix(ao, 1.0, 0.25);                               // clear-coat reflection
     vec3 H = normalize(uLight + V);
-    c += uKeyL * tint * pow(max(dot(N, H), 0.0), gloss) * (gloss + 8.0) / 25.13 * ks * F * 6.0 * sh * ndl;
+    float ndh = max(dot(N, H), 0.0);
+    cs += uKeyL * tint * pow(ndh, gloss) * (gloss + 8.0) / 25.13 * ks * F * 6.0 * sh * ndl;
+    if (m == 0.0)                                      // paint: a broad metallic base lobe in the paint's colour
+        cs += uKeyL * alb * pow(ndh, 24.0) * (24.0 + 8.0) / 25.13 * 0.10 * keyv * ndl;
     if (m == 1.0) a = min(a, mix(0.88, 1.0, F));       // glass: see-through head-on, a mirror at grazing angles
-    c = camlight(finish(c), vPos + N * 0.03);          // off the surface: a face does not occlude itself
+    vec3 c;
+    if (uNCam > 0) {
+        // the camera light tints the diffuse shading only (the legend's formula); the reflections and highlights
+        // stay on top, so the panels keep their curvature, and a thin rim in the camera's colour marks the edge
+        vec3 lit = camlight(to_srgb(tone(cd)), vPos + N * 0.03);     // off the surface: no self-occlusion
+        c = finish(to_lin(lit) + cs);
+        c += gCamTint.rgb * pow(1.0 - NdV, 3.0) * 0.22 * gCamTint.a;
+    } else {
+        c = finish(cd + cs);
+    }
     gl_FragColor = vec4(c, a);
 }
 '''
@@ -400,7 +452,15 @@ uniform vec4 uGrid;          // on, minor step (m), major step (m), axes on
 uniform vec4 uGridC1;        // minor line RGBA
 uniform vec4 uGridC2;        // major line RGBA
 uniform vec2 uOrigin;        // the display frame's origin
+uniform sampler2D uRoiMap;   // 1 inside the analysis ROI, falling to 0 at ROI_FADE_M outside it (roi_fade_map)
+uniform vec4 uRoiExt;        // its extent: x0, y0, x1, y1
+uniform float uRoiOn;
 ''' + _COMMON + '''
+float roi_k(vec2 xy) {
+    vec2 tc = (xy - uRoiExt.xy) / (uRoiExt.zw - uRoiExt.xy);
+    if (tc.x < 0.0 || tc.x > 1.0 || tc.y < 0.0 || tc.y > 1.0) return 0.0;
+    return texture2D(uRoiMap, tc).r;
+}
 float grid_lines(vec2 p, float step) {
     // anti-aliased lines about one pixel wide; they fade out where they would crowd closer than a few pixels
     vec2 q = p / step;
@@ -435,8 +495,10 @@ void main() {
     col.rgb *= (0.55 + 0.45 * sh) * ao;
     col.a = max(col.a, (1.0 - min(sh, ao)) * 0.85);
     float dist = length(vPos.xy - uTarget.xy);
-    // the camera light at full strength near the rig, toned down far out on the floor (it reaches the horizon)
-    col.rgb = mix(col.rgb, camlight(col.rgb, vPos), 1.0 - 0.65 * smoothstep(9.0, 26.0, dist));
+    // the camera light at full strength inside the ROI (exactly the legend's colours), fading to a faint trace over
+    // ROI_FADE_M outside it so the floor reads as floor again; without an ROI, toned down far out instead
+    float k = uRoiOn > 0.5 ? mix(''' + f'{ROI_FLOOR_K}' + ''', 1.0, roi_k(vPos.xy)) : 1.0 - 0.65 * smoothstep(9.0, 26.0, dist);
+    col.rgb = mix(col.rgb, camlight(col.rgb, vPos), k);
     if (uGrid.x > 0.5) {
         float g1 = grid_lines(vPos.xy - uOrigin, uGrid.y) * uGridC1.a;
         float g2 = grid_lines(vPos.xy - uOrigin, uGrid.z) * uGridC2.a;
@@ -625,7 +687,8 @@ void main() { gl_FragColor = vec4(finish(vCol.rgb), 1.0); }
 '''
 
 # texture units: every sampler has its own, so a shadow sampler and a plain one never share a unit
-UNITS = {'uTex': 0, 'uShadow': 1, 'uAO': 2, 'uContact': 2, 'uCube': 3, 'uSkyMap': 4}
+UNITS = {'uTex': 0, 'uShadow': 1, 'uAO': 2, 'uContact': 2, 'uCube': 3, 'uSkyMap': 4, 'uRoiMap': 5}
+SCRATCH_UNIT = 7             # texture uploads happen on this unit, which no shader samples
 
 
 # ---------------------------------------------------------------------------- colour (reference for the tests)
@@ -797,6 +860,29 @@ def _fingerprint(a: np.ndarray, refs: list):
         return hash(np.ascontiguousarray(a).tobytes())
     refs.append(a)
     return (id(a), a.shape)
+
+
+def roi_fade_map(mask, x0, y0, cell, reach=ROI_FADE_M, max_px=512):
+    """The camera light's strength on the floor around the analysis ROI, as an RGBA texture and its world extent:
+    1 inside the ROI (mask[j, i] is the cell at x0 + (i + 0.5) cell, y0 + (j + 0.5) cell), falling smoothly to 0 at
+    `reach` metres outside it (exact Euclidean distance to the nearest ROI cell). None for an empty ROI."""
+    from scipy import ndimage
+    m = np.asarray(mask, bool)
+    if m.ndim != 2 or not m.any() or not cell > 0:
+        return None
+    pad = int(math.ceil((reach + 1.0) / cell))
+    m = np.pad(m, pad)
+    d = ndimage.distance_transform_edt(~m) * cell
+    t = np.clip(d / reach, 0.0, 1.0)
+    k = 1.0 - t * t * (3.0 - 2.0 * t)
+    step = max(1, int(math.ceil(max(m.shape) / max_px)))
+    k = k[::step, ::step]
+    ox, oy = x0 - pad * cell, y0 - pad * cell
+    ext = (ox, oy, ox + k.shape[1] * step * cell, oy + k.shape[0] * step * cell)
+    rgba = np.zeros(k.shape + (4,), np.uint8)
+    rgba[..., 0] = np.round(k * 255.0)
+    rgba[..., 3] = 255
+    return rgba, ext
 
 
 def outline_offsets(width_px: float) -> list:
@@ -985,7 +1071,12 @@ class GLRenderer:
 
     # ---- resources
     def _texture(self, data: np.ndarray, nearest=False, wrap_s=None, tex=None):
+        # uploaded on a spare unit, the active one restored after: binding here must not unbind a map a draw has
+        # already bound (a texture first built mid-frame, such as the camera light's cube atlas or the ROI fade map,
+        # used to unbind the shadow map for that frame, so the first render darkened the floor inside its frustum)
         GL = self.GL
+        prev = GL.glGetIntegerv(GL.GL_ACTIVE_TEXTURE)
+        GL.glActiveTexture(GL.GL_TEXTURE0 + SCRATCH_UNIT)
         tex = tex if tex is not None else GL.glGenTextures(1)
         GL.glBindTexture(GL.GL_TEXTURE_2D, tex)
         h, w = data.shape[:2]
@@ -997,6 +1088,7 @@ class GLRenderer:
         GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_S, wrap_s or GL.GL_CLAMP_TO_EDGE)
         GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_T, GL.GL_CLAMP_TO_EDGE)
         GL.glBindTexture(GL.GL_TEXTURE_2D, 0)
+        GL.glActiveTexture(int(np.ravel(prev)[0]) if prev is not None else GL.GL_TEXTURE0)
         return tex
 
     def _mesh_vbo(self, md):
@@ -1392,6 +1484,7 @@ class GLRenderer:
     def _draw_ground(self, f: Frame, VP):
         GL = self.GL
         p = self.prog['ground']
+        roi = self._roi_map(f.roi) if f.cams else None
         GL.glUseProgram(p['id'])
         self._set(p, 'uVP', VP)
         self._common(p, f)
@@ -1432,6 +1525,13 @@ class GLRenderer:
             self._set(p, 'uAOInfo', (1.0, 0.0, 0.0, 0.0))
         else:
             self._set(p, 'uAOInfo', (0.0, 0.0, 0.0, 1.0))
+        if roi is not None:
+            GL.glActiveTexture(GL.GL_TEXTURE5)
+            GL.glBindTexture(GL.GL_TEXTURE_2D, roi[1])
+            self._set(p, 'uRoiExt', roi[2])
+            self._set(p, 'uRoiOn', 1.0)
+        else:
+            self._set(p, 'uRoiOn', 0.0)
         GL.glActiveTexture(GL.GL_TEXTURE0)
         # a large quad around the view target (and the coverage texture)
         R = st.fade[1] + 5.0
@@ -1446,6 +1546,25 @@ class GLRenderer:
         GL.glDrawArrays(GL.GL_TRIANGLES, 0, 6)
         GL.glDisableVertexAttribArray(0)
         GL.glDepthMask(GL.GL_TRUE)
+
+    def _roi_map(self, roi):
+        """The ROI fade texture for Frame.roi, rebuilt only when the mask or its placement changes (the cache holds
+        the mask, so its id stays unique while it is the key)."""
+        if roi is None:
+            return None
+        mask, x0, y0, cell = roi[:4]
+        key = (id(mask), getattr(mask, 'shape', None), float(x0), float(y0), float(cell))
+        c = getattr(self, '_roi_tex', None)
+        if c is not None and c[0] == key:
+            return c[3]
+        baked = roi_fade_map(mask, x0, y0, cell)
+        if baked is None:
+            self._roi_tex = (key, mask, c[2] if c else None, None)
+            return None
+        tex = self._texture(baked[0], tex=c[2] if c else None)
+        out = (key, tex, tuple(float(v) for v in baked[1]))
+        self._roi_tex = (key, mask, tex, out)
+        return out
 
     def _draw_mesh(self, f, VP, mesh, phase):
         GL = self.GL
@@ -1819,6 +1938,9 @@ class GLRenderer:
             for t in (self._ground_tex, self._cube):
                 if t:
                     GL.glDeleteTextures([t[1]])
+            rt = getattr(self, '_roi_tex', None)
+            if rt and rt[2]:
+                GL.glDeleteTextures([rt[2]])
             for p in self.prog.values():
                 GL.glDeleteProgram(p['id'])
         except Exception:

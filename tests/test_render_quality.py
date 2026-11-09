@@ -76,6 +76,33 @@ def test_camera_light_colours_are_the_legend_formula(gl):
     assert gl['camlight_colour_err'] <= 3
 
 
+def test_camera_light_fades_outside_the_roi(gl):
+    """Inside the analysis ROI the camera light is exactly the legend colour; well beyond ROI_FADE_M outside it, only
+    a trace (ROI_FLOOR_K) is left, where without an ROI it would be nearly full strength there."""
+    from vantage.ui.render_gl import ROI_FLOOR_K
+    assert gl['roi_inside_n'] > 50 and gl['roi_inside_err'] <= 3
+    assert gl['roi_far_n'] > 50 and abs(gl['roi_far_strength'] - ROI_FLOOR_K) < 0.06
+    assert gl['roi_off_far_strength'] > 0.8
+
+
+def test_first_frame_equals_the_second(gl):
+    """A single render (Render image, a still) is already right: no texture built during the frame unbinds a map."""
+    assert gl['first_frame_diff'] <= 2
+
+
+def test_roi_fade_map_is_one_inside_and_zero_beyond_the_reach():
+    from vantage.ui.render_gl import ROI_FADE_M, roi_fade_map
+    m = np.zeros((40, 40), bool)
+    m[10:30, 10:30] = True                                   # 1 m square from (0.5, 0.5), 0.05 m cells
+    rgba, (x0, y0, x1, y1) = roi_fade_map(m, 0.0, 0.0, 0.05)
+    cell = (x1 - x0) / rgba.shape[1]
+    at = lambda x, y: rgba[int((y - y0) / cell), int((x - x0) / cell), 0]
+    assert at(1.0, 1.0) == 255                               # inside
+    assert at(1.5 + ROI_FADE_M / 2, 1.0) in range(100, 156)   # half way out: about half
+    assert at(1.5 + ROI_FADE_M + 0.3, 1.0) == 0               # beyond the reach
+    assert roi_fade_map(np.zeros((5, 5), bool), 0, 0, 0.05) is None
+
+
 def test_sky_occlusion_darkens_a_crevice_not_an_open_panel(gl):
     assert gl['ao_crevice_ratio'] < 0.93                     # slab next to the wall darker than the open slab
     assert gl['noao_crevice_ratio'] > 0.97                   # ... only because of the occlusion
