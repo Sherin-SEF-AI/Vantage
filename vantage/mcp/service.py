@@ -15,7 +15,9 @@ window goes through the session) and in the MCP process on a file (vantage.mcp.s
 The assistant's tools come along as they are (reading the design, studies, simulate, compare, look, the Copilot's
 plan tools), except two that only make sense inside the app's own chat (update_plan, suggest_next). Then
 edit_project changes anything the user can change in the design, one undo step per call; undo, save, export and
-activity complete it."""
+activity complete it. import_vehicle and import_layout bring in a model and a layout; set_view, render_view and
+turntable_video drive the window's 3D view; start_job, get_job, cancel_job and list_jobs (run by the MCP server)
+run any tool in the background."""
 from __future__ import annotations
 
 import base64
@@ -39,7 +41,7 @@ NEEDS_WINDOW = ('show_in_app', 'propose_changes', 'propose_requirements', 'add_d
 
 _OP_ITEM = {'type': 'object', 'properties': {
     'op': {'type': 'string', 'enum': list(E.OPS), 'description': 'set fields, add, remove, activate a variant, '
-                                                                 'link or unlink mirrored cameras'},
+                                                                 'link or unlink mirrored cameras, aim a camera'},
     'target': {'type': 'string', 'enum': list(E.TARGETS)},
     'id': {'type': 'string', 'description': 'which one: a camera or sensor tag, a rig part, obstacle or target name, '
                                             'a variant name (set/remove/activate; for add variant: the one to copy), '
@@ -48,7 +50,8 @@ _OP_ITEM = {'type': 'object', 'properties': {
                                                '(degrees about the body centre) or auto: true (back to the automatic '
                                                'placement); add sensor: kind (lidar|radar|gnss|imu), model_id and pose '
                                                'optional; add log: kind (decision|rejected|constraint|note), text, '
-                                               'about (tags)'},
+                                               'about (tags); aim camera: at [x, y] (ground) or [x, y, z], or '
+                                               'along: "normal" (the body\'s outward normal), and/or level_roll: true'},
     'preset': {'type': 'string', 'enum': ['roof_rack', 'sensor_mast', 'enclosure', 'bar'],
                'description': 'add rig_part: a preset sized from the roof and fitted with the parts there'},
     'variant': {'type': 'string', 'description': 'camera/sensor ops: which variant (default: the active one)'},
@@ -61,10 +64,13 @@ _OP_ITEM = {'type': 'object', 'properties': {
 
 class Tool:
     def __init__(self, name, title, description, params, fn=None, required=(), read_only=True, destructive=False,
-                 assistant=None):
+                 assistant=None, router=False, idempotent=False, window=False):
         self.name, self.title, self.description = name, title, description
         self.params, self.fn, self.required = params, fn, tuple(required)
         self.read_only, self.destructive, self.assistant = read_only, destructive, assistant
+        self.router = router                      # run by the MCP server itself (background jobs), not a session
+        self.idempotent = idempotent or read_only
+        self.window = window                      # needs the Vantage window open
 
     def schema(self) -> dict:
         s = {'type': 'object', 'properties': self.params}
@@ -75,7 +81,8 @@ class Tool:
     def listing(self) -> dict:
         return {'name': self.name, 'title': self.title, 'description': self.description, 'inputSchema': self.schema(),
                 'annotations': {'title': self.title, 'readOnlyHint': self.read_only,
-                                'destructiveHint': self.destructive, 'openWorldHint': False}}
+                                'destructiveHint': self.destructive, 'idempotentHint': self.idempotent,
+                                'openWorldHint': False}}
 
 
 class NeedsWindow(Exception):
@@ -84,9 +91,25 @@ class NeedsWindow(Exception):
 
 # =========================================================================== results
 def text(doc, error=False) -> dict:
-    """An MCP result. Whole JSON (the assistant's tools cut their own text for the in-app chat; these never are)."""
+    """An MCP result. Whole JSON (the assistant's tools cut their own text for the in-app chat; these never are); a
+    JSON object also goes out as structuredContent (with the same JSON as text, for clients that read only text)."""
     body = doc if isinstance(doc, str) else json.dumps(doc, ensure_ascii=False, default=str, separators=(',', ':'))
-    return {'content': [{'type': 'text', 'text': body}], 'isError': error}
+    out = {'content': [{'type': 'text', 'text': body}], 'isError': error}
+    st = structured(body)
+    if st is not None:
+        out['structuredContent'] = st
+    return out
+
+
+def structured(body):
+    """The JSON object in a tool's text, or None (prose, a list, or not JSON)."""
+    if not isinstance(body, str) or not body.lstrip().startswith('{'):
+        return None
+    try:
+        doc = json.loads(body)
+    except ValueError:
+        return None
+    return doc if isinstance(doc, dict) else None
 
 
 def _figures(tc) -> dict:
@@ -189,7 +212,7 @@ def _export(s, formats=None, folder=None, **_):
     return {'folder': folder, 'files': [os.path.relpath(x, folder) for x in paths]}
 
 
-def _batch(s, args=None, help=False, timeout_s=600, **_):
+def _batch(s, args=None, help=False, timeout_s=600, _cancel=None, **_):
     from . import batchrun as B
     if help or not args:
         return B.help_doc()
@@ -201,11 +224,174 @@ def _batch(s, args=None, help=False, timeout_s=600, **_):
     base = os.path.dirname(p.path) if p.path and os.access(os.path.dirname(p.path), os.W_OK) else \
         os.path.join(tc.working_dir or os.path.expanduser('~'), p.name)
     os.makedirs(base, exist_ok=True)
-    return B.run(p, args, base, timeout_s)
+    return B.run(p, args, base, timeout_s, cancel=_cancel)
 
 
 def _open(s, path=None, sample=False, template=None, **_):
     return s.open(path=path, sample=bool(sample), template=template)
+
+
+def _import_vehicle(s, path=None, units=None, up=None, forward=None, flip_lr=False, origin='rear_axle',
+                    ground='tyre', name=None, keep_cameras=True, **_):
+    from ..core import loaders
+    from ..core import vehicle_import as VI
+    if not path:
+        return {'error': 'path: the model file (.glb .gltf .obj .stl .ply .dae .fbx; .step with gmsh)'}
+    try:
+        veh, rep = VI.import_vehicle(path, units=units, up=up, forward=forward, flip_lr=bool(flip_lr),
+                                     origin=origin or 'rear_axle', ground=ground or 'tyre', name=name)
+    except (loaders.MeshLoadError, ValueError, OSError) as e:
+        return {'error': str(e), 'changed': 'nothing'}
+    before = s.context()
+    keep = bool(keep_cameras)
+    label = E.title([f'imported {rep["file"]} ({rep["triangles"]} tris, {rep["units"].split()[0]}, up '
+                     f'{veh.import_up}, forward {veh.import_forward})'])
+
+    def fn(p):
+        p.vehicle = veh
+        if not keep:
+            p.variant.cameras = []
+        if p.photos.landmarks:
+            for k, c in veh.wheel_centres.items():
+                p.photos.landmarks[f'Wheel centre {k}'] = list(c)
+        p.add_log('import', f'{rep["file"]} · {veh.mesh.n_tris} tris · units {veh.import_units} · up {veh.import_up} '
+                            f'· forward {veh.import_forward}')
+    s.edit(['vehicle', 'variant', 'photos'], fn, label)
+    after = s.context()
+    if s.mode == 'live':
+        s.show({'action': 'frame_all'})
+    return {'imported': rep, 'undo_step': label, 'cameras_kept': keep, 'before': _figures(before),
+            'after': _figures(after),
+            'note': 'Check the report: a guessed unit, up or forward axis can be given explicitly. undo_last_change '
+                    'takes it back.'}
+
+
+def _import_layout(s, path=None, name=None, **_):
+    from ..core import samples
+    from ..core.project import Variant
+    from ..ui.dialogs.misc import import_layout_file
+    if not path:
+        return {'error': 'path: a CSV (tag,name,x,y,z,yaw,pitch[,roll,lens,port]) or the extrinsics JSON export'}
+    path = os.path.abspath(os.path.expanduser(path))
+    p = s.project()
+    try:
+        cams = import_layout_file(path, p)
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        return {'error': f'{os.path.basename(path)}: {e}', 'changed': 'nothing'}
+    v = Variant(name=name or os.path.splitext(os.path.basename(path))[0])
+    v.cameras = cams
+    samples.link_pairs(v)
+    label = E.title([f'imported layout {v.name!r} ({len(cams)} cameras) as a new variant'])
+
+    def fn(pj):
+        pj.variants.append(v)
+        pj.active_uid = v.uid
+    s.edit(['variants'], fn, label)
+    after = s.context()
+    return {'variant': v.name, 'cameras': [{'tag': c.tag, 'x': c.x, 'y': c.y, 'z': c.z, 'yaw': c.yaw,
+                                             'pitch': c.pitch, 'roll': c.roll, 'lens_id': c.lens_id} for c in cams],
+            'active': True, 'undo_step': label, 'after': _figures(after)}
+
+
+VIEWS = ('persp', 'top', 'side', 'front', 'rear', 'top3d', 'bev', 'bowl', 'through')
+
+
+def _window_only(s, what):
+    if s.mode != 'live':
+        raise NeedsWindow(f'{what} draws in the Vantage window, and none is open: open the project in Vantage '
+                          '(look draws the analysis without a window)')
+
+
+def _view_req(view=None, camera=None, orbit=None, overlays=None, heatmap=None, frame=None, page=None):
+    req = {}
+    if view is not None:
+        if view not in VIEWS:
+            raise ValueError(f'view: one of {", ".join(VIEWS)}')
+        if view == 'through' and not camera:
+            raise ValueError('view through: camera (its tag)')
+        req['view'] = view
+    if camera:
+        req['camera'] = str(camera)
+    if orbit is not None:
+        if not isinstance(orbit, dict):
+            raise ValueError('orbit: {az, el, distance} (degrees, degrees, metres)')
+        o = {}
+        for k, lo, hi in (('az', -720.0, 720.0), ('el', -89.0, 89.99), ('distance', 0.5, 500.0)):
+            if k in orbit:
+                v = float(orbit[k])
+                if not lo <= v <= hi:
+                    raise ValueError(f'orbit.{k}: {lo:g} to {hi:g}')
+                o[k] = v
+        req['orbit'] = o
+    if overlays is not None:
+        from ..ui.context import OVERLAYS
+        keys = {k for k, *_ in OVERLAYS}
+        if not isinstance(overlays, dict) or any(k not in keys for k in overlays):
+            raise ValueError(f'overlays: {{key: true|false}} with keys {", ".join(sorted(keys))}')
+        req['overlays'] = {k: bool(v) for k, v in overlays.items()}
+    if heatmap is not None:
+        from ..ui.context import HEATMAPS
+        if heatmap not in {k for k, _ in HEATMAPS}:
+            raise ValueError(f'heatmap: one of {", ".join(k for k, _ in HEATMAPS)}')
+        req['heatmap'] = heatmap
+    if frame is not None:
+        if frame not in ('all', 'selection'):
+            raise ValueError('frame: all | selection')
+        req['frame'] = frame
+    return req
+
+
+def _set_view(s, view=None, camera=None, orbit=None, overlays=None, heatmap=None, frame=None, **_):
+    _window_only(s, 'set_view')
+    try:
+        req = _view_req(view, camera, orbit, overlays, heatmap, frame)
+    except (ValueError, TypeError) as e:
+        return {'error': str(e)}
+    if not req:
+        return {'error': 'give view, camera, orbit, overlays, heatmap or frame'}
+    return s.view(req)
+
+
+def _render_view(s, path=None, scale=2, transparent=False, view=None, camera=None, orbit=None, overlays=None,
+                 heatmap=None, inline=True, **_):
+    _window_only(s, 'render_view')
+    try:
+        req = _view_req(view, camera, orbit, overlays, heatmap)
+    except (ValueError, TypeError) as e:
+        return {'error': str(e)}
+    sc = int(scale or 2)
+    if not 1 <= sc <= 4:
+        return {'error': 'scale: 1 to 4 (times the view\'s size)'}
+    req.update(scale=sc, transparent=bool(transparent), path=_out_path(s, path, 'render', '.png'))
+    out = s.render(req)
+    if inline and isinstance(out, dict) and out.get('path'):
+        out['_image'] = out['path']
+    return out
+
+
+def _turntable(s, path=None, seconds=8, fps=30, scale=1, **_):
+    _window_only(s, 'turntable_video')
+    secs, f = float(seconds or 8), int(fps or 30)
+    if not 1 <= secs <= 60 or not 5 <= f <= 60:
+        return {'error': 'seconds: 1 to 60; fps: 5 to 60'}
+    sc = float(scale or 1)
+    if not 0.5 <= sc <= 2:
+        return {'error': 'scale: 0.5 to 2'}
+    return s.turntable({'path': _out_path(s, path, 'turntable', '.mp4'), 'frames': int(round(secs * f)), 'fps': f,
+                        'scale': sc})
+
+
+def _out_path(s, path, kind, ext):
+    import time as _t
+    if path:
+        out = os.path.abspath(os.path.expanduser(path))
+    else:
+        p = s.project()
+        base = os.path.dirname(p.path) if p.path and os.access(os.path.dirname(p.path), os.W_OK) else \
+            os.path.join(os.path.expanduser('~'), 'Vantage')
+        out = os.path.join(base, f'{p.name}-{kind}-{_t.strftime("%Y%m%d-%H%M%S")}{ext}')
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    return out
 
 
 MCP_TOOLS = [
@@ -279,6 +465,76 @@ MCP_TOOLS = [
          'even while a window is open; with no arguments, Claude goes back to the window.',
          {'path': {'type': 'string'}, 'sample': {'type': 'boolean'}, 'template': {'type': 'string'}}, _open,
          read_only=False),
+    Tool('import_vehicle', 'Import a vehicle model',
+         'Replace the vehicle with a 3D model file (.glb .gltf .obj .stl .ply .dae .fbx; .step with gmsh), as File ▸ '
+         'Import ▸ Vehicle model does: units, up and forward axes from the file or guessed (give them when the '
+         'report says a guess is wrong), turned into the vehicle frame, wheels found, ground on the tyres and the '
+         'origin at the rear-axle centre, glass made a forbidden mount zone. One undo step; the cameras stay unless '
+         'keep_cameras is false. Returns the import report and the coverage before and after.',
+         {'path': {'type': 'string', 'description': 'the model file'},
+          'units': {'type': 'string', 'enum': ['m', 'mm', 'cm', 'in']},
+          'up': {'type': 'string', 'enum': ['+X', '-X', '+Y', '-Y', '+Z', '-Z']},
+          'forward': {'type': 'string', 'enum': ['+X', '-X', '+Y', '-Y', '+Z', '-Z']},
+          'flip_lr': {'type': 'boolean', 'description': 'mirror left and right (a model exported mirrored)'},
+          'origin': {'type': 'string', 'enum': ['rear_axle', 'front_axle', 'front_bumper', 'centre', 'file']},
+          'ground': {'type': 'string', 'enum': ['tyre', 'lowest', 'file']},
+          'name': {'type': 'string'},
+          'keep_cameras': {'type': 'boolean', 'description': 'keep the active variant\'s cameras (default true)'}},
+         _import_vehicle, required=('path',), read_only=False, destructive=True),
+    Tool('import_layout', 'Import a camera layout',
+         'A camera layout from a CSV (tag,name,x,y,z,yaw,pitch[,roll,lens,port]; headers such as x_mm or yaw_rad '
+         'give units) or the extrinsics JSON export, as a new variant made active (File ▸ Import ▸ Layout). One '
+         'undo step.',
+         {'path': {'type': 'string'}, 'name': {'type': 'string', 'description': 'the variant\'s name (default: the '
+                                                                                 'file\'s)'}},
+         _import_layout, required=('path',), read_only=False),
+    Tool('set_view', 'Set the 3D view',
+         'Set what the Vantage window shows (never changes the design): view (persp | top | side | front | rear | '
+         'top3d | bev | bowl | through, with camera for through: the view through that camera\'s lens), orbit '
+         '{az, el, distance} for the 3D view, overlays {key: true|false} (camlight, frustums, footprints, seams, roi, '
+         'grid, sensors, lidarpts, brackets, harness, volume …), heatmap (none | coverage | density | redundancy | '
+         'stitched), frame (all | selection). Needs the window.',
+         {'view': {'type': 'string', 'enum': list(VIEWS)}, 'camera': {'type': 'string'},
+          'orbit': {'type': 'object', 'properties': {'az': {'type': 'number'}, 'el': {'type': 'number'},
+                                                     'distance': {'type': 'number'}}},
+          'overlays': {'type': 'object', 'additionalProperties': {'type': 'boolean'}},
+          'heatmap': {'type': 'string'}, 'frame': {'type': 'string', 'enum': ['all', 'selection']}},
+         _set_view, window=True),
+    Tool('render_view', 'Render the 3D view',
+         'Render the window\'s 3D view as Render image does (the shader renderer, overlays crisp) at 1–4 times its '
+         'size to a PNG, after an optional view, orbit, overlays and heatmap as in set_view; returns the file and the '
+         'picture. Needs the window (look draws the analysis without one).',
+         {'path': {'type': 'string', 'description': 'a .png path (default: next to the project)'},
+          'scale': {'type': 'integer', 'minimum': 1, 'maximum': 4}, 'transparent': {'type': 'boolean'},
+          'view': {'type': 'string', 'enum': list(VIEWS)}, 'camera': {'type': 'string'},
+          'orbit': {'type': 'object'}, 'overlays': {'type': 'object'}, 'heatmap': {'type': 'string'},
+          'inline': {'type': 'boolean', 'description': 'return the picture too (default true)'}},
+         _render_view, read_only=False, window=True),
+    Tool('turntable_video', 'Turntable video',
+         'One orbit of the 3D view around its target as an MP4 (ffmpeg) or PNG frames, as View ▸ Turntable video '
+         'does. Needs the window; long ones are best run with start_job.',
+         {'path': {'type': 'string'}, 'seconds': {'type': 'number'}, 'fps': {'type': 'integer'},
+          'scale': {'type': 'number'}},
+         _turntable, read_only=False, window=True),
+    Tool('start_job', 'Start a background job',
+         'Run any other tool in the background and return at once with a job id: for long studies (run_batch, '
+         'run_study, optimise_rig, design_rig, run_validation, calibrate_lidar_camera, turntable_video …). '
+         'get_job reads its progress and result, cancel_job stops it. Jobs run one after another on the project as '
+         'it is when each starts.',
+         {'tool': {'type': 'string', 'description': 'the tool to run'},
+          'arguments': {'type': 'object', 'description': 'its arguments'},
+          'label': {'type': 'string'}},
+         router=True, read_only=False, required=('tool',)),
+    Tool('get_job', 'Read a background job',
+         'A job\'s state (queued, running, done, failed, cancelled), how long it has run and, when done, its result. '
+         'wait_s waits up to that long for it to finish first.',
+         {'job_id': {'type': 'string'}, 'wait_s': {'type': 'number', 'minimum': 0, 'maximum': 300}},
+         router=True, required=('job_id',)),
+    Tool('cancel_job', 'Cancel a background job', 'Stop a queued or running job (a batch run is stopped at once; a '
+         'study stops at its next check).', {'job_id': {'type': 'string'}}, router=True, read_only=False,
+         required=('job_id',)),
+    Tool('list_jobs', 'List background jobs', 'Every job of this session, newest first, with its state.', {},
+         router=True),
 ]
 
 
@@ -316,17 +572,46 @@ def _picture(pic) -> dict:
     return {'type': 'image', 'data': base64.b64encode(pic.data).decode('ascii'), 'mimeType': pic.media_type}
 
 
-def call(session, name: str, args) -> dict:
-    """Run tool name with args on the session: an MCP tools/call result ({'content': [...], 'isError': bool})."""
+def _file_picture(path, max_side=1568):
+    """An image file as MCP image content, scaled down to max_side pixels on its long side (what a model reads)."""
+    try:
+        from PyQt6.QtCore import QBuffer, QByteArray, QIODevice, Qt
+        from PyQt6.QtGui import QImage
+        img = QImage(path)
+        if img.isNull():
+            return None
+        if max(img.width(), img.height()) > max_side:
+            img = img.scaled(max_side, max_side, Qt.AspectRatioMode.KeepAspectRatio,
+                             Qt.TransformationMode.SmoothTransformation)
+        ba = QByteArray()
+        buf = QBuffer(ba)
+        buf.open(QIODevice.OpenModeFlag.WriteOnly)
+        img.save(buf, 'PNG')
+        return {'type': 'image', 'data': base64.b64encode(bytes(ba)).decode('ascii'), 'mimeType': 'image/png'}
+    except Exception:                              # the picture is extra: the file is what was asked for
+        return None
+
+
+def call(session, name: str, args, cancel=None) -> dict:
+    """Run tool name with args on the session: an MCP tools/call result ({'content': [...], 'isError': bool}).
+    cancel: a threading.Event the caller sets to stop it (a batch run is killed; a study stops at its next check)."""
     t = BY_NAME.get(name)
     if t is None:
         return text({'error': f'unknown tool {name!r}'}, True)
+    if t.router:
+        return text({'error': f'{name} is run by the MCP server, not the window'}, True)
     args = {k: v for k, v in (args or {}).items() if v is not None} if isinstance(args, dict) else {}
     try:
         if t.assistant is None:
             with _EDIT_LOCK if not t.read_only else _nolock():
-                out = t.fn(session, **args)
-            return text(out, isinstance(out, dict) and 'error' in out)
+                out = t.fn(session, _cancel=cancel, **args)
+            pic = out.pop('_image', None) if isinstance(out, dict) else None
+            res = text(out, isinstance(out, dict) and 'error' in out)
+            if pic:
+                img = _file_picture(pic)
+                if img is not None:
+                    res['content'].append(img)
+            return res
         problems = T.validate_args(name, args)
         if problems:
             return text({'error': 'the input does not match the tool: ' + '; '.join(problems[:6])}, True)
@@ -335,13 +620,17 @@ def call(session, name: str, args) -> dict:
                                   'Vantage, or use edit_project to make the change on the file.'}, True)
         tc = session.context()
         tc.vision = True
-        tc.cancel = threading.Event()
+        tc.cancel = cancel if cancel is not None else threading.Event()
         if session.mode == 'live':
             tc.on_ui, tc.on_proposal, tc.on_copilot, tc.on_log = (session.show, session.proposal, session.plan,
                                                                   session.log)
         body, ok, pics = T.run_full(tc, name, args)
         content = [{'type': 'text', 'text': body}] + [_picture(p) for p in pics]
-        return {'content': content, 'isError': not ok}
+        out = {'content': content, 'isError': not ok}
+        st = structured(body)
+        if st is not None:
+            out['structuredContent'] = st
+        return out
     except NeedsWindow as e:
         return text({'error': str(e)}, True)
     except Exception as e:                          # a tool never takes the server down

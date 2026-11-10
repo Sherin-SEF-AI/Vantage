@@ -43,7 +43,8 @@ EXIT = {0: 'done: fine',
         7: 'no CARLA server answered (or CARLA\'s Python is missing)',
         8: 'a model the job needs is not downloaded (the detector, a foundation model)',
         9: 'an external detector is not set up or approved here, or a drive failed',
-        1: 'failed: an error (see the output)', 130: 'stopped', -9: 'stopped: it ran longer than timeout_s'}
+        1: 'failed: an error (see the output)', 130: 'stopped', -9: 'stopped: it ran longer than timeout_s',
+        -15: 'cancelled'}
 JSON_MAX = 60_000                       # characters of JSON outputs returned in full, all together
 TAIL = 4000
 
@@ -107,8 +108,9 @@ def command(project_file: str, args) -> tuple[list, dict]:
     return exe + [project_file] + [str(a) for a in args], env
 
 
-def run(project, args, base_dir: str, timeout_s=600) -> dict:
-    """Run the batch job on a copy of project in a new folder under base_dir."""
+def run(project, args, base_dir: str, timeout_s=600, cancel=None) -> dict:
+    """Run the batch job on a copy of project in a new folder under base_dir. cancel: a threading.Event; set, the
+    job's process is stopped (exit code -15, 'cancelled')."""
     why = check(args)
     if why:
         return {'error': why}
@@ -123,14 +125,35 @@ def run(project, args, base_dir: str, timeout_s=600) -> dict:
     project.save(pfile)                                 # (a snapshot: the user's project is not touched)
     cmd, env = command(pfile, args)
     t0 = time.time()
-    try:
-        p = subprocess.run(cmd, cwd=folder, env=env, capture_output=True, text=True, errors='replace',
-                           timeout=max(10, min(int(timeout_s or 600), 3600)))
-        code, out, err = p.returncode, p.stdout, p.stderr
-    except subprocess.TimeoutExpired as e:
-        code = -9
-        out = e.stdout.decode('utf-8', 'replace') if isinstance(e.stdout, bytes) else (e.stdout or '')
-        err = e.stderr.decode('utf-8', 'replace') if isinstance(e.stderr, bytes) else (e.stderr or '')
+    limit = max(10, min(int(timeout_s or 600), 3600))
+    with open(os.path.join(folder, '.stdout'), 'w+', encoding='utf-8', errors='replace') as fo, \
+            open(os.path.join(folder, '.stderr'), 'w+', encoding='utf-8', errors='replace') as fe:
+        proc = subprocess.Popen(cmd, cwd=folder, env=env, stdout=fo, stderr=fe, text=True)
+        code = None
+        while code is None:
+            try:
+                code = proc.wait(timeout=0.25)
+            except subprocess.TimeoutExpired:
+                if cancel is not None and cancel.is_set():
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
+                    code = -15
+                elif time.time() - t0 > limit:
+                    proc.kill()
+                    proc.wait()
+                    code = -9
+        fo.seek(0)
+        fe.seek(0)
+        out, err = fo.read(), fe.read()
+    for f in ('.stdout', '.stderr'):
+        try:
+            os.remove(os.path.join(folder, f))
+        except OSError:
+            pass
     files, budget, docs = [], JSON_MAX, {}
     for root, _, names in os.walk(folder):
         for nm in sorted(names):

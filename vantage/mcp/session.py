@@ -12,6 +12,8 @@ import json
 import os
 import shutil
 import socket
+import itertools
+import threading
 import sys
 import time
 
@@ -71,56 +73,108 @@ class LinkError(Exception):
     pass
 
 
+_CALLS = itertools.count(1)
+
+
 class LiveLink:
-    """Requests to one window's bridge: one JSON line each way."""
+    """Requests to one window's bridge: one JSON line each way, on a small pool of connections so that calls can run
+    side by side and a cancel reaches the window while a call is still running."""
     mode = 'live'
 
     def __init__(self, info: dict, timeout=900.0):
         self.info = info
         self.timeout = timeout
-        self._sock = None
-        self._buf = b''
+        self._free = []                      # idle connections: [socket, buffer]
+        self._lock = threading.Lock()
         self._n = 0
 
     @property
     def pid(self) -> int:
         return int(self.info.get('pid', 0))
 
-    def _connect(self):
-        if self._sock is None:
-            try:
-                self._sock = socket.create_connection(('127.0.0.1', int(self.info['port'])), timeout=10)
-            except OSError as e:
-                raise LinkError(f'the Vantage window (pid {self.pid}) does not answer: {e}') from None
-            self._sock.settimeout(self.timeout)
+    def _take(self):
+        with self._lock:
+            if self._free:
+                return self._free.pop()
+        try:
+            sock = socket.create_connection(('127.0.0.1', int(self.info['port'])), timeout=10)
+        except OSError as e:
+            raise LinkError(f'the Vantage window (pid {self.pid}) does not answer: {e}') from None
+        sock.settimeout(self.timeout)
+        return [sock, b'']
+
+    def _give(self, conn):
+        with self._lock:
+            if len(self._free) < 4:
+                self._free.append(conn)
+                return
+        try:
+            conn[0].close()
+        except OSError:
+            pass
 
     def request(self, method: str, **params) -> dict:
-        self._connect()
-        self._n += 1
-        msg = {'token': self.info['token'], 'id': self._n, 'method': method, **params}
+        conn = self._take()
+        with self._lock:
+            self._n += 1
+            n = self._n
+        msg = {'token': self.info['token'], 'id': n, 'method': method, **params}
+        sock = conn[0]
         try:
-            self._sock.sendall((json.dumps(msg) + '\n').encode('utf-8'))
-            while b'\n' not in self._buf:
-                chunk = self._sock.recv(1 << 20)
+            sock.sendall((json.dumps(msg) + '\n').encode('utf-8'))
+            while b'\n' not in conn[1]:
+                chunk = sock.recv(1 << 20)
                 if not chunk:
                     raise OSError('the window closed the connection')
-                self._buf += chunk
+                conn[1] += chunk
         except OSError as e:
-            self.close()
+            try:
+                sock.close()
+            except OSError:
+                pass
             raise LinkError(f'lost the Vantage window (pid {self.pid}): {e}') from None
-        line, self._buf = self._buf.split(b'\n', 1)
+        line, conn[1] = conn[1].split(b'\n', 1)
+        self._give(conn)
         doc = json.loads(line.decode('utf-8'))
         if 'error' in doc:
             raise LinkError(str(doc['error']))
         return doc.get('result') or {}
 
+    def call(self, name, args, cancel=None) -> dict:
+        """A tool call in the window; cancel (a threading.Event) set while it runs is passed on to the window."""
+        cid = f'{os.getpid()}-{next(_CALLS)}'          # unique at the window: this process and its count
+        if cancel is None:
+            return self.request('call', name=name, args=args or {}, call_id=cid)
+        stop = threading.Event()
+
+        def watch():
+            while not stop.is_set():
+                if cancel.wait(0.2):
+                    try:
+                        self.request('cancel', call_id=cid)
+                    except LinkError:
+                        pass
+                    return
+        th = threading.Thread(target=watch, daemon=True)
+        th.start()
+        try:
+            return self.request('call', name=name, args=args or {}, call_id=cid)
+        finally:
+            stop.set()
+
+    def revision(self):
+        """(project path, a number that changes with every change to the project) for resource subscriptions."""
+        r = self.request('ping')
+        return r.get('path') or r.get('project'), (int(r.get('revision', 0)), int(r.get('undo_index', 0)))
+
     def close(self):
-        if self._sock is not None:
+        with self._lock:
+            conns, self._free = self._free, []
+        for c in conns:
             try:
-                self._sock.close()
+                c[0].close()
             except OSError:
                 pass
-        self._sock, self._buf = None, b''
 
 
 # =========================================================================== a file
@@ -136,6 +190,7 @@ class FileSession:
         self._mtime = 0.0
         self._backed_up = set()
         self._dirty = False
+        self._lock = threading.RLock()        # one call at a time on the file (the analysis and the undo stack)
 
     # ---------------------------------------------------------------- opening
     def open(self, path=None, sample=False, template=None) -> dict:
@@ -200,14 +255,15 @@ class FileSession:
         self._need()
         self._check_disk()
         p = self.p
-        before = {k: copy.deepcopy(p.section(k)) for k in keys}
+        keys = [k if k != 'variant' else f'variant:{p.active_uid}' for k in keys]     # as the window's store does
+        before = {k: _state(p, k) for k in keys}
         try:
             fn(p)
         except Exception:
             for k, st in before.items():
-                p.restore(k, st)
+                p.restore(k, _copy(k, st))
             raise
-        after = {k: copy.deepcopy(p.section(k)) for k in keys}
+        after = {k: _state(p, k) for k in keys}
         self.undo_stack.append((text, before, after))
         self.redo_stack.clear()
         p.add_log('edit', text)
@@ -244,7 +300,7 @@ class FileSession:
         self._check_disk()
         text, before, after = self.undo_stack.pop()
         for k, st in before.items():
-            self.p.restore(k, copy.deepcopy(st))
+            self.p.restore(k, _copy(k, st))
         self.redo_stack.append((text, before, after))
         self._changed()
         return f'undid: {text}'
@@ -256,7 +312,7 @@ class FileSession:
         self._check_disk()
         text, before, after = self.redo_stack.pop()
         for k, st in after.items():
-            self.p.restore(k, copy.deepcopy(st))
+            self.p.restore(k, _copy(k, st))
         self.undo_stack.append((text, before, after))
         self._changed()
         return f'redid: {text}'
@@ -289,7 +345,30 @@ class FileSession:
     def show(self, req):
         raise _needs()
 
-    proposal = plan = log = show
+    proposal = plan = log = view = render = turntable = show
+
+    def revision(self):
+        """(project path or name, a number that changes with every change) for resource subscriptions."""
+        if self.p is None:
+            return None, (-1, 0)
+        return self.p.path or self.p.name, (self.rev, id(self.p))
+
+    def call(self, name, args, cancel=None) -> dict:
+        from . import service as SV
+        with self._lock:
+            return SV.call(self, name, args, cancel=cancel)
+
+
+def _state(p, k):
+    """A section's state for undo. The vehicle keeps its mesh by reference (a mesh is never changed in place: an import
+    or an edit replaces it), as the window's store keeps it; everything else is copied."""
+    if k == 'vehicle':
+        return {'meta': copy.deepcopy(p.vehicle.meta()), 'vehicle': copy.copy(p.vehicle)}
+    return copy.deepcopy(p.section(k))
+
+
+def _copy(k, st):
+    return st if k == 'vehicle' else copy.deepcopy(st)
 
 
 def _needs():

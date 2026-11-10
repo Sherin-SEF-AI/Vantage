@@ -232,6 +232,37 @@ Claude Desktop takes the same command in `claude_desktop_config.json` under `mcp
   runs, model downloads and the automation command are not available through it.
 - `save_project`, `export_files`, `get_recent_activity` (what you changed in the window), `get_project_data` and
   `vantage_status`.
+- `import_vehicle`, which replaces the vehicle with a model file as File ▸ Import ▸ Vehicle model does: units, up and
+  forward taken from the file or guessed (the report says which, so a wrong guess can be given), wheels found, the
+  ground on the tyres and the origin at the rear-axle centre, glass made a forbidden mount zone. `import_layout`
+  brings in a camera layout from a CSV or the extrinsics JSON as a new variant. Both are one undo step.
+- The `aim` operation of `edit_project`: a camera aimed at a point (`{"op": "aim", "target": "camera", "id": "F",
+  "props": {"at": [8, 0]}}`), along the body's outward normal (`{"along": "normal"}`) or with its roll levelled
+  (`{"level_roll": true}`), mirrored to a linked partner as any change is.
+- In the window: `set_view` (a view such as persp, top, side or the view through a camera, an orbit, overlays, the
+  heatmap), `render_view` (the shaded 3D view at 1–4 times its size to a PNG, returned as a picture too) and
+  `turntable_video`.
+- Background jobs: `start_job` runs any tool in the background and returns at once; `get_job` reads its progress and
+  result (`wait_s` waits for it), `cancel_job` stops it and `list_jobs` lists them. Jobs run one after another.
+
+**Beyond tools.** The server speaks MCP 2024-11-05 to 2025-11-25 (97 tools):
+- **Resources:** the project by URI, read through the tool that computes it, so always current:
+  `vantage://status`, `vantage://overview`, `vantage://project-data`, `vantage://coverage`, `vantage://issues`,
+  `vantage://seams`, `vantage://requirements`, `vantage://design-log`, `vantage://view/top.png` and more.
+  - **Templates:** `vantage://camera/{tag}`, `vantage://study/{name}` (any study's last result, such as
+    `power_budget` or `rig_perception`), `vantage://view/{view}`, `vantage://docs/{name}` and `vantage://job/{job_id}`.
+  - **Subscriptions:** a client that subscribes is told when the project changes, in the window or on the file.
+- **Prompts** for the common workflows: design review, a rig from a brief, closing blind spots, the calibration
+  plan, checking a recording, perception in the loop, comparing variants, explaining an issue, and starting from a
+  vehicle model.
+- **Argument completion** for prompts and resource templates: camera tags, study names, documentation pages, jobs
+  and file paths.
+- **Progress, cancellation and logging:**
+  - a call with a progress token reports its progress every 2 s;
+  - a cancelled call stops: a batch run's process at once, a study at its next check;
+  - log messages follow the level the client sets.
+- **Structured content:** every JSON result also comes as structured content.
+- **Order:** calls run in the order they arrive. Reads run side by side; a change waits for every call before it.
 
 **Claude inside the window.** The assistant panel on the right (Ctrl+J) has a switch at the top. **Groq assistant**
 is the in-app assistant: Groq, or Claude through the API, set in Preferences ▸ Assistant; it proposes changes for you
@@ -244,5 +275,6 @@ Shift+PageUp). Keys go to the shell while it has focus. It needs the optional `p
 include it) and runs on Linux and macOS.
 
 **What Claude cannot change.** Locked cameras and sensors (Claude may lock one, never unlock it), unit calibrations,
-stream sources, the fleet, photos, the vehicle model, the Copilot's approval records and the automation settings.
+stream sources, the fleet, photos, the Copilot's approval records and the automation settings. The vehicle model
+changes only as a whole, through `import_vehicle`, as one undo step.
 Runs such as CARLA drives still go through a Copilot plan that you approve in the window.

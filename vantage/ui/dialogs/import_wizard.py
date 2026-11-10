@@ -24,55 +24,8 @@ from ..viewport3d import make_viewport, MeshDraw, LineDraw, TriDraw, shade_faces
 from ..widgets import label, button, SegmentedControl, hline, vline, ROW_H, StatusLine, ScrubSpinBox, fix_height
 from .base import VDialog
 
-UNITS = [('m', 'Metres', 1.0), ('mm', 'Millimetres', 1e-3), ('cm', 'Centimetres', 1e-2), ('in', 'Inches', 0.0254)]
-AXES = ['+X', '-X', '+Y', '-Y', '+Z', '-Z']
+from ...core.vehicle_import import UNITS, AXES, axis_vec, detect_roles, detect_glass, guess_units  # noqa: F401
 STEPS = ['File', 'Orient', 'Scale and origin', 'Body and zones', 'Summary']
-
-
-def axis_vec(a):
-    v = np.zeros(3)
-    v['XYZ'.index(a[1])] = 1.0 if a[0] == '+' else -1.0
-    return v
-
-
-def detect_roles(parts):
-    out = []
-    for p in parts:
-        n = (p.name + ' ' + p.material).lower()
-        if any(k in n for k in ('glass', 'window', 'windshield', 'windscreen', 'windscr')) or p.alpha < 0.9:
-            out.append(ROLE_GLASS)
-        elif any(k in n for k in ('wheel', 'tyre', 'tire', 'rim', 'hub')):
-            out.append(ROLE_WHEELS)
-        elif any(k in n for k in ('interior', 'seat', 'dash', 'steering', 'cabin', 'engine')):
-            out.append(ROLE_IGNORED)
-        else:
-            out.append(ROLE_MOUNTABLE)
-    return out
-
-
-def detect_glass(mesh: Mesh):
-    gi = [i for i, p in enumerate(mesh.parts) if p.role == ROLE_GLASS or 'glass' in (p.name + p.material).lower() or p.alpha < 0.9]
-    for i in gi:
-        mesh.parts[i].role = ROLE_GLASS
-    zi = next((i for i, z in enumerate(mesh.zones) if z.auto and z.kind == 'forbidden'), None)
-    if zi is None:
-        mesh.zones.append(Zone('Glass (auto)', 'forbidden', auto=True))
-        zi = len(mesh.zones) - 1
-    m = np.isin(mesh.face_part, gi)
-    mesh.face_zone = np.where(m, zi, mesh.face_zone).astype(np.int16)
-    mesh.zones[zi].name = f'Glass ({int(m.sum())} faces, auto)'
-    return int(m.sum())
-
-
-def guess_units(lo, hi, hint):
-    ext = float(np.max(hi - lo))
-    readings = [(u, name, ext * f) for u, name, f in UNITS]
-    fits = [u for u, _, L in readings if 2.4 <= L <= 25.0]
-    if hint in ('m', 'mm', 'cm', 'in') and (hint in fits or not fits):
-        return hint, readings, True
-    if len(fits) == 1:
-        return fits[0], readings, True
-    return (fits[0] if fits else 'm'), readings, False
 
 
 class _LoadSig(QObject):

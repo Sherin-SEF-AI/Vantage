@@ -11,6 +11,9 @@ An operation names a target and what to do with it:
     {"op": "link", "target": "camera", "id": "ML", "partner": "MR"}
     {"op": "set", "target": "seam", "id": "QR|MR", "props": {"angle_deg": -107}}
     {"op": "set", "target": "seam", "id": "QR|MR", "props": {"auto": true}}
+    {"op": "aim", "target": "camera", "id": "F", "props": {"at": [6.0, 0.0, 0.0]}}
+    {"op": "aim", "target": "camera", "id": "ML", "props": {"along": "normal"}}
+    {"op": "aim", "target": "camera", "id": "QR", "props": {"level_roll": true}}
 
 apply() runs them in order on a project and returns the project sections they touched (the undo keys) and a line per
 operation. Every value is checked against the field it replaces (its type, its range, the library for a lens or a
@@ -21,17 +24,19 @@ page sets it (variant.seams, the angle by hand to 0.1°) or handed back to the a
 the analysis' seams to find it.
 
 What Claude cannot change here: a locked camera or sensor (the user locked it; Claude may lock, never unlock), a unit
-calibration (measured data), stream sources (they may hold passwords), the fleet, photos, the vehicle model, the
-Copilot's approval records and the automation settings (a command never comes from the model)."""
+calibration (measured data), stream sources (they may hold passwords), the fleet, photos, the Copilot's approval
+records and the automation settings (a command never comes from the model). The vehicle model is replaced only as a
+whole (the import_vehicle tool), never edited here."""
 from __future__ import annotations
 
 import math
 
+from ..core import mathutil as MU
 from ..core import project as P
 from ..core import rig as R
 from ..core import sensors as S
 
-OPS = ('set', 'add', 'remove', 'activate', 'link', 'unlink')
+OPS = ('set', 'add', 'remove', 'activate', 'link', 'unlink', 'aim')
 TARGETS = ('camera', 'sensor', 'rig_part', 'obstacle', 'target', 'variant', 'roi', 'ecu', 'analysis',
            'target_settings', 'project', 'log', 'seam')
 LISTED = ('camera', 'sensor', 'rig_part', 'obstacle', 'target', 'variant')      # targets named by an id
@@ -559,6 +564,48 @@ def _remove(p, op, touched):
     raise EditError(f'remove: target {t!r} cannot be removed')
 
 
+def _aim(p, op, touched):
+    """Camera ▸ Aim as an operation: at a point (its optical axis through it), along the body's outward normal where
+    it is mounted (pitched no higher than level), or with its roll levelled. The yaw, pitch and roll it gives are set
+    as a set operation would set them (a linked partner mirrors them)."""
+    if op['target'] != 'camera':
+        raise EditError('aim is for cameras')
+    props = op.get('props') or {}
+    if not isinstance(props, dict) or not props:
+        raise EditError('aim: props {"at": [x, y] or [x, y, z]}, {"along": "normal"} or {"level_roll": true}')
+    v = _variant(p, op.get('variant'))
+    c = _named(v.cameras, op.get('id'), 'camera', 'tag')
+    new = {}
+    if 'at' in props:
+        at = props['at']
+        if not isinstance(at, (list, tuple)) or len(at) not in (2, 3) or \
+                not all(isinstance(x, (int, float)) and math.isfinite(x) for x in at):
+            raise EditError('aim at: [x, y] on the ground or [x, y, z], metres in the vehicle frame')
+        pt = [float(at[0]), float(at[1]), float(at[2]) if len(at) == 3 else 0.0]
+        d = [pt[0] - c.x, pt[1] - c.y, pt[2] - c.z]
+        if math.hypot(*d) < 0.05:
+            raise EditError('aim at: the point is at the camera')
+        yaw, pitch = MU.yaw_pitch_from_dir(d)
+        new.update(yaw=round(yaw, 1), pitch=round(pitch, 1))
+    elif props.get('along') == 'normal':
+        mesh = p.vehicle.mesh if p.vehicle is not None else None
+        if mesh is None:
+            raise EditError('aim along the normal needs the vehicle model')
+        from ..core.analysis import surface_frame
+        _, n, _, _, _ = surface_frame(mesh, c.pos())
+        yaw, pitch = MU.yaw_pitch_from_dir(n)
+        new.update(yaw=round(yaw, 1), pitch=round(max(pitch, 0.0), 1))
+    elif 'along' in props:
+        raise EditError('aim along: "normal" (the body\'s outward normal where the camera is mounted)')
+    if props.get('level_roll'):
+        new['roll'] = 0.0
+    if not new:
+        raise EditError('aim: props {"at": [x, y] or [x, y, z]}, {"along": "normal"} or {"level_roll": true}')
+    line = _set(p, {'op': 'set', 'target': 'camera', 'id': op.get('id'), 'props': new, 'variant': op.get('variant'),
+                    'mirror': op.get('mirror', True)}, touched)
+    return 'aimed ' + line
+
+
 def _link(p, op, touched, on):
     if op['target'] != 'camera':
         raise EditError('link and unlink are for cameras (mirrored partners)')
@@ -611,6 +658,8 @@ def apply(project, ops, seams=None) -> tuple[list, list]:
                 lines.append(_add(project, op, touched))
             elif kind == 'remove':
                 lines.append(_remove(project, op, touched))
+            elif kind == 'aim':
+                lines.append(_aim(project, op, touched))
             elif kind == 'activate':
                 if t != 'variant':
                     raise EditError('activate is for variants')

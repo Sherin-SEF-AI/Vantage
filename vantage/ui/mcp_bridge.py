@@ -192,6 +192,90 @@ class LiveSession:
         ctl = self.ctx.assistant
         self.ui(lambda: ctl._do_ui((ctl._tid, req)))
 
+    # ---------------------------------------------------------------- the 3D view (never the design)
+    def _apply_view(self, req) -> dict:
+        """On the UI thread: a view, an orbit, overlays, a heatmap, a framing, as set_view asks."""
+        w, ctx = self.ctx.window, self.ctx
+        if w is None:
+            raise RuntimeError('the Vantage window is closing')
+        done = {}
+        if 'overlays' in req:
+            for k, on in req['overlays'].items():
+                ctx.set_overlay(k, on)
+            done['overlays'] = req['overlays']
+        if 'heatmap' in req:
+            w.set_heatmap(req['heatmap'])
+            done['heatmap'] = req['heatmap']
+        view = req.get('view')
+        if req.get('camera') or view == 'through':
+            tag = req.get('camera')
+            c = next((c for c in ctx.store.project.variant.cameras if c.tag == tag), None)
+            if c is None:
+                raise ValueError(f'no camera {tag!r} in the active variant')
+            ctx.store.select_cams([c.uid])
+            done['camera'] = tag
+        if view == 'bowl':
+            w.set_page('camviews')
+            done['view'] = view
+        elif view:
+            w.set_view(view)
+            done['view'] = view
+        elif 'orbit' in req and w.page_name() != 'viewports':
+            w.set_page('viewports')
+        if 'orbit' in req:
+            pane = w.viewarea.active
+            vp = pane.vp3d if pane is not None else None
+            if vp is None:
+                raise RuntimeError('no 3D view to orbit')
+            if pane.kind not in ('persp', 'side', 'front', 'rear', 'top3d'):
+                w.set_view('persp')
+            o = req['orbit']
+            vp.cam.custom = None
+            vp.cam.az = o.get('az', vp.cam.az)
+            vp.cam.el = o.get('el', vp.cam.el)
+            vp.cam.dist = o.get('distance', vp.cam.dist)
+            if 'el' in o or 'az' in o:
+                vp.cam.ortho = False
+            vp.update()
+            done['orbit'] = {'az': vp.cam.az, 'el': vp.cam.el, 'distance': vp.cam.dist}
+        fr = req.get('frame')
+        if fr == 'all':
+            w.frame_all()
+            done['frame'] = 'all'
+        elif fr == 'selection':
+            w.frame_selection()
+            done['frame'] = 'selection'
+        return done
+
+    def view(self, req) -> dict:
+        return {'done': self.ui(lambda: self._apply_view(req)), 'page': self.ui(lambda: self.ctx.window.page_name())}
+
+    def render(self, req) -> dict:
+        def run():
+            w = self.ctx.window
+            done = self._apply_view(req) if any(k in req for k in ('view', 'camera', 'orbit', 'overlays', 'heatmap')) \
+                else {}
+            from PyQt6.QtWidgets import QApplication
+            QApplication.processEvents()
+            path = w.render_image(req['path'], req['scale'], transparent=req.get('transparent', False))
+            if not path:
+                raise RuntimeError('nothing to render: the active pane has no 3D view (set_view persp first)')
+            from PyQt6.QtGui import QImage
+            img = QImage(path)
+            return {'path': path, 'pixels': [img.width(), img.height()], 'view': done or None,
+                    'page': w.page_name()}
+        return self.ui(run, timeout=300.0)
+
+    def turntable(self, req) -> dict:
+        def run():
+            w = self.ctx.window
+            out = w.turntable(req['path'], frames=req['frames'], scale=req['scale'], fps=req['fps'])
+            if not out:
+                raise RuntimeError('nothing to render: the active pane has no 3D view (set_view persp first)')
+            return {'path': out, 'frames': req['frames'], 'fps': req['fps'],
+                    'seconds': round(req['frames'] / req['fps'], 2)}
+        return self.ui(run, timeout=1800.0)
+
     def proposal(self, prop):
         def run():
             ctl = self.ctx.assistant
@@ -234,6 +318,7 @@ class Bridge(QObject):
         self.invoker = _Invoker()
         self.session = LiveSession(ctx, self.invoker)
         self._buf = {}
+        self._running = {}                       # call id -> the cancel event of a tool running for the MCP server
         self._reply.connect(self._write)
 
     @property
@@ -314,8 +399,16 @@ class Bridge(QObject):
             sock.disconnectFromHost()
             return
         if req.get('method') == 'ping':
-            p = self.ctx.store.project
-            return self._write(sock, {'id': rid, 'result': {'project': p.name, 'path': p.path}})
+            st = self.ctx.store
+            p = st.project
+            return self._write(sock, {'id': rid, 'result': {'project': p.name, 'path': p.path,
+                                                             'revision': int(getattr(st, 'revision', 0)),
+                                                             'undo_index': int(st.undo.index())}})
+        if req.get('method') == 'cancel':
+            ev = self._running.get(str(req.get('call_id', '')))
+            if ev is not None:
+                ev.set()
+            return self._write(sock, {'id': rid, 'result': {'cancelled': ev is not None}})
         if req.get('method') != 'call':
             return self._write(sock, {'id': rid, 'error': f'no method {req.get("method")!r}'})
         name, args = str(req.get('name', '')), req.get('args') or {}
@@ -324,10 +417,16 @@ class Bridge(QObject):
         w = self.ctx.window
         if w is not None and t is not None:
             w.msg(f'Claude: {t.title}…', 4000)
-        threading.Thread(target=self._work, args=(sock, rid, name, args), daemon=True).start()
+        cid = str(req.get('call_id') or f'{id(sock)}:{rid}')
+        ev = threading.Event()
+        self._running[cid] = ev
+        threading.Thread(target=self._work, args=(sock, rid, name, args, cid, ev), daemon=True).start()
 
-    def _work(self, sock, rid, name, args):
-        out = SV.call(self.session, name, args)
+    def _work(self, sock, rid, name, args, cid='', ev=None):
+        try:
+            out = SV.call(self.session, name, args, cancel=ev)
+        finally:
+            self._running.pop(cid, None)
         try:
             self._reply.emit(sock, {'id': rid, 'result': out})
         except RuntimeError:                       # the window closed meanwhile

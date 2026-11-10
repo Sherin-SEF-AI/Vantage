@@ -25,7 +25,8 @@ full reference. A 70-minute tour of the app is on YouTube: <https://youtu.be/s0T
 - **Hand it off.** Exports to OpenCV, ROS 2 (URDF, TF and bags), Kalibr, nuScenes, KITTI, Autoware and more. Each one is
   checked against the tool that reads it, and every number carries provenance.
 - **Ask for it.** The **Copilot** (Groq or Claude, with your own key) turns a request into a plan with every value and
-  its reason, and nothing runs until you approve it. Claude Code and Claude Desktop can also work on a design over MCP.
+  its reason, and nothing runs until you approve it. Claude Code and Claude Desktop can also work on a design over MCP
+  (97 tools, resources, prompts and background jobs).
 
 The same engine serves production surround-view systems: stitched bird's-eye remap tables, a 3D bowl view, parking
 guidelines, and where standing people vanish at stitch seams.

@@ -821,6 +821,13 @@ With a Vantage window open, Claude works on the project in it, and every change 
 - "Run the requirements check with run_batch and summarise what fails and by how much."
 - "Export the calibration for nuScenes and ROS 2 in millimetres from the front axle."
 - "Duplicate the variant, add a second narrow camera ahead, and compare the front perception range."
+- "Import ~/models/van.glb, check the import report, then lay out six cameras on it."
+- "Aim F at the ground 8 m ahead, render the 3D view with the camera light on, and show me."
+- "Run the validation suite as a background job and tell me when it is done."
+
+Claude can also read the project as resources (`vantage://overview`, `vantage://camera/F`,
+`vantage://study/power_budget` …) and use the server's prompts for the common workflows (`/mcp` in Claude Code lists
+them).
 
 Preferences ▸ General ▸ Claude turns the window's side of the connection off. [Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#claude-mcp)
 
