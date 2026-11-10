@@ -634,6 +634,23 @@ def _same_rig(a, b) -> bool:
         return not os.path.exists(ra) and not os.path.exists(rb)
 
 
+DRIVE_OUTPUTS = ('rig', 'nuscenes', 'ground_truth', 'rosbag', 'dataset.json', 'README.md', 'run.json')
+
+
+def _vantage_drive(out_dir) -> bool:
+    """Whether out_dir holds a drive Vantage wrote (its run report or its rig file carries a vantage schema): only then
+    are its outputs replaced; anything else in a folder chosen for drives is left alone."""
+    for rel in ('run.json', os.path.join('rig', 'sim_rig.json')):
+        try:
+            with open(os.path.join(out_dir, rel), encoding='utf-8') as fh:
+                doc = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if isinstance(doc, dict) and str(doc.get('schema', '')).startswith('vantage.'):
+            return True
+    return False
+
+
 def drive(project, variant, sim, out_dir, python=None, progress=None, cancel=None, runner=None,
           memory_gb=BRIDGE_MEMORY_GB) -> dict | None:
     """One drive: the rig into out_dir/rig, the bridge in CARLA's Python on the server answering on sim.port (or
@@ -666,11 +683,16 @@ def drive(project, variant, sim, out_dir, python=None, progress=None, cancel=Non
         shutil.rmtree(new_dir, ignore_errors=True)
         prog(1.0, 'reused')
         return {'dir': out_dir, 'reused': True, 'seconds': time.perf_counter() - t0, 'run': doc}
-    for name in ('rig', 'nuscenes', 'ground_truth', 'rosbag', 'dataset.json', 'README.md', 'run.json'):
+    present = [n for n in DRIVE_OUTPUTS if os.path.lexists(os.path.join(out_dir, n))]
+    if present and not _vantage_drive(out_dir):
+        shutil.rmtree(new_dir, ignore_errors=True)
+        raise RuntimeError(f'{out_dir} already holds {", ".join(present)}, which no Vantage drive wrote: choose an empty '
+                           'folder for the drives (nothing there was changed).')
+    for name in present:                           # a drive of ours from another rig, or one that failed: replaced
         path = os.path.join(out_dir, name)
-        if os.path.isdir(path):
+        if os.path.isdir(path) and not os.path.islink(path):
             shutil.rmtree(path)
-        elif os.path.exists(path):
+        else:
             os.remove(path)
     os.replace(new_dir, rig_dir)
     rig_json = os.path.join(rig_dir, 'sim_rig.json')

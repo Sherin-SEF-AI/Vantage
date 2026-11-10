@@ -602,7 +602,7 @@ def test_settings_tolerant_of_junk():
                                         'constraints': [{'kind': 'budget', 'value': 'lots'}, {'kind': 'budget',
                                                                                               'value': 500}],
                                         'axes': ['cost', 'cost'], 'currency': 7})
-    assert st.options == 7 and st.evaluations == 10 and st.budget_s == 180.0 and st.seed == 4
+    assert st.options == 7 and st.evaluations == 10 and st.budget_s == 0.0 and st.seed == 4
     assert st.prices == {'module:a': 12.0}
     assert len(st.requirements) == 1 and st.requirements[0]['item']['target'] is None
     assert [c['value'] for c in st.constraints] == [500.0] and st.axes == ['cost', 'margin']

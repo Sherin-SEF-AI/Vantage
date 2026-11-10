@@ -48,7 +48,7 @@ FIELDS = (
     ('Scenario', 'warmup_s', 'Warm-up', 's', 1, 0.5, 1.0, 'Traffic settles this long before the sensors attach'),
     ('Scenario', 'spawn_point', 'Spawn point', '', 0, 1.0, 1.0,
      'The ego\'s spawn point on the map (−1: chosen by the seed; on a straight road for a scenario or an actors scene)'),
-    ('Cameras', 'image_scale', 'Image size', '%', 0, 5.0, 100.0,
+    ('Cameras', 'image_scale', 'Image size', '%', 1, 5.0, 100.0,
      'Images at this share of each sensor\'s size, as the sample dataset (the intrinsics are scaled to it)'),
     ('Cameras', 'face_oversample', 'View detail', '×', 2, 0.1, 1.0,
      'Resolution of the pinhole views CARLA renders against the lens\'s own at the image centre'),
@@ -406,6 +406,7 @@ class SimPage(QWidget):
                 group = g
                 grid = start(g)
             f = ScrubSpinBox('', 'plain', dec, unit, step=step, width=118)
+            f.trim = key == 'image_scale'                  # 12.5 %, not 13 %; 50 %, not 50.0 %
             f.setToolTip(tip)
             f.committed.connect(lambda v, k=key, s=scale, t=text, u=unit: self._set(f'{t.lower()} {v:g} {u}'.strip(),
                                                                                   **{k: v / s}))

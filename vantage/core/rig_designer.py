@@ -17,7 +17,8 @@ the objectives are
   region grid's ground (to the open bin's edge + 20 m) where some camera resolves the requirement classes at the
   perception range's minimum pixel height, said to be "geometric only".
 
-Search, deterministic for a seed (budgeted in evaluations; the time budget only cuts it short, and says so):
+Search, deterministic for a seed (budgeted in evaluations; no time limit by default, so the options do not depend
+on how busy the machine is; a time limit set by hand only cuts it short, and says so):
 
 1. seeds: the active variant, the project's other variants with cameras, and the reference rigs whose layout is
    published (core.reference_rigs) scaled to this vehicle's footprint and snapped onto its body;
@@ -66,7 +67,7 @@ OBJECTIVE_LABEL = {'cost': 'Cost', 'power': 'Power (W)', 'margin': 'Requirement 
                    'cameras': 'Cameras', 'sensors': 'Sensors'}
 AXES = ('cost', 'power', 'margin', 'detection', 'cameras', 'sensors')
 SCREEN_STUDIES = ('perception', 'coverage')        # study metrics fast enough to score every candidate (≈0.2 s each)
-LIMITS = {'options': (3, 7), 'budget_s': (10.0, 1800.0), 'evaluations': (10, 5000), 'seed': (0, 2 ** 31 - 1)}
+LIMITS = {'options': (3, 7), 'budget_s': (0.0, 1800.0), 'evaluations': (10, 5000), 'seed': (0, 2 ** 31 - 1)}
 MAX_CAMERAS = 8                                    # core.project.MAX_CAMERAS: the colour slots and GMSL ports
 MAX_LIDARS, MAX_RADARS = 3, 8
 SIDE_OFFSET_M = 0.06                               # a camera added beside an existing mount
@@ -123,7 +124,7 @@ class DesignerSettings:
     currency: str = 'USD'
     options: int = 5
     evaluations: int = 160
-    budget_s: float = 180.0
+    budget_s: float = 0.0               # seconds; 0: no time limit (the evaluations alone decide: reproducible)
     seed: int = 7
     axes: list = field(default_factory=lambda: ['cost', 'margin'])
     vary_lenses: bool = True
@@ -185,7 +186,7 @@ class DesignerSettings:
                 setattr(s, k, int(round(min(max(v, lo), hi))))
         v = _num(d.get('budget_s'))
         if v is not None:
-            s.budget_s = float(min(max(v, LIMITS['budget_s'][0]), LIMITS['budget_s'][1]))
+            s.budget_s = 0.0 if v <= 0 else float(min(max(v, 10.0), LIMITS['budget_s'][1]))   # under 10 s: 10
         ax = d.get('axes')
         if isinstance(ax, list) and len(ax) == 2 and all(a in AXES for a in ax) and ax[0] != ax[1]:
             s.axes = list(ax)
@@ -537,7 +538,8 @@ class Designer:
         self.evals = 0
         self.notes = []
         self.t0 = time.perf_counter()
-        self.t_end = self.t0 + float(self.st.budget_s)
+        lim = float(self.st.budget_s)
+        self.t_end = self.t0 + lim if lim > 0 else math.inf          # no time limit by default
         self.stopped = 'finished'
         lens_pairs = []
         for ln in project.lenses.values():
@@ -1356,7 +1358,7 @@ class Designer:
             while self.evals < n_search and tries < n_search * 6:
                 if self.stop():
                     raise _Stop()
-                if time.perf_counter() > self.t0 + 0.6 * st.budget_s:
+                if st.budget_s > 0 and time.perf_counter() > self.t0 + 0.6 * st.budget_s:
                     self.stopped = 'time'
                     break
                 tries += 1
@@ -1376,7 +1378,8 @@ class Designer:
                 for k, ev in enumerate(front):
                     if self.stop():
                         raise _Stop()
-                    if self.evals >= n_target or time.perf_counter() > self.t0 + 0.75 * st.budget_s:
+                    if self.evals >= n_target or (st.budget_s > 0 and
+                                                  time.perf_counter() > self.t0 + 0.75 * st.budget_s):
                         break
                     rig = self.place(ev)
                     if rig is not None and rig.key() not in self.archive:
@@ -1413,7 +1416,8 @@ class Designer:
             if full and time.perf_counter() > self.t_end:
                 self.stopped = 'time'
                 self.notes.append(f'{len(cand) - k} front rig{"s" * (len(cand) - k != 1)} not evaluated in full: '
-                                  'the time budget ran out')
+                                  'the time limit ran out (the options now depend on the machine\'s speed; set the '
+                                  'time limit to 0 for none)')
                 break
             fe = self.evaluate(ev.rig, 'full')
             fe.robust = self.robust(fe) if fe.feasible else None      # an infeasible rig needs no robust check

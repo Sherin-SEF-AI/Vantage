@@ -727,31 +727,57 @@ def expected_view(project, engine, cam, width=640) -> ExpectedView:
     return ExpectedView(w, h, (W, H), valid, body, np.c_[ii, jj], n, contours, horizon, view_key(project, cam))
 
 
-def alignment(frame: np.ndarray, ev: ExpectedView, search=0.05, min_support=0.3) -> float | None:
-    """How far (sensor pixels, median) the body edge in the live image lies from the planned one: along each planned
-    edge point's normal, the nearest gradient peak above the image's noise. Small when the camera sits where it was
-    planned. None when the plan shows no body edge, or too little of it has an edge in the image (the body and what
-    is behind it look alike, or the lens is covered)."""
+def alignment(frame: np.ndarray, ev: ExpectedView, search=0.05, min_support=0.3, prior=0.15) -> float | None:
+    """How far (sensor pixels) the body's outline in the live image lies from the planned one, measured across the
+    outline: the one 2D shift of the whole planned outline that best meets edges in the image running the same way
+    (the gradient along each outline point's normal), searched over ±search of the width, coarse to fine, to a
+    fraction of a pixel; then the median over the outline of that shift along each point's normal. A camera moved or
+    turned on its mount moves the whole outline nearly as one, so the texture on the body and the scene (panel lines,
+    wheels, lane marks), which the outline as a whole does not fit, does not pull the answer to itself (each point
+    counts at most the image's 95th-percentile gradient, so a strongly textured road cannot either); a slight
+    preference for small shifts (prior) settles near-ties, and measuring along the normals leaves out a slide along
+    the outline that its shape cannot show (a long straight edge). None when the plan shows too little body edge, or
+    too little of it meets an edge in the image (the body and what is behind it look alike, or the lens is covered).
+
+    (It used to take each outline point's nearest gradient peak, which on a real car is mostly texture a pixel away:
+    a camera turned 40 px read 1.5 px.)"""
     import cv2
     if len(ev.edge) < 20:
         return None
     g = frame if frame.ndim == 2 else cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
     g = cv2.resize(g, (ev.w, ev.h), interpolation=cv2.INTER_AREA).astype(np.float32)
     g = cv2.GaussianBlur(g, (0, 0), 1.0)
-    G = np.hypot(cv2.Sobel(g, cv2.CV_32F, 1, 0), cv2.Sobel(g, cv2.CV_32F, 0, 1))
-    G[~ev.valid] = 0
+    gx, gy = cv2.Sobel(g, cv2.CV_32F, 1, 0), cv2.Sobel(g, cv2.CV_32F, 0, 1)
+    G = np.hypot(gx, gy)[ev.valid]
+    floor = max(8.0, 3.0 * float(np.median(G)))
+    cap = max(floor, float(np.percentile(G, 95)))      # a point counts at most this much: strong texture (a speckled
+    gx[~ev.valid] = 0                                  # road, leaf shadows) cannot outweigh the outline as a whole
+    gy[~ev.valid] = 0
+    ex, ey = ev.edge[:, 0].astype(np.float32), ev.edge[:, 1].astype(np.float32)
+    nx, ny = ev.normal[:, 0].astype(np.float32), ev.normal[:, 1].astype(np.float32)
     r = max(4, int(search * ev.w))
-    ks = np.arange(-r, r + 1)
-    P = ev.edge[:, None, :] + ks[None, :, None] * ev.normal[:, None, :]
-    S = G[np.clip(np.round(P[..., 1]).astype(int), 0, ev.h - 1), np.clip(np.round(P[..., 0]).astype(int), 0, ev.w - 1)]
-    floor = max(8.0, 3.0 * float(np.median(G[ev.valid])))
-    peak = np.zeros_like(S, bool)
-    peak[:, 1:-1] = (S[:, 1:-1] >= S[:, :-2]) & (S[:, 1:-1] >= S[:, 2:]) & (S[:, 1:-1] > floor)
-    best = np.where(peak, np.abs(ks)[None, :], 1 << 20).argmin(1)
-    ok = peak[np.arange(len(S)), best]
-    if ok.mean() < min_support:
+
+    def oriented(dx, dy):
+        x = np.clip(np.rint(ex + dx).astype(int), 0, ev.w - 1)
+        y = np.clip(np.rint(ey + dy).astype(int), 0, ev.h - 1)
+        return np.abs(gx[y, x] * nx + gy[y, x] * ny)
+
+    def score(dx, dy):
+        return float(np.minimum(oriented(dx, dy), cap).mean()) * (1.0 - prior * min(1.0, math.hypot(dx, dy) / r))
+    coarse = range(-r, r + 1, 2)
+    best = max(((score(dx, dy), dx, dy) for dy in coarse for dx in coarse))
+    _, bx, by = best
+    fine = {(dx, dy): score(dx, dy) for dy in range(by - 2, by + 3) for dx in range(bx - 2, bx + 3)}
+    (bx, by), top = max(fine.items(), key=lambda kv: kv[1])
+
+    def sub(a, b, c):
+        den = a - 2.0 * b + c
+        return 0.5 * (a - c) / den if den < 0 else 0.0
+    dx = bx + sub(fine.get((bx - 1, by), top), top, fine.get((bx + 1, by), top))
+    dy = by + sub(fine.get((bx, by - 1), top), top, fine.get((bx, by + 1), top))
+    if (oriented(bx, by) > floor).mean() < min_support:
         return None
-    return float(np.median(np.abs(ks[best[ok]]))) * ev.sensor[0] / ev.w
+    return float(np.median(np.abs(dx * nx + dy * ny))) * ev.sensor[0] / ev.w
 
 
 # ====================================================================================== batch

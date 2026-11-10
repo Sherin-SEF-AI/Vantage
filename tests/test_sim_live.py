@@ -450,7 +450,9 @@ def test_body_masks_are_carlas_own_car_and_make_the_drift_indicator_work(tmp_pat
     iou, plan, carla, _ = run(_sample(('F',)), 'tigor', 'F')
     assert iou < 0.5                                                # the project's body is not CARLA's car
     assert carla[0] <= 3.0 and carla[1] - carla[0] >= 4.0 and carla[2] - carla[1] >= 4.0, carla
-    assert not (plan[1] > plan[0] and plan[2] > plan[1]), plan       # (what the Live rig page measures today)
+    # against the project's body (what the Live rig page would use without CARLA's car) the indicator either finds no
+    # outline of it in CARLA's images (None) or does not follow the turn
+    assert None in plan or not (plan[1] > plan[0] and plan[2] > plan[1]), plan
     with _session(_sample(('F',)), tmp_path / 'off', ['--no-body-masks'], scale=0.05) as (live, client):
         _streaming(client)
         assert client.status()['cameras']['F']['body_mask'] is None

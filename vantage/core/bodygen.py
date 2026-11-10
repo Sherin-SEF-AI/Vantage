@@ -456,6 +456,64 @@ def _ellipsoid(c, half, seg=14, ring=8):
         f.append([a + i, a + (i + 1) % seg, top])
     return np.array(v, float), np.array(f, np.int64)
 
+GLASS_BELOW_ROOF = 0.05      # m: the side glass's upper edge under the roof line
+
+
+def _glass_split(v, f, bs, xr, sz):
+    """The lofted body's glass faces: inside the cabin span (glass_u), above the belt line, below the roof line by
+    GLASS_BELOW_ROOF and not facing up or down. The span's front and rear edges cross each quad of the loft, and the
+    upper edge crosses its rows where the roof slopes (the A- and C-pillars), so each triangle an edge crosses is cut
+    along it, in the triangle's own plane: the surface stays exactly as it was (the analysis sees the same body) and
+    the glass edges are straight lines, not the stairs of whole triangles they used to be. Returns (vertices, faces,
+    glass mask)."""
+    v = np.asarray(v, float)
+    f = np.asarray(f, np.int64)
+    L = bs.length
+    fields = (lambda p: (p[..., 0] - xr) - bs.glass_u[0] * L,                       # behind the span's rear edge: < 0
+              lambda p: bs.glass_u[1] * L - (p[..., 0] - xr),                       # past its front edge: < 0
+              lambda p: np.interp((p[..., 0] - xr) / L, bs.u, bs.top) * sz - GLASS_BELOW_ROOF - p[..., 2])
+    tri = v[f]
+    nrm = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    nrm /= np.maximum(np.linalg.norm(nrm, axis=1, keepdims=True), 1e-12)
+    # faces that can be glass at all (above the belt, which is a row of the loft, and not facing up or down)
+    cand = (tri[:, :, 2].min(axis=1) > bs.belt_z - 1e-6) & (np.abs(nrm[:, 2]) < 0.93)
+    for field in fields:
+        v, f, cand = _cut(v, f, cand, field)
+    tri = v[f]
+    inside = np.all([(fl(tri) >= -1e-9).all(axis=1) for fl in fields], axis=0)
+    return v, f, cand & inside
+
+
+def _cut(v, f, cand, field):
+    """Cut every candidate triangle that field's zero line crosses into three, in its own plane (new vertices on its
+    edges where the field is zero): (vertices, faces, candidate mask)."""
+    d = field(v[f])
+    d = np.where(np.abs(d) < 5e-4, -5e-4, d)        # a vertex within 0.5 mm of the line counts as outside: no slivers
+    pos = d > 0
+    cross = np.flatnonzero(cand & pos.any(axis=1) & ~pos.all(axis=1))
+    if not len(cross):
+        return v, f, cand
+    keep = np.ones(len(f), bool)
+    keep[cross] = False
+    nv, nf = [v], []
+    base = len(v)
+    for fi in cross:
+        ids, dd = f[fi], d[fi]
+        side = dd > 0
+        k = int(np.flatnonzero(side)[0]) if side.sum() == 1 else int(np.flatnonzero(~side)[0])
+        a, b, c = ids[k], ids[(k + 1) % 3], ids[(k + 2) % 3]
+        da, db, dc = dd[k], dd[(k + 1) % 3], dd[(k + 2) % 3]
+        pp = v[a] + (v[b] - v[a]) * (da / (da - db))
+        qq = v[a] + (v[c] - v[a]) * (da / (da - dc))
+        nv.append(np.array([pp, qq]))
+        ip, iq = base, base + 1
+        base += 2
+        nf += [[a, ip, iq], [ip, b, c], [ip, c, iq]]
+    f2 = np.concatenate([f[keep], np.asarray(nf, np.int64)])
+    c2 = np.concatenate([cand[keep], np.ones(len(nf), bool)])
+    return np.concatenate(nv), f2, c2
+
+
 def build_body(spec: BodySpec) -> tuple[Mesh, dict]:
     """Build body + wheels + mirrors as a Mesh in ISO 8855 rear-axle coordinates.
     Returns (mesh, info) where info has landmark positions. The measured Tigor keeps its lofted rings; a library
@@ -503,8 +561,9 @@ def build_body(spec: BodySpec) -> tuple[Mesh, dict]:
             # windscreen and backlight where the roof line slopes, inside the pillars)
             glass = li['v_glass'][f].all(axis=1)
         else:
-            glass = (u > bs.glass_u[0]) & (u < bs.glass_u[1]) & (tri[:, :, 2].min(axis=1) > bs.belt_z - 1e-6) & \
-                (tri[:, :, 2].max(axis=1) < top_c - 0.05) & (np.abs(n[:, 2]) < 0.93)
+            v, f, glass = _glass_split(v, f, bs, xr, sz)
+            tri = v[f]
+            c = tri.mean(axis=1)
         part = np.where(glass, P_GLASS, P_BODY)
         if shaped and bs.key != 'trailer':
             W = bs.width

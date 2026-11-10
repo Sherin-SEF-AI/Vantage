@@ -93,6 +93,26 @@ def _cell(t, r, c, text, num=False, color=None, tip=None):
     return it
 
 
+
+def axis_value(ax, v, sign='') -> str:
+    """A step, flex amplitude or standard error on one axis, as the page shows them: translations (x y z, metres in
+    the result) in millimetres to 0.1 mm, rotations in degrees to 0.001°; sign '+' for a signed step, '±' for an
+    amplitude."""
+    v = float(v)
+    if ax in OC.TAXES:
+        num, unit = v * 1000.0, ' mm'
+        txt = f'{num:+.1f}' if sign == '+' else f'{abs(num) if sign == "±" else num:.1f}'
+    else:
+        unit = '°'
+        txt = f'{v:+.3f}' if sign == '+' else f'{abs(v) if sign == "±" else v:.3f}'
+    return ('±' if sign == '±' else '') + txt.replace('-', '−') + unit
+
+
+def _nice(span) -> str:
+    """An axis span for its label: two significant figures at most (0.73, 4.5, 12)."""
+    span = float(span)
+    return f'{span:.2f}' if span < 1 else f'{span:.1f}' if span < 10 else f'{span:.0f}'
+
 class TimelinePlot(QWidget):
     """One sensor over the drive: yaw, pitch and roll (and x, y, z when fitted), each the smoothed correction with its
     σ band, the windows' own estimates (dots, where the window constrains the axis), knocks (a red line), excursions
@@ -146,7 +166,7 @@ class TimelinePlot(QWidget):
             p.setFont(mono(10))
             p.drawText(QRectF(4, 0.5 * (yt + yb), left - 8, (yb - yt) / 2),
                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                       f'±{span:g}{" mm" if unit == "m" else "°"}')
+                       f'±{_nice(span)}{" mm" if unit == "m" else "°"}')
             p.setFont(sans(11))
             if len(t) > 1:
                 band = QPolygonF([QPointF(X(a), Y(m + s)) for a, m, s in zip(t, E[:, i], S[:, i])] +
@@ -182,7 +202,7 @@ class TimelinePlot(QWidget):
                 else:
                     p.setPen(THEME.color('warning'))
                     p.drawText(QRectF(x0 + 4, yt, x1 - x0 - 8, 16), Qt.AlignmentFlag.AlignRight,
-                               f'flex with {OC.COV_TEXT[ev["covariate"]]} ±{ev["amplitude"]:.2f}{unit}')
+                               f'flex with {OC.COV_TEXT[ev["covariate"]]} {axis_value(ax, ev["amplitude"], "±")}')
         yb = 4 + len(ser['axes']) * self.ROW
         p.setPen(THEME.color('muted'))
         p.setFont(mono(10))
@@ -654,15 +674,13 @@ class OnlineCalibPage(QWidget):
             _cell(t, r, 2, ', '.join(e['axes']))
             if e['kind'] == 'flex':
                 _cell(t, r, 3, '—', num=True)
-                ax = e['axes'][0]
-                u = 'm' if ax in OC.TAXES else '°'
-                _cell(t, r, 4, f'±{e["amplitude"]:.3f}{u}', num=True)
+                _cell(t, r, 4, axis_value(e['axes'][0], e['amplitude'], '±'), num=True)
                 _cell(t, r, 5, f'{e["slope_sigma"]:.4f}', num=True, tip=f'σ of the slope ({e["slope_unit"]})')
             else:
                 when = e['clock'] + (f' → {e["clock_end"]}' if e.get('clock_end') else '')
                 _cell(t, r, 3, when, num=True, tip=f'resolution {e["resolution_s"]:.2f} s')
-                _cell(t, r, 4, ', '.join(f'{v:+.3f}' for v in e['size'].values()), num=True)
-                _cell(t, r, 5, ', '.join(f'{v:.3f}' for v in e['sigma'].values()), num=True)
+                _cell(t, r, 4, ', '.join(axis_value(a, v, '+') for a, v in e['size'].items()), num=True)
+                _cell(t, r, 5, ', '.join(axis_value(a, v) for a, v in e['sigma'].items()), num=True)
             _cell(t, r, 6, e['message'], tip=e['message'])
 
     def _fill_findings(self, res):

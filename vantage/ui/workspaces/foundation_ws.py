@@ -114,6 +114,26 @@ def _pix(data: bytes) -> QPixmap:
     return QPixmap.fromImage(img)
 
 
+
+def farthest_measured(fits):
+    """The fit with the longest measured R50 over every camera, class and model (the 'all' subset), and the fits whose
+    R50 lies beyond the farthest distance tested: those have no R50, only a bound, so they never rank as the farthest
+    (a "> 100 m" there would say only how far the test went)."""
+    best, beyond = None, []
+    for f in fits:
+        if f['subset'] != 'all':
+            continue
+        rf = f['range']
+        if rf.get('beyond', [False])[0] and rf.get('tested'):
+            beyond.append(f)
+            continue
+        x = rf['x'][0]
+        if x is None or rf.get('flat') or rf.get('below', [False])[0]:
+            continue
+        if best is None or x > best['range']['x'][0]:
+            best = f
+    return best, beyond
+
 class _Sig(QObject):
     done = pyqtSignal(int, object)
     failed = pyqtSignal(int, str)
@@ -906,15 +926,14 @@ class FoundationPage(QWidget):
             return
         n = len(res.trials['hit'])
         self.tiles['trials'].set(f'{n}', '', f'{len(res.recordings)} drive(s)')
-        best = None
-        for f in res.fits:
-            x = f['range']['x'][0]
-            if f['subset'] == 'all' and x is not None and (best is None or x > best[0]):
-                best = (x, f)
-        if best:
-            f = best[1]
-            self.tiles['r50'].set(FR.range_text(f, 0).split('  ')[0], '',
-                                  f'{f["camera"]} · {f["class"]} · {FM.model_label(f["model"])}')
+        best, beyond = farthest_measured(res.fits)
+        far = f' · {len(beyond)} more beyond the tested {beyond[0]["range"]["tested"][1]:g} m' if beyond else ''
+        if best is not None:
+            self.tiles['r50'].set(FR.range_text(best, 0).split('  ')[0], '',
+                                  f'{best["camera"]} · {best["class"]} · {FM.model_label(best["model"])}{far}')
+        elif beyond:
+            self.tiles['r50'].set('beyond', '', f'every fit runs past the tested {beyond[0]["range"]["tested"][1]:g} m: '
+                                                 'no R50 measured', 'warning')
         else:
             self.tiles['r50'].set('—')
         ratios = [f['ratio50'] for f in res.fits if f['subset'] == 'all' and f.get('ratio50')]

@@ -938,7 +938,8 @@ logged with why the others were not chosen; large change sets ask for an approva
 tolerance; prices entered by a stated rule for the test only): five options, all passing every must requirement and
 the robust check; the cheapest drops the lidar and radars the brief does not need and gives F a narrow lens. With the
 ODD test fixture as a PDF, no option meets *no blind ground*: the agent says so rather than hiding it. A run of 160
-rigs takes 2–3 minutes. The LLM path was tested only against fake servers.
+rigs takes 2–3 minutes, with no time limit by default, so the same seed gives the same options on any machine.
+The LLM path was tested only against fake servers.
 
 ### Learned detection model (Analysis ▸ Learned detection model)
 
@@ -1170,7 +1171,8 @@ How firmly the planned calibration will pin every sensor, before anything is cap
 **Over each image:**
 
 - the planned body outline and horizon;
-- an edge-alignment drift indicator.
+- a drift indicator: how far the body's outline in the image lies from the planned one, as one shift of the
+  whole outline measured across it (texture does not decide it).
 
 **Reliability:**
 
@@ -1812,14 +1814,24 @@ on a Claude subscription, reads and changes rig designs. Add it once with
   General ▸ Claude).
 - **With no window open**, Claude works on a `.vantage` file. It is analysed as the app does it and saved after each
   change, with the original kept as `.bak`.
-- **Tools (74).**
+- **Tools (97).**
   - The assistant's tools.
   - `edit_project`: anything the user can change in the design, stitch seams included, checked as a whole before
     anything changes.
   - `run_batch`: any of batch mode's 94 job options, on the design as it is now, in a run folder beside it.
   - Undo and redo of Claude's own steps only; save, export, recent activity, project data and status.
-- **What stays the user's:** locked devices, unit calibrations, stream sources, the fleet, photos, the vehicle model,
-  Copilot approvals and the automation settings. CARLA runs, model downloads and the automation command are not
+  - `import_vehicle` (the import wizard's steps, headless: `core.vehicle_import`) and `import_layout`; the `aim`
+    operation; `set_view`, `render_view` and `turntable_video` in the window; background jobs (`start_job`,
+    `get_job`, `cancel_job`, `list_jobs`).
+- **Beyond tools:**
+  - resources and resource templates for the project, with subscriptions;
+  - workflow prompts and argument completion;
+  - progress, cancellation and logging;
+  - structured content.
+
+  Calls keep their arrival order: reads run side by side, and a change waits for every call before it.
+- **What stays the user's:** locked devices, unit calibrations, stream sources, the fleet, photos, Copilot approvals
+  and the automation settings. The vehicle model changes only as a whole, through `import_vehicle`. CARLA runs, model downloads and the automation command are not
   available to Claude.
 
 The **assistant panel** switches between the in-app assistant (Groq, or Claude through the API) and **Claude Code ·

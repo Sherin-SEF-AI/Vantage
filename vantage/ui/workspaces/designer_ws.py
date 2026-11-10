@@ -407,13 +407,17 @@ class DesignerPage(QWidget):
         self.s_budget = QSpinBox()
         self.s_budget.setRange(int(RD.LIMITS['budget_s'][0]), int(RD.LIMITS['budget_s'][1]))
         self.s_budget.setSuffix(' s')
+        self.s_budget.setSpecialValueText('none')          # 0: no time limit (the default: reproducible)
         self.s_seed = QSpinBox()
         self.s_seed.setRange(0, 2 ** 31 - 1)
         for r, (t, wdg, key, tip) in enumerate((
                 ('Options', self.s_options, 'options', 'How many options to propose (3–7)'),
                 ('Rigs to score', self.s_evals, 'evaluations', 'The search\'s budget in rigs scored (the result is '
                                                                'the same for the same seed)'),
-                ('Time limit', self.s_budget, 'budget_s', 'The search stops here at the latest (and says so)'),
+                ('Time limit', self.s_budget, 'budget_s', 'None (the default): the rigs to score alone decide, so the '
+                                                          'same seed gives the same options on any machine. A limit '
+                                                          'stops the search there at the latest, and says so; the '
+                                                          'options then depend on the machine\'s speed'),
                 ('Seed', self.s_seed, 'seed', 'The random seed: the same seed, the same options'))):
             a = label(t, ink2=True)
             a.setFixedWidth(86)

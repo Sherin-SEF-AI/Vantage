@@ -437,8 +437,9 @@ class SplatPage(QWidget):
         self.rd_budget.committed.connect(lambda v: self._rd_set(f'error budget {v:g}', error_budget=v))
         row.addWidget(self.rd_budget)
         self.rd_paired_label = label('', small=True)
-        b = button('Second recording…', 'ghost', 'folder', 'A recording of the same drive by another rig: it '
-                                                        'calibrates and tests the confidence')
+        b = button('Second recording…', 'ghost', 'folder', 'A recording of the same drive by another rig: it helps '
+                                                        'calibrate the confidence, and is tested with a calibration '
+                                                        'fitted without it')
         b.clicked.connect(lambda: self._rd_pick_paired())
         row.addWidget(b)
         row.addWidget(self.rd_paired_label, 1)
@@ -654,8 +655,8 @@ class SplatPage(QWidget):
         pv = res.paired or {}
         if pv.get('reliability'):
             pr = pv['reliability']
-            bits.append(f'Second recording: within budget {_pc(pr.get("within_pred"))} predicted, '
-                        f'{_pc(pr.get("within_meas"))} measured.')
+            bits.append(f'Second recording ({"in-sample: it is the only calibration source" if pv.get("in_calibration") else "out of sample"}): '
+                        f'within budget {_pc(pr.get("within_pred"))} predicted, {_pc(pr.get("within_meas"))} measured.')
         self.rd_text.setText(' '.join(b for b in bits if b))
         import cv2
         for view, inverse, cap in ((self.rd_polar, False, 'Share within budget per region'),

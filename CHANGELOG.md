@@ -116,6 +116,27 @@ they compare rigs, cameras and models, and are not a stack's absolute performanc
   - [docs/features.md](docs/features.md): every feature and its measured figures;
   - [docs/development.md](docs/development.md): the tests and the code layout.
 
+**Claude over MCP**
+
+- **More tools (97 in all):**
+  - `import_vehicle` replaces the vehicle with a model file, as the import wizard does, and reports every guess;
+  - `import_layout` brings in a CSV or extrinsics JSON layout as a new variant;
+  - the `aim` operation of `edit_project` aims a camera at a point, along the body's normal, or levels its roll;
+  - in the window, `set_view`, `render_view` (a PNG, returned as a picture too) and `turntable_video`.
+- **Background jobs:** `start_job` runs any tool in the background; `get_job`, `cancel_job` and `list_jobs` follow it.
+- **Resources:** the project by URI (`vantage://overview`, `vantage://camera/{tag}`, `vantage://study/{name}`,
+  `vantage://docs/{name}` …). A subscribed client is told when the project changes, in the window or on the file.
+- **Prompts** for nine common workflows, and argument completion.
+- **Progress, cancellation and logging:**
+  - progress notifications every 2 s while a call runs;
+  - cancellation: a batch run's process stops at once, a study at its next check;
+  - logging at the level the client sets.
+- **Structured content** for every JSON result.
+- **Calls run in arrival order:** reads side by side, a change after every call before it. Connections to the window
+  are pooled.
+- **Headless import:** the import wizard's guesses moved to `core.vehicle_import`, which the wizard and
+  `import_vehicle` share.
+
 **3D view**
 
 - **Camera light on the body:** the camera's colour now tints the diffuse shading only. The clear-coat reflections and
@@ -130,6 +151,30 @@ they compare rigs, cameras and models, and are not a stack's absolute performanc
 
 **Fixed**
 
+- Live rig health and the CARLA live rig: the **drift indicator** read about the same small value whatever had
+  happened to the camera (on real CARLA frames a camera turned 40 px read 1.5 px), because each outline point took its
+  nearest edge, which on a real car is mostly texture. It now finds the one shift of the whole planned outline that
+  best meets edges running the same way and measures it across the outline; each point counts at most the image's
+  95th-percentile gradient, so a speckled road cannot outweigh the outline. On the recorded fault campaign the left
+  mirror camera now reads 2.3–3.5 px clean and 9–13.5 px at a 1° turn (it read 3.0 px on every drive).
+- Learned detection model: **Propose** runs in the background with progress and Cancel (it held the window for over a
+  minute on the sample), and the store line names the folder `VANTAGE_PERF_DIR` points to, with the full path as its
+  tooltip.
+- Foundation models: the **Farthest R50** tile ranks only measured R50s; fits that run past the tested distances are
+  counted beside it instead of showing "> 100 m" as a result.
+- Rig perception: each recording names its rig once.
+- CARLA and the CARLA live rig: the **image size** shows 12.5 %, not 13 %.
+- Online self-calibration: steps, flex amplitudes and standard errors in mm or degrees with their units; a flex on a
+  translation axis showed "±0.00m".
+- Re-drive: a **second recording** that is also a calibration source is tested with a calibration fitted without it,
+  so its figures are out of sample (they were in-sample), and the page says which.
+- Design agent: **no time limit** by default. The 180 s limit cut the search short on a busy machine, so the same
+  seed could give different options; a limit can still be set.
+- Critical targets in CARLA: a drive never deletes files in its folder that no Vantage drive wrote; it stops and says
+  so.
+- 3D view: the Tigor sample's **glass edges** are straight lines. The triangles they cross are cut along them in their
+  own planes, so the body's surface (and every analysis figure) is exactly as before; before, the A-pillar and the
+  glass's front edge showed a staircase.
 - 3D view: a single render (*Render image*, stills, clips) with shadows and the camera light on no longer darkens
   the floor inside the shadow map's square. Building the camera light's texture in the first frame unbound the shadow
   map for that frame; textures are now uploaded on a spare unit.

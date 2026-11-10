@@ -1326,9 +1326,11 @@ def _inverse(old: list, new_seen: set, grid) -> dict:
 
 # =========================================================================== a second recording of the drive
 def paired_validation(project, drive, scene, ev, calib: Calibration, paired: SP.Drive, sst, st: RedriveSettings,
-                      engine=None, dev=None, progress=None, cancel=None) -> dict:
+                      engine=None, dev=None, progress=None, cancel=None, held_out=None) -> dict:
     """The paired recording's own cameras re-rendered at its frame times and scored against its real images: PSNR,
-    SSIM and the measured error against the confidence (per camera and over all; reliability)."""
+    SSIM and the measured error against the confidence (per camera and over all; reliability). held_out: whether calib
+    was fitted without the paired recording (default: whether it is not a calibration source)."""
+    held_out = ('paired' not in st.sources) if held_out is None else bool(held_out)
     stop = cancel or (lambda: False)
     dev = dev or SP.SR.device_for(sst.device, sst.gpu_mem_gb)
     ts = SP.TorchScene(scene, drive, dev)
@@ -1395,10 +1397,13 @@ def paired_validation(project, drive, scene, ev, calib: Calibration, paired: SP.
     return {'drive': os.path.basename(os.path.normpath(paired.path)), 'variant': paired.variant, 'cameras': cams,
             'reliability': rel, 'frames': sum(d['frames'] for d in per.values()),
             'frame_rank_correlation': frame_corr,
-            'in_calibration': 'paired' in st.sources,
-            'note': ('The paired recording is one of the calibration sources: these figures are in-sample.'
+            'in_calibration': not held_out,
+            'note': ('The second recording is the only calibration source: these figures are in-sample.'
+                     if not held_out else
+                     'Tested with a calibration fitted without the second recording (from the other sources): these '
+                     'figures test the confidence on views it was not fitted on. The main calibration uses it too.'
                      if 'paired' in st.sources else
-                     'The paired recording is not a calibration source: these figures test the confidence on views '
+                     'The second recording is not a calibration source: these figures test the confidence on views '
                      'it was not fitted on.')}
 
 
@@ -1503,9 +1508,24 @@ def run(project, engine=None, settings: RedriveSettings | None = None, variant=N
         pv = None
         if pr['paired'] is not None:
             t0 = time.perf_counter()
-            pv = paired_validation(project, pr['drive'], pr['scene'], pr['evidence'], pr['calibration'], pr['paired'],
-                                   sst, st, pr['engine'], pr['dev'], lambda f, t='': _prog(progress, 0.95 + 0.05 * f,
-                                                                                           t), stop)
+            vcal, held = pr['calibration'], 'paired' not in st.sources
+            if not held:
+                # the main calibration was fitted on the second recording too: test it with one fitted without it,
+                # from the other sources, so its figures are out of sample (none to fit from: in-sample, and said so)
+                st_wo = dataclasses.replace(st, sources=[x for x in st.sources if x != 'paired'])
+                if st_wo.sources:
+                    try:
+                        vcal = calibrate(project, pr['drive'], pr['scene'], pr['evidence'], sst, st_wo, pr['engine'],
+                                         pr['dev'], None, pr['loo'] if 'loo' in st_wo.sources else None,
+                                         lambda f, t='': _prog(progress, 0.95 + 0.02 * f, 'Calibration without the '
+                                                                                          'second recording · ' + t),
+                                         stop)
+                        held = True
+                    except ValueError:              # no other calibration views
+                        vcal = pr['calibration']
+            pv = paired_validation(project, pr['drive'], pr['scene'], pr['evidence'], vcal, pr['paired'],
+                                   sst, st, pr['engine'], pr['dev'], lambda f, t='': _prog(progress, 0.97 + 0.03 * f,
+                                                                                           t), stop, held_out=held)
             pr['timing']['paired_s'] = round(time.perf_counter() - t0, 2)
     except (Cancelled, SP.Cancelled):
         return None

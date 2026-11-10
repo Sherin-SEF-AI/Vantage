@@ -1260,7 +1260,8 @@ vantage project.vantage            # open a project</code></pre>
     <p>On the sample, with the brief "pedestrians at 80 m forward, 360° up to 30 m, budget under $6k, under 300 W,
       survives a 2 mm mounting tolerance" and prices entered by a stated rule for that run only, it found five options
       that pass every must requirement and the robust check; the current rig fails the 80 m requirement and the budget. A
-      run of 160 rigs takes 2–3 minutes. The LLM path was tested only against fake servers. Batch:
+      run of 160 rigs takes 2–3 minutes; there is no time limit by default, so the same seed gives the same options on
+      any machine (a time limit can be set, and the options then depend on the machine's speed). The LLM path was tested only against fake servers. Batch:
       <code>--read-requirements OUT.json FILE…</code> (the brief parser) and <code>--design OUT_DIR</code> (exit 5 when
       no option meets every must requirement and constraint).</p>
 
@@ -1454,7 +1455,7 @@ vantage project.vantage            # open a project</code></pre>
     </table>
     <p>Statistics cover the last 5 seconds. The resolution is checked against the module's sensor.</p>
     <ul>
-      <li><b>Drift indicator</b>: the planned body outline and horizon are drawn over each live image through the lens model, and the edge alignment score is the median distance from the planned body edge to the nearest edge in the image, in sensor pixels. A camera that has been knocked shows its body edge elsewhere. It is an indicator, not a measurement: where the body and what lies behind it look alike it may not find the edge, and it misses a rotation that slides the edge along itself, such as yaw on a mirror camera. The installation check measures the pose.</li>
+      <li><b>Drift indicator</b>: the planned body outline and horizon are drawn over each live image through the lens model. The indicator is how far the body's outline in the image lies from the planned one, in sensor pixels: the one shift of the whole planned outline that best meets edges running the same way in the image, measured across the outline (the median over its points of that shift along each point's normal). A camera that has been knocked moves its whole outline, so texture on the body or the road does not decide the answer, as it did when each point took its nearest edge. It is an indicator, not a measurement: where the body and what lies behind it look alike it may not find the outline, and it misses a rotation that slides the outline along itself, such as yaw on a mirror camera. The installation check measures the pose.</li>
       <li><b>Save frames</b> writes the newest frame of every camera as <code>&lt;tag&gt;.png</code>; <b>Check installation</b> freezes them and opens the installation check with them.</li>
       <li>Capture times are when frames reached Vantage (the software clock), not sensor timestamps, so network and encoder delays are included in the spread.</li>
       <li>The skew is judged against the <a href="#timing">sync plan</a>: a rig synchronised to a spinning lidar fires its cameras round the sweep, so each camera's planned offset to the reference camera is taken out first (a 31–34 ms stagger on a lidar-synchronised rig is no skew). A camera the plan does not phase is expected to fire with the others. Streams from the <a href="#carla-live">CARLA live rig</a> are judged against its own schedule. Hover the summary line for each camera's offset, planned offset and skew.</li>
@@ -1821,9 +1822,25 @@ vantage project.vantage            # open a project</code></pre>
         checked as a whole before anything changes. <code>get_seams</code> gives each seam's advised angle, and
         <code>simulate_changes</code> compares seam angles by where a standing object vanishes at each seam;
         <code>run_batch</code>, every batch job on the project as it is now, in a run folder beside it; undo and redo of Claude's own steps only; save, export and recent activity.</li>
+      <li><b>Imports and aiming</b>: <code>import_vehicle</code> replaces the vehicle with a model file as the import
+        wizard does (units and axes from the file or guessed, wheels found, origin on the rear axle, glass a forbidden
+        zone) and reports every guess; <code>import_layout</code> brings in a CSV or extrinsics JSON as a new variant;
+        the <code>aim</code> operation of <code>edit_project</code> aims a camera at a point, along the body's normal
+        or levels its roll.</li>
+      <li><b>The window's view</b>: <code>set_view</code> (a view, an orbit, overlays, the heatmap),
+        <code>render_view</code> (the shaded 3D view to a PNG, returned as a picture too) and
+        <code>turntable_video</code>.</li>
+      <li><b>Background jobs</b>: <code>start_job</code> runs any tool in the background; <code>get_job</code>,
+        <code>cancel_job</code> and <code>list_jobs</code> follow it.</li>
+      <li><b>Beyond tools</b> (97 tools, MCP 2024-11-05 to 2025-11-25): resources for the project by URI
+        (<code>vantage://overview</code>, <code>vantage://camera/{tag}</code>, <code>vantage://study/{name}</code>,
+        <code>vantage://docs/{name}</code> …) with subscriptions that tell the client when the project changes;
+        prompts for the common workflows; argument completion; progress every 2 s, cancellation (a batch run stops at
+        once) and logging; structured content for every JSON result. Calls run in the order they arrive: reads side by
+        side, a change after everything before it.</li>
       <li><b>What stays yours</b>: locked cameras and sensors (Claude may lock one, never unlock it), unit
-        calibrations, stream sources, the fleet, photos, the vehicle model, the Copilot's approval records and the
-        automation settings. CARLA runs still go through a Copilot plan you approve in the window.</li>
+        calibrations, stream sources, the fleet, photos, the Copilot's approval records and the automation settings.
+        The vehicle model changes only as a whole, through <code>import_vehicle</code>. CARLA runs still go through a Copilot plan you approve in the window.</li>
     </ul>
 
     <h3 id="claude-panel">Claude Code in the panel</h3>
@@ -2154,8 +2171,11 @@ vantage project.vantage            # open a project</code></pre>
         against the sync plan, reads them within 0.001 ms and flags no clean camera (the plan's 31–34 ms stagger had
         flagged four of six on every clean drive); offsets of 1–10 ms stay under its 20 ms warning, as they should for
         software arrival times.</li>
-      <li><b>Dropped frames</b>: every one found. Rig health's drift indicator rose with a turn but never reached its
-        warning at 1°.</li>
+      <li><b>Dropped frames</b>: every one found. Rig health's drift indicator, re-scored on the same drives after
+        it was fixed: on the left mirror camera 2.3–3.5 px on clean drives and growing with the turn, 9–13.5 px at 1°
+        (pitch and roll; 6.6–11.6 px for yaw, which slides the outline along itself), past its 12 px warning in 3 of
+        9 drives at 1° (before the fix it read 3.0 px on every drive). The front camera sees too little of CARLA's car
+        for it.</li>
       <li><b>Not applicable on CARLA</b>: the as-built check judges a camera's mount by its view of your vehicle's body,
         and in CARLA the body in the images is CARLA's car. Its verdict measures the two bodies' difference, not the
         mount, so the campaign keeps its answers but never counts them: on the clean drives it flagged 11 of its 18
@@ -2235,7 +2255,8 @@ vantage project.vantage            # open a project</code></pre>
       <b>Re-drive</b> tab works out, for every pixel each new camera would record, how well the existing drive pins it
       down: whether any recorded frame saw that surface, from how far away and at what angle, whether it is a moving
       object or sky. It turns that into an expected error in grey levels, calibrated by an additive isotonic fit on frames
-      the reconstruction never saw (held-out frames, a second recording or a left-out camera). Each camera gets its
+      the reconstruction never saw (held-out frames, a second recording or a left-out camera). A second recording is
+      also tested on its own, with a calibration fitted without it, so its figures are out of sample. Each camera gets its
       share within your error budget, a verdict (reuse, partly reusable, re-collect) and the reasons for the rest, per
       region; a second map shows what the old rig saw that the new one does not. <b>Export re-shot drive</b> writes the
       drive as the new rig would have recorded it: a nuScenes folder with ground truth, a confidence map per image and,

@@ -284,7 +284,8 @@ class SimLivePanel(QWidget):
         row = QHBoxLayout()
         row.setSpacing(6)
         row.addWidget(label('Render', ink2=True))
-        self.scale = ScrubSpinBox('', 'plain', 0, '%', step=5.0, width=70)
+        self.scale = ScrubSpinBox('', 'plain', 1, '%', step=5.0, width=70)
+        self.scale.trim = True                             # 12.5 %, not 13 %
         self.scale.setToolTip('The views CARLA renders, at this share of each camera\'s sensor size (smaller: faster, '
                               'closer to real time)')
         self.scale.committed.connect(self._scale_changed)

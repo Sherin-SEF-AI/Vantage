@@ -27,6 +27,7 @@ from .recording_ws import Tile
 
 JOB = 'perf_model'
 JOB_AL = 'perf_model_campaign'
+JOB_PROP = 'perf_model_propose'
 EMPTY = ('No perception records yet. Run Simulate ▸ Perception in the loop on a few rig variants (each run adds a '
          'record), or import records another team exported, then Train.')
 STORE_COLS = (('Source', ''), ('Scene set', 'Town · scenario · seed'), ('Rig', 'The rig\'s label or hash'),
@@ -85,6 +86,17 @@ def _fmt(v, nd=3):
     except (TypeError, ValueError):
         return '—'
     return f'{x:.{nd}f}' if math.isfinite(x) else '—'
+
+
+
+def store_place(project, store) -> str:
+    """Where the records are kept, in words: beside the project file, in the folder VANTAGE_PERF_DIR names, or in the
+    user's data folder (the store line; its tooltip has the full path)."""
+    if PM.project_store_path(project):
+        return 'beside the project file'
+    if os.environ.get('VANTAGE_PERF_DIR'):
+        return f'in {os.path.dirname(store.path)} (VANTAGE_PERF_DIR)'
+    return 'in your data folder'
 
 
 class _Sig(QObject):
@@ -506,7 +518,7 @@ class PerfModelPage(QWidget):
         self.mode.changed.connect(lambda k: self._set(f'pick by {k}', mode=k))
         ar.addWidget(self.mode)
         self.b_propose = button('Propose', None, 'target', 'Rank the project\'s variants for a real evaluation')
-        self.b_propose.clicked.connect(lambda: self.propose())
+        self.b_propose.clicked.connect(lambda: self.propose(background=True))
         ar.addWidget(self.b_propose)
         ar.addWidget(label('Rounds', ink2=True))
         self.rounds = QSpinBox()
@@ -691,6 +703,12 @@ class PerfModelPage(QWidget):
             self.status_text = (f'Trained on {m.n_records} records in {m.seconds:.1f} s' if m.trained else m.reason())
             p.add_log('perf_model', self.status_text)
             self.ctx.msg(f'Learned model · {self.status_text}', 5000)
+        elif kind == JOB_PROP:
+            if out is None or out[0] is not self.ctx.store.project:
+                self.status_text = 'Cancelled' if out is None else ''
+            else:
+                _, cands, self.proposals = out
+                self.status_text = f'{len(self.proposals)} of {len(cands)} variants proposed'
         elif kind == JOB_AL:
             self.campaign_result = out
             if out is not None:
@@ -712,7 +730,7 @@ class PerfModelPage(QWidget):
 
     def cancel(self):
         win = self.ctx.window
-        for job in (JOB, JOB_AL):
+        for job in (JOB, JOB_AL, JOB_PROP):
             j = getattr(win, '_jobs', {}).get(job) if win is not None else None
             if j is not None:
                 j['cancel'].set()
@@ -722,13 +740,46 @@ class PerfModelPage(QWidget):
             self.status_text = 'Cancelled'
         self.refresh()
 
-    def propose(self) -> list:
+    def propose(self, background=False) -> list:
+        """Rank the project's variants for a real evaluation. Featurising every variant takes a while on a large
+        project (a minute and more), so the Propose button runs it as a background job with progress and Cancel;
+        called from code it runs here and returns the proposals."""
         if self.model is None or not self.model.trained:
             self.status_text = self.model.reason() if self.model is not None else 'Train the model first.'
             self.refresh()
             return []
         p = self.ctx.store.project
         st = self.settings
+        if background:
+            if self.busy:
+                return []
+            model, engine = self.model, self._engine()
+            grid = RG.RegionGrid.from_dict(model.grid) if model.grid else None
+            variants = [v for v in p.variants if any(c.visible for c in v.cameras)]
+            self._gen += 1
+            self.busy = True
+            self.status_text = 'Proposing…'
+            gen, sig = self._gen, self.sig
+
+            def work(progress, cancel):
+                eng = engine.share() if engine is not None else None
+                cands = []
+                for i, v in enumerate(variants):
+                    if cancel():
+                        return None
+                    text = f'variant {i + 1} of {len(variants)}: {v.name}'
+                    progress(i / max(len(variants), 1), text)
+                    try:
+                        sig.progress.emit(gen, i / max(len(variants), 1), text)
+                    except RuntimeError:
+                        pass
+                    cands += PM.candidates_from_variants(p, [v], eng, grid)
+                return p, cands, PM.propose(cands, st.k, st.objective, model, st.mode, st.kappa)
+            ok = self._start(JOB_PROP, 'Propose variants', work)
+            if not ok:
+                self.busy = False
+            self.refresh()
+            return []
         try:
             cands = PM.candidates_from_variants(p, None, self._engine(),
                                                 RG.RegionGrid.from_dict(self.model.grid) if self.model.grid else None)
@@ -840,9 +891,9 @@ class PerfModelPage(QWidget):
         S = self.store()
         docs = S.records()
         summ = PM.store_summary(docs)
-        loc = 'beside the project file' if PM.project_store_path(p) else 'in your data folder'
         self.store_text.setText(f'{summ["records"]} records · {summ["rigs"]} rigs · {summ["scenes"]} scene sets, '
-                                f'kept {loc} ({os.path.basename(S.path)})' if docs else EMPTY)
+                                f'kept {store_place(p, S)} ({os.path.basename(S.path)})' if docs else EMPTY)
+        self.store_text.setToolTip(S.path)
         self.store_table.setRowCount(len(docs))
         for i, d in enumerate(docs):
             sc = d.get('scene') or {}

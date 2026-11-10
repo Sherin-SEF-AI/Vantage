@@ -275,7 +275,10 @@ class ScrubSpinBox(QDoubleSpinBox):
     def textFromValue(self, v):
         if self._mixed:
             return '—'
-        return fmt_num(v, self.decimals())
+        t = fmt_num(v, self.decimals())
+        if getattr(self, 'trim', False) and '.' in t:      # 12.5 stays 12.5, 50.0 shows as 50
+            t = t.rstrip('0').rstrip('.')
+        return t
 
     def valueFromText(self, text):
         try:

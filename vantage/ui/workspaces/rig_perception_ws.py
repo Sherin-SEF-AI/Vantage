@@ -118,6 +118,15 @@ def _qc(rgb) -> QColor:
 
 
 # ============================================================================ the polar region map
+
+def rec_text(rig, label) -> str:
+    """A recording as listed: its rig, then its label without the rig's name again (a recording's label starts with
+    its variant's name, which is usually the rig's): 'Data rig · cut in · seed 3', not 'Data rig · Data rig · …'."""
+    rig, label = str(rig or ''), str(label or '')
+    if rig and label.lower().startswith(rig.lower()):
+        label = label[len(rig):].lstrip(' ·-:')
+    return f'{rig} · {label}' if rig and label else (rig or label)
+
 class PolarMap(QWidget):
     """Regions as sector × range-ring cells around the car (front up, left on the left, rings of equal width per range
     bin), coloured by a rig's figure (sequential blue) or by a difference (diverging orange–blue); grey for regions
@@ -898,8 +907,8 @@ class RigPerceptionPage(QWidget):
             for r in st.recordings:
                 info = self._rec_info(r['path'])
                 rig = self._rig_of(r)
-                it = QListWidgetItem(('★ ' if rig == ref else '') + f'{rig} · ' +
-                                     (info.get('label') or os.path.basename(r['path'])) +
+                it = QListWidgetItem(('★ ' if rig == ref else '') +
+                                     rec_text(rig, info.get('label') or os.path.basename(r['path'])) +
                                      ('' if info['ok'] else ' · not readable'))
                 it.setToolTip(f'{r["path"]}\n{info["text"]}')
                 if not info['ok']:
@@ -1154,7 +1163,7 @@ class RigPerceptionPage(QWidget):
             for r in res.rigs[1:]:
                 self.rig_pick.addItem(r['name'], r['name'])
             for r in res.recordings:
-                self.frame_rec.addItem(f'{r["rig"]} · {r["label"]}', r['index'])
+                self.frame_rec.addItem(rec_text(r['rig'], r['label']), r['index'])
         for cb in (self.cls_pick, self.rig_pick, self.frame_rec):
             cb.blockSignals(False)
         self.cls_pick.setEnabled(self.cls_pick.count() > 0)
