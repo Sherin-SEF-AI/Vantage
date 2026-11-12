@@ -12,7 +12,7 @@ a new user meets them.
     ros 2 bags   a tiny bag written and read back: MCAP uncompressed, with zstd and lz4 chunks when those modules
                  are present, and a SQLite (.db3) bag
     opengl       the shader renderer draws a frame off-screen (a warning only: the 3D view falls back to QPainter)
-    gpu          PyTorch's GPU, when PyTorch is installed: its name and a convolution and grid sample checked against
+    gpu          on a Jetson only: PyTorch's GPU, when PyTorch is installed: its name and a convolution and grid sample checked against
                  the CPU (information when PyTorch or CUDA is absent)
     main window  the main window is built with the sample and its analysis finishes (shown and painted on the
                  offscreen platform, never on a desktop)
@@ -34,6 +34,8 @@ import sys
 import tempfile
 import time
 import traceback
+
+from . import JETSON
 
 OK, WARN, FAIL = 'ok', 'warning', 'FAILED'
 # EGL platform enums (EGL_EXT_platform_device, EGL_MESA_platform_surfaceless); PyOpenGL has no constants for them
@@ -660,7 +662,7 @@ def _check_exports(S):
 CHECKS = (('analysis', _check_analysis), ('opencv', _check_opencv), ('cameras', _check_cameras),
           ('fonts', _check_fonts), ('qt plugins', _check_qt_plugins), ('time zones', _check_time_zones),
           ('https', _check_https), ('keyring', _check_keyring), ('ros 2 bags', _check_bags), ('opengl', _check_opengl),
-          ('gpu', _check_gpu),
+          *((('gpu', _check_gpu),) if JETSON else ()),
           ('main window', _check_window), ('pages', _check_pages), ('software 3d', _check_software_3d),
           ('exports', _check_exports))
 NAMES = tuple(n for n, _ in CHECKS)

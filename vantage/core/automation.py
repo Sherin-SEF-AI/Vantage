@@ -48,6 +48,8 @@ import threading
 import time
 from dataclasses import asdict, dataclass, field
 
+from .. import JETSON
+
 SCHEMA = 'vantage.automation_run/1'              # vantage_summary.json and a run's JSON export
 HISTORY_SCHEMA = 'vantage.automation_history/1'
 SUMMARY_NAME = 'vantage_summary.json'
@@ -1025,17 +1027,20 @@ class History:
 
     def _key(self):
         st = os.stat(self.path)
-        return (st.st_ino, st.st_mtime_ns, st.st_ctime_ns, st.st_size)
+        if JETSON:
+            return (st.st_ino, st.st_mtime_ns, st.st_ctime_ns, st.st_size)
+        return (st.st_mtime_ns, st.st_size)
 
     def _save(self, projects: dict):
-        """Write the file and keep what was written as the cache: the file's times tick coarsely (a few ms on Linux's
-        ext4), so two writes of the same size within one tick (a fast machine, such as a Jetson AGX Orin, adding runs
-        in a row) would otherwise leave the cache holding the earlier one."""
+        """Write the file. On a Jetson, also keep what was written as the cache: the file's times tick coarsely (a few
+        ms on ext4), and an AGX Orin adds runs fast enough that two writes of the same size land in one tick, which
+        would leave the cache holding the earlier one."""
         _write_private(self.path, (json.dumps({'schema': HISTORY_SCHEMA, 'projects': projects}) + '\n').encode('utf-8'))
-        try:
-            self._cache = (self._key(), projects)
-        except OSError:
-            self._cache = (None, {})
+        if JETSON:
+            try:
+                self._cache = (self._key(), projects)
+            except OSError:
+                self._cache = (None, {})
 
     def _load(self) -> dict:
         try:
