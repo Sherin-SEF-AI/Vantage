@@ -20,3 +20,5 @@ demo/youtube/
 # third-party sample data (not redistributable): the Tigor studio photo spin
 data/
 Tata-Tigor-EV-360.zip
+# ... except the fake CARLA co-simulation folder the SUMO tests run against
+!tests/fake_sumo/carla_root/Co-Simulation/Sumo/data/

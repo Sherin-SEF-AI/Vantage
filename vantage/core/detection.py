@@ -446,8 +446,17 @@ def _nms_batched(boxes, scores, cls, thr):
     if not len(boxes):
         return np.zeros(0, int)
     xywh = np.column_stack([boxes[:, :2], boxes[:, 2:] - boxes[:, :2]]).astype(np.float64)
-    keep = cv2.dnn.NMSBoxesBatched(xywh.tolist(), scores.astype(float).tolist(), cls.astype(int).tolist(), 0.0,
-                                   float(thr))
+    if hasattr(cv2.dnn, 'NMSBoxesBatched'):
+        keep = cv2.dnn.NMSBoxesBatched(xywh.tolist(), scores.astype(float).tolist(), cls.astype(int).tolist(), 0.0,
+                                       float(thr))
+    else:
+        # OpenCV before 4.7 (Ubuntu 24.04's python3-opencv 4.6, as on JetPack 7): NMSBoxesBatched's own method, each
+        # class's boxes moved apart by class × (largest coordinate + 1) so that no two classes overlap, then NMSBoxes
+        hi = float(np.max(np.concatenate([xywh[:, :2], xywh[:, :2] + xywh[:, 2:]], 1)))
+        off = cls.astype(np.float64) * (hi + 1.0)
+        shifted = xywh.copy()
+        shifted[:, :2] += off[:, None]
+        keep = cv2.dnn.NMSBoxes(shifted.tolist(), scores.astype(float).tolist(), 0.0, float(thr))
     return np.asarray(keep, int).reshape(-1)
 
 

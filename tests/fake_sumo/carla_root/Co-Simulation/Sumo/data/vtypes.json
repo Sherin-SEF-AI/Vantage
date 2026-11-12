@@ -1,0 +1,28 @@
+{
+    "carla_blueprints": {
+        "vehicle.audi.a2": {
+            "vClass": "passenger"
+        },
+        "vehicle.carlamotors.carlacola": {
+            "vClass": "truck"
+        },
+        "vehicle.citroen.c3": {
+            "vClass": "passenger"
+        },
+        "vehicle.diamondback.century": {
+            "vClass": "bicycle"
+        },
+        "vehicle.dodge.charger_police": {
+            "vClass": "authority"
+        },
+        "vehicle.lincoln.mkz_2017": {
+            "vClass": "passenger"
+        },
+        "vehicle.tesla.model3": {
+            "vClass": "evehicle"
+        },
+        "vehicle.toyota.prius": {
+            "vClass": "evehicle"
+        }
+    }
+}
