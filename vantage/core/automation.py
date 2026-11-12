@@ -1023,10 +1023,23 @@ class History:
         self._cache = (None, {})
         self._lock = threading.Lock()
 
+    def _key(self):
+        st = os.stat(self.path)
+        return (st.st_ino, st.st_mtime_ns, st.st_ctime_ns, st.st_size)
+
+    def _save(self, projects: dict):
+        """Write the file and keep what was written as the cache: the file's times tick coarsely (a few ms on Linux's
+        ext4), so two writes of the same size within one tick (a fast machine, such as a Jetson AGX Orin, adding runs
+        in a row) would otherwise leave the cache holding the earlier one."""
+        _write_private(self.path, (json.dumps({'schema': HISTORY_SCHEMA, 'projects': projects}) + '\n').encode('utf-8'))
+        try:
+            self._cache = (self._key(), projects)
+        except OSError:
+            self._cache = (None, {})
+
     def _load(self) -> dict:
         try:
-            st = os.stat(self.path)
-            key = (st.st_mtime_ns, st.st_size)
+            key = self._key()
         except OSError:
             return {}
         if self._cache[0] == key:
@@ -1075,15 +1088,13 @@ class History:
             if len(projects) > HISTORY_PROJECTS:            # forget the projects not run for longest
                 for k in sorted(projects, key=lambda k: projects[k].get('last', 0))[:len(projects) - HISTORY_PROJECTS]:
                     projects.pop(k, None)
-            _write_private(self.path, (json.dumps({'schema': HISTORY_SCHEMA, 'projects': projects}) + '\n')
-                           .encode('utf-8'))
+            self._save(projects)
 
     def clear(self, project_path: str):
         with self._lock:
             projects = dict(self._load())
             if projects.pop(norm_path(project_path), None) is not None:
-                _write_private(self.path, (json.dumps({'schema': HISTORY_SCHEMA, 'projects': projects}) + '\n')
-                               .encode('utf-8'))
+                self._save(projects)
 
 
 _HISTORY: History | None = None
