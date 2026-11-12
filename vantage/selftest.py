@@ -12,6 +12,8 @@ a new user meets them.
     ros 2 bags   a tiny bag written and read back: MCAP uncompressed, with zstd and lz4 chunks when those modules
                  are present, and a SQLite (.db3) bag
     opengl       the shader renderer draws a frame off-screen (a warning only: the 3D view falls back to QPainter)
+    gpu          PyTorch's GPU, when PyTorch is installed: its name and a convolution and grid sample checked against
+                 the CPU (information when PyTorch or CUDA is absent)
     main window  the main window is built with the sample and its analysis finishes (shown and painted on the
                  offscreen platform, never on a desktop)
     pages        every page of the main window built and shown
@@ -440,6 +442,39 @@ def _check_opengl(S):
     return OK, f'shader renderer on {name} ({how})'
 
 
+def _check_gpu(S):
+    """PyTorch's device for the tensor jobs (gradient refinement, log replay, the foundation models): which GPU, and a
+    convolution and a grid sample (forward and backward) on it checked against the CPU. PyTorch is optional (the
+    downloads leave it out), so its absence or a CPU-only build is information, not a warning; a GPU that computes
+    wrong numbers fails."""
+    try:
+        import torch
+    except ImportError:
+        return OK, 'PyTorch not installed (optional: gradient refinement, log replay, foundation models)'
+    if not torch.cuda.is_available():
+        return OK, f'PyTorch {torch.__version__} on the CPU (no CUDA GPU)'
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')                 # aarch64 wheels name Orin's sm_87 as unsupported: checked below
+        p = torch.cuda.get_device_properties(0)
+
+        def run(dev):
+            x = (torch.arange(2 * 3 * 24 * 32, dtype=torch.float32) % 17 / 8 - 1).reshape(2, 3, 24, 32).to(dev)
+            x.requires_grad_(True)
+            w = (torch.arange(4 * 3 * 3 * 3, dtype=torch.float32) % 5 / 4 - 0.5).reshape(4, 3, 3, 3).to(dev)
+            g = (torch.linspace(-1.1, 1.1, 2 * 10 * 12 * 2)).reshape(2, 10, 12, 2).to(dev)
+            y = torch.nn.functional.conv2d(x, w, padding=1).relu()
+            z = torch.nn.functional.grid_sample(y, g, align_corners=False)
+            z.square().sum().backward()
+            return z.detach().cpu(), x.grad.cpu()
+        cpu, gpu = run('cpu'), run('cuda')
+    if not all(torch.allclose(a, b, rtol=1e-3, atol=1e-3) for a, b in zip(cpu, gpu)):
+        return FAIL, f'PyTorch {torch.__version__} on {p.name}: the GPU\'s results differ from the CPU\'s'
+    mem = f'{p.total_memory / 1e9:.0f} GB shared with the CPU' if getattr(p, 'is_integrated', False) else \
+        f'{p.total_memory / 1e9:.0f} GB'
+    return OK, f'PyTorch {torch.__version__} on {p.name} (sm_{p.major}{p.minor}, {mem}): results match the CPU'
+
+
 def _pump(seconds, until=None):
     from PyQt6.QtWidgets import QApplication
     t = time.time()
@@ -625,6 +660,7 @@ def _check_exports(S):
 CHECKS = (('analysis', _check_analysis), ('opencv', _check_opencv), ('cameras', _check_cameras),
           ('fonts', _check_fonts), ('qt plugins', _check_qt_plugins), ('time zones', _check_time_zones),
           ('https', _check_https), ('keyring', _check_keyring), ('ros 2 bags', _check_bags), ('opengl', _check_opengl),
+          ('gpu', _check_gpu),
           ('main window', _check_window), ('pages', _check_pages), ('software 3d', _check_software_3d),
           ('exports', _check_exports))
 NAMES = tuple(n for n, _ in CHECKS)

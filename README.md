@@ -65,6 +65,9 @@ Each one carries its own Python and libraries, so there is nothing else to insta
 
 **From source, with Python 3.10 or later:** `python3 -m pip install .`, then `vantage`.
 
+**On a Jetson AGX Orin with JetPack 7:** `packaging/jetson/setup.sh` installs from source with PyTorch on the GPU and
+the system's GStreamer-enabled OpenCV for GMSL cameras (details in [docs/install.md](docs/install.md)).
+
 Each system's details, GMSL cameras on a Jetson, checking a download and building the downloads are in
 [docs/install.md](docs/install.md).
 

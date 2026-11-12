@@ -45,6 +45,40 @@ so Vantage runs the pipeline in the system's `gst-launch-1.0` (JetPack's, with N
 back. `vantage --self-test` says which of these work on the machine. JetPack 5 (Ubuntu 20.04) is too old for the
 bundle: run from source there.
 
+**From source on a Jetson AGX Orin with JetPack 7** (L4T R39, Ubuntu 24.04, Python 3.12, CUDA 13): one script sets
+up a virtual environment that uses the GPU and the system's camera stack:
+
+```bash
+sudo apt install python3-venv python3-opencv python3-numpy python3-scipy gstreamer1.0-tools   # once
+packaging/jetson/setup.sh             # .venv/, PyTorch with CUDA, ~/.local/bin/vantage, the app-menu entry
+packaging/jetson/setup.sh --self-test # the same, then the self-test (about 5 minutes on an AGX Orin 64 GB)
+```
+
+- **OpenCV comes from apt, not PyPI.** Ubuntu's `python3-opencv` is built with GStreamer, so `nvarguscamerasrc` and
+  `v4l2src` pipelines open in OpenCV directly (the self-test's cameras line says *GStreamer pipelines through
+  OpenCV*). The venv sees the system's packages, and the script installs Vantage with `--no-deps` so that
+  `opencv-python` (no GStreamer) never shadows it.
+- **numpy and scipy come from PyPI, inside the venv.** Their wheels bring OpenBLAS. Apt's use whatever
+  `libblas.so.3` points at, which on a fresh JetPack is the reference BLAS: a 2000 × 2000 matrix product took 5.5 s
+  against 0.22 s with OpenBLAS (`sudo apt install libopenblas0-pthread` fixes the system's too). numpy stays below 2
+  because apt's OpenCV is built against numpy 1.x.
+- **BLAS threads.** On a Jetson, Vantage starts OpenBLAS (and OpenMP) with half the cores unless
+  `OPENBLAS_NUM_THREADS` / `OMP_NUM_THREADS` are already set. The cores are shared with the camera pipelines, and a
+  thread per core spin-waits on the busy ones: with six GMSL cameras streaming, a 1000 × 1000 SVD took 14.9 s on 12
+  threads and 0.7 s on 6.
+- **PyTorch on the GPU.** The script installs PyTorch's `cu130` aarch64 wheel, which brings its own CUDA runtime (no
+  CUDA toolkit needed, only JetPack's driver). The wheel carries sm_80 code and names Orin's sm_87 unsupported, but
+  its kernels run correctly there: the self-test's `gpu` line runs a convolution and a grid sample, forward and
+  backward, on the GPU and checks them against the CPU (`PyTorch 2.14.1+cu130 on Orin (sm_87, 66 GB shared with the
+  CPU): results match the CPU`). Vantage hides PyTorch's warning about Orin for that reason. `--no-torch` leaves
+  PyTorch out.
+- **Memory.** The Orin's GPU shares the 64 GB with the CPU, so the GPU jobs' memory budgets (*gpu_mem_gb* in log
+  replay and the foundation models) are slices of system RAM: leave room for the recorder and the window.
+- **Power mode.** For the long jobs (campaigns, log replay, designed experiments), run the Orin in MAXN with its
+  clocks fixed: `sudo nvpmodel -m 0 && sudo jetson_clocks`.
+- **The reference stitcher's `--cuda`** needs an OpenCV built with CUDA, which apt's is not. Without one it remaps on
+  the CPU and says so.
+
 **Checking a download.** `SHA256SUMS.txt` in the release lists the SHA-256 of every file:
 
 ```bash

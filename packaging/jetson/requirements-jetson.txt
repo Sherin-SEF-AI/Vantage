@@ -1,0 +1,16 @@
+# Vantage on an NVIDIA Jetson (JetPack 7, Ubuntu 24.04, Python 3.12), installed by packaging/jetson/setup.sh into a
+# virtual environment that sees the system's packages. OpenCV, numpy and scipy come from apt (python3-opencv,
+# python3-numpy, python3-scipy): Ubuntu's OpenCV is built with GStreamer, so nvarguscamerasrc / v4l2src pipelines open
+# through cv2.CAP_GSTREAMER. Do NOT install opencv-python from PyPI here: it has no GStreamer and would shadow it.
+PyQt6>=6.5
+PyOpenGL>=3.1
+PyYAML>=6.0
+certifi
+keyring             # the assistant's API key in the system keyring
+pyte                # the Terminal panel
+zstandard           # compressed ROS 2 bags (MCAP chunks)
+lz4
+anthropic>=2.3,<3   # the assistant's Claude provider
+pytest
+pytest-xdist        # QT_QPA_PLATFORM=offscreen python -m pytest tests -n 6 --dist loadfile
+# PyTorch (gradient refinement, log replay, foundation models) is installed by setup.sh from PyTorch's cu130 index.
