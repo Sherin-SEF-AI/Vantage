@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from .. import JETSON
 from .lens import resolve, Intrinsics
 from .mathutil import rot_zyx, euler_zyx, BODY_TO_OPTICAL, wrap180
 from .project import Project, Camera, Target
@@ -177,16 +178,35 @@ def find_sb(gray, pattern, flags):
 def _find(patch, pattern):
     import cv2
     flags = cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY | cv2.CALIB_CB_NORMALIZE_IMAGE
+    classic = cv2.CALIB_CB_ADAPTIVE_THRESH | cv2.CALIB_CB_NORMALIZE_IMAGE
     for pat in (pattern, (pattern[1], pattern[0])):
         ok, corners = find_sb(patch, pat, flags)
         if ok:
             return corners.reshape(pat[1], pat[0], 2)
-        ok, corners = cv2.findChessboardCorners(patch, pat, flags=cv2.CALIB_CB_ADAPTIVE_THRESH | cv2.CALIB_CB_NORMALIZE_IMAGE)
+        if JETSON:
+            ok, corners = _find_classic_half(patch, pat, classic)
+        else:
+            ok, corners = cv2.findChessboardCorners(patch, pat, flags=classic)
         if ok:
             corners = cv2.cornerSubPix(patch, corners, (5, 5), (-1, -1),
                                        (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 40, 0.01))
             return corners.reshape(pat[1], pat[0], 2)
     return None
+
+
+def _find_classic_half(patch, pat, flags):
+    """The classic detector on a Jetson: on the patch at half size, its corners then put back at full size (cornerSubPix
+    refines them there, as for a full-size find). Apt's OpenCV 4.6 spends 1.8-2.7 s on a board-free 640 x 640 patch of
+    sensor noise (its adaptive threshold makes a quad of every speck: a planned lidar board that is not there took 10 s
+    a frame, against 0.15 s on a desktop); at half size 0.01 s. A board fills 45-72 % of a patch, 140 px or more at
+    half size, which the detector finds."""
+    import cv2
+    h, w = patch.shape[:2]
+    small = cv2.resize(patch, (w // 2, h // 2), interpolation=cv2.INTER_AREA)
+    ok, corners = cv2.findChessboardCorners(small, pat, flags=flags)
+    if not ok:
+        return False, None
+    return True, (corners * 2.0 + 0.5).astype(np.float32)      # pixel centres: full x = 2 half x + 0.5
 
 
 def _match_grid(det, pred):
@@ -208,7 +228,28 @@ def _match_grid(det, pred):
 
 def detect_boards(img, project: Project, cam: Camera, targets=None, pose=None) -> list[BoardObs]:
     """Find every board the camera should see. img: 2-D uint8 (any resolution of the sensor's aspect).
-    pose: (R_body_to_world, position) to predict the boards with; the planned pose when None."""
+    pose: (R_body_to_world, position) to predict the boards with; the planned pose when None.
+
+    On a Jetson, each board is looked for first on its own plane (core.install_guide.detect_on_plane), then in a
+    pinhole patch. A Jetson runs apt's OpenCV 4.6 (the one with GStreamer), whose detector places every other corner
+    of a small, oblique board 1-2 px off in a pinhole patch (a checkerboard pattern of errors: QR's T5 in the
+    sample, 2.3 px at worst), which pulled the joint solve 0.37 deg off. On the board's plane every square is 40 px
+    and seen square-on: 0.07 px median there."""
+    if not JETSON:
+        return _detect_in_patches(img, project, cam, targets, pose)
+    from .install_guide import detect_floor
+    R0, p0 = (rot_zyx(cam.yaw, cam.pitch, cam.roll), cam.pos()) if pose is None else \
+        (np.asarray(pose[0], float), np.asarray(pose[1], float))
+    ts = list(project.targets if targets is None else targets)
+    found = {o.target_uid: o for o in detect_floor(img, project, cam, (R0, p0), ts)}
+    rest = [t for t in ts if t.uid not in found]
+    if rest:
+        found.update({o.target_uid: o for o in _detect_in_patches(img, project, cam, rest, pose)})
+    return [found[t.uid] for t in ts if t.uid in found]
+
+
+def _detect_in_patches(img, project: Project, cam: Camera, targets=None, pose=None) -> list[BoardObs]:
+    """detect_boards' search in a pinhole patch round each board."""
     import cv2
     if img.ndim == 3:
         img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)

@@ -29,7 +29,8 @@ from ..widgets import fit_width, ROW_H, ScrubSpinBox, SegmentedControl, StatusLi
 
 JOB = 'critical'
 OVERLAY = 'critical'                 # View ▸ Overlays key the main views draw the targets under
-AUTO_MAX_S = 8.0                     # re-run by itself after an edit while the last run took less than this
+from ... import CPU_SLOWDOWN
+AUTO_MAX_S = 8.0 * CPU_SLOWDOWN                     # re-run by itself after an edit while the last run took less than this
 EMPTY = 'Add a critical target: Add ▸ Child 2 m ahead, a traffic light, a kerb, a lane marking…'
 AXIS_LABEL = {'yaw': 'Yaw ψ', 'pitch': 'Pitch θ', 'roll': 'Roll φ', 'x': 'X', 'y': 'Y', 'z': 'Z'}
 WHY_TEXT = {'pixels': 'too few pixels across it', 'seen': 'too little of it seen', 'focus': 'out of focus',

@@ -16,7 +16,8 @@ from ..core import weather as W
 from .charts import ChartBase
 from .theme import THEME, STATUS, mono, sans
 
-AUTO_MAX_S = 2.0
+from .. import CPU_SLOWDOWN
+AUTO_MAX_S = 2.0 * CPU_SLOWDOWN
 CLASS_COLORS = PR.CLASS_COLORS
 RINGS = PR.PNG_RINGS
 

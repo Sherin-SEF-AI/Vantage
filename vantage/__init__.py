@@ -11,6 +11,11 @@ import warnings as _warnings
 # unchanged.
 JETSON = _os.path.exists('/etc/nv_tegra_release')
 
+# How much longer a computation takes here than on the desktop the pages' "re-run by itself after an edit while the
+# last run took less than N s" limits were set on. An AGX Orin's cores take about 3 times as long: the calibration
+# observability study took 2 s warm and 3.7 s cold on its own, and 6.5 s beside the 3D view, against its 3 s limit.
+CPU_SLOWDOWN = 3.0 if JETSON else 1.0
+
 if JETSON:
     _n = str(max(1, (_os.cpu_count() or 2) // 2))
     for _k in ('OPENBLAS_NUM_THREADS', 'OMP_NUM_THREADS'):

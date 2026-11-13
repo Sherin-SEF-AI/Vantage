@@ -116,7 +116,9 @@ def test_self_test_passes():
     """The self-test from source: every check runs and none fails (warnings are allowed here: a developer machine may
     lack a GPU, libxcb-cursor0 or zstandard); the exports, pages and bags checks pass outright."""
     from vantage.selftest import NAMES
-    r = _run('--self-test', timeout=300)
+    from vantage import CPU_SLOWDOWN
+    # about 5 minutes on an AGX Orin (docs/install.md), so a Jetson's limit is CPU_SLOWDOWN times the desktop's 300 s
+    r = _run('--self-test', timeout=300 * CPU_SLOWDOWN)
     assert r.returncode == 0, r.stdout + r.stderr
     lines = r.stdout.splitlines()
     assert lines[-1].startswith('self-test passed'), lines[-1]
