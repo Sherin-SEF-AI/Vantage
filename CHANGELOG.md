@@ -4,6 +4,10 @@ Versions follow [semantic versioning](https://semver.org). The top entry is what
 
 ## Unreleased
 
+**Install guide** (Calibrate ▸ Install guide…, `vantage --install-guide`): a rig fitted to a car from its live streams to a verified calibration and coverage, stage by stage (connect, identify the ports by covering each lens, lens calibrations, aim from the car's own outline with the shim that corrects it, boards, the poses with their 1σ, coverage graded robust/uncertain/blind by that uncertainty, and checks the solve did not use), with Claude as a coach whose figures must all be the guide's. A board planner that meets the requirement in about 15 s, boards on stands for cameras the floor cannot reach, a detector on the board's own plane (more boards found, corners within 0.1 px on synthetic captures), cameras behind glass, and a rehearsal mode. Details and the mathematics: [docs/install-guide.md](docs/install-guide.md).
+
+**Fixes.** API keys pasted with a line break (from a wrapped line or a chat) no longer fail as "Could not reach Anthropic's API": the key fields and the stored keys drop whitespace and invisible characters, and that error, and a library failing on the machine, now say what happened. On a Jetson: number fields drew empty under Qt 6.12 (a spin box with no buttons and a styled border gets a 1 px text field; the buttons are now kept, 0 px wide), and `brotli>=1.2` is installed in the venv, since apt's 1.1 made every successful Claude call fail as a connection error.
+
 **Perception in the loop.** Vantage now measures how well the perception will work on a rig, not only what the rig
 can see, and feeds that back into the design: 3D detection per region around the car, re-driven logs, foundation
 models, tolerances carried to detection, coverage weighted by where crashes start, a twin of the fleet, a learned

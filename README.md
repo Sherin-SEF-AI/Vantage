@@ -124,6 +124,7 @@ The full reference for batch mode, its exit codes and Claude over MCP is in
 | [docs/features.md](docs/features.md) | Every feature, where it is in the app and the figures measured with it |
 | [docs/overview.md](docs/overview.md) | The models behind the figures, their references and their known limits |
 | [docs/install.md](docs/install.md) | Installing on each system, running from source, building the downloads |
+| [docs/install-guide.md](docs/install-guide.md) | Calibrate ▸ Install guide: fitting a rig to a car live, stage by stage, with the mathematics behind it |
 | [docs/command-line.md](docs/command-line.md) | Batch mode, exit codes and Claude over MCP |
 | [docs/simulator-bridge.md](docs/simulator-bridge.md) | The CARLA bridge: rig file, run folder and ground truth |
 | [docs/project-format.md](docs/project-format.md) | The `.vantage` project file and its schema |

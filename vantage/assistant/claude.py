@@ -240,6 +240,14 @@ def map_error(e) -> ApiError:
         if st >= 500:
             return ApiError('server', msg or f'Anthropic returned an error ({st}). Try again in a moment.', st)
         return ApiError('bad_request', msg or f'The request was refused ({st}).', st)
+    if isinstance(e, A.APIConnectionError) and type(e.__cause__).__name__ == 'LocalProtocolError':
+        return ApiError('auth', 'The API key has a character a request cannot carry (a line break from the copy?). '
+                                'Paste it again in Preferences ▸ Assistant.')
+    if isinstance(e, A.APIConnectionError) and isinstance(e.__cause__, (TypeError, AttributeError, ImportError,
+                                                                         ValueError)):
+        c = e.__cause__              # a library on this machine failed, not the network (an old Brotli, for one)
+        return ApiError('server', f'The Anthropic SDK failed on this machine: {type(c).__name__}: {c}. Run '
+                                  f'"vantage --self-test" or reinstall the requirements.')
     if isinstance(e, A.APIConnectionError):
         return ApiError('network', 'Could not reach Anthropic\'s API: check the connection.')
     return ApiError('server', f'{type(e).__name__}: {msg}')

@@ -5414,7 +5414,7 @@ class AssistantPrefs(QWidget):
             QDesktopServices.openUrl(QUrl(href))
 
     def _edited(self, text):
-        self.new_keys[self.prov] = text.strip() or None
+        self.new_keys[self.prov] = K.clean(text) or None
         self.status.setText('')
 
     def current_key(self):

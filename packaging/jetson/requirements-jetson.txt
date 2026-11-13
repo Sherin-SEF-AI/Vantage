@@ -11,6 +11,10 @@ pyte                # the Terminal panel
 zstandard           # compressed ROS 2 bags (MCAP chunks)
 lz4
 anthropic>=2.3,<3   # the assistant's Claude provider
+# Its HTTP client decodes Anthropic's brotli-compressed replies with process(..., output_buffer_limit=), which only
+# Brotli 1.2+ takes. The venv sees apt's python3-brotli 1.1, and every successful call then fails as a "connection
+# error" (TypeError: process() takes no keyword arguments), while a refused key, sent back uncompressed, does not.
+brotli>=1.2
 pytest
 pytest-xdist        # QT_QPA_PLATFORM=offscreen python -m pytest tests -n 6 --dist loadfile
 # PyTorch (gradient refinement, log replay, foundation models) is installed by setup.sh from PyTorch's cu130 index.

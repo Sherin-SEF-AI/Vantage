@@ -72,6 +72,9 @@ packaging/jetson/setup.sh --self-test # the same, then the self-test (about 5 mi
   backward, on the GPU and checks them against the CPU (`PyTorch 2.14.1+cu130 on Orin (sm_87, 66 GB shared with the
   CPU): results match the CPU`). Vantage hides PyTorch's warning about Orin for that reason. `--no-torch` leaves
   PyTorch out.
+- **Brotli comes from PyPI too.** Apt's `python3-brotli` 1.1 is too old for the Anthropic SDK's HTTP client, which
+  then reports every successful Claude call as "Could not reach Anthropic's API" (`process() takes no keyword
+  arguments`). The requirements install Brotli 1.2 or later in the venv.
 - **Memory.** The Orin's GPU shares the 64 GB with the CPU, so the GPU jobs' memory budgets (*gpu_mem_gb* in log
   replay and the foundation models) are slices of system RAM: leave room for the recorder and the window.
 - **Power mode.** For the long jobs (campaigns, log replay, designed experiments), run the Orin in MAXN with its
@@ -131,4 +134,5 @@ python3 run_vantage.py project.vantage          # open a project
 ```
 
 Options: `--theme dark|light|system`, `--scale 1.15`, `--software-3d` (QPainter 3D view instead of OpenGL),
-`--template <vehicle-library id>|tigor` (the old sedan, hatchback, suv, van and truck still work), `--self-test`, `--version`.
+`--template <vehicle-library id>|tigor` (the old sedan, hatchback, suv, van and truck still work), `--install-guide`
+(open straight on Calibrate ▸ Install guide, full screen; [docs/install-guide.md](install-guide.md)), `--self-test`, `--version`.

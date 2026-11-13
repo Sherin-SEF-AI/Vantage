@@ -62,7 +62,7 @@ PAGE_CLASSES = {
     'fleet_twin': ('fleet_twin_ws', 'FleetTwinPage'), 'perf_model': ('perf_model_ws', 'PerfModelPage'),
     'designer': ('designer_ws', 'DesignerPage'), 'robust_perception': ('robust_ws', 'RobustPage'),
     'risk_coverage': ('risk_ws', 'RiskPage'), 'rig_perception': ('rig_perception_ws', 'RigPerceptionPage'),
-    'foundation': ('foundation_ws', 'FoundationPage'),
+    'foundation': ('foundation_ws', 'FoundationPage'), 'guide': ('guide_ws', 'GuidePage'),
 }
 
 
@@ -141,6 +141,7 @@ class MainWindow(QMainWindow):
         'photo': ('outliner', 'library', 'inspector', 'bottom'),
         'targets': ('outliner', 'library', 'inspector', 'bottom'),
         'install': (),
+        'guide': (),
         'volume': (),
         'perception': (),
         'rig': (),
@@ -596,6 +597,9 @@ class MainWindow(QMainWindow):
                                     'direction, what moving or adding a board gains), the lidar–camera pairs and '
                                     'radars, a Monte Carlo check, and the camera–lidar fusion density')
         A('install', 'Installation check…', lambda: self.set_page('install'), 'Ctrl+Shift+I', 'target', category='Calibrate')
+        A('install_guide', 'Install guide…', lambda: self.set_page('guide'), None, 'camera-wide', category='Calibrate',
+          tip='Fit the rig to a car from its live streams: ports, aim, boards, poses with their uncertainty, '
+              'coverage and independent checks, stage by stage, with Claude as a coach')
         A('live_rig', 'Live rig…', lambda: self.set_page('rig'), None, 'camera-wide', category='Calibrate',
           tip='Every camera\'s stream at once: frame rate, drops, exposure, sharpness, sync and drift from the plan')
         A('calib_coach', 'Calibration coach…', lambda: (self.set_page('rig'), self.page('rig').set_mode('coach')), None,
@@ -845,7 +849,7 @@ class MainWindow(QMainWindow):
         cb.addSeparator()
         cb.addActions([a['lens_calib'], a['calib_import'], a['calib_export'], a['calib_clear']])
         cb.addSeparator()
-        cb.addActions([a['install'], a['lidar_calib'], a['live_rig'], a['calib_coach'], a['drive_log'], a['asbuilt'],
+        cb.addActions([a['install_guide'], a['install'], a['lidar_calib'], a['live_rig'], a['calib_coach'], a['drive_log'], a['asbuilt'],
                        a['online_calib'], a['fleet'], a['fleet_twin']])
         si = menu('Simulate')
         si.addActions([a['carla'], a['carla_live']])
@@ -1205,6 +1209,8 @@ class MainWindow(QMainWindow):
             self._page_widgets['install'].stop_live()
         if 'rig' in self._page_widgets:
             self._page_widgets['rig'].stop()
+        if 'guide' in self._page_widgets:
+            self._page_widgets['guide'].stop()
         # the undo stack and analysis keep emitting while child widgets are torn down
         for obj in (self.store.undo, self.store, self.ctx.analysis, self.ctx):
             obj.blockSignals(True)

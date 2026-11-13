@@ -8,6 +8,14 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QFontDatabase, QPalette
 from PyQt6.QtWidgets import QApplication
 
+from .. import JETSON
+
+# Qt 6.12 squeezes a NoButtons spin box's text field to 1 px once the style sheet gives the box a border or padding,
+# so every number field draws empty. On the Jetson the buttons are kept, drawn 0 px wide.
+SPIN_NO_BUTTONS = not JETSON
+_SPIN_ZERO_BUTTONS = ('\nQAbstractSpinBox::up-button, QAbstractSpinBox::down-button { width: 0px; border: none; '
+                      'image: none; }\n')
+
 RES = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'resources')
 
 TOKENS = {
@@ -205,6 +213,8 @@ class ThemeManager(QObject):
         from . import icons
         icons.clear_cache()
         qss = QSS
+        if not SPIN_NO_BUTTONS:
+            qss = qss.replace(' qproperty-buttonSymbols: NoButtons;', '') + _SPIN_ZERO_BUTTONS
         tok = dict(self.tok)
         tok['crit'] = STATUS['critical']
         tok['fs12'] = str(self.px(12))

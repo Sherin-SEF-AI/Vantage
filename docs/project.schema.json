@@ -41,7 +41,20 @@
       },
       "additionalProperties": false
     },
-    "log": {"type": "array", "description": "The last 400 entries of the project's history: [time (s since 1970 UTC), kind, text].", "items": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": ["number", "string"]}}}
+    "install_guide": {
+      "type": "object",
+      "description": "The install guide (core/install_guide.py): boards on stands that tie a camera the floor boards cannot reach to a solved one, and the guide's settings (requirement, safety factor, board placement and corner noise, the check boards left out of the solve).",
+      "properties": {
+        "stands": {"type": "array", "items": {"type": "object", "properties": {
+          "uid": {"type": "string"}, "name": {"type": "string"}, "x": {"type": "number"}, "y": {"type": "number"},
+          "z": {"type": "number"}, "yaw": {"type": "number"}, "rows": {"type": "integer"}, "cols": {"type": "integer"},
+          "square_mm": {"type": "number"}, "parent": {"type": "string"}, "child": {"type": "string"}},
+          "additionalProperties": false}},
+        "settings": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "log":{"type": "array", "description": "The last 400 entries of the project's history: [time (s since 1970 UTC), kind, text].", "items": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": ["number", "string"]}}}
   },
   "$defs": {
     "vec3": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}},
