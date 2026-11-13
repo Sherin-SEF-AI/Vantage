@@ -21,6 +21,14 @@ if JETSON:
     for _k in ('OPENBLAS_NUM_THREADS', 'OMP_NUM_THREADS'):
         _os.environ.setdefault(_k, _n)
 
+# On Windows, numpy's OpenBLAS with its own worker threads crashed the process (access violation, 0xC0000005) when
+# Vantage's studies called it from several threads at once: the 0.9.0 bundle's self-test died in a different study on
+# each run, and passed with one OpenBLAS thread. Vantage's parallelism is its study threads, and its matrices are
+# small (3 x 3 rotations applied to many rays), so one BLAS thread each costs little. Unless the environment says
+# otherwise; set before anything imports numpy.
+if _os.name == 'nt':
+    _os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
+
 # PyTorch's CUDA wheels for aarch64 (cu130) carry sm_80 code and call a Jetson Orin's sm_87 unsupported on first use.
 # On an AGX Orin (JetPack 7) the kernels run and match the CPU (`vantage --self-test` checks it on the machine: the gpu
 # line), so the warning only alarms; any other GPU's warning is kept.

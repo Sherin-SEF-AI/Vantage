@@ -27,6 +27,7 @@ everything the app needs works, 1 otherwise; a warning says what does not work h
 from __future__ import annotations
 
 import ctypes
+import faulthandler
 import json
 import os
 import shutil
@@ -681,6 +682,10 @@ def run() -> int:
     if sys.platform.startswith('linux') and plat.startswith(('offscreen', 'minimal')):
         os.environ.setdefault('PYOPENGL_PLATFORM', 'egl')      # before anything imports OpenGL
         os.environ.setdefault('EGL_LOG_LEVEL', 'fatal')        # Mesa's notes about the displays it tries
+    try:                                # a crash in native code (exit 0xC0000005, SIGSEGV) prints where it happened
+        faulthandler.enable(all_threads=True)
+    except (RuntimeError, ValueError, AttributeError):     # no usable stderr (a windowed bundle)
+        pass
     t0 = time.perf_counter()
     print(f'Vantage {__version__} self-test · Python {sys.version.split()[0]} · {sys.platform}'
           + (' · bundled' if getattr(sys, 'frozen', False) else ''), flush=True)
