@@ -36,6 +36,7 @@ import cv2
 import numpy as np
 import pytest
 
+from vantage import CPU_SLOWDOWN
 from vantage.core import calib, lidar_calib as LC, samples
 from vantage.core.analysis import Engine
 from vantage.core.lens import builtin_lenses, builtin_modules, resolve
@@ -43,8 +44,9 @@ from vantage.core.lens import builtin_lenses, builtin_modules, resolve
 MOD = builtin_modules()[0]
 WIDE = builtin_lenses()[0]
 LENS_PAT = (9, 6)
-CLUTTER_S = 1.5            # a cluttered board-free frame at 1920 × 1536 (measured: see the module docstring)
-LIMIT_S = 2.0              # generous bound for a rejected frame (measured 0.02–0.15 s; target 0.3 s at 1920 × 1080)
+CLUTTER_S = 1.5 * CPU_SLOWDOWN   # a cluttered board-free frame at 1920 × 1536 (measured: see the module docstring)
+LIMIT_S = 2.0 * CPU_SLOWDOWN     # generous bound for a rejected frame (measured 0.02–0.15 s; target 0.3 s at 1920 × 1080)
+# (CPU_SLOWDOWN: these were measured on a desktop; a Jetson's cores take about 3 times as long, 1 elsewhere)
 
 
 def _rig():

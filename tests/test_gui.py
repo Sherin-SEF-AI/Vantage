@@ -508,6 +508,10 @@ def test_photo_matched_shading_main_view(app, win):
     solved = [k for k in range(len(ps.frames)) if ps.frames[k].pose is not None]
     if not solved:
         pytest.skip('sample photos have no solved pose')
+    if not ps.source:
+        # the studio photos are not distributed with Vantage (core.samples.tigor_photos): the sample has their poses
+        # but no images unless VANTAGE_TIGOR_PHOTOS or data/Tata-Tigor-EV-360.zip provides them
+        pytest.skip('the Tigor studio photos are not on this machine (VANTAGE_TIGOR_PHOTOS)')
     win.set_shading('photo')
     pane = win.viewarea.active
     assert win.ctx.shading == 'photo' and pane.vp3d.cam.custom is not None

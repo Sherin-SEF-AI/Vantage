@@ -72,6 +72,21 @@ packaging/jetson/setup.sh --self-test # the same, then the self-test (about 5 mi
   backward, on the GPU and checks them against the CPU (`PyTorch 2.14.1+cu130 on Orin (sm_87, 66 GB shared with the
   CPU): results match the CPU`). Vantage hides PyTorch's warning about Orin for that reason. `--no-torch` leaves
   PyTorch out.
+- **Brotli comes from PyPI too.** Apt's `python3-brotli` 1.1 is too old for the Anthropic SDK's HTTP client, which
+  then reports every successful Claude call as "Could not reach Anthropic's API" (`process() takes no keyword
+  arguments`). The requirements install Brotli 1.2 or later in the venv.
+- **Boards in the Installation check.** Apt's OpenCV 4.6 places every other corner of a small, oblique board 1–2 px
+  off (a checkerboard pattern of errors), which pulled the joint solve 0.37° off for one camera of the sample. On a
+  Jetson the check looks for each board first on the board's own plane, as the Install guide does (every square
+  40 px and seen square-on), then in the usual pinhole patch: on the sample's synthetic captures the worst corner went
+  from 2.3 px to 0.25 px, the rear camera found three boards instead of one, and every camera came within 0.02°.
+  The same OpenCV takes 1.8–2.7 s for its classic detector on a board-free patch of sensor noise (a planned lidar
+  board that is not there: 10 s a frame, against 0.15 s on a desktop), so on a Jetson that detector runs at half
+  size, where it takes 0.01 s, and its corners are refined at full size.
+- **Slower CPU.** The pages that run again by themselves after an edit (calibration observability, coverage,
+  exposure, critical scenarios, rig perception) do so while their last run took less than a few seconds. An Orin's
+  cores take about three times as long as the desktop's those limits were set on, so on a Jetson they are three
+  times as long (`vantage.CPU_SLOWDOWN`); the observability study takes 3–6 s there against a 3 s desktop limit.
 - **Memory.** The Orin's GPU shares the 64 GB with the CPU, so the GPU jobs' memory budgets (*gpu_mem_gb* in log
   replay and the foundation models) are slices of system RAM: leave room for the recorder and the window.
 - **Power mode.** For the long jobs (campaigns, log replay, designed experiments), run the Orin in MAXN with its
@@ -131,4 +146,5 @@ python3 run_vantage.py project.vantage          # open a project
 ```
 
 Options: `--theme dark|light|system`, `--scale 1.15`, `--software-3d` (QPainter 3D view instead of OpenGL),
-`--template <vehicle-library id>|tigor` (the old sedan, hatchback, suv, van and truck still work), `--self-test`, `--version`.
+`--template <vehicle-library id>|tigor` (the old sedan, hatchback, suv, van and truck still work), `--install-guide`
+(open straight on Calibrate ▸ Install guide, full screen; [docs/install-guide.md](install-guide.md)), `--self-test`, `--version`.

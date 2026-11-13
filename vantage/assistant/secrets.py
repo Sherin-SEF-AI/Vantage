@@ -22,6 +22,12 @@ def sources(provider='groq') -> dict:
             'file': 'in a private file in your settings folder (readable only by you)'}
 
 
+def clean(key) -> str:
+    """The key without whitespace or invisible characters anywhere in it: keys have none, and a copy from a wrapped
+    line or a chat brings a line break the key field keeps but does not show (an HTTP header cannot carry it)."""
+    return ''.join(c for c in (key or '') if not c.isspace() and c not in '\u200b\u200c\u200d\u2060\ufeff')
+
+
 def _p(provider) -> str:
     if provider not in WHERE:
         raise KeyError(f'unknown provider {provider!r}')
@@ -65,20 +71,20 @@ def _keyring():
 def load(provider='groq') -> tuple[str | None, str | None]:
     """(key, source) — source is 'environment', 'keyring', 'file' or None."""
     env, account, _ = WHERE[_p(provider)]
-    k = os.environ.get(env, '').strip()
+    k = clean(os.environ.get(env, ''))
     if k:
         return k, 'environment'
     kr = _keyring()
     if kr is not None:
         try:
-            k = (kr.get_password(SERVICE, account) or '').strip()
+            k = clean(kr.get_password(SERVICE, account))
             if k:
                 return k, 'keyring'
         except Exception:
             pass
     try:
         with open(_path(provider), encoding='utf-8') as f:
-            k = f.read().strip()
+            k = clean(f.read())
         if k:
             return k, 'file'
     except OSError:
@@ -88,7 +94,7 @@ def load(provider='groq') -> tuple[str | None, str | None]:
 
 def save(key: str, provider='groq') -> str:
     """Store the key; returns where it went."""
-    key = key.strip()
+    key = clean(key)
     _, account, _ = WHERE[_p(provider)]
     kr = _keyring()
     if kr is not None:

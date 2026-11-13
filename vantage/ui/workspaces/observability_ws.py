@@ -27,7 +27,8 @@ from .recording_ws import Tile
 
 JOB = 'observability'
 JOB_MC = 'observability_mc'
-AUTO_MAX_S = 3.0                       # runs again by itself after an edit when the last run took less
+from ... import CPU_SLOWDOWN
+AUTO_MAX_S = 3.0 * CPU_SLOWDOWN                       # runs again by itself after an edit when the last run took less
 EMPTY = 'Plan calibration targets in Calibrate ▸ Targets, then Run.'
 SEV_WORD = {'good': 'OK', 'warning': 'Warning', 'serious': 'Serious', 'critical': 'Critical'}
 # (group, key, label, unit, decimals, step, tip)

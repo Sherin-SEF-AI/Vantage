@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (QWidget, QLabel, QDoubleSpinBox, QAbstractSpinBox, 
                              QLineEdit, QComboBox, QApplication)
 
 from ..core.mathutil import parse_number, fmt_num
-from .theme import THEME, mono, sans, STATUS
+from .theme import THEME, mono, sans, STATUS, SPIN_NO_BUTTONS
 from . import icons
 
 LABEL_W = 96
@@ -193,7 +193,8 @@ class ScrubSpinBox(QDoubleSpinBox):
         self.setDecimals(decimals)
         self.setRange(-1e7, 1e7)
         self.setKeyboardTracking(False)
-        self.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        if SPIN_NO_BUTTONS:
+            self.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         self.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.setFont(mono(12))
         self.scrub_step = step if step is not None else (10 ** -decimals if kind != 'angle' else 0.1)
@@ -238,7 +239,8 @@ class ScrubSpinBox(QDoubleSpinBox):
             self.unit_w.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
             right = w + 2
         le = self.lineEdit()
-        le.setTextMargins(max(0, left - 6), 0, max(0, right - 6), 0)
+        pad = 6 if SPIN_NO_BUTTONS else 0       # the style sheet's padding, which the Jetson's 0 px buttons lose
+        le.setTextMargins(max(0, left - pad), 0, max(0, right - pad), 0)
 
     def resizeEvent(self, e):
         super().resizeEvent(e)

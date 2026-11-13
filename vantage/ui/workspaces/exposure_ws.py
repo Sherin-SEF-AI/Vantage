@@ -23,7 +23,8 @@ from ..theme import STATUS, THEME, mono
 from ..widgets import fit_width, ROW_H, ScrubSpinBox, SegmentedControl, StatusLine, button, hline, label
 
 JOB = 'exposure'
-AUTO_MAX_S = 3.0
+from ... import CPU_SLOWDOWN
+AUTO_MAX_S = 3.0 * CPU_SLOWDOWN
 # (group, key, label, unit, decimals, scrub step, tooltip)
 FIELDS = (
     ('Campaign', 'lat', 'Latitude', '° N', 4, 0.1, 'Where the data is collected: degrees north (south negative)'),

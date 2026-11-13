@@ -70,6 +70,8 @@ def main(argv=None):
     ap.add_argument('--scale', type=float, help='UI scale, e.g. 1.15')
     ap.add_argument('--software-3d', action='store_true', help='draw the 3D view with QPainter instead of OpenGL')
     ap.add_argument('--no-start', action='store_true', help='skip the start window')
+    ap.add_argument('--install-guide', action='store_true',
+                    help='open straight on Calibrate ▸ Install guide, full screen (with a project path, or the sample)')
     ap.add_argument('--install-desktop', action='store_true',
                     help='Linux: add Vantage to the app menu with its icon (dock, app grid) and the .vantage file type '
                          'for this user, for a checkout or pip install (the bundle\'s install.sh does this itself)')
@@ -121,7 +123,7 @@ def main(argv=None):
         else:
             project = samples.blank_project()
             model_path = args.path
-    elif not args.no_start:
+    elif not args.no_start and not args.install_guide:
         from .ui.dialogs.start import StartWindow
         sw = StartWindow(settings)
         if not sw.exec() or not sw.choice:
@@ -154,6 +156,9 @@ def main(argv=None):
         QTimer.singleShot(100, lambda: w.import_vehicle(path=model_path))
     if project.path:
         w.add_recent(project.path)
+    if args.install_guide:
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(0, lambda: (w.set_page('guide'), w.showMaximized()))
     return app.exec()
 
 

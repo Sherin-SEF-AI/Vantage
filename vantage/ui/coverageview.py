@@ -20,7 +20,8 @@ from ..core import sensors as S
 from .charts import ChartBase
 from .theme import THEME, STATUS, mono, sans
 
-AUTO_MAX_S = 3.0
+from .. import CPU_SLOWDOWN
+AUTO_MAX_S = 3.0 * CPU_SLOWDOWN
 JOB = 'sensor_coverage'
 EMPTY = 'Add a lidar or radar: Vehicle ▸ Add lidar / Add radar'
 RINGS = PR.PNG_RINGS

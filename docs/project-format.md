@@ -93,6 +93,7 @@ writes; it describes version 1 as Vantage 0.2 writes it.
 | `streams` | object | live-stream source per camera tag |
 | `fleet` | object | vehicles built to this design and their calibrations |
 | `hardware` | object | custom rig hardware (compute, recorder, switch, time server, converter) and the item selected per role |
+| `install_guide` | object | the install guide's boards on stands and its settings |
 | `log` | array | the last 400 history entries `[time, kind, text]` |
 
 ### vehicle
@@ -477,6 +478,12 @@ figures, e.g. a recorder's `write_mb_s`, `storage_tb`, `power_w`), `selected` (r
 into `ecu`, `analysis.power` and `analysis.recording`; the clock tree reads a switch's and a time server's timing
 figures from it. Custom cameras, lenses and sensors go into `modules`, `lenses` and `sensor_models` with `builtin`
 false.
+
+`install_guide` (`core/install_guide.py`): `stands` ([`uid`, `name`, `x`, `y`, `z` the board's centre (m),
+`yaw` the direction its printed face looks (deg), `rows`, `cols` (squares), `square_mm`, `parent` and `child` the tags
+of the solved camera and the camera it ties to it]) and `settings` (the guide's `GuideSettings`: `need_deg`, `need_mm`,
+`safety`, `pixel_sigma`, `board_sigma_mm`, `board_sigma_deg`, `min_square_px`, `check_boards` (floor board names left
+out of the solve for the verify stage) and the rest of its tolerances). The floor boards themselves are `targets`.
 
 `log`: the last 400 entries of the project's history, `[time, kind, text]`.
 
