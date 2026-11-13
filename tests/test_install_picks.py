@@ -14,7 +14,7 @@ from vantage.core import samples, capture
 from vantage.core.analysis import Engine
 from vantage.core.install import (check_all, check_camera, picks_from_rows, picks_to_rows, planned_corners,
                                   solve_from_picks)
-from vantage.core.mathutil import rot_zyx
+from vantage.core.mathutil import euler_zyx, rot_zyx, wrap180
 from vantage.core.synth import render_capture
 
 from test_gui import app, win, pump, _wait   # noqa: F401  (fixtures)
@@ -235,7 +235,14 @@ def test_page_pick_corners_by_dragging(app, win, tmp_path):
     _wait(app, lambda: not pg.busy and pg.results)
     r = pg.results[f.uid]
     assert r.method == 'picked' and r.pos is not None, r.message
-    assert np.abs(r.dang_deg - d[:3]).max() < 0.5      # picks land on whole screen pixels of a scaled-down tile
+    # the picks' own solve: they land on whole screen pixels of a scaled-down tile
+    R1 = r.single[0] if r.joint else rot_zyx(r.yaw, r.pitch, r.roll)
+    y1, p1, r1 = euler_zyx(R1)
+    own = np.array([wrap180(y1 - f.yaw), p1 - f.pitch, wrap180(r1 - f.roll)])
+    assert np.abs(own - d[:3]).max() < 0.5, own
+    # the joint solve with the other cameras may move it a little: the boards may shift within their placement priors,
+    # and five picks on one camera hold it less firmly than detected boards hold the others
+    assert np.abs(r.dang_deg - d[:3]).max() < 1.0, r.dang_deg
     assert pg.images[f.uid] is img and pg.n_picks(f.uid) == moved - 1      # the capture and its picks are kept
     row = next(x for x in pg.report()['cameras'] if x['tag'] == 'F')
     assert row['method'] == 'picked' and len(row['picked_corners']) == moved - 1
