@@ -122,7 +122,7 @@ vantage --desktop-shortcut          # Linux: the same, plus a Vantage launcher o
 vantage project.vantage --analyse report.json
 ```
 
-**Building the downloads.** Tag a version (`git tag v0.8.1 && git push origin v0.8.1`). The *Build installers*
+**Building the downloads.** Tag a version (`git tag v0.9.0 && git push origin v0.9.0`). The *Build installers*
 workflow builds and smoke-tests all four bundles (Linux x86_64 and arm64, Windows, macOS). When all pass, it publishes
 the GitHub release with `SHA256SUMS.txt` and the CHANGELOG entry as notes. Starting the workflow by hand from the Actions tab builds the
 bundles as artifacts only, without a release. To build for the machine you are on, in a fresh virtual environment
