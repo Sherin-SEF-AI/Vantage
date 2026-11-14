@@ -1045,6 +1045,17 @@ def _r_targets(pg, w, p):
     return t or None
 
 
+def _r_guide(pg, w, p):
+    """The Install guide's session as its report reads it (stages, poses, coverage), without the coach's log."""
+    if getattr(pg, 'session', None) is None:
+        return None
+    try:
+        doc = pg.report()
+    except Exception:                                   # a half-set-up session: nothing to read yet
+        return None
+    return {k: v for k, v in doc.items() if k != 'coach'} or None
+
+
 def _r_compare(pg, w, p):
     """Per variant (by name) the figures the page compares, read off its analysis results."""
     r = getattr(pg, 'results', None)
@@ -1214,6 +1225,13 @@ _G = [
           result_fn=_r_install, run='b_run', run_text='Run check', export='b_report', before=('targets', 'rig'),
           after=(Next('fleet', 'Record the measured poses per vehicle (Import… takes the installation report).',
                       'b_import'),)),
+    Guide('guide', 'Install guide',
+          'Take a rig fitted to the car from its live streams to a verified calibration and coverage, stage by '
+          'stage, with Claude as a coach whose figures are all the guide\'s.', needs=(NEED_CAMERAS,),
+          result_fn=_r_guide, busy='running', run='start_btn', run_text='Start', export='report_btn',
+          before=('targets', 'install'),
+          after=(Next('asbuilt', 'Compare a recording of the fitted rig with the plan.'),
+                 Next('fleet', 'Record the measured poses per vehicle.'))),
     Guide('volume', 'Blind volume',
           'Where around the vehicle something can stand unseen by every camera, in 3D, and how tall an object must be '
           'to be seen.', needs=(NEED_ANALYSIS, NEED_MESH), result='ctx:volume.result', busy='ctx:volume.busy',

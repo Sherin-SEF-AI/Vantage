@@ -117,7 +117,7 @@ KIND_WORD = {'decision': 'decision:', 'rejected': '', 'constraint': 'constraint:
 
 PAGES = {'viewports': '3D and top views', 'camviews': 'Camera views', 'tolerance': 'Tolerance study',
          'optimiser': 'Optimiser', 'compare': 'Compare variants', 'photo': 'Photo matching', 'targets': 'Targets',
-         'install': 'Installation check', 'volume': 'Blind volume', 'perception': 'Perception range',
+         'install': 'Installation check', 'guide': 'Install guide', 'volume': 'Blind volume', 'perception': 'Perception range',
          'rig': 'Live rig', 'coverage': 'Lidar and radar coverage', 'timing': 'Sync and timing',
          'clock_tree': 'Clock tree and time sync', 'isp': 'Exposure metering and HDR seams',
          'recording': 'Recording budget', 'power': 'Power budget',
