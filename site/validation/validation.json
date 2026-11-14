@@ -2,15 +2,15 @@
  "schema": "vantage.validation/1",
  "project": "sample (built in)",
  "variant": "6-cam · v3",
- "created_utc": "2026-11-04T06:21:24Z",
- "seconds": 61.31,
+ "created_utc": "2026-11-14T08:02:34Z",
+ "seconds": 108.7,
  "settings": {
   "models": [],
   "quick": false,
   "seed": 20261027
  },
  "environment": {
-  "vantage": "0.8.1",
+  "vantage": "0.10.0",
   "python": "3.14.4",
   "numpy": "2.3.5",
   "scipy": "1.16.3",
@@ -22,8 +22,8 @@
  "limits": "The suite checks the models against references for the cases it builds; it does not show that a model describes a real vehicle, lens or sensor. Monte Carlo checks are statistical: their tolerance is 4.5 standard errors of the estimated spread, at a fixed seed.",
  "cancelled": false,
  "summary": {
-  "checks": 71,
-  "passed": 71,
+  "checks": 119,
+  "passed": 119,
   "failed": [],
   "ok": true
  },
@@ -49,7 +49,7 @@
      "tolerance": 1e-06,
      "unit": "degrees",
      "passed": true,
-     "seconds": 0.014,
+     "seconds": 0.022,
      "note": "",
      "exception": "",
      "detail": {
@@ -109,7 +109,39 @@
        "computar_m0814_mp2_bfs": 3.1805546814635168e-15,
        "computar_m0814_mp2_tri032": 3.1805546814635168e-15,
        "fujinon_hf6xa_5m_bfs": 6.3611093629270335e-15,
-       "fujinon_hf6xa_5m_tri054": 6.3611093629270335e-15
+       "fujinon_hf6xa_5m_tri054": 6.3611093629270335e-15,
+       "bosonplus640_as95": 2.2899993706537323e-13,
+       "bosonplus640_as50": 1.2722218725854067e-14,
+       "bosonplus640_a032": 3.1805546814635168e-15,
+       "bosonplus640_as32": 3.1805546814635168e-15,
+       "bosonplus640_a024": 6.3611093629270335e-15,
+       "bosonplus640_as24": 6.3611093629270335e-15,
+       "bosonplus640_a018": 3.1805546814635168e-15,
+       "bosonplus640_hs14": 7.951386703658792e-16,
+       "bosonplus640_a012": 1.5902773407317584e-15,
+       "bosonplus640_a008": 1.5902773407317584e-15,
+       "bosonplus320_h092": 3.81666561775622e-14,
+       "bosonplus320_a050": 1.2722218725854067e-14,
+       "bosonplus320_as50": 1.2722218725854067e-14,
+       "bosonplus320_a034": 6.3611093629270335e-15,
+       "bosonplus320_a024": 4.770832022195275e-15,
+       "bosonplus320_a016": 3.1805546814635168e-15,
+       "bosonplus320_a012": 1.5902773407317584e-15,
+       "bosonplus320_a004": 7.951386703658792e-16,
+       "adk_75": 6.3611093629270335e-15,
+       "adk_50": 6.3611093629270335e-15,
+       "adk_32": 6.3611093629270335e-15,
+       "adk_24": 4.770832022195275e-15,
+       "pico640s_19mm": 3.1805546814635168e-15,
+       "pico640s_50mm": 1.5902773407317584e-15,
+       "pico640s_75mm": 1.5902773407317584e-15,
+       "tura_24": 4.770832022195275e-15,
+       "tura_42": 6.3611093629270335e-15,
+       "tura_70": 1.2722218725854067e-14,
+       "prophesee_evk4_lens": 3.1805546814635168e-15,
+       "prophesee_evk5_lens_48": 3.1805546814635168e-15,
+       "prophesee_evk5_lens_159": 2.5444437451708134e-14,
+       "prophesee_evk3_genx320_lens": 6.3611093629270335e-15
       },
       "samples": 2000
      },
@@ -128,7 +160,7 @@
      "tolerance": 1e-06,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.005,
+     "seconds": 0.007,
      "note": "",
      "exception": "",
      "detail": {
@@ -188,7 +220,39 @@
        "computar_m0814_mp2_bfs": 6.657851104491648e-11,
        "computar_m0814_mp2_tri032": 6.657851104491648e-11,
        "fujinon_hf6xa_5m_bfs": 8.963274658973937e-11,
-       "fujinon_hf6xa_5m_tri054": 8.811325654442983e-11
+       "fujinon_hf6xa_5m_tri054": 8.811325654442983e-11,
+       "bosonplus640_as95": 1.7491353878268987e-09,
+       "bosonplus640_as50": 1.1743853808845046e-10,
+       "bosonplus640_a032": 8.192682550991579e-11,
+       "bosonplus640_as32": 8.493856390210023e-11,
+       "bosonplus640_a024": 6.690996555433288e-11,
+       "bosonplus640_as24": 6.60923903310951e-11,
+       "bosonplus640_a018": 4.42827846021391e-11,
+       "bosonplus640_hs14": 2.210497222411879e-11,
+       "bosonplus640_a012": 2.03539451630993e-11,
+       "bosonplus640_a008": 1.5047766494931763e-11,
+       "bosonplus320_h092": 3.184443097322054e-10,
+       "bosonplus320_a050": 1.607383773637168e-10,
+       "bosonplus320_as50": 9.599197740379834e-11,
+       "bosonplus320_a034": 8.380280990921543e-11,
+       "bosonplus320_a024": 5.95484472672992e-11,
+       "bosonplus320_a016": 3.266599068143206e-11,
+       "bosonplus320_a012": 2.0268987298638944e-11,
+       "bosonplus320_a004": 8.283702920800513e-12,
+       "adk_75": 1.0149250844331392e-10,
+       "adk_50": 1.033959440611937e-10,
+       "adk_32": 6.840423834104483e-11,
+       "adk_24": 4.751479485282265e-11,
+       "pico640s_19mm": 8.091032751450548e-11,
+       "pico640s_50mm": 2.318506192810163e-11,
+       "pico640s_75mm": 1.4769357829743698e-11,
+       "tura_24": 4.751479485282265e-11,
+       "tura_42": 9.721538812554865e-11,
+       "tura_70": 1.0953023694695161e-10,
+       "prophesee_evk4_lens": 7.42124345449857e-11,
+       "prophesee_evk5_lens_48": 7.42124345449857e-11,
+       "prophesee_evk5_lens_159": 2.539770059774047e-10,
+       "prophesee_evk3_genx320_lens": 8.940101313315384e-11
       }
      },
      "figure": null
@@ -207,7 +271,7 @@
      "tolerance": 1e-06,
      "unit": "px",
      "passed": true,
-     "seconds": 0.037,
+     "seconds": 0.03,
      "note": "",
      "exception": "",
      "detail": {
@@ -235,11 +299,11 @@
       "opencv",
       "kannala2006"
      ],
-     "error": 1.3830600733622803e-12,
+     "error": 2.109342780759047e-12,
      "tolerance": 1e-06,
      "unit": "px",
      "passed": true,
-     "seconds": 0.016,
+     "seconds": 0.028,
      "note": "",
      "exception": "",
      "detail": {
@@ -287,7 +351,39 @@
        "d3_imx390_medium": 5.084229945850415e-13,
        "d3_imx390_narrow": 5.084229945850415e-13,
        "d3_imx728_medium": 1.0725194820289065e-12,
-       "d3_imx728_narrow": 1.016845989170083e-12
+       "d3_imx728_narrow": 1.016845989170083e-12,
+       "bosonplus640_as95": 2.3437142008433856e-13,
+       "bosonplus640_as50": 1.6077746776921858e-13,
+       "bosonplus640_a032": 2.2737367544323206e-13,
+       "bosonplus640_as32": 2.5421149729252077e-13,
+       "bosonplus640_a024": 2.3437142008433856e-13,
+       "bosonplus640_as24": 1.6077746776921858e-13,
+       "bosonplus640_a018": 2.5421149729252077e-13,
+       "bosonplus640_hs14": 2.6812987050722663e-13,
+       "bosonplus640_a012": 2.428351918216984e-13,
+       "bosonplus640_a008": 2.3437142008433856e-13,
+       "bosonplus320_h092": 1.214175959108492e-13,
+       "bosonplus320_a050": 1.2710574864626038e-13,
+       "bosonplus320_as50": 1.1718571004216928e-13,
+       "bosonplus320_a034": 1.2710574864626038e-13,
+       "bosonplus320_a024": 1.2710574864626038e-13,
+       "bosonplus320_a016": 1.1718571004216928e-13,
+       "bosonplus320_a012": 7.105427357601002e-14,
+       "bosonplus320_a004": 8.038873388460929e-14,
+       "adk_75": 2.5421149729252077e-13,
+       "adk_50": 2.3437142008433856e-13,
+       "adk_32": 2.5421149729252077e-13,
+       "adk_24": 2.3437142008433856e-13,
+       "pico640s_19mm": 2.5421149729252077e-13,
+       "pico640s_50mm": 2.428351918216984e-13,
+       "pico640s_75mm": 2.3437142008433856e-13,
+       "tura_24": 2.5421149729252077e-13,
+       "tura_42": 2.3437142008433856e-13,
+       "tura_70": 2.3437142008433856e-13,
+       "prophesee_evk4_lens": 4.582862941503293e-13,
+       "prophesee_evk5_lens_48": 4.687428401686771e-13,
+       "prophesee_evk5_lens_159": 2.109342780759047e-12,
+       "prophesee_evk3_genx320_lens": 1.2710574864626038e-13
       }
      },
      "figure": null
@@ -296,7 +392,7 @@
      "id": "lens.opencv_undistort",
      "model": "lens",
      "title": "Pixel to ray against OpenCV's fisheye undistortion",
-     "quantity": "largest angle between Intrinsics.unproject's ray and the ray cv2.fisheye.undistortPoints gives for the same pixel, every built-in fisheye lens, pixels up to 75° off the axis",
+     "quantity": "largest angle between Intrinsics.unproject's ray and the ray cv2.fisheye.undistortPoints gives for the same pixel, every built-in fisheye lens, pixels up to 75° off the axis (where OpenCV's answer projects back onto the pixel: its iteration does not converge far out on a strongly bent wide-angle fit; those pixels are counted)",
      "reference": "OpenCV cv2.fisheye.undistortPoints (iterated to 10⁻¹⁴)",
      "references": [
       "opencv",
@@ -306,7 +402,7 @@
      "tolerance": 0.0001,
      "unit": "degrees",
      "passed": true,
-     "seconds": 0.024,
+     "seconds": 0.066,
      "note": "",
      "exception": "",
      "detail": {
@@ -354,7 +450,42 @@
        "d3_imx390_medium": 1.2074182697257333e-06,
        "d3_imx390_narrow": 1.2074182697257333e-06,
        "d3_imx728_medium": 1.2074182697257333e-06,
-       "d3_imx728_narrow": 1.2074182697257333e-06
+       "d3_imx728_narrow": 1.2074182697257333e-06,
+       "bosonplus640_as95": 1.2074182697257333e-06,
+       "bosonplus640_as50": 1.2074182697257333e-06,
+       "bosonplus640_a032": 1.2074182697257333e-06,
+       "bosonplus640_as32": 1.2074182697257333e-06,
+       "bosonplus640_a024": 8.537736462515939e-07,
+       "bosonplus640_as24": 1.2074182697257333e-06,
+       "bosonplus640_a018": 1.2074182697257333e-06,
+       "bosonplus640_hs14": 1.2074182697257333e-06,
+       "bosonplus640_a012": 8.537736462515939e-07,
+       "bosonplus640_a008": 8.537736462515939e-07,
+       "bosonplus320_h092": 1.2074182697257333e-06,
+       "bosonplus320_a050": 1.2074182697257333e-06,
+       "bosonplus320_as50": 1.2074182697257333e-06,
+       "bosonplus320_a034": 1.2074182697257333e-06,
+       "bosonplus320_a024": 8.537736462515939e-07,
+       "bosonplus320_a016": 8.537736462515939e-07,
+       "bosonplus320_a012": 1.2074182697257333e-06,
+       "bosonplus320_a004": 8.537736462515939e-07,
+       "adk_75": 1.2074182697257333e-06,
+       "adk_50": 1.2074182697257333e-06,
+       "adk_32": 1.2074182697257333e-06,
+       "adk_24": 8.537736462515939e-07,
+       "pico640s_19mm": 1.2074182697257333e-06,
+       "pico640s_50mm": 1.2074182697257333e-06,
+       "pico640s_75mm": 1.2074182697257333e-06,
+       "tura_24": 8.537736462515939e-07,
+       "tura_42": 1.2074182697257333e-06,
+       "tura_70": 1.2074182697257333e-06,
+       "prophesee_evk4_lens": 1.2074182697257333e-06,
+       "prophesee_evk5_lens_48": 1.2074182697257333e-06,
+       "prophesee_evk5_lens_159": 1.2074182697257333e-06,
+       "prophesee_evk3_genx320_lens": 1.2074182697257333e-06
+      },
+      "opencv_unconverged_pixels": {
+       "prophesee_evk5_lens_159": 300
       }
      },
      "figure": null
@@ -372,7 +503,7 @@
      "tolerance": 0.5,
      "unit": "degrees",
      "passed": true,
-     "seconds": 0.011,
+     "seconds": 0.018,
      "note": "",
      "exception": "",
      "detail": {
@@ -1208,6 +1339,526 @@
          0.0
         ],
         "diff_deg": {}
+       },
+       "bosonplus640_as95": {
+        "model_deg": [
+         95.011,
+         76.992,
+         130.498
+        ],
+        "stated_deg": [
+         95.0,
+         77.0,
+         130.5
+        ],
+        "diff_deg": {
+         "H": 0.0109,
+         "V": -0.008,
+         "D": -0.0017
+        }
+       },
+       "bosonplus640_as50": {
+        "model_deg": [
+         49.898,
+         39.293,
+         65.895
+        ],
+        "stated_deg": [
+         49.9,
+         39.3,
+         65.9
+        ],
+        "diff_deg": {
+         "H": -0.0025,
+         "V": -0.0069,
+         "D": -0.0047
+        }
+       },
+       "bosonplus640_a032": {
+        "model_deg": [
+         31.98,
+         25.502,
+         40.83
+        ],
+        "stated_deg": [
+         32.0,
+         25.6,
+         40.8
+        ],
+        "diff_deg": {
+         "H": -0.0195,
+         "V": -0.0983,
+         "D": 0.0304
+        }
+       },
+       "bosonplus640_as32": {
+        "model_deg": [
+         32.026,
+         25.695,
+         40.889
+        ],
+        "stated_deg": [
+         32.0,
+         25.7,
+         40.9
+        ],
+        "diff_deg": {
+         "H": 0.0265,
+         "V": -0.0047,
+         "D": -0.0111
+        }
+       },
+       "bosonplus640_a024": {
+        "model_deg": [
+         24.396,
+         19.525,
+         31.249
+        ],
+        "stated_deg": [
+         24.3,
+         19.5,
+         31.3
+        ],
+        "diff_deg": {
+         "H": 0.0959,
+         "V": 0.0246,
+         "D": -0.0508
+        }
+       },
+       "bosonplus640_as24": {
+        "model_deg": [
+         24.346,
+         19.49,
+         31.21
+        ],
+        "stated_deg": [
+         24.3,
+         19.2,
+         31.3
+        ],
+        "diff_deg": {
+         "H": 0.0464,
+         "V": 0.2904,
+         "D": -0.0899
+        }
+       },
+       "bosonplus640_a018": {
+        "model_deg": [
+         18.108,
+         14.549,
+         23.018
+        ],
+        "stated_deg": [
+         18.0,
+         14.4,
+         23.1
+        ],
+        "diff_deg": {
+         "H": 0.1078,
+         "V": 0.1494,
+         "D": -0.082
+        }
+       },
+       "bosonplus640_hs14": {
+        "model_deg": [
+         13.538,
+         10.89,
+         17.175
+        ],
+        "stated_deg": [
+         13.5,
+         10.8,
+         17.2
+        ],
+        "diff_deg": {
+         "H": 0.0382,
+         "V": 0.09,
+         "D": -0.0246
+        }
+       },
+       "bosonplus640_a012": {
+        "model_deg": [
+         12.238,
+         9.786,
+         15.684
+        ],
+        "stated_deg": [
+         12.2,
+         9.8,
+         15.7
+        ],
+        "diff_deg": {
+         "H": 0.0376,
+         "V": -0.0141,
+         "D": -0.0162
+        }
+       },
+       "bosonplus640_a008": {
+        "model_deg": [
+         8.013,
+         6.407,
+         10.272
+        ],
+        "stated_deg": [
+         8.0,
+         6.4,
+         10.3
+        ],
+        "diff_deg": {
+         "H": 0.013,
+         "V": 0.0068,
+         "D": -0.028
+        }
+       },
+       "bosonplus320_h092": {
+        "model_deg": [
+         91.91,
+         74.0,
+         124.799
+        ],
+        "stated_deg": [
+         91.9,
+         74.0,
+         124.8
+        ],
+        "diff_deg": {
+         "H": 0.0099,
+         "V": 0.0004,
+         "D": -0.0009
+        }
+       },
+       "bosonplus320_a050": {
+        "model_deg": [
+         49.994,
+         40.017,
+         65.9
+        ],
+        "stated_deg": [
+         50.0,
+         40.0,
+         65.9
+        ],
+        "diff_deg": {
+         "H": -0.0061,
+         "V": 0.0171,
+         "D": 0.0005
+        }
+       },
+       "bosonplus320_as50": {
+        "model_deg": [
+         50.097,
+         39.868,
+         64.983
+        ],
+        "stated_deg": [
+         50.0,
+         40.0,
+         65.0
+        ],
+        "diff_deg": {
+         "H": 0.0966,
+         "V": -0.1322,
+         "D": -0.0173
+        }
+       },
+       "bosonplus320_a034": {
+        "model_deg": [
+         34.07,
+         27.406,
+         43.589
+        ],
+        "stated_deg": [
+         34.1,
+         27.3,
+         43.6
+        ],
+        "diff_deg": {
+         "H": -0.0296,
+         "V": 0.1063,
+         "D": -0.0106
+        }
+       },
+       "bosonplus320_a024": {
+        "model_deg": [
+         24.02,
+         19.262,
+         30.624
+        ],
+        "stated_deg": [
+         24.1,
+         19.2,
+         30.6
+        ],
+        "diff_deg": {
+         "H": -0.0803,
+         "V": 0.0622,
+         "D": 0.0242
+        }
+       },
+       "bosonplus320_a016": {
+        "model_deg": [
+         15.951,
+         12.759,
+         20.434
+        ],
+        "stated_deg": [
+         16.0,
+         12.8,
+         20.4
+        ],
+        "diff_deg": {
+         "H": -0.0488,
+         "V": -0.0413,
+         "D": 0.0336
+        }
+       },
+       "bosonplus320_a012": {
+        "model_deg": [
+         12.229,
+         9.782,
+         15.666
+        ],
+        "stated_deg": [
+         12.2,
+         9.7,
+         15.7
+        ],
+        "diff_deg": {
+         "H": 0.0293,
+         "V": 0.0816,
+         "D": -0.0338
+        }
+       },
+       "bosonplus320_a004": {
+        "model_deg": [
+         4.001,
+         3.201,
+         5.124
+        ],
+        "stated_deg": [
+         4.0,
+         3.2,
+         5.2
+        ],
+        "diff_deg": {
+         "H": 0.001,
+         "V": 0.0006,
+         "D": -0.0756
+        }
+       },
+       "adk_75": {
+        "model_deg": [
+         75.0,
+         63.092,
+         89.002
+        ],
+        "stated_deg": [
+         75.0,
+         0.0,
+         0.0
+        ],
+        "diff_deg": {
+         "H": 0.0
+        }
+       },
+       "adk_50": {
+        "model_deg": [
+         50.0,
+         40.916,
+         61.688
+        ],
+        "stated_deg": [
+         50.0,
+         0.0,
+         0.0
+        ],
+        "diff_deg": {
+         "H": -0.0005
+        }
+       },
+       "adk_32": {
+        "model_deg": [
+         31.998,
+         25.838,
+         40.329
+        ],
+        "stated_deg": [
+         32.0,
+         0.0,
+         0.0
+        ],
+        "diff_deg": {
+         "H": -0.0022
+        }
+       },
+       "adk_24": {
+        "model_deg": [
+         23.998,
+         19.299,
+         30.456
+        ],
+        "stated_deg": [
+         24.0,
+         0.0,
+         0.0
+        ],
+        "diff_deg": {
+         "H": -0.0019
+        }
+       },
+       "pico640s_19mm": {
+        "model_deg": [
+         31.975,
+         24.254,
+         39.394
+        ],
+        "stated_deg": [
+         32.0,
+         0.0,
+         0.0
+        ],
+        "diff_deg": {
+         "H": -0.0245
+        }
+       },
+       "pico640s_50mm": {
+        "model_deg": [
+         12.415,
+         9.328,
+         15.482
+        ],
+        "stated_deg": [
+         12.4,
+         9.3,
+         0.0
+        ],
+        "diff_deg": {
+         "H": 0.0149,
+         "V": 0.0283
+        }
+       },
+       "pico640s_75mm": {
+        "model_deg": [
+         8.301,
+         6.229,
+         10.369
+        ],
+        "stated_deg": [
+         8.3,
+         6.2,
+         0.0
+        ],
+        "diff_deg": {
+         "H": 0.0012,
+         "V": 0.0294
+        }
+       },
+       "tura_24": {
+        "model_deg": [
+         23.998,
+         19.299,
+         30.456
+        ],
+        "stated_deg": [
+         24.0,
+         0.0,
+         0.0
+        ],
+        "diff_deg": {
+         "H": -0.0019
+        }
+       },
+       "tura_42": {
+        "model_deg": [
+         41.999,
+         34.142,
+         52.355
+        ],
+        "stated_deg": [
+         42.0,
+         0.0,
+         0.0
+        ],
+        "diff_deg": {
+         "H": -0.0013
+        }
+       },
+       "tura_70": {
+        "model_deg": [
+         70.0,
+         58.513,
+         83.766
+        ],
+        "stated_deg": [
+         70.0,
+         0.0,
+         0.0
+        ],
+        "diff_deg": {
+         "H": 0.0
+        }
+       },
+       "prophesee_evk4_lens": {
+        "model_deg": [
+         42.145,
+         24.459,
+         47.701
+        ],
+        "stated_deg": [
+         0.0,
+         0.0,
+         47.7
+        ],
+        "diff_deg": {
+         "D": 0.0011
+        }
+       },
+       "prophesee_evk5_lens_48": {
+        "model_deg": [
+         42.145,
+         24.459,
+         47.701
+        ],
+        "stated_deg": [
+         0.0,
+         0.0,
+         47.7
+        ],
+        "diff_deg": {
+         "D": 0.0011
+        }
+       },
+       "prophesee_evk5_lens_159": {
+        "model_deg": [
+         155.86,
+         138.383,
+         158.902
+        ],
+        "stated_deg": [
+         0.0,
+         0.0,
+         158.9
+        ],
+        "diff_deg": {
+         "D": 0.0019
+        }
+       },
+       "prophesee_evk3_genx320_lens": {
+        "model_deg": [
+         58.001,
+         58.001,
+         76.001
+        ],
+        "stated_deg": [
+         58.0,
+         58.0,
+         76.0
+        ],
+        "diff_deg": {
+         "H": 0.0009,
+         "V": 0.0009,
+         "D": 0.0006
+        }
        }
       }
      },
@@ -1271,7 +1922,39 @@
          47.0,
          48.0,
          49.0,
-         50.0
+         50.0,
+         51.0,
+         52.0,
+         53.0,
+         54.0,
+         55.0,
+         56.0,
+         57.0,
+         58.0,
+         59.0,
+         60.0,
+         61.0,
+         62.0,
+         63.0,
+         64.0,
+         65.0,
+         66.0,
+         67.0,
+         68.0,
+         69.0,
+         70.0,
+         71.0,
+         72.0,
+         73.0,
+         74.0,
+         75.0,
+         76.0,
+         77.0,
+         78.0,
+         79.0,
+         80.0,
+         81.0,
+         82.0
         ],
         "y": [
          0.4342,
@@ -1324,7 +2007,39 @@
          0.0,
          0.0,
          0.0,
-         0.0
+         0.0,
+         0.0109,
+         0.0069,
+         0.0983,
+         0.0265,
+         0.0959,
+         0.2904,
+         0.1494,
+         0.09,
+         0.0376,
+         0.028,
+         0.0099,
+         0.0171,
+         0.1322,
+         0.1063,
+         0.0803,
+         0.0488,
+         0.0816,
+         0.0756,
+         0.0,
+         0.0005,
+         0.0022,
+         0.0019,
+         0.0245,
+         0.0283,
+         0.0294,
+         0.0019,
+         0.0013,
+         0.0,
+         0.0011,
+         0.0011,
+         0.0019,
+         0.0009
         ]
        }
       ],
@@ -1383,7 +2098,39 @@
        "Computar M0814-MP2 (8 mm)",
        "computar_m0814_mp2_tri032",
        "Fujinon HF6XA-5M (6 mm)",
-       "fujinon_hf6xa_5m_tri054"
+       "fujinon_hf6xa_5m_tri054",
+       "AS95 (95°)",
+       "AS50 (49.9°)",
+       "A032 (32°)",
+       "AS32 (32°)",
+       "A024 (24.3°)",
+       "AS24 (24.3°)",
+       "A018 (18°)",
+       "HS14 (13.5°)",
+       "A012 (12.2°)",
+       "A008 (8°)",
+       "H092 (91.9°)",
+       "A050 (50°)",
+       "AS50 (50°)",
+       "A034 (34.1°)",
+       "A024 (24.1°)",
+       "A016 (16°)",
+       "bosonplus320_a012",
+       "A004 (4°)",
+       "75° HFOV",
+       "50° HFOV",
+       "32° HFOV",
+       "24° HFOV",
+       "19 mm (32°)",
+       "50 mm (12.4°)",
+       "75 mm (8.3°)",
+       "tura_24",
+       "42° HFOV",
+       "70° HFOV",
+       "C-mount f/2.0 (47.7° D)",
+       "CS-mount (47.7° D)",
+       "CS-mount wide (158.9° D)",
+       "SND2636A1SD-8M M12 (1.8 mm)"
       ]
      }
     },
@@ -1401,7 +2148,7 @@
      "tolerance": 0.001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.01,
+     "seconds": 0.011,
      "note": "",
      "exception": "",
      "detail": {
@@ -1682,7 +2429,7 @@
      "tolerance": 0.001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.127,
+     "seconds": 0.134,
      "note": "",
      "exception": "",
      "detail": {
@@ -1739,7 +2486,7 @@
      "tolerance": 0.001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.818,
+     "seconds": 0.264,
      "note": "",
      "exception": "",
      "detail": {
@@ -1794,7 +2541,7 @@
      "tolerance": 0.001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.064,
+     "seconds": 0.073,
      "note": "",
      "exception": "",
      "detail": {
@@ -1833,7 +2580,7 @@
      "tolerance": 0.005,
      "unit": "share of directions",
      "passed": true,
-     "seconds": 6.897,
+     "seconds": 4.719,
      "note": "A cube map texel stores the exact distance along its centre ray to the plane of the triangle drawn there (painted far to near by each triangle's nearest point): the depth error left is the texel's size (a random direction lies up to half a texel off the centre ray; most at grazing angles and silhouettes), see the median and 95th percentile here. Until 0.2.0 it stored the triangle centroid's distance: 15 % off in the median, over 3× at the 95th percentile. What the analysis decides from it is checked in occlusion.ground_visibility.",
      "exception": "",
      "detail": {
@@ -1881,8 +2628,8 @@
       "farthest_from_silhouette_deg": 0.6,
       "silhouette_band_deg": 1.0,
       "depth_rel_error_median": 0.001545572790678814,
-      "depth_rel_error_p95": 0.014184105954725043,
-      "triangles": 6040
+      "depth_rel_error_p95": 0.014205847459685847,
+      "triangles": 6682
      },
      "figure": {
       "kind": "bars",
@@ -1951,7 +2698,7 @@
      "tolerance": 0.005,
      "unit": "share of texels",
      "passed": true,
-     "seconds": 5.974,
+     "seconds": 6.37,
      "note": "The texels off by more than 0.1 % lie at a silhouette or a crease: the triangle drawn there covers part of the texel but not its centre (a polygon's one-pixel outline), so the depth is of a surface within one texel of the centre ray.",
      "exception": "",
      "detail": {
@@ -1979,7 +2726,7 @@
        },
        "QL": {
         "texels": 3000,
-        "off_by_more_than_0_1pct": 54,
+        "off_by_more_than_0_1pct": 55,
         "no_surface_within_one_texel": 0
        },
        "QR": {
@@ -1989,11 +2736,11 @@
        }
       },
       "texels": 18000,
-      "off_by_more_than_0_1pct": 234,
+      "off_by_more_than_0_1pct": 235,
       "no_surface_within_one_texel": 17,
-      "centre_rel_error_median": 2.1024640751319358e-08,
-      "centre_rel_error_p99": 0.0008994800432575444,
-      "triangles": 6040
+      "centre_rel_error_median": 2.1025554667383747e-08,
+      "centre_rel_error_p99": 0.0009463281009613584,
+      "triangles": 6682
      },
      "figure": {
       "kind": "bars",
@@ -2013,10 +2760,10 @@
          5.0
         ],
         "y": [
-         17725.0,
+         17724.0,
          41.0,
          70.0,
-         70.0,
+         71.0,
          38.0,
          56.0
         ]
@@ -2050,7 +2797,7 @@
      "tolerance": 0.005,
      "unit": "share of points",
      "passed": true,
-     "seconds": 5.808,
+     "seconds": 4.951,
      "note": "",
      "exception": "",
      "detail": {
@@ -2240,7 +2987,7 @@
      "tolerance": 0.001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.099,
+     "seconds": 0.111,
      "note": "",
      "exception": "",
      "detail": {
@@ -2277,7 +3024,7 @@
      "tolerance": 1e-06,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.011,
+     "seconds": 0.012,
      "note": "",
      "exception": "",
      "detail": {
@@ -2308,7 +3055,7 @@
      "tolerance": 0.02,
      "unit": "degrees",
      "passed": true,
-     "seconds": 0.138,
+     "seconds": 0.139,
      "note": "",
      "exception": "",
      "detail": {
@@ -2646,7 +3393,7 @@
      "tolerance": 1e-06,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.031,
+     "seconds": 0.028,
      "note": "",
      "exception": "",
      "detail": {
@@ -2672,7 +3419,7 @@
      "tolerance": 0.02,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.281,
+     "seconds": 0.292,
      "note": "",
      "exception": "",
      "detail": {
@@ -2815,7 +3562,7 @@
      "tolerance": 0.1,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.304,
+     "seconds": 0.321,
      "note": "The study gives every channel that crosses the object its full angular width / h_res. A pitched lidar's channel that crosses the top or bottom edge off its axis meets the face over part of the width only (the edge is tilted in the lidar's frame), so the count runs high there (and the channels it counts can differ by two from those cast): up to about 8 % in these cases, against 1 % for a level lidar.",
      "exception": "",
      "detail": {
@@ -2968,7 +3715,7 @@
      "tolerance": 0.0001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.015,
+     "seconds": 0.016,
      "note": "",
      "exception": "",
      "detail": {
@@ -3190,7 +3937,7 @@
      "tolerance": 0.001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.632,
+     "seconds": 0.754,
      "note": "",
      "exception": "",
      "detail": {
@@ -3671,7 +4418,7 @@
      "tolerance": 1e-09,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.038,
+     "seconds": 0.042,
      "note": "",
      "exception": "",
      "detail": {
@@ -4056,7 +4803,7 @@
      "tolerance": 0.0,
      "unit": "share of the requirement",
      "passed": true,
-     "seconds": 0.008,
+     "seconds": 0.006,
      "note": "",
      "exception": "",
      "detail": {
@@ -4617,7 +5364,7 @@
      "tolerance": 1e-09,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.005,
+     "seconds": 0.004,
      "note": "",
      "exception": "",
      "detail": {
@@ -4911,7 +5658,7 @@
      "tolerance": 0.001,
      "unit": "share of points",
      "passed": true,
-     "seconds": 1.638,
+     "seconds": 1.483,
      "note": "A ray that grazes the road within the allowance may land either side of it.",
      "exception": "",
      "detail": {
@@ -4950,7 +5697,7 @@
      "tolerance": 0.3,
      "unit": "m",
      "passed": true,
-     "seconds": 0.345,
+     "seconds": 0.423,
      "note": "The profile samples the road every 0.25 m beyond 10 m.",
      "exception": "",
      "detail": {
@@ -5004,7 +5751,7 @@
      "tolerance": 1e-06,
      "unit": "ms",
      "passed": true,
-     "seconds": 0.025,
+     "seconds": 0.03,
      "note": "",
      "exception": "",
      "detail": {
@@ -5035,7 +5782,7 @@
      "tolerance": 1e-09,
      "unit": "ms",
      "passed": true,
-     "seconds": 0.014,
+     "seconds": 0.017,
      "note": "",
      "exception": "",
      "detail": {
@@ -5056,7 +5803,7 @@
      "tolerance": 0.0001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.047,
+     "seconds": 0.054,
      "note": "",
      "exception": "",
      "detail": {
@@ -5091,7 +5838,7 @@
      "tolerance": 0.02,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.055,
+     "seconds": 0.059,
      "note": "",
      "exception": "",
      "detail": {
@@ -5130,7 +5877,7 @@
      "tolerance": 0.01,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.031,
+     "seconds": 0.04,
      "note": "",
      "exception": "",
      "detail": {
@@ -5175,7 +5922,7 @@
      "tolerance": 1.0,
      "unit": "px",
      "passed": true,
-     "seconds": 3.381,
+     "seconds": 3.661,
      "note": "",
      "exception": "",
      "detail": {
@@ -5212,7 +5959,7 @@
      "tolerance": 0.01,
      "unit": "σ",
      "passed": true,
-     "seconds": 1.656,
+     "seconds": 1.872,
      "note": "",
      "exception": "",
      "detail": {
@@ -5252,7 +5999,7 @@
      "tolerance": 0.001,
      "unit": "degrees or mm",
      "passed": true,
-     "seconds": 0.427,
+     "seconds": 0.558,
      "note": "",
      "exception": "",
      "detail": {
@@ -5298,7 +6045,7 @@
      "tolerance": 0.22556461820268847,
      "unit": "log ratio",
      "passed": true,
-     "seconds": 12.924,
+     "seconds": 13.666,
      "note": "",
      "exception": "",
      "detail": {
@@ -5512,7 +6259,7 @@
      "tolerance": 0.31980107453341566,
      "unit": "log ratio",
      "passed": true,
-     "seconds": 4.879,
+     "seconds": 4.974,
      "note": "",
      "exception": "",
      "detail": {
@@ -5595,7 +6342,7 @@
      "tolerance": 0.0001,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.968,
+     "seconds": 0.933,
      "note": "",
      "exception": "",
      "detail": {
@@ -5623,7 +6370,7 @@
      "tolerance": 0.41425857805424554,
      "unit": "log ratio",
      "passed": true,
-     "seconds": 6.152,
+     "seconds": 6.835,
      "note": "",
      "exception": "",
      "detail": {
@@ -5727,7 +6474,7 @@
      "tolerance": 6.0,
      "unit": "mm",
      "passed": true,
-     "seconds": 6.103,
+     "seconds": 10.952,
      "note": "",
      "exception": "",
      "detail": {
@@ -5746,7 +6493,7 @@
    "title": "Dataset calibration files",
    "modules": "vantage.core.exporters",
    "methods_anchor": "formats",
-   "passed": 4,
+   "passed": 7,
    "checks": [
     {
      "id": "formats.nuscenes",
@@ -5763,7 +6510,7 @@
      "tolerance": 0.05,
      "unit": "px",
      "passed": true,
-     "seconds": 0.527,
+     "seconds": 0.609,
      "note": "",
      "exception": "",
      "detail": {
@@ -5875,6 +6622,97 @@
       }
      },
      "figure": null
+    },
+    {
+     "id": "formats.project_dir_round_trip",
+     "model": "formats",
+     "title": "Project folder round trip (zip → folder → zip)",
+     "quantity": "projects whose content differs after the round trip (project.json, mesh arrays, content hash)",
+     "reference": "the project as loaded from its .vantage file (identity: nothing may change)",
+     "references": [
+      "formats.project_dir_round_trip"
+     ],
+     "error": 0.0,
+     "tolerance": 0.0,
+     "unit": "projects",
+     "passed": true,
+     "seconds": 0.397,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "npz": {
+       "equal": true,
+       "stable_bytes": true,
+       "digest": "04edfc2a4405e8f8b7143b615227337c5467654bb490286d4042bd790b958b2d"
+      },
+      "obj": {
+       "equal": true
+      },
+      "differs": []
+     },
+     "figure": null
+    },
+    {
+     "id": "formats.project_diff_known_edits",
+     "model": "formats",
+     "title": "Semantic diff of known edits",
+     "quantity": "largest error of the reported move (mm) and turn (°) against the edits made",
+     "reference": "the edits applied: a camera moved 50 mm forward and 14 mm up and yawed 2°, a lidar pitched 1.5°, a lens swapped, a tolerance changed",
+     "references": [
+      "formats.project_diff_known_edits"
+     ],
+     "error": 2.871036741680655e-13,
+     "tolerance": 1e-06,
+     "unit": "mm or °",
+     "passed": true,
+     "seconds": 0.098,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "moved_mm": 51.92301994298851,
+      "expected_mm": 51.92301994298868,
+      "rotation_deg": 2.0000000000001297,
+      "summary": {
+       "variants_added": 0,
+       "variants_removed": 0,
+       "variants_changed": 1,
+       "cameras_added": 0,
+       "cameras_removed": 0,
+       "cameras_moved": 1,
+       "sensors_added": 0,
+       "sensors_removed": 0,
+       "sensors_moved": 1,
+       "lens_changes": 1,
+       "settings_changed": 1,
+       "library_changed": 0,
+       "mesh_changed": false,
+       "changes": 4
+      }
+     },
+     "figure": null
+    },
+    {
+     "id": "formats.project_merge_two_edits",
+     "model": "formats",
+     "title": "Three-way merge of two edits",
+     "quantity": "leaves that differ from the hand-merged result plus conflict-count errors",
+     "reference": "the two edits applied by hand (different cameras: no conflict; the same value two ways: one conflict)",
+     "references": [
+      "formats.project_merge_two_edits"
+     ],
+     "error": 0.0,
+     "tolerance": 0.0,
+     "unit": "count",
+     "passed": true,
+     "seconds": 0.057,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "wrong_leaves": 0,
+      "conflicts_clean_case": 0,
+      "conflicts_both_ways": 1
+     },
+     "figure": null
     }
    ]
   },
@@ -5902,7 +6740,7 @@
      "tolerance": 0.02,
      "unit": "index",
      "passed": true,
-     "seconds": 0.197,
+     "seconds": 0.282,
      "note": "",
      "exception": "",
      "detail": {
@@ -6089,7 +6927,7 @@
      "tolerance": 1e-09,
      "unit": "share",
      "passed": true,
-     "seconds": 0.002,
+     "seconds": 0.005,
      "note": "",
      "exception": "",
      "detail": {
@@ -6111,7 +6949,7 @@
      "tolerance": 0.022500562521094628,
      "unit": "relative",
      "passed": true,
-     "seconds": 0.192,
+     "seconds": 0.233,
      "note": "",
      "exception": "",
      "detail": {
@@ -6328,7 +7166,7 @@
      "tolerance": 0.0,
      "unit": "frames",
      "passed": true,
-     "seconds": 0.156,
+     "seconds": 0.161,
      "note": "",
      "exception": "",
      "detail": {
@@ -6359,7 +7197,7 @@
      "tolerance": 0.5,
      "unit": "ms",
      "passed": true,
-     "seconds": 0.006,
+     "seconds": 0.008,
      "note": "",
      "exception": "",
      "detail": {
@@ -6378,6 +7216,2025 @@
        "L": 64.0,
        "R": 14.0
       }
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "thermal",
+   "title": "Thermal LWIR cameras and the night photon budget",
+   "modules": "vantage.core.thermal_ir",
+   "methods_anchor": "thermal",
+   "passed": 5,
+   "checks": [
+    {
+     "id": "thermal.planck_band",
+     "model": "thermal",
+     "title": "Planck band radiance (8–14 µm)",
+     "quantity": "relative error of the Gauss–Legendre band integral against the Widger–Woodall series at −40 to 100 °C, and of the full-spectrum integral against σT⁴/π",
+     "reference": "the closed-form series of the Planck integral (Widger & Woodall 1976) and the Stefan–Boltzmann law (CODATA 2018 constants)",
+     "references": [
+      "widger1976",
+      "codata2018"
+     ],
+     "error": 3.006192091714277e-11,
+     "tolerance": 1e-06,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.011,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "relative_error": {
+       "-40 °C": 7.016863247495008e-16,
+       "-10 °C": 4.877194413665028e-16,
+       "10 °C": 8.480815597362963e-16,
+       "30 °C": 6.166782326197665e-16,
+       "40 °C": 8.533358202130821e-16,
+       "100 °C": 1.4545575515189493e-15,
+       "series 0–∞ vs σT⁴/π (300 K)": 3.006192091714277e-11,
+       "quadrature 3–100 µm (300 K)": 3.5581177219526005e-12
+      }
+     },
+     "figure": {
+      "kind": "xy",
+      "title": "In-band (8–14 µm) radiance: quadrature against the series",
+      "xlabel": "T, K",
+      "ylabel": "W/(m²·sr)",
+      "series": [
+       {
+        "label": "Gauss–Legendre",
+        "kind": "line",
+        "x": [
+         230.0,
+         235.0,
+         240.0,
+         245.0,
+         250.0,
+         255.0,
+         260.0,
+         265.0,
+         270.0,
+         275.0,
+         280.0,
+         285.0,
+         290.0,
+         295.0,
+         300.0,
+         305.0,
+         310.0,
+         315.0,
+         320.0,
+         325.0,
+         330.0,
+         335.0,
+         340.0,
+         345.0,
+         350.0,
+         355.0,
+         360.0,
+         365.0,
+         370.0,
+         375.0,
+         380.0
+        ],
+        "y": [
+         14.057221,
+         15.882062,
+         17.85972,
+         19.994975,
+         22.29229,
+         24.755805,
+         27.389342,
+         30.196399,
+         33.180159,
+         36.343495,
+         39.688973,
+         43.218864,
+         46.935151,
+         50.839538,
+         54.933461,
+         59.218102,
+         63.694395,
+         68.36304,
+         73.224515,
+         78.279088,
+         83.526826,
+         88.967612,
+         94.601147,
+         100.42697,
+         106.44447,
+         112.65287,
+         119.0513,
+         125.63872,
+         132.414,
+         139.37591,
+         146.52311
+        ]
+       },
+       {
+        "label": "Widger & Woodall series",
+        "kind": "points",
+        "x": [
+         230.0,
+         235.0,
+         240.0,
+         245.0,
+         250.0,
+         255.0,
+         260.0,
+         265.0,
+         270.0,
+         275.0,
+         280.0,
+         285.0,
+         290.0,
+         295.0,
+         300.0,
+         305.0,
+         310.0,
+         315.0,
+         320.0,
+         325.0,
+         330.0,
+         335.0,
+         340.0,
+         345.0,
+         350.0,
+         355.0,
+         360.0,
+         365.0,
+         370.0,
+         375.0,
+         380.0
+        ],
+        "y": [
+         14.057221,
+         15.882062,
+         17.85972,
+         19.994975,
+         22.29229,
+         24.755805,
+         27.389342,
+         30.196399,
+         33.180159,
+         36.343495,
+         39.688973,
+         43.218864,
+         46.935151,
+         50.839538,
+         54.933461,
+         59.218102,
+         63.694395,
+         68.36304,
+         73.224515,
+         78.279088,
+         83.526826,
+         88.967612,
+         94.601147,
+         100.42697,
+         106.44447,
+         112.65287,
+         119.0513,
+         125.63872,
+         132.414,
+         139.37591,
+         146.52311
+        ]
+       }
+      ],
+      "logy": false,
+      "hline": null,
+      "hline_label": "",
+      "diag": false,
+      "categories": null
+     }
+    },
+    {
+     "id": "thermal.johnson_pico640s",
+     "model": "thermal",
+     "title": "Johnson recognition range against a datasheet",
+     "quantity": "relative error of the recognition range (6 pixels across √(1.8 × 0.5 m)) against Lynred's stated 180 / 455 / 700 m with 19 / 50 / 75 mm lenses on the 17 µm PICO640S",
+     "reference": "Lynred PICO640S datasheet, \"Recognition distances for human measuring 1.80 m x 0.50 m\"",
+     "references": [
+      "lynred_pico640s"
+     ],
+     "error": 0.022067763467478865,
+     "tolerance": 0.03,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "relative_error": {
+       "19 mm": 0.018247131647071847,
+       "50 mm": 0.022067763467478865,
+       "75 mm": 0.0034839306192082273,
+       "50 mm through the lens model": 0.022067763467478616
+      },
+      "model_m": {
+       "19 mm": 176.71551630352707,
+       "50 mm": 465.0408323777029,
+       "75 mm": 697.5612485665542
+      },
+      "stated_m": {
+       "19.0": 180.0,
+       "50.0": 455.0,
+       "75.0": 700.0
+      }
+     },
+     "figure": {
+      "kind": "xy",
+      "title": "Recognition range of a 1.8 × 0.5 m human (6 px across √(h·w))",
+      "xlabel": "lens",
+      "ylabel": "range, m",
+      "series": [
+       {
+        "label": "this model",
+        "kind": "points",
+        "x": [
+         19.0,
+         50.0,
+         75.0
+        ],
+        "y": [
+         176.71552,
+         465.04083,
+         697.56125
+        ]
+       },
+       {
+        "label": "Lynred datasheet",
+        "kind": "points",
+        "x": [
+         19.0,
+         50.0,
+         75.0
+        ],
+        "y": [
+         180.0,
+         455.0,
+         700.0
+        ]
+       }
+      ],
+      "logy": false,
+      "hline": null,
+      "hline_label": "",
+      "diag": false,
+      "categories": null
+     }
+    },
+    {
+     "id": "thermal.r112_points",
+     "model": "thermal",
+     "title": "UN R112 test points and illuminance",
+     "quantity": "largest relative error of E = I/d² at the points' named distances, and of the R112-minimum lamp at its binding test point; transcription of the class B table against the validation suite's own copy",
+     "reference": "UN R112 01 series §6.2.4 and §6.3.3 (class B), written out independently in validation.checks_environment",
+     "references": [
+      "unr112"
+     ],
+     "error": 0.0,
+     "tolerance": 1e-06,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.001,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "transcription_mismatch": [],
+      "r112_min_lowest_ratio": 1.0
+     },
+     "figure": null
+    },
+    {
+     "id": "thermal.mie_bhmie",
+     "model": "thermal",
+     "title": "Mie extinction (fog in the LWIR)",
+     "quantity": "relative error of Q_ext, Q_sca and Q_back for m = 1.55, x = 5.213, and of Q_ext → 2 for a large drop",
+     "reference": "Bohren & Huffman (1983), BHMIE's worked example: Q_ext = Q_sca = 3.10543, Q_back = 2.92534; the extinction paradox",
+     "references": [
+      "bohren1983"
+     ],
+     "error": 1.4389421507391348e-06,
+     "tolerance": 0.0001,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.001,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "relative_error": {
+       "Q_ext": 1.4389421507391348e-06,
+       "Q_sca": 1.4389421507391348e-06,
+       "Q_back": 2.2207983008589304e-07,
+       "Q_ext → 2 (x = 400)": 0.0
+      },
+      "q": [
+       3.105425531465877,
+       3.105425531465877,
+       2.92534064965901
+      ],
+      "reference": [
+       3.10543,
+       3.10543,
+       2.92534
+      ]
+     },
+     "figure": null
+    },
+    {
+     "id": "thermal.fog_visibility",
+     "model": "thermal",
+     "title": "Model fogs reproduce their visibility",
+     "quantity": "relative error of the visibility (2 % contrast, 3.912/σ at 0.55 µm) that the Mie sum gives the Shettle & Fenn advection and radiation fogs with their published number densities",
+     "reference": "Shettle & Fenn (1979): heavy advection fog ≈ 130 m, moderate radiation fog ≈ 450 m (as quoted with the model parameters); the visibilities are rounded, hence 5 %",
+     "references": [
+      "shettle1979",
+      "bohren1983"
+     ],
+     "error": 0.042712279322405886,
+     "tolerance": 0.05,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.116,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "relative_error": {
+       "advection": 0.042712279322405886,
+       "radiation": 0.006496286951800256
+      },
+      "visibility_2pct_m": {
+       "advection": 135.55259631191277,
+       "radiation": 452.9233291283101
+      },
+      "stated_m": {
+       "advection": 130.0,
+       "radiation": 450.0
+      },
+      "lwir_to_visible_10um": {
+       "radiation": 0.24244336011752027,
+       "advection": 1.2219295767640443
+      }
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "event",
+   "title": "Event sensors",
+   "modules": "vantage.core.event_camera",
+   "methods_anchor": "event",
+   "passed": 3,
+   "checks": [
+    {
+     "id": "event.ramp_count",
+     "model": "event",
+     "title": "Events from a known log-intensity ramp",
+     "quantity": "event count error plus the event times' error beyond 1 µs",
+     "reference": "the analytic crossings of a linear ramp: floor(ΔlnI / θ) events at t = kθ / (ΔlnI/s)",
+     "references": [
+      "rebecq2018_esim"
+     ],
+     "error": 0.0,
+     "tolerance": 0.0,
+     "unit": "events",
+     "passed": true,
+     "seconds": 0.008,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "theta_0.15": {
+       "on": 6.0,
+       "off": 6.0,
+       "expected_on": 6,
+       "expected_off": 6,
+       "max_time_error_us": 0.0
+      },
+      "theta_0.22": {
+       "on": 4.0,
+       "off": 4.0,
+       "expected_on": 4,
+       "expected_off": 4,
+       "max_time_error_us": 1.1102230246251565e-10
+      },
+      "theta_0.3": {
+       "on": 3.0,
+       "off": 3.0,
+       "expected_on": 3,
+       "expected_off": 3,
+       "max_time_error_us": 0.0
+      }
+     },
+     "figure": null
+    },
+    {
+     "id": "event.bandwidth_cap",
+     "model": "event",
+     "title": "The readout cap (ERC and FIFO)",
+     "quantity": "the ERC's output rate over the cap (share) and the FIFO's kept events against μT + B",
+     "reference": "a deterministic queue: a uniform 2 Mev/s burst into a 1 Mev/s readout keeps μT + B events",
+     "references": [
+      "kleinrock1975"
+     ],
+     "error": 1.9801980198019803e-05,
+     "tolerance": 0.002,
+     "unit": "share",
+     "passed": true,
+     "seconds": 0.043,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "erc_kept": 100000,
+      "erc_max_rate_mevs": 1.0000000000000002,
+      "fifo_kept": 100998,
+      "fifo_expected": 101000,
+      "fifo_max_delay_us": 1000.0000000010001
+     },
+     "figure": null
+    },
+    {
+     "id": "event.carla_dvs",
+     "model": "event",
+     "title": "Agreement with CARLA's DVS camera algorithm",
+     "quantity": "share of events not matched exactly (pixel, polarity, ±1 µs) plus the count error",
+     "reference": "a literal transcription of CARLA 0.9.16 DVSCamera.cpp's ESIM loop on a scripted scene (the round-17 CARLA drive measured the server itself: see the module doc)",
+     "references": [
+      "carla_dvs",
+      "rebecq2018_esim"
+     ],
+     "error": 0.0,
+     "tolerance": 0.0,
+     "unit": "share",
+     "passed": true,
+     "seconds": 0.073,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "schema": "vantage.dvs_compare/1",
+      "carla_events": 21043,
+      "model_events": 21043,
+      "count_ratio": 1.0,
+      "count_error": 0.0,
+      "on_share_carla": 0.5016395000712827,
+      "on_share_model": 0.5016395000712827,
+      "pixel_count_r": 1.0,
+      "pixel_count_mae": 0.0,
+      "exact_match_share": 1.0,
+      "rate_series_r": 1.0,
+      "bin_us": 1000,
+      "pixels_with_events_carla": 1536,
+      "pixels_with_events_model": 1536
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "fmcw",
+   "title": "FMCW lidar: Doppler, sun and cross-talk",
+   "modules": "vantage.core.fmcw_lidar",
+   "methods_anchor": "fmcw",
+   "passed": 4,
+   "checks": [
+    {
+     "id": "fmcw.ego_fit",
+     "model": "fmcw",
+     "title": "Ego velocity from one sweep of static points",
+     "quantity": "largest error of the fitted sensor velocity per axis in units of its own 1 σ, 4000 rays, 3 cm/s noise, 20 % movers",
+     "reference": "the known velocity the synthetic points were made with",
+     "references": [
+      "rep103"
+     ],
+     "error": 1.405714773691407,
+     "tolerance": 4.0,
+     "unit": "σ",
+     "passed": true,
+     "seconds": 0.003,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "v_true": [
+       13.9,
+       0.42,
+       -0.05
+      ],
+      "v_fit": [
+       13.901105752862327,
+       0.41983320908274324,
+       -0.04968383164849284
+      ],
+      "sigma_fit": [
+       0.0007866125355021085,
+       0.0007693875439580971,
+       0.0027329674765511573
+      ],
+      "inliers": 3233
+     },
+     "figure": null
+    },
+    {
+     "id": "fmcw.box_doppler",
+     "model": "fmcw",
+     "title": "Doppler of a known moving box",
+     "quantity": "largest difference of the radial velocity of two points of a closing, yawing box seen from a turning sensor",
+     "reference": "d · (v + ω × r − v_s) written out in the check",
+     "references": [
+      "iso8855"
+     ],
+     "error": 0.0,
+     "tolerance": 1e-09,
+     "unit": "m/s",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "got": [
+       -24.759839522654275,
+       -24.715122850623427
+      ],
+      "want": [
+       -24.759839522654275,
+       -24.715122850623427
+      ]
+     },
+     "figure": null
+    },
+    {
+     "id": "fmcw.solar_planck",
+     "model": "fmcw",
+     "title": "Solar irradiance and photons per mode against Planck",
+     "quantity": "largest relative difference of G173's extraterrestrial band irradiance (905, 1550 nm) and of the sun's photons per mode at 1550 nm from a 5772 K blackbody",
+     "reference": "Planck's law for the IAU 2015 nominal sun at 1 au. The sun is not a blackbody: near 1.6 µm (the H⁻ opacity minimum) the photosphere is seen deeper and hotter, a brightness temperature some 500 K above T_eff (G173 gives 6320 K at 1550 nm), so 25 % there; 905 nm agrees to 0.2 %",
+     "references": [
+      "astm_g173",
+      "iau2015",
+      "siegman1966"
+     ],
+     "error": 0.19610105662528277,
+     "tolerance": 0.25,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "895-915": {
+       "g173_etr": 0.907327142857143,
+       "planck": 0.9061385208492285,
+       "rel": 0.0013117442648840072
+      },
+      "1540-1560": {
+       "g173_etr": 0.2708966666666667,
+       "planck": 0.2264830928508525,
+       "rel": 0.19610105662528277
+      },
+      "occupancy_1550": {
+       "g173": 0.29949482157601504,
+       "planck_5772K": 0.25039257336752063,
+       "rel": 0.19610105662528254,
+       "brightness_temperature_K": 6324.760192115096
+      }
+     },
+     "figure": null
+    },
+    {
+     "id": "fmcw.tof_background",
+     "model": "fmcw",
+     "title": "Time-of-flight solar background",
+     "quantity": "relative difference of the background photoelectron rate on a sunlit 30 % wall",
+     "reference": "the Lambertian closed form N = η ρ E Δλ A Ω λ / (π h c)",
+     "references": [
+      "astm_g173",
+      "kasten1989"
+     ],
+     "error": 1.1102230246251565e-16,
+     "tolerance": 1e-09,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "got_e_per_s": 31753813.230153043,
+      "closed_form_e_per_s": 31753813.230153047,
+      "E_W_m2_nm": 0.036877564816111756
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "imaging_radar",
+   "title": "4D imaging radar: array, sidelobes, ghosts",
+   "modules": "vantage.core.imaging_radar",
+   "methods_anchor": "imaging-radar",
+   "passed": 5,
+   "checks": [
+    {
+     "id": "imaging_radar.ula_beamwidth",
+     "model": "imaging_radar",
+     "title": "Uniform linear array: beamwidth and taper sidelobes",
+     "quantity": "largest relative difference of the −3 dB beamwidth of uniform arrays of 8–128 elements at λ/2 from 0.886 λ / (N d); the 128-element uniform, Hann and Taylor (30 dB, n̄ 4) highest sidelobes must be within 0.05, 0.3 and 0.5 dB of −13.26, −31.47 and −30 dB and the Hann beamwidth within 0.01 bins of 1.44",
+     "reference": "the closed form for a uniform aperture (Balanis §6.3) and Harris's window table",
+     "references": [
+      "balanis2016",
+      "harris1978",
+      "doerry2017"
+     ],
+     "error": 0.007182275327600215,
+     "tolerance": 0.01,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.1,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "beamwidth": [
+       {
+        "N": 8,
+        "hpbw_deg": 12.78217,
+        "closed_form_deg": 12.69102,
+        "rel_error": 0.007182275327600215
+       },
+       {
+        "N": 16,
+        "hpbw_deg": 6.34863,
+        "closed_form_deg": 6.34551,
+        "rel_error": 0.0004915998090596925
+       },
+       {
+        "N": 32,
+        "hpbw_deg": 3.16907,
+        "closed_form_deg": 3.17275,
+        "rel_error": 0.0011595001215261118
+       },
+       {
+        "N": 64,
+        "hpbw_deg": 1.58388,
+        "closed_form_deg": 1.58638,
+        "rel_error": 0.0015710472928650169
+       },
+       {
+        "N": 128,
+        "hpbw_deg": 0.79186,
+        "closed_form_deg": 0.79319,
+        "rel_error": 0.0016738164602482558
+       }
+      ],
+      "tapers_128": {
+       "uniform": {
+        "psl_db": -13.26,
+        "reference_db": -13.26,
+        "hpbw_bins": 0.8845,
+        "reference_bins": 0.886
+       },
+       "hann": {
+        "psl_db": -31.467,
+        "reference_db": -31.47,
+        "hpbw_bins": 1.4382,
+        "reference_bins": 1.44
+       },
+       "taylor": {
+        "psl_db": -30.303,
+        "reference_db": -30.0,
+        "hpbw_bins": 1.1229,
+        "reference_bins": null
+       }
+      }
+     },
+     "figure": null
+    },
+    {
+     "id": "imaging_radar.taylor",
+     "model": "imaging_radar",
+     "title": "The Taylor taper",
+     "quantity": "largest difference of imaging_radar.taper('taylor') from scipy.signal.windows.taylor for 16–128 points, n̄ 4–8, 30–45 dB",
+     "reference": "SciPy's independent implementation of the Taylor window",
+     "references": [
+      "doerry2017"
+     ],
+     "error": 4.440892098500626e-16,
+     "tolerance": 1e-09,
+     "unit": "amplitude",
+     "passed": true,
+     "seconds": 0.014,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "cases": 4
+     },
+     "figure": null
+    },
+    {
+     "id": "imaging_radar.slab_fresnel",
+     "model": "imaging_radar",
+     "title": "The fascia slab against the Fresnel equations",
+     "quantity": "largest difference of the power reflectance of materials.stack_rt from the Fresnel interface (a 0.3 m lossy slab, whose back face returns nothing) and from the Airy sum of the Fresnel coefficients (lossless 1.7–3 mm slabs), TE and TM, 0–70°",
+     "reference": "Fresnel's equations and the Airy summation written out in the check (Born & Wolf §1.5–1.6)",
+     "references": [
+      "bornwolf1999",
+      "macleod2010"
+     ],
+     "error": 2.220446049250313e-16,
+     "tolerance": 1e-09,
+     "unit": "power ratio",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "cases": [
+       {
+        "case": "thick lossy",
+        "eps": 2.75,
+        "tan_delta": 0.2,
+        "theta": 0.0,
+        "difference": 2.7755575615628914e-17
+       },
+       {
+        "case": "thick lossy",
+        "eps": 8.6,
+        "tan_delta": 0.2,
+        "theta": 40.0,
+        "difference": 0.0
+       },
+       {
+        "case": "thick lossy",
+        "eps": 4.46,
+        "tan_delta": 0.3,
+        "theta": 70.0,
+        "difference": 1.6653345369377348e-16
+       },
+       {
+        "case": "lossless Airy",
+        "eps": 2.75,
+        "mm": 3.0,
+        "theta": 0.0,
+        "difference": 1.1102230246251565e-16
+       },
+       {
+        "case": "lossless Airy",
+        "eps": 2.75,
+        "mm": 3.0,
+        "theta": 0.0,
+        "difference": 5.551115123125783e-17
+       },
+       {
+        "case": "lossless Airy",
+        "eps": 2.75,
+        "mm": 3.0,
+        "theta": 30.0,
+        "difference": 1.1102230246251565e-16
+       },
+       {
+        "case": "lossless Airy",
+        "eps": 2.75,
+        "mm": 3.0,
+        "theta": 30.0,
+        "difference": 1.6653345369377348e-16
+       },
+       {
+        "case": "lossless Airy",
+        "eps": 3.2,
+        "mm": 1.7,
+        "theta": 55.0,
+        "difference": 2.220446049250313e-16
+       },
+       {
+        "case": "lossless Airy",
+        "eps": 3.2,
+        "mm": 1.7,
+        "theta": 55.0,
+        "difference": 6.938893903907228e-18
+       }
+      ]
+     },
+     "figure": null
+    },
+    {
+     "id": "imaging_radar.two_ray",
+     "model": "imaging_radar",
+     "title": "Two-ray ground multipath",
+     "quantity": "largest difference of imaging_radar.two_ray (Γ = −1, no spreading) from 2|sin(k(R_r − R_d)/2)| for a radar 0.5 m and a target 1 m up, 2–2000 m; beyond 500 m within 2e-3 of the asymptote 2|sin(2π h_r h_t / (λ d))|; at the nulls d_n = 2 h_r h_t / (n λ), n = 1, 2, 3, 5, below 0.01",
+     "reference": "the two-ray closed form (flat earth) written in the check",
+     "references": [
+      "skolnik2001"
+     ],
+     "error": 4.440892098500626e-16,
+     "tolerance": 1e-09,
+     "unit": "field ratio",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "asymptote_max_error": 1.2024704398871933e-06,
+      "nulls": [
+       {
+        "n": 1,
+        "d_m": 256.844,
+        "F": 5.952675972976044e-05
+       },
+       {
+        "n": 2,
+        "d_m": 128.422,
+        "F": 0.0004761895957931925
+       },
+       {
+        "n": 3,
+        "d_m": 85.615,
+        "F": 0.001607001093267367
+       },
+       {
+        "n": 5,
+        "d_m": 51.369,
+        "F": 0.007437752107376489
+       }
+      ]
+     },
+     "figure": null
+    },
+    {
+     "id": "imaging_radar.ti_cascade",
+     "model": "imaging_radar",
+     "title": "The TI cascade's virtual array against its design guide",
+     "quantity": "mismatches of the virtual array (12 Tx × 16 Rx = 192 channels, 86 unique azimuth elements, 23 in the 2-device mode, an elevation co-array of 7)",
+     "reference": "TI TIDUEN5A §3.1, Figures 7 and 8",
+     "references": [
+      "ti_tiduen5",
+      "ti_swru553"
+     ],
+     "error": 0.0,
+     "tolerance": 0.0,
+     "unit": "count",
+     "passed": true,
+     "seconds": 0.114,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "az_elements_4dev": 86,
+      "az_elements_2dev": 23,
+      "elevation_coarray": [
+       0.0,
+       1.0,
+       2.0,
+       3.0,
+       4.0,
+       5.0,
+       6.0
+      ],
+      "channels": 192,
+      "uniform_hpbw_deg": 1.223,
+      "rayleigh_2_over_N_deg": 1.332,
+      "stated_deg": 1.4
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "neural_replay",
+   "title": "Neural log replay: the unscented projection",
+   "modules": "vantage.core.neural_replay",
+   "methods_anchor": "neural-replay",
+   "passed": 3,
+   "checks": [
+    {
+     "id": "neural_replay.ut_monte_carlo",
+     "model": "neural_replay",
+     "title": "The Unscented Transform places a Gaussian through a fisheye as a Monte Carlo does",
+     "quantity": "distance between the UT's projected mean and the mean of 400 000 samples of the Gaussian (52° off the axis of the CARLA drives' Kannala-Brandt fisheye, 1.9 m away), px",
+     "reference": "Monte Carlo through the same projection",
+     "references": [
+      "wu2025_3dgut",
+      "kannala2006"
+     ],
+     "error": 0.1047336670368321,
+     "tolerance": 0.5,
+     "unit": "px",
+     "passed": true,
+     "seconds": 0.917,
+     "note": "the UT's mean against 400 000 samples; its covariance within 15 %",
+     "exception": "",
+     "detail": {
+      "ut_mean_err_px": 0.1047,
+      "ewa_mean_err_px": 1.4534,
+      "ut_cov_rel_err": 0.068,
+      "ewa_cov_rel_err": 0.0248
+     },
+     "figure": null
+    },
+    {
+     "id": "neural_replay.ut_axis",
+     "model": "neural_replay",
+     "title": "The 3D response along each ray equals the closed form on an equidistant lens's axis",
+     "quantity": "largest alpha difference over a 64 × 64 image",
+     "reference": "the closed form of EWA with the 0.3 px² dilation (exact on the axis)",
+     "references": [
+      "wu2025_3dgut"
+     ],
+     "error": 2.2981419145626236e-05,
+     "tolerance": 0.0002,
+     "unit": "alpha",
+     "passed": true,
+     "seconds": 0.013,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "passed": true,
+      "value": 2.2981419145626236e-05,
+      "tolerance": 0.0002
+     },
+     "figure": null
+    },
+    {
+     "id": "neural_replay.skeleton_fit",
+     "model": "neural_replay",
+     "title": "The walker fit recovers known joint angles from noisy keypoints",
+     "quantity": "median joint-angle error of a synthetic 2 s walk seen by three fisheyes (keypoints with 1.5 px noise), below the gait prior's",
+     "reference": "the synthetic walk's own angles",
+     "references": [
+      "winter2009"
+     ],
+     "error": 5.165,
+     "tolerance": 6.0,
+     "unit": "°",
+     "passed": true,
+     "seconds": 3.454,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "passed": true,
+      "median_joint_error_deg": 5.165,
+      "prior_median_joint_error_deg": 9.768,
+      "observations": 63,
+      "stats": {
+       "observations": 63,
+       "keypoints_used": 1071,
+       "cameras": [
+        "F",
+        "ML",
+        "MR"
+       ],
+       "median_px_prior": 6.04,
+       "median_px_fit": 1.91,
+       "within_10pc_prior": 0.9739,
+       "within_10pc_fit": 0.9944,
+       "scale": 0.9988,
+       "facing_flipped": false,
+       "cost": 0.2691
+      }
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "relight",
+   "title": "Relighting",
+   "modules": "vantage.core.relight",
+   "methods_anchor": "relight",
+   "passed": 2,
+   "checks": [
+    {
+     "id": "relight.schlick_water",
+     "model": "relight",
+     "title": "The wet road's Fresnel term matches water's exact reflectance",
+     "quantity": "largest |R_Schlick − R_Fresnel| of water (n 1.333, unpolarised) from 0° to 60°",
+     "reference": "the Fresnel equations",
+     "references": [
+      "schlick1994",
+      "hecht2017"
+     ],
+     "error": 0.0092,
+     "tolerance": 0.01,
+     "unit": "reflectance",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "passed": true,
+      "value": 0.0092,
+      "tolerance": 0.01
+     },
+     "figure": null
+    },
+    {
+     "id": "relight.snow_extinction",
+     "model": "relight",
+     "title": "Falling snow's extinction is ITU-R P.1814's",
+     "quantity": "relative difference of σ at 2 mm/h, 550 nm from the recommendation's coefficients",
+     "reference": "ITU-R P.1814 Table 3",
+     "references": [
+      "itu_p1814"
+     ],
+     "error": 1.3086483810835584e-16,
+     "tolerance": 1e-06,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "passed": true,
+      "value": 0.003313960229982593,
+      "reference": 0.0033139602299825936
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "ego_composite",
+   "title": "The user's body composited into simulator images",
+   "modules": "vantage.core.ego_composite",
+   "methods_anchor": "ego-composite",
+   "passed": 2,
+   "checks": [
+    {
+     "id": "ego_composite.layer_vs_gl_depth",
+     "model": "ego_composite",
+     "title": "The composited body's depth equals OpenGL's depth buffer",
+     "quantity": "share of the composited body's pixels whose coverage differs from OpenGL's depth buffer (two virtual pinhole views of the sample), the range median below 1 mm besides",
+     "reference": "Independent: the same triangles rasterised by OpenGL (EGL, headless) into a 32-bit float depth buffer through the same pinhole, planar depth turned into range along each pixel's ray",
+     "references": [
+      "ego_composite.layer_vs_gl_depth"
+     ],
+     "error": 0.0,
+     "tolerance": 1.0,
+     "unit": "% of the body's pixels",
+     "passed": true,
+     "seconds": 3.057,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "views": [
+       {
+        "view": "front_quarter",
+        "pixels": 24978,
+        "coverage_disagree": 0,
+        "coverage_disagree_share": 0.0,
+        "range_median_mm": 0.04194127555612326,
+        "range_p99_mm": 0.12214166693706112,
+        "renderer": "AMD Ryzen 9 9900X 12-Core Processor (radeonsi, raphael_mendocino, ACO, DRM 3.64, 7.0.0-42-generic)"
+       },
+       {
+        "view": "above",
+        "pixels": 55902,
+        "coverage_disagree": 0,
+        "coverage_disagree_share": 0.0,
+        "range_median_mm": 0.028825165402146524,
+        "range_p99_mm": 0.06842917024793668,
+        "renderer": "AMD Ryzen 9 9900X 12-Core Processor (radeonsi, raphael_mendocino, ACO, DRM 3.64, 7.0.0-42-generic)"
+       }
+      ]
+     },
+     "figure": null
+    },
+    {
+     "id": "ego_composite.layer_vs_occlusion_cube",
+     "model": "ego_composite",
+     "title": "The composited body is the analysis's body",
+     "quantity": "1 − the IoU of each camera's exact body layer with the analysis's occlusion-cube mask on the sample's data rig (worst camera)",
+     "reference": "The analysis's occlusion cube (core.occlusion, as core.asbuilt and core.rig_health look it up) and core.lens's own unprojection, on every camera of the sample's data rig",
+     "references": [
+      "ego_composite.layer_vs_occlusion_cube"
+     ],
+     "error": 0.020043684954387797,
+     "tolerance": 0.05,
+     "unit": "1 − IoU",
+     "passed": true,
+     "seconds": 2.923,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "cameras": [
+       {
+        "tag": "F",
+        "iou": 0.9889121737473805,
+        "depth_median_m": 6.657838821411133e-05,
+        "ray_max_deg": 1.9090959104164224e-06
+       },
+       {
+        "tag": "R",
+        "iou": 0.9802845876907251,
+        "depth_median_m": 0.0010441243648529053,
+        "ray_max_deg": 1.9090959104164224e-06
+       },
+       {
+        "tag": "ML",
+        "iou": 0.9811158798283262,
+        "depth_median_m": 0.0009704232215881348,
+        "ray_max_deg": 1.9090959104164224e-06
+       },
+       {
+        "tag": "MR",
+        "iou": 0.9803186927278472,
+        "depth_median_m": 0.0009742975234985352,
+        "ray_max_deg": 1.9090959104164224e-06
+       },
+       {
+        "tag": "QL",
+        "iou": 0.980418202073871,
+        "depth_median_m": 0.0020254850387573242,
+        "ray_max_deg": 1.9090959104164224e-06
+       },
+       {
+        "tag": "QR",
+        "iou": 0.9799563150456122,
+        "depth_median_m": 0.0020254850387573242,
+        "ray_max_deg": 1.9090959104164224e-06
+       }
+      ]
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "usd",
+   "title": "OpenUSD rig export",
+   "modules": "vantage.core.usd_export",
+   "methods_anchor": "usd",
+   "passed": 1,
+   "checks": [
+    {
+     "id": "usd.camera_projection",
+     "model": "usd",
+     "title": "An exported USD camera projects as Vantage's lens does",
+     "quantity": "largest reprojection error of an exported USD camera against Vantage's lens, over its allowance (0.01 px, plus 3 × a fitted lens's RMS)",
+     "reference": "Independent: the USD camera's standard attributes (OpenUSD UsdGeomCamera: tenths of a scene unit, aperture offsets) and NVIDIA's OpenCV fisheye attributes, read back from the written text and projected by their own published formulas, against core.lens on 400 random rays per camera of the sample's data rig",
+     "references": [
+      "usd.camera_projection"
+     ],
+     "error": 0.00047650211440306164,
+     "tolerance": 1.0,
+     "unit": "× the camera's allowance",
+     "passed": true,
+     "seconds": 0.097,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "cameras": [
+       {
+        "tag": "F",
+        "max_px": 4.765021144030617e-06,
+        "points": 400,
+        "fit_rms_px": 0.0,
+        "fisheye": true
+       },
+       {
+        "tag": "R",
+        "max_px": 4.218341838885723e-06,
+        "points": 400,
+        "fit_rms_px": 0.0,
+        "fisheye": true
+       },
+       {
+        "tag": "ML",
+        "max_px": 3.921402677533413e-06,
+        "points": 400,
+        "fit_rms_px": 0.0,
+        "fisheye": true
+       },
+       {
+        "tag": "MR",
+        "max_px": 3.2436194001756185e-06,
+        "points": 400,
+        "fit_rms_px": 0.0,
+        "fisheye": true
+       },
+       {
+        "tag": "QL",
+        "max_px": 2.885247838339727e-06,
+        "points": 400,
+        "fit_rms_px": 0.0,
+        "fisheye": true
+       },
+       {
+        "tag": "QR",
+        "max_px": 4.5361051937202924e-06,
+        "points": 400,
+        "fit_rms_px": 0.0,
+        "fisheye": true
+       }
+      ]
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "framing",
+   "title": "Extrusion framing",
+   "modules": "vantage.core.framing",
+   "methods_anchor": "framing",
+   "passed": 2,
+   "checks": [
+    {
+     "id": "framing.profile_mass",
+     "model": "framing",
+     "title": "Catalogue mass per metre against area × density",
+     "quantity": "worst |kg/m ÷ (area × 2700 kg/m³) − 1| over the profile library, %",
+     "reference": "the makers' own section areas and 2700 kg/m³ (ASM, wrought aluminium)",
+     "references": [
+      "framing.profile_mass"
+     ],
+     "error": 1.7172261114102527,
+     "tolerance": 3.0,
+     "unit": "%",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "in-1010": 0.07,
+      "in-1020": 1.21,
+      "in-2020": 0.68,
+      "in-1515": 1.72,
+      "in-1530": 0.26,
+      "mm-2020": 0.08,
+      "mm-4040": 0.13,
+      "mm-4080": 0.03
+     },
+     "figure": null
+    },
+    {
+     "id": "framing.cut_list_sum",
+     "model": "framing",
+     "title": "Cut list total against the members",
+     "quantity": "|Σ member lengths − Σ cut list (length × quantity)|, mm",
+     "reference": "the frame's own member list",
+     "references": [
+      "framing.cut_list_sum"
+     ],
+     "error": 9.094947017729282e-13,
+     "tolerance": 10.0,
+     "unit": "mm",
+     "passed": true,
+     "seconds": 0.048,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "members_mm": 5406.000000000001,
+      "cut_list_mm": 5406.0
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "fea",
+   "title": "Tetrahedral modal analysis",
+   "modules": "vantage.core.fea",
+   "methods_anchor": "fea",
+   "passed": 3,
+   "checks": [
+    {
+     "id": "fea.cantilever_eb",
+     "model": "fea",
+     "title": "Cantilever bar against Euler–Bernoulli",
+     "quantity": "worst |f_FEA / f_EB − 1| of the first two bending modes, %",
+     "reference": "Euler–Bernoulli closed form, βL = 1.8751, 4.6941 (20 × 20 × 400 mm aluminium bar)",
+     "references": [
+      "fea.cantilever_eb"
+     ],
+     "error": 0.6284481150820143,
+     "tolerance": 2.0,
+     "unit": "%",
+     "passed": true,
+     "seconds": 0.131,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "cantilever": [
+       [
+        103.33870958569278,
+        102.81522068672992,
+        0.5091550603756323
+       ],
+       [
+        640.2826970324126,
+        644.3319892738747,
+        -0.6284481150820143
+       ]
+      ],
+      "free": [
+       [
+        648.6078063365992,
+        654.2389906167032,
+        -0.860722818552262
+       ]
+      ],
+      "rigid_modes": 6
+     },
+     "figure": null
+    },
+    {
+     "id": "fea.free_free_eb",
+     "model": "fea",
+     "title": "Free-free bar against Euler–Bernoulli",
+     "quantity": "|f_FEA / f_EB − 1| of the first elastic mode, % (and six rigid-body modes)",
+     "reference": "Euler–Bernoulli closed form, βL = 4.7300",
+     "references": [
+      "fea.free_free_eb"
+     ],
+     "error": 0.8607207893133628,
+     "tolerance": 2.0,
+     "unit": "%",
+     "passed": true,
+     "seconds": 0.124,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "cantilever": [
+       [
+        103.3387095869385,
+        102.81522068672992,
+        0.5091550615872631
+       ],
+       [
+        640.2826970322312,
+        644.3319892738747,
+        -0.6284481151101584
+       ]
+      ],
+      "free": [
+       [
+        648.6078196126713,
+        654.2389906167032,
+        -0.8607207893133628
+       ]
+      ],
+      "rigid_modes": 6
+     },
+     "figure": null
+    },
+    {
+     "id": "fea.plate_leissa",
+     "model": "fea",
+     "title": "Square cantilever plate against Leissa",
+     "quantity": "worst |f_FEA / f_Leissa − 1| of the first two modes, %",
+     "reference": "Leissa (1969) Vibration of Plates, NASA SP-160: C-F-F-F square, λ = 3.492, 8.525 (ν = 0.3)",
+     "references": [
+      "fea.plate_leissa"
+     ],
+     "error": 1.318498359312159,
+     "tolerance": 3.0,
+     "unit": "%",
+     "passed": true,
+     "seconds": 0.744,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "modes": [
+       [
+        213.52768641569781,
+        214.06855719635973,
+        -0.25266241233447007
+       ],
+       [
+        515.733946469965,
+        522.6247451602624,
+        -1.318498359312159
+       ]
+      ]
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "aero",
+   "title": "Aerodynamic drag and vortex shedding",
+   "modules": "vantage.core.aero",
+   "methods_anchor": "aero",
+   "passed": 2,
+   "checks": [
+    {
+     "id": "aero.cylinder",
+     "model": "aero",
+     "title": "Long circular cylinder: drag and Strouhal number",
+     "quantity": "worst of |Cd/1.2 − 1| at Re 10⁵ and |St/0.21 − 1|, %",
+     "reference": "Wieselsberger's measurements (Schlichting, Boundary-Layer Theory, Fig. 1.12) and Roshko 1954 (NACA TN 3169)",
+     "references": [
+      "aero.cylinder"
+     ],
+     "error": 4.761904761904756,
+     "tolerance": 10.0,
+     "unit": "%",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "cd_model": 1.2,
+      "cd_ref": 1.2,
+      "st_model": 0.2,
+      "st_ref": 0.21
+     },
+     "figure": null
+    },
+    {
+     "id": "aero.roof_rack_cr2020",
+     "model": "aero",
+     "title": "Bare roof rack against measured fuel economy",
+     "quantity": "percentage points outside the measured band of the two cars (0 inside)",
+     "reference": "Consumer Reports, How Rooftop Carriers Affect Fuel Economy, 2020-05-28: rack only −2 % (RAV4) to −11 % (Altima) at 65 mph",
+     "references": [
+      "aero.roof_rack_cr2020"
+     ],
+     "error": 0.0,
+     "tolerance": 2.0,
+     "unit": "pp",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "drag_n": 42.471995110797195,
+      "base_n": 446.7910729521265,
+      "loss_pct": 8.680809544638446,
+      "rig_cda_m2": 0.08356128843903891,
+      "measured_band_pct": [
+       2.0,
+       11.0
+      ],
+      "source": "Consumer Reports, How Rooftop Carriers Affect Fuel Economy, 2020-05-28"
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "trigger_fw",
+   "title": "Trigger firmware schedule",
+   "modules": "vantage.core.trigger_firmware",
+   "methods_anchor": "trigger-fw",
+   "passed": 2,
+   "checks": [
+    {
+     "id": "trigger_fw.exact_ticks",
+     "model": "trigger_fw",
+     "title": "Generated trigger firmware puts every pulse on the plan's tick",
+     "quantity": "largest |rise tick − plan time × clock| over 6 s of the sample rig's suggested lines, the STM32 project's scheduling core compiled with gcc and run against an exact simulated clock",
+     "reference": "the sync plan's trigger times in exact rational arithmetic (Python Fractions), rounded to the 100 MHz tick",
+     "references": [
+      "trigger_fw.exact_ticks"
+     ],
+     "error": 0.4231258113615779,
+     "tolerance": 0.5,
+     "unit": "ticks",
+     "passed": true,
+     "seconds": 0.299,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "rises": 948,
+      "lines": 4,
+      "ticks off the rounded plan": 0
+     },
+     "figure": null
+    },
+    {
+     "id": "trigger_fw.pio_cycles",
+     "model": "trigger_fw",
+     "title": "RP2040 PIO programs place edges and timestamp the PPS to the cycle",
+     "quantity": "largest cycle error of the trigger edges (core ticks through the firmware's delay words and a cycle-exact PIO simulation) and of the recovered PPS edges (capture program and the firmware's arithmetic, across a counter wrap)",
+     "reference": "the core's edge ticks; PPS edges placed at known cycles (RP2040 datasheet 3.2.2, 3.4.2, 3.5.4.2 instruction semantics)",
+     "references": [
+      "trigger_fw.pio_cycles"
+     ],
+     "error": 1.0,
+     "tolerance": 1.0,
+     "unit": "cycles",
+     "passed": true,
+     "seconds": 0.155,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "trigger_edges": 40,
+      "trigger_matched": true,
+      "trigger_max_cycle_error": 0,
+      "trigger_stalls": 0,
+      "captures": 12,
+      "capture_errors_cycles": [
+       -1,
+       0
+      ],
+      "capture_counter_wrapped": true
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "edge",
+   "title": "The edge watchdog",
+   "modules": "vantage.core.edge_daemon",
+   "methods_anchor": "edge",
+   "passed": 3,
+   "checks": [
+    {
+     "id": "edge.travel_direction",
+     "model": "edge",
+     "title": "The direction of travel from two frames is the camera's true motion",
+     "quantity": "95th percentile angle between the recovered and the true displacement direction (sign included) over random scenes of 300 static points 3–60 m away, a 0.7 m step, 0.5 px noise and 15 % wrong matches",
+     "reference": "the simulated camera motion (known exactly)",
+     "references": [
+      "hartley2004"
+     ],
+     "error": 1.0334934128992208,
+     "tolerance": 1.2,
+     "unit": "deg",
+     "passed": true,
+     "seconds": 0.266,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "pairs": 100,
+      "median_deg": 0.3192445882605964,
+      "p95_deg": 1.0334934128992208,
+      "max_deg": 1.867292651938492
+     },
+     "figure": null
+    },
+    {
+     "id": "edge.knock_injection",
+     "model": "edge",
+     "title": "An injected knock re-renders the image as the rotated camera sees it",
+     "quantity": "largest angle between a re-rendered pixel's ray and the original ray rotated by the knock",
+     "reference": "the rotation applied to the rays in closed form",
+     "references": [
+      "edge.knock_injection"
+     ],
+     "error": 1.2074182697257333e-06,
+     "tolerance": 0.01,
+     "unit": "deg",
+     "passed": true,
+     "seconds": 0.04,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "rays": 500,
+      "max_deg": 1.2074182697257333e-06
+     },
+     "figure": null
+    },
+    {
+     "id": "edge.fault_detection",
+     "model": "edge",
+     "title": "The watchdog catches every injected fault and raises nothing else",
+     "quantity": "missed faults plus false alarms on a 12 s synthetic drive of the sample's six cameras with a 2° knock, a frozen stream, a stall, a dark image and dropped frames",
+     "reference": "the injected faults (where and when they were written in)",
+     "references": [
+      "edge.fault_detection"
+     ],
+     "error": 0.0,
+     "tolerance": 0.0,
+     "unit": "alerts",
+     "passed": true,
+     "seconds": 8.127,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "faults": 5,
+      "caught": 5,
+      "false alarms": 0,
+      "worst delay s": 3.6,
+      "knock size error deg": 0.4736
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "thermal_intrinsics",
+   "title": "Intrinsics against temperature",
+   "modules": "vantage.core.thermal_intrinsics",
+   "methods_anchor": "thermal-intrinsics",
+   "passed": 3,
+   "checks": [
+    {
+     "id": "thermal_intrinsics.press_closed_form",
+     "model": "thermal_intrinsics",
+     "title": "Leave-one-out errors of a thermal curve in closed form",
+     "quantity": "largest difference between the leave-one-out residuals from the hat matrix (e/(1−h)) and from refitting without each point, linear and quadratic curves of 4, 6 and 9 temperatures",
+     "reference": "brute-force refits (numpy lstsq), an independent computation",
+     "references": [
+      "hastie2009"
+     ],
+     "error": 4.2121399701500195e-09,
+     "tolerance": 1e-07,
+     "unit": "px",
+     "passed": true,
+     "seconds": 0.001,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "cases": 6,
+      "largest difference px": 4.2121399701500195e-09
+     },
+     "figure": null
+    },
+    {
+     "id": "thermal_intrinsics.interval_coverage",
+     "model": "thermal_intrinsics",
+     "title": "Prediction intervals of a thermal curve cover a new calibration as often as stated",
+     "quantity": "difference between the share of new calibrations (at random temperatures, Gaussian scatter) inside the 95 % prediction interval of a 6-temperature linear curve and 0.95",
+     "reference": "Monte Carlo with known truth (2000 trials; the band is 2.6 binomial σ)",
+     "references": [
+      "hastie2009"
+     ],
+     "error": 0.0015000000000000568,
+     "tolerance": 0.012670832648251654,
+     "unit": "share",
+     "passed": true,
+     "seconds": 0.15,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "trials": 2000,
+      "coverage": 0.9515
+     },
+     "figure": null
+    },
+    {
+     "id": "thermal_intrinsics.drift_recovery",
+     "model": "thermal_intrinsics",
+     "title": "A simulated temperature sweep's drift is recovered by calibrating the rendered boards",
+     "quantity": "worst error of the fitted drift per K of fx, fy, cx, cy against the sweep's true drift, in the fit's own standard errors (polycarbonate holder, N-BK7 lens, 6 temperatures −20 … 80 °C, each calibrated by calib.calibrate on 14 rendered checkerboard views)",
+     "reference": "the true intrinsics the views were rendered with (the material model: SCHOTT, Apollo Optical Systems, Jamieson 1981)",
+     "references": [
+      "schott_glass",
+      "jamieson1981",
+      "apollo_polymers"
+     ],
+     "error": 0.4385900615798743,
+     "tolerance": 3.0,
+     "unit": "σ",
+     "passed": true,
+     "seconds": 10.837,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "fx": {
+       "true_per_k": 0.05865,
+       "fitted_per_k": 0.06363,
+       "se_per_k": 0.01443,
+       "error_sigma": 0.34542,
+       "worst_px": 1.44604,
+       "true_drift_px": 5.86485
+      },
+      "fy": {
+       "true_per_k": 0.05862,
+       "fitted_per_k": 0.06447,
+       "se_per_k": 0.01334,
+       "error_sigma": 0.43859,
+       "worst_px": 1.50894,
+       "true_drift_px": 5.86176
+      },
+      "cx": {
+       "true_per_k": -0.00913,
+       "fitted_per_k": -0.00628,
+       "se_per_k": 0.00674,
+       "error_sigma": 0.42277,
+       "worst_px": 0.47681,
+       "true_drift_px": 0.91263
+      },
+      "cy": {
+       "true_per_k": 0.06738,
+       "fitted_per_k": 0.06564,
+       "se_per_k": 0.00823,
+       "error_sigma": 0.21212,
+       "worst_px": 0.46617,
+       "true_drift_px": 6.73848
+      }
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "sotif",
+   "title": "SOTIF: stopping distance and the ODD bound",
+   "modules": "vantage.core.sotif",
+   "methods_anchor": "sotif",
+   "passed": 2,
+   "checks": [
+    {
+     "id": "sotif.stopping_closed_form",
+     "model": "sotif",
+     "title": "Stopping distance with a jerk ramp against a time-stepped integration",
+     "quantity": "largest |closed form − integration| of sotif.stopping_distance over the R157 driver, R157 FSM and AASHTO models, four road surfaces and 5–130 km/h, and of the inverse max_safe_speed round trip, metres",
+     "reference": "the kinematics stepped in time (midpoint rule, 5 µs) in the check, independent of the closed form",
+     "references": [
+      "unece_r157"
+     ],
+     "error": 8.257040917669656e-08,
+     "tolerance": 0.005,
+     "unit": "m",
+     "passed": true,
+     "seconds": 10.723,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "stopping_distance_m": {
+       "r157/dry/5": 2.0311,
+       "r157/dry/10": 4.4222,
+       "r157/dry/30": 16.544,
+       "r157/dry/50": 32.732,
+       "r157/dry/80": 64.6383,
+       "r157/dry/130": 138.1466,
+       "r157/wet/5": 2.0324,
+       "r157/wet/10": 4.4889,
+       "r157/wet/30": 18.249,
+       "r157/wet/50": 38.3036,
+       "r157/wet/80": 80.1879,
+       "r157/wet/130": 181.4676,
+       "r157/snow/5": 2.1947,
+       "r157/snow/10": 5.3749,
+       "r157/snow/30": 27.9308,
+       "r157/snow/50": 66.223,
+       "r157/snow/80": 153.1671,
+       "r157/snow/130": 376.7558,
+       "r157/ice/5": 2.6343,
+       "r157/ice/10": 7.236,
+       "r157/ice/30": 45.3129,
+       "r157/ice/50": 114.8626,
+       "r157/ice/80": 278.1984,
+       "r157/ice/130": 707.7885,
+       "r157_fsm/dry/5": 1.4756,
+       "r157_fsm/dry/10": 3.3289,
+       "r157_fsm/dry/30": 13.9571,
+       "r157_fsm/dry/50": 29.7293,
+       "r157_fsm/dry/80": 63.0328,
+       "r157_fsm/dry/130": 144.2587,
+       "r157_fsm/wet/5": 1.4769,
+       "r157_fsm/wet/10": 3.3778,
+       "r157_fsm/wet/30": 14.9157,
+       "r157_fsm/wet/50": 32.7482,
+       "r157_fsm/wet/80": 71.2992,
+       "r157_fsm/wet/130": 167.0235,
+       "r157_fsm/snow/5": 1.6391,
+       "r157_fsm/snow/10": 4.2638,
+       "r157_fsm/snow/30": 24.5975,
+       "r157_fsm/snow/50": 60.6675,
+       "r157_fsm/snow/80": 144.2783,
+       "r157_fsm/snow/130": 362.3114,
+       "r157_fsm/ice/5": 2.0788,
+       "r157_fsm/ice/10": 6.1248,
+       "r157_fsm/ice/30": 41.9796,
+       "r157_fsm/ice/50": 109.307,
+       "r157_fsm/ice/80": 269.3096,
+       "r157_fsm/ice/130": 693.3441,
+       "aashto/dry/5": 3.7548,
+       "aashto/dry/10": 8.0746,
+       "aashto/dry/30": 31.0046,
+       "aashto/dry/50": 62.9757,
+       "aashto/dry/80": 127.8845,
+       "aashto/dry/130": 281.2713,
+       "aashto/wet/5": 3.7548,
+       "aashto/wet/10": 8.0746,
+       "aashto/wet/30": 31.0046,
+       "aashto/wet/50": 62.9757,
+       "aashto/wet/80": 127.8845,
+       "aashto/wet/130": 281.2713,
+       "aashto/snow/5": 3.964,
+       "aashto/snow/10": 8.9115,
+       "aashto/snow/30": 38.5367,
+       "aashto/snow/50": 83.8984,
+       "aashto/snow/80": 181.4464,
+       "aashto/snow/130": 422.7084,
+       "aashto/ice/5": 4.4557,
+       "aashto/ice/10": 10.8785,
+       "aashto/ice/30": 56.2401,
+       "aashto/ice/50": 133.0745,
+       "aashto/ice/80": 307.3373,
+       "aashto/ice/130": 755.139
+      }
+     },
+     "figure": null
+    },
+    {
+     "id": "sotif.wsdot_ssd",
+     "model": "sotif",
+     "title": "Design stopping sight distance against WSDOT Exhibit 1260-1 (AASHTO)",
+     "quantity": "largest difference between the AASHTO stop model's distance rounded up to 5 ft and the table's 12 design values (25–80 mph), feet",
+     "reference": "WSDOT Design Manual M 22-01.23 (September 2024), Exhibit 1260-1, as printed",
+     "references": [
+      "wsdot_1260",
+      "aashto_greenbook"
+     ],
+     "error": 0.0,
+     "tolerance": 0.0,
+     "unit": "ft",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "rows": {
+       "25 mph": {
+        "model_ft": 151.69,
+        "rounded_ft": 155.0,
+        "table_ft": 155
+       },
+       "30 mph": {
+        "model_ft": 196.43,
+        "rounded_ft": 200.0,
+        "table_ft": 200
+       },
+       "35 mph": {
+        "model_ft": 245.97,
+        "rounded_ft": 250.0,
+        "table_ft": 250
+       },
+       "40 mph": {
+        "model_ft": 300.32,
+        "rounded_ft": 305.0,
+        "table_ft": 305
+       },
+       "45 mph": {
+        "model_ft": 359.46,
+        "rounded_ft": 360.0,
+        "table_ft": 360
+       },
+       "50 mph": {
+        "model_ft": 423.41,
+        "rounded_ft": 425.0,
+        "table_ft": 425
+       },
+       "55 mph": {
+        "model_ft": 492.16,
+        "rounded_ft": 495.0,
+        "table_ft": 495
+       },
+       "60 mph": {
+        "model_ft": 565.71,
+        "rounded_ft": 570.0,
+        "table_ft": 570
+       },
+       "65 mph": {
+        "model_ft": 644.07,
+        "rounded_ft": 645.0,
+        "table_ft": 645
+       },
+       "70 mph": {
+        "model_ft": 727.22,
+        "rounded_ft": 730.0,
+        "table_ft": 730
+       },
+       "75 mph": {
+        "model_ft": 815.18,
+        "rounded_ft": 820.0,
+        "table_ft": 820
+       },
+       "80 mph": {
+        "model_ft": 907.94,
+        "rounded_ft": 910.0,
+        "table_ft": 910
+       }
+      }
+     },
+     "figure": null
+    }
+   ]
+  },
+  {
+   "id": "cleaning",
+   "title": "Cleaning and de-icing",
+   "modules": "vantage.core.cleaning",
+   "methods_anchor": "cleaning",
+   "passed": 3,
+   "checks": [
+    {
+     "id": "cleaning.spray_cone",
+     "model": "cleaning",
+     "title": "Spray cone on a lens window against closed forms",
+     "quantity": "largest |sampled covered area − closed form| over 3 square-on cones (circle–circle overlap) and 2 tilted cones (the ellipse π·a·b of the conic section), relative to the window's area",
+     "reference": "circle–circle intersection area and the cone's elliptical section, written out in the check",
+     "references": [
+      "cleaning.spray_cone"
+     ],
+     "error": 2.9075914359456797e-05,
+     "tolerance": 0.005,
+     "unit": "share of the window",
+     "passed": true,
+     "seconds": 0.01,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "rows": {
+       "square h=0.02 α=20.0 off=0.0": {
+        "model_mm2": 166.473,
+        "closed_mm2": 166.4722
+       },
+       "square h=0.03 α=15.0 off=0.012": {
+        "model_mm2": 202.9783,
+        "closed_mm2": 202.9485
+       },
+       "square h=0.01 α=40.0 off=0.018": {
+        "model_mm2": 134.0361,
+        "closed_mm2": 134.0372
+       },
+       "tilted h=0.006 α=15.0 β=30.0": {
+        "model_mm2": 12.9277,
+        "closed_mm2": 12.9642,
+        "a_mm": 2.196,
+        "b_mm": 1.879
+       },
+       "tilted h=0.004 α=20.0 β=45.0": {
+        "model_mm2": 23.3263,
+        "closed_mm2": 23.309,
+        "a_mm": 3.356,
+        "b_mm": 2.211
+       }
+      },
+      "note": "error relative to the window's area"
+     },
+     "figure": null
+    },
+    {
+     "id": "cleaning.convection",
+     "model": "cleaning",
+     "title": "Flat-plate convection against two published worked examples",
+     "quantity": "largest relative difference of cleaning.flat_plate_h from the examples' h̄ with their own air properties (and within 3 % with Sutherland's properties)",
+     "reference": "METU ME 212 (F. Arınç), forced convection, Examples 1 and 5 (Incropera's correlations)",
+     "references": [
+      "incropera"
+     ],
+     "error": 0.0013558415767530997,
+     "tolerance": 0.01,
+     "unit": "relative",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "ok also requires Sutherland's air properties within 3 % of the published h",
+     "exception": "",
+     "detail": {
+      "rows": {
+       "Example 1 (laminar)": {
+        "given_properties": 5.487,
+        "own_properties": 5.512,
+        "published": 5.48,
+        "own_properties_rel_err": 0.0058
+       },
+       "Example 5 (truck roof, turbulent)": {
+        "given_properties": 56.153,
+        "own_properties": 56.607,
+        "published": 56.2,
+        "own_properties_rel_err": 0.0072
+       }
+      }
+     },
+     "figure": null
+    },
+    {
+     "id": "cleaning.heater_econ",
+     "model": "cleaning",
+     "title": "Lens heater warm-up against e-con Systems' measurements",
+     "quantity": "outcomes mispredicted: the lumped model fitted to the 5.5 W and 4.5 W warm-ups (−30 → 20 °C in 300 and 480 s) must predict that 3.5 W and 2 W never reach 20 °C",
+     "reference": "e-con Systems, \"What makes Automatic De-icing and Defogging Cameras Crucial in Dynamic Environments\", 26 Mar 2026, tests 4–5",
+     "references": [
+      "econ_heater"
+     ],
+     "error": 0.0,
+     "tolerance": 0.0,
+     "unit": "outcomes",
+     "passed": true,
+     "seconds": 0.0,
+     "note": "",
+     "exception": "",
+     "detail": {
+      "G_w_k": 0.07669,
+      "C_j_k": 19.258,
+      "predictions": {
+       "3.5 W": {
+        "steady_rise_k": 45.64,
+        "reaches_20c": false
+       },
+       "2 W": {
+        "steady_rise_k": 26.08,
+        "reaches_20c": false
+       },
+       "5.5 W": {
+        "time_s": 300.0,
+        "measured_s": 300.0
+       },
+       "4.5 W": {
+        "time_s": 480.0,
+        "measured_s": 480.0
+       }
+      },
+      "lg_innotek_4w_minus18_to_20c_s": 327.5,
+      "lg_innotek_measured_s": 240.0
      },
      "figure": null
     }
@@ -6431,6 +9288,9 @@
   "kitti2013": "A. Geiger, P. Lenz, C. Stiller and R. Urtasun, \"Vision meets robotics: The KITTI dataset\", International Journal of Robotics Research 32(11), 1231–1237, 2013; the KITTI raw data devkit.",
   "ros_camera_info": "ROS sensor_msgs/CameraInfo message definition and the camera_calibration_parsers YAML format.",
   "kalibr2013": "P. Furgale, J. Rehder and R. Siegwart, \"Unified temporal and spatial calibration for multi-sensor systems\", Proc. IEEE/RSJ IROS, 1280–1286, 2013; Kalibr's camchain.yaml format.",
+  "formats.project_dir_round_trip": "the project as loaded from its .vantage file (identity: nothing may change)",
+  "formats.project_diff_known_edits": "the edits applied: a camera moved 50 mm forward and 14 mm up and yawed 2°, a lidar pitched 1.5°, a lens swapped, a tolerance changed",
+  "formats.project_merge_two_edits": "the two edits applied by hand (different cameras: no conflict; the same value two ways: one conflict)",
   "sobol2001": "I. M. Sobol', \"Global sensitivity indices for nonlinear mathematical models and their Monte Carlo estimates\", Mathematics and Computers in Simulation 55(1–3), 271–280, 2001.",
   "saltelli2010": "A. Saltelli, P. Annoni, I. Azzini, F. Campolongo, M. Ratto and S. Tarantola, \"Variance based sensitivity analysis of model output. Design and estimator for the total sensitivity index\", Computer Physics Communications 181(2), 259–270, 2010.",
   "jansen1999": "M. J. W. Jansen, \"Analysis of variance designs for model output\", Computer Physics Communications 117(1–2), 35–43, 1999.",
@@ -6439,6 +9299,50 @@
   "morris1991": "M. D. Morris, \"Factorial sampling plans for preliminary computational experiments\", Technometrics 33(2), 161–174, 1991.",
   "campolongo2007": "F. Campolongo, J. Cariboni and A. Saltelli, \"An effective screening design for sensitivity analysis of large models\", Environmental Modelling & Software 22(10), 1509–1518, 2007.",
   "wilson1927": "E. B. Wilson, \"Probable inference, the law of succession, and statistical inference\", Journal of the American Statistical Association 22(158), 209–212, 1927.",
-  "rfc7693": "M-J. Saarinen and J-P. Aumasson, \"The BLAKE2 Cryptographic Hash and Message Authentication Code (MAC)\", RFC 7693, IETF, 2015."
+  "rfc7693": "M-J. Saarinen and J-P. Aumasson, \"The BLAKE2 Cryptographic Hash and Message Authentication Code (MAC)\", RFC 7693, IETF, 2015.",
+  "widger1976": "W. K. Widger, M. P. Woodall, \"Integration of the Planck blackbody radiation function\", Bull. Am. Meteorol. Soc. 57(10), 1217–1219, 1976 (the series of the Planck integral).",
+  "codata2018": "E. Tiesinga et al., \"CODATA recommended values of the fundamental physical constants: 2018\", Rev. Mod. Phys. 93, 025010, 2021 (h, c, k exact; σ derived).",
+  "lynred_pico640s": "Lynred, PICO640S datasheet (ref. 06/2020/01): recognition distances of a 1.80 m × 0.50 m human with 19, 50 and 75 mm lenses for Johnson's criteria (read 2026-11-11).",
+  "bohren1983": "C. F. Bohren, D. R. Huffman, Absorption and Scattering of Light by Small Particles, Wiley, 1983 (Appendix A, BHMIE, and its worked example).",
+  "shettle1979": "E. P. Shettle, R. W. Fenn, \"Models for the aerosols of the lower atmosphere and the effects of humidity variations on their optical properties\", AFGL-TR-79-0214, 1979 (the modified gamma fog drop distributions).",
+  "rebecq2018_esim": "H. Rebecq, D. Gehrig, D. Scaramuzza, \"ESIM: an Open Event Camera Simulator\", Conference on Robot Learning (CoRL), 2018.",
+  "kleinrock1975": "L. Kleinrock, Queueing Systems, Vol. 1: Theory, Wiley, 1975 (Lindley's recursion for a single-server queue).",
+  "carla_dvs": "CARLA 0.9.16, sensor.camera.dvs (DVSCamera.cpp, \"based on ESIM\"), https://carla.readthedocs.io.",
+  "astm_g173": "ASTM G173-03, Standard Tables for Reference Solar Spectral Irradiances: Direct Normal and Hemispherical on 37° Tilted Surface (SMARTS v2.9.2); the rows used here as pvlib-python ships them, pvlib/data/ASTMG173.csv (https://github.com/pvlib/pvlib-python, read 2026-11-11).",
+  "iau2015": "IAU 2015 Resolution B3 on recommended nominal conversion constants for selected solar and planetary properties (R☉ = 6.957 × 10⁸ m, T_eff☉ = 5772 K).",
+  "siegman1966": "A. E. Siegman, \"The antenna properties of optical heterodyne receivers\", Applied Optics 5(10), 1588–1594, 1966.",
+  "kasten1989": "F. Kasten and A. T. Young, \"Revised optical air mass tables and approximation formula\", Applied Optics 28(22), 4735–4738, 1989.",
+  "balanis2016": "C. A. Balanis, Antenna Theory: Analysis and Design, 4th ed., Wiley, 2016, §6.3 (the uniform linear array: half-power beamwidth 0.886 λ / (N d) at broadside, first sidelobe −13.26 dB).",
+  "harris1978": "F. J. Harris, \"On the use of windows for harmonic analysis with the discrete Fourier transform\", Proc. IEEE 66(1), 51–83, 1978, Table 1 (Hann: highest sidelobe −31.5 dB, 3 dB bandwidth 1.44 bins; rectangle −13 dB, 0.89 bins).",
+  "doerry2017": "A. W. Doerry, \"Catalog of window taper functions for sidelobe control\", Sandia report SAND2017-4042, 2017, §3.6 (the Taylor taper).",
+  "ti_tiduen5": "Texas Instruments, TIDEP-01012 Imaging Radar Using Cascaded mmWave Sensor Reference Design, TIDUEN5A, June 2019, revised March 2020 (Table 1; §2.3.1; §3.1, Figures 6–8; §4.2.2.1).",
+  "ti_swru553": "Texas Instruments, MMWCAS-RF-EVM user's guide SWRU553A (antenna offsets in wavelengths at 78.5 GHz) and the mmWave Studio 4-chip cascade MATLAB example (TX/RX position indices).",
+  "wu2025_3dgut": "Q. Wu, J. Martinez Esturo, A. Mirzaei, N. Moenne-Loccoz, Z. Gojcic, \"3DGUT: Enabling Distorted Cameras and Secondary Rays in Gaussian Splatting\", CVPR 2025, arXiv:2412.12507.",
+  "winter2009": "D. A. Winter, \"Biomechanics and Motor Control of Human Movement\", 4th ed., Wiley, 2009.",
+  "schlick1994": "C. Schlick, \"An Inexpensive BRDF Model for Physically-based Rendering\", Computer Graphics Forum 13(3), 1994.",
+  "ego_composite.layer_vs_gl_depth": "Independent: the same triangles rasterised by OpenGL (EGL, headless) into a 32-bit float depth buffer through the same pinhole, planar depth turned into range along each pixel's ray",
+  "ego_composite.layer_vs_occlusion_cube": "The analysis's occlusion cube (core.occlusion, as core.asbuilt and core.rig_health look it up) and core.lens's own unprojection, on every camera of the sample's data rig",
+  "usd.camera_projection": "Independent: the USD camera's standard attributes (OpenUSD UsdGeomCamera: tenths of a scene unit, aperture offsets) and NVIDIA's OpenCV fisheye attributes, read back from the written text and projected by their own published formulas, against core.lens on 400 random rays per camera of the sample's data rig",
+  "framing.profile_mass": "the makers' own section areas and 2700 kg/m³ (ASM, wrought aluminium)",
+  "framing.cut_list_sum": "the frame's own member list",
+  "fea.cantilever_eb": "Euler–Bernoulli closed form, βL = 1.8751, 4.6941 (20 × 20 × 400 mm aluminium bar)",
+  "fea.free_free_eb": "Euler–Bernoulli closed form, βL = 4.7300",
+  "fea.plate_leissa": "Leissa (1969) Vibration of Plates, NASA SP-160: C-F-F-F square, λ = 3.492, 8.525 (ν = 0.3)",
+  "aero.cylinder": "Wieselsberger's measurements (Schlichting, Boundary-Layer Theory, Fig. 1.12) and Roshko 1954 (NACA TN 3169)",
+  "aero.roof_rack_cr2020": "Consumer Reports, How Rooftop Carriers Affect Fuel Economy, 2020-05-28: rack only −2 % (RAV4) to −11 % (Altima) at 65 mph",
+  "trigger_fw.exact_ticks": "the sync plan's trigger times in exact rational arithmetic (Python Fractions), rounded to the 100 MHz tick",
+  "trigger_fw.pio_cycles": "the core's edge ticks; PPS edges placed at known cycles (RP2040 datasheet 3.2.2, 3.4.2, 3.5.4.2 instruction semantics)",
+  "edge.knock_injection": "the rotation applied to the rays in closed form",
+  "edge.fault_detection": "the injected faults (where and when they were written in)",
+  "hastie2009": "T. Hastie, R. Tibshirani, J. Friedman, The Elements of Statistical Learning, 2nd ed., Springer, 2009, §7.10 (cross-validation; the leave-one-out shortcut for linear smoothers, eq. 7.52).",
+  "schott_glass": "SCHOTT AG, Optical Glass Data Sheets (collection, US edition, 2007): N-BK7 page 11 (as of 09/03/2001), N-LAK9 page 35, N-SF6 page 74: nd, α(−30/+70 °C) and the temperature coefficients of the refractive index Δn_rel/ΔT at the e line (546.1 nm), read 2026-11-11.",
+  "jamieson1981": "T. H. Jamieson, \"Thermal effects in optical systems\", Optical Engineering 20(2), 156–160, 1981 (the thermo-optic coefficient of a thin lens, x_f = α − (dn/dT)/(n − 1)).",
+  "apollo_polymers": "Apollo Optical Systems, \"Common Polymers for Optical Components\" (property table: nD, dn/dT, CTE of acrylic, polycarbonate, COC and COP), https://www.apollooptical.com/common-polymers-for-optical-components, read 2026-11-11.",
+  "unece_r157": "UN Regulation No. 157, 01 series, Amendment 4 (E/ECE/TRANS/505/Rev.3/Add.156/Amend.4, 3 March 2023), Annex 3: the competent and careful human driver model and the fuzzy safety model.",
+  "wsdot_1260": "Washington State DOT, Design Manual M 22-01.23, September 2024, Chapter 1260 Sight Distance, §1260.03 and Exhibit 1260-1.",
+  "aashto_greenbook": "AASHTO, A Policy on Geometric Design of Highways and Streets (the Green Book): stopping sight distance, 2.5 s brake reaction time and 11.2 ft/s² (3.4 m/s²) deceleration.",
+  "cleaning.spray_cone": "circle–circle intersection area and the cone's elliptical section, written out in the check",
+  "incropera": "F. P. Incropera, D. P. DeWitt, T. L. Bergman, A. S. Lavine, Fundamentals of Heat and Mass Transfer, Wiley: flat-plate correlations (laminar, turbulent, mixed).",
+  "econ_heater": "e-con Systems, \"What makes Automatic De-icing and Defogging Cameras Crucial in Dynamic Environments\", 26 Mar 2026."
  }
 }

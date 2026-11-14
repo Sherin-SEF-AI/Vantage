@@ -173,7 +173,7 @@ python -m vantage.validation --list                  # the checks, their referen
       them (the as-built check and the drive-log check compare a recording with the plan). The suite shows that each
       model computes what this page says it computes, within the stated tolerance, for the cases it builds.</p>
     <!-- validation:summary -->
-<table class="val"><caption>71 of 71 checks passed (Vantage 0.8.1, run 2026-11-04, seed 20261027); the full <a href="validation/validation.html">validation report</a>.</caption><tr><th>Model</th><th>Checks</th><th>Passed</th></tr><tr><td><a href="#lens">Lens projection</a></td><td>7</td><td>7</td></tr>
+<table class="val"><caption>119 of 119 checks passed (Vantage 0.10.0, run 2026-11-14, seed 20261027); the full <a href="validation/validation.html">validation report</a>.</caption><tr><th>Model</th><th>Checks</th><th>Passed</th></tr><tr><td><a href="#lens">Lens projection</a></td><td>7</td><td>7</td></tr>
 <tr><td><a href="#coverage">Ground coverage and pixel density</a></td><td>3</td><td>3</td></tr>
 <tr><td><a href="#occlusion">Occlusion by the body</a></td><td>3</td><td>3</td></tr>
 <tr><td><a href="#perception">Perception range</a></td><td>3</td><td>3</td></tr>
@@ -191,9 +191,25 @@ python -m vantage.validation --list                  # the checks, their referen
 <tr><td><a href="#joint">Joint extrinsic solve</a></td><td>2</td><td>2</td></tr>
 <tr><td><a href="#observability">Calibration observability</a></td><td>4</td><td>4</td></tr>
 <tr><td><a href="#lidar-calib">Lidar–camera calibration</a></td><td>2</td><td>2</td></tr>
-<tr><td><a href="#formats">Dataset calibration files</a></td><td>4</td><td>4</td></tr>
+<tr><td><a href="#formats">Dataset calibration files</a></td><td>7</td><td>7</td></tr>
 <tr><td><a href="#experiments">Designed experiments and sensitivity</a></td><td>4</td><td>4</td></tr>
 <tr><td><a href="#recording-checks">Recording checks: frozen cameras and capture skew</a></td><td>2</td><td>2</td></tr>
+<tr><td><a href="#thermal">Thermal LWIR cameras and the night photon budget</a></td><td>5</td><td>5</td></tr>
+<tr><td><a href="#event">Event sensors</a></td><td>3</td><td>3</td></tr>
+<tr><td><a href="#fmcw">FMCW lidar: Doppler, sun and cross-talk</a></td><td>4</td><td>4</td></tr>
+<tr><td><a href="#imaging-radar">4D imaging radar: array, sidelobes, ghosts</a></td><td>5</td><td>5</td></tr>
+<tr><td><a href="#neural-replay">Neural log replay: the unscented projection</a></td><td>3</td><td>3</td></tr>
+<tr><td><a href="#relight">Relighting</a></td><td>2</td><td>2</td></tr>
+<tr><td><a href="#ego-composite">The user&#x27;s body composited into simulator images</a></td><td>2</td><td>2</td></tr>
+<tr><td><a href="#usd">OpenUSD rig export</a></td><td>1</td><td>1</td></tr>
+<tr><td><a href="#framing">Extrusion framing</a></td><td>2</td><td>2</td></tr>
+<tr><td><a href="#fea">Tetrahedral modal analysis</a></td><td>3</td><td>3</td></tr>
+<tr><td><a href="#aero">Aerodynamic drag and vortex shedding</a></td><td>2</td><td>2</td></tr>
+<tr><td><a href="#trigger-fw">Trigger firmware schedule</a></td><td>2</td><td>2</td></tr>
+<tr><td><a href="#edge">The edge watchdog</a></td><td>3</td><td>3</td></tr>
+<tr><td><a href="#thermal-intrinsics">Intrinsics against temperature</a></td><td>3</td><td>3</td></tr>
+<tr><td><a href="#sotif">SOTIF: stopping distance and the ODD bound</a></td><td>2</td><td>2</td></tr>
+<tr><td><a href="#cleaning">Cleaning and de-icing</a></td><td>3</td><td>3</td></tr>
 </table>
 <!-- /validation:summary -->
 
@@ -242,11 +258,11 @@ python -m vantage.validation --list                  # the checks, their referen
     </dl>
     <h4>Validation</h4>
     <!-- validation:lens -->
-<table class="val"><caption>7 of 7 checks passed (Vantage 0.8.1, run 2026-11-04, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#lens">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>7 of 7 checks passed (Vantage 0.10.0, run 2026-11-14, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#lens">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#lens.inverse">Image height inverts back to the angle</a><br><code>lens.inverse</code></td><td>the identity: θ(r) is the inverse of r(θ) (closed form, or Newton&#x27;s method for Kannala–Brandt)</td><td>4.7e-13 degrees</td><td>1e-06 degrees</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#lens.derivative">Radial sampling dr/dθ</a><br><code>lens.derivative</code></td><td>a central difference of r(θ) with step 10⁻⁶ rad</td><td>1.9e-09 relative</td><td>1e-06 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#lens.opencv_pinhole">Rectilinear lenses against OpenCV&#x27;s pinhole projection</a><br><code>lens.opencv_pinhole</code></td><td>OpenCV cv2.projectPoints (no distortion); OpenCV pixel centres are at integers, Vantage&#x27;s at i + ½</td><td>1e-12 px</td><td>1e-06 px</td><td class="ok">✓ pass</td></tr>
-<tr><td><a href="validation/validation.html#lens.opencv_fisheye">Kannala–Brandt lenses against OpenCV&#x27;s fisheye model</a><br><code>lens.opencv_fisheye</code></td><td>OpenCV cv2.fisheye.projectPoints: θ_d = θ(1 + k1θ² + k2θ⁴ + k3θ⁶ + k4θ⁸), the same model</td><td>1.4e-12 px</td><td>1e-06 px</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#lens.opencv_fisheye">Kannala–Brandt lenses against OpenCV&#x27;s fisheye model</a><br><code>lens.opencv_fisheye</code></td><td>OpenCV cv2.fisheye.projectPoints: θ_d = θ(1 + k1θ² + k2θ⁴ + k3θ⁶ + k4θ⁸), the same model</td><td>2.1e-12 px</td><td>1e-06 px</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#lens.opencv_undistort">Pixel to ray against OpenCV&#x27;s fisheye undistortion</a><br><code>lens.opencv_undistort</code></td><td>OpenCV cv2.fisheye.undistortPoints (iterated to 10⁻¹⁴)</td><td>1.5e-06 degrees</td><td>0.0001 degrees</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#lens.builtin_fov">Built-in lenses reproduce their makers&#x27; stated field of view</a><br><code>lens.builtin_fov</code></td><td>the FOV each maker publishes for its lens (H, V, D: e-con Systems, Leopard Imaging, D3 Embedded, Sekonix)</td><td>0.434 degrees</td><td>0.5 degrees</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#lens.density">Pixel density on a target facing the camera</a><br><code>lens.density</code></td><td>the projected area of a small square, by the shoelace formula</td><td>3.7e-06 relative</td><td>0.001 relative</td><td class="ok">✓ pass</td></tr>
@@ -289,7 +305,7 @@ python -m vantage.validation --list                  # the checks, their referen
     </dl>
     <h4>Validation</h4>
     <!-- validation:coverage -->
-<table class="val"><caption>3 of 3 checks passed (Vantage 0.8.1, run 2026-11-04, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#coverage">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>3 of 3 checks passed (Vantage 0.10.0, run 2026-11-14, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#coverage">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#coverage.nadir_pyramid">A rectilinear camera looking straight down at a plate</a><br><code>coverage.nadir_pyramid</code></td><td>the pyramid of a pinhole camera cut by a plane, written out in the check</td><td>5.4e-08 relative</td><td>0.001 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#coverage.oblique_footprint">An aimed and rolled camera&#x27;s footprint on a plate</a><br><code>coverage.oblique_footprint</code></td><td>the image corners&#x27; rays intersected with the plane, written out in the check</td><td>5.9e-08 relative</td><td>0.001 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#coverage.fisheye_cone">A fisheye&#x27;s image circle on a plate is a disc</a><br><code>coverage.fisheye_cone</code></td><td>the cone of the image circle cut by the plane, written out in the check</td><td>5.9e-08 relative</td><td>0.001 relative</td><td class="ok">✓ pass</td></tr>
@@ -321,7 +337,7 @@ python -m vantage.validation --list                  # the checks, their referen
     </div>
     <h4>Validation</h4>
     <!-- validation:occlusion -->
-<table class="val"><caption>3 of 3 checks passed (Vantage 0.8.1, run 2026-11-04, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#occlusion">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>3 of 3 checks passed (Vantage 0.10.0, run 2026-11-14, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#occlusion">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#occlusion.cube_vs_rays">Cube maps against exact ray casting</a><br><code>occlusion.cube_vs_rays</code></td><td>Möller–Trumbore ray–triangle intersection against every occluder triangle, written for the check</td><td>0.00196 share of directions</td><td>0.005 share of directions</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#occlusion.cube_depth">Cube-map depth against exact ray casting</a><br><code>occlusion.cube_depth</code></td><td>Möller–Trumbore ray–triangle intersection against every occluder triangle, written for the check</td><td>0.00094 share of texels</td><td>0.005 share of texels</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#occlusion.ground_visibility">Which ground points a camera sees past the body</a><br><code>occlusion.ground_visibility</code></td><td>Möller–Trumbore ray–triangle intersection along the line of sight, written for the check</td><td>0.00079 share of points</td><td>0.005 share of points</td><td class="ok">✓ pass</td></tr>
@@ -365,7 +381,7 @@ python -m vantage.validation --list                  # the checks, their referen
       must also keep its contrast and, at night, enough light (<a href="#weather">Weather and night</a>).</p>
     <h4>Validation</h4>
     <!-- validation:perception -->
-<table class="val"><caption>3 of 3 checks passed (Vantage 0.8.1, run 2026-11-04, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#perception">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>3 of 3 checks passed (Vantage 0.10.0, run 2026-11-14, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#perception">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#perception.pinhole_pixels">Object pixels through a pinhole lens</a><br><code>perception.pinhole_pixels</code></td><td>the pinhole projection of a fronto-parallel segment, f·H/Z with Z the depth along the axis</td><td>0 relative</td><td>1e-09 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#perception.fisheye_pixels">Object pixels through a fisheye follow its local sampling</a><br><code>perception.fisheye_pixels</code></td><td>the first-order local magnification of the lens at the object&#x27;s direction</td><td>0.00103 relative</td><td>0.02 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#perception.far_range">Perception range of a pinhole camera</a><br><code>perception.far_range</code></td><td>the pinhole relation f·H/Z = min_px solved for Z</td><td>5.6e-16 relative</td><td>0.001 relative</td><td class="ok">✓ pass</td></tr>
@@ -391,7 +407,7 @@ python -m vantage.validation --list                  # the checks, their referen
       to 0.01° or 0.1 mm. The joint check tries all six axes at once on the 3⁶ = 729-pose grid of (−, 0, +) offsets.</p>
     <h4>Validation</h4>
     <!-- validation:critical -->
-<table class="val"><caption>2 of 2 checks passed (Vantage 0.8.1, run 2026-11-04, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#critical">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>2 of 2 checks passed (Vantage 0.10.0, run 2026-11-14, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#critical">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#critical.pinhole_pixels">Critical-target pixels through a pinhole lens</a><br><code>critical.pinhole_pixels</code></td><td>the pinhole projection, written out in the check</td><td>1.3e-15 relative</td><td>1e-06 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#critical.pinhole_envelope">Mounting envelopes of a pinhole camera</a><br><code>critical.pinhole_envelope</code></td><td>the angles of the target&#x27;s edges against the half field, and f·h / min_px, written out in the check</td><td>0.00656 degrees</td><td>0.02 degrees</td><td class="ok">✓ pass</td></tr>
 </table>
@@ -431,7 +447,7 @@ python -m vantage.validation --list                  # the checks, their referen
     </dl>
     <h4>Validation</h4>
     <!-- validation:lidar -->
-<table class="val"><caption>4 of 4 checks passed (Vantage 0.8.1, run 2026-11-04, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#lidar">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>4 of 4 checks passed (Vantage 0.10.0, run 2026-11-14, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#lidar">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#lidar.ring_radii">Ground rings of a level lidar</a><br><code>lidar.ring_radii</code></td><td>the cone of a beam at elevation ε cut by the ground plane, written out in the check</td><td>4.1e-16 relative</td><td>1e-09 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#lidar.ground_points">Points a level lidar puts on the ground</a><br><code>lidar.ground_points</code></td><td>the beam count: channels reaching the ground within range × columns per revolution</td><td>0 relative</td><td>1e-06 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#lidar.points_level">Lidar points on an object: a level lidar</a><br><code>lidar.points_level</code></td><td>every beam (channel elevation × column azimuth, through the lidar&#x27;s rotation) intersected with a vertical rectangle square to the line of sight, written for the check</td><td>0.00985 relative</td><td>0.02 relative</td><td class="ok">✓ pass</td></tr>
@@ -481,7 +497,7 @@ python -m vantage.validation --list                  # the checks, their referen
     </dl>
     <h4>Validation</h4>
     <!-- validation:radar -->
-<table class="val"><caption>6 of 6 checks passed (Vantage 0.8.1, run 2026-11-04, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#radar">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>6 of 6 checks passed (Vantage 0.10.0, run 2026-11-14, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#radar">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#radar.cross_section">Radar range against the cross-section</a><br><code>radar.cross_section</code></td><td>the radar equation: received power ∝ σ / R⁴, so the range at a fixed threshold ∝ σ^¼</td><td>1.2e-05 relative</td><td>0.0001 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#radar.slab">One fascia layer against the sum of its reflections</a><br><code>radar.slab</code></td><td>the Airy summation of the slab&#x27;s multiple reflections with the Fresnel interface coefficients, written for the check</td><td>3.3e-16 power ratio</td><td>1e-09 power ratio</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#radar.thin_film">Layer identities: half wave, quarter wave, Brewster, energy</a><br><code>radar.thin_film</code></td><td>thin-film closed forms (Macleod; Born &amp; Wolf)</td><td>6.7e-16 power ratio</td><td>1e-09 power ratio</td><td class="ok">✓ pass</td></tr>
@@ -509,7 +525,7 @@ python -m vantage.validation --list                  # the checks, their referen
       normal incidence.</p>
     <h4>Validation</h4>
     <!-- validation:glass -->
-<table class="val"><caption>2 of 2 checks passed (Vantage 0.8.1, run 2026-11-04, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#glass">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>2 of 2 checks passed (Vantage 0.10.0, run 2026-11-14, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#glass">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#glass.plate_shift">A ray through a glass plate shifts by the plate formula</a><br><code>glass.plate_shift</code></td><td>the textbook lateral displacement of a plane-parallel plate (Hecht)</td><td>3.1e-16 relative</td><td>1e-09 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#glass.energy">Glass transmission and reflection conserve energy</a><br><code>glass.energy</code></td><td>energy conservation, and the class&#x27;s own t_vis</td><td>3.7e-15 power ratio</td><td>1e-09 power ratio</td><td class="ok">✓ pass</td></tr>
 </table>
@@ -603,7 +619,7 @@ python -m vantage.validation --list                  # the checks, their referen
       25 mm/h on the sample).</p>
     <h4>Validation</h4>
     <!-- validation:weather -->
-<table class="val"><caption>8 of 8 checks passed (Vantage 0.8.1, run 2026-11-04, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#weather">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>8 of 8 checks passed (Vantage 0.10.0, run 2026-11-14, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#weather">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#weather.p838_table">Rain attenuation coefficients against ITU-R P.838-3</a><br><code>weather.p838_table</code></td><td>Recommendation ITU-R P.838-3, Table 5, as printed</td><td>0.9998 half last digits</td><td>1 half last digits</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#weather.p840_water">Fog attenuation at radar frequencies (ITU-R P.840)</a><br><code>weather.p840_water</code></td><td>Rayleigh absorption by drops much smaller than the wavelength, from the same Debye permittivity, written out in the check</td><td>0.00024 relative</td><td>0.002 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#weather.p1814_coefficients">Optical rain and snow attenuation against ITU-R P.1814</a><br><code>weather.p1814_coefficients</code></td><td>Recommendation ITU-R P.1814, Tables 2 and 3</td><td>0 relative</td><td>0.005 relative</td><td class="ok">✓ pass</td></tr>
@@ -631,7 +647,7 @@ python -m vantage.validation --list                  # the checks, their referen
       onto the sensor inside the image circle and the body does not hide it.</p>
     <h4>Validation</h4>
     <!-- validation:sun -->
-<table class="val"><caption>2 of 2 checks passed (Vantage 0.8.1, run 2026-11-04, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#sun">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>2 of 2 checks passed (Vantage 0.10.0, run 2026-11-14, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#sun">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#sun.spa_example">Sun position against the SPA paper&#x27;s worked example</a><br><code>sun.spa_example</code></td><td>I. Reda and A. Andreas, NREL Solar Position Algorithm, worked example</td><td>0.00298 degrees</td><td>0.01 degrees</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#sun.meeus_examples">Solar coordinates against Meeus&#x27;s worked examples</a><br><code>sun.meeus_examples</code></td><td>J. Meeus, Astronomical Algorithms, examples 25.a and 28.b; spherical astronomy at solar noon</td><td>0.0002 degrees</td><td>0.002 degrees</td><td class="ok">✓ pass</td></tr>
 </table>
@@ -679,7 +695,7 @@ python -m vantage.validation --list                  # the checks, their referen
     </dl>
     <h4>Validation</h4>
     <!-- validation:suspension -->
-<table class="val"><caption>3 of 3 checks passed (Vantage 0.8.1, run 2026-11-04, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#suspension">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>3 of 3 checks passed (Vantage 0.10.0, run 2026-11-14, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#suspension">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#suspension.static_hand">Static loads against hand calculations</a><br><code>suspension.static_hand</code></td><td>springs in series, force and moment balance, written out in the check</td><td>1.3e-15 relative</td><td>1e-09 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#suspension.balance">The static solve balances force and moments</a><br><code>suspension.balance</code></td><td>static equilibrium of a rigid body on four supports</td><td>3.1e-15 relative</td><td>1e-06 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#suspension.load_transfer">Brake dive and cornering roll against hand calculations</a><br><code>suspension.load_transfer</code></td><td>quasi-static load transfer with anti-dive and roll centres (Gillespie; Milliken), written out in the check</td><td>6.5e-16 relative</td><td>1e-06 relative</td><td class="ok">✓ pass</td></tr>
@@ -708,7 +724,7 @@ python -m vantage.validation --list                  # the checks, their referen
     </div>
     <h4>Validation</h4>
     <!-- validation:terrain -->
-<table class="val"><caption>4 of 4 checks passed (Vantage 0.8.1, run 2026-11-04, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#terrain">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>4 of 4 checks passed (Vantage 0.10.0, run 2026-11-14, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#terrain">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#terrain.primitives">Road primitives against their definitions</a><br><code>terrain.primitives</code></td><td>each primitive&#x27;s closed form (a vertical curve is the parabola of a grade changing linearly with distance) and a central difference with step 10⁻⁵ m</td><td>5.3e-10 m (height) and m/m (gradient)</td><td>1e-06 m (height) and m/m (gradient)</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#terrain.line_of_sight">Seeing the road past its own crests and kerbs</a><br><code>terrain.line_of_sight</code></td><td>a brute-force march along every line of sight, written for the check</td><td>0.00025 share of points</td><td>0.001 share of points</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#terrain.crest_tangent">The road hidden beyond a crest</a><br><code>terrain.crest_tangent</code></td><td>the tangent from the camera to the vertical curve, written out in the check</td><td>0.111 m</td><td>0.3 m</td><td class="ok">✓ pass</td></tr>
@@ -741,7 +757,7 @@ python -m vantage.validation --list                  # the checks, their referen
     </div>
     <h4>Validation</h4>
     <!-- validation:timing -->
-<table class="val"><caption>3 of 3 checks passed (Vantage 0.8.1, run 2026-11-04, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#timing">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>3 of 3 checks passed (Vantage 0.10.0, run 2026-11-14, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#timing">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#timing.sweep">When the lidar sweep crosses each camera</a><br><code>timing.sweep</code></td><td>the head&#x27;s azimuth phase ∓ 360°·f·t written out in the check; the image&#x27;s half field atan(2.88 mm / 6 mm)</td><td>1.4e-14 ms</td><td>1e-06 ms</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#timing.trigger">Triggers centre the middle row&#x27;s exposure on the sweep</a><br><code>timing.trigger</code></td><td>a rolling shutter&#x27;s middle row is exposed around trigger + readout/2 + exposure/2 (Liang et al.)</td><td>0 ms</td><td>1e-09 ms</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#timing.motion_blur">Motion blur and rolling-shutter skew through the lens</a><br><code>timing.motion_blur</code></td><td>the angular rate v·sin β / d of a static point seen from a moving camera, through the lens, written out in the check</td><td>4.7e-14 relative</td><td>0.0001 relative</td><td class="ok">✓ pass</td></tr>
@@ -771,7 +787,7 @@ python -m vantage.validation --list                  # the checks, their referen
     </div>
     <h4>Validation</h4>
     <!-- validation:gnss -->
-<table class="val"><caption>2 of 2 checks passed (Vantage 0.8.1, run 2026-11-04, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#gnss">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>2 of 2 checks passed (Vantage 0.10.0, run 2026-11-14, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#gnss">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#gnss.sky_solid_angle">Sky blocked by a wall against its solid angle</a><br><code>gnss.sky_solid_angle</code></td><td>the solid angle of a rectangle seen from a point, integrated with scipy.integrate.quad</td><td>0.00667 relative</td><td>0.02 relative</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#gnss.pose_budget">The pose error budget against a hand calculation and Monte Carlo</a><br><code>gnss.pose_budget</code></td><td>small-angle error propagation δp = δθ × L (Groves), by hand and by Monte Carlo</td><td>0.00223 relative</td><td>0.01 relative</td><td class="ok">✓ pass</td></tr>
 </table>
@@ -792,7 +808,7 @@ python -m vantage.validation --list                  # the checks, their referen
       resolution of the images; the app converts them to the sensor's full resolution and its own pixel convention.</p>
     <h4>Validation</h4>
     <!-- validation:calib -->
-<table class="val"><caption>1 of 1 checks passed (Vantage 0.8.1, run 2026-11-04, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#calib">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>1 of 1 checks passed (Vantage 0.10.0, run 2026-11-14, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#calib">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#calib.unit_recovery">A unit calibration recovers a simulated unit&#x27;s lens</a><br><code>calib.unit_recovery</code></td><td>the simulated unit&#x27;s own intrinsics (the images are rendered from them)</td><td>0.698 px</td><td>1 px</td><td class="ok">✓ pass</td></tr>
 </table>
 <!-- /validation:calib -->
@@ -817,7 +833,7 @@ python -m vantage.validation --list                  # the checks, their referen
       broken line.</p>
     <h4>Validation</h4>
     <!-- validation:joint -->
-<table class="val"><caption>2 of 2 checks passed (Vantage 0.8.1, run 2026-11-04, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#joint">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>2 of 2 checks passed (Vantage 0.10.0, run 2026-11-14, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#joint">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#joint.reference_optimum">The joint solve reaches the optimum of its least-squares problem</a><br><code>joint.reference_optimum</code></td><td>the same problem written out from scratch (own parameterisation, IRLS Gauss–Newton, central differences), solved to convergence</td><td>4.5e-07 σ</td><td>0.01 σ</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#joint.exact_recovery">The joint solve recovers known poses from exact corners</a><br><code>joint.exact_recovery</code></td><td>the injected poses the corners were rendered from</td><td>6.5e-10 degrees or mm</td><td>0.001 degrees or mm</td><td class="ok">✓ pass</td></tr>
 </table>
@@ -847,7 +863,7 @@ python -m vantage.validation --list                  # the checks, their referen
       verified by Monte Carlo with the machinery that solves real captures.</p>
     <h4>Validation</h4>
     <!-- validation:observability -->
-<table class="val"><caption>4 of 4 checks passed (Vantage 0.8.1, run 2026-11-04, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#observability">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>4 of 4 checks passed (Vantage 0.10.0, run 2026-11-14, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#observability">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#observability.cameras">Predicted camera σ against the joint solve&#x27;s spread</a><br><code>observability.cameras</code></td><td>Monte Carlo solves with core.joint.joint_solve, the machinery that solves real captures</td><td>0.163 log ratio</td><td>0.226 log ratio</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#observability.boards_placed">Predicted σ with boards laid by hand</a><br><code>observability.boards_placed</code></td><td>Monte Carlo solves with core.joint.joint_solve</td><td>0.179 log ratio</td><td>0.32 log ratio</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#observability.radar">Radar pose σ from corner reflectors</a><br><code>observability.radar</code></td><td>the Fisher information of range and azimuth measurements, written out in the check; Monte Carlo</td><td>2.9e-09 relative</td><td>0.0001 relative</td><td class="ok">✓ pass</td></tr>
@@ -872,7 +888,7 @@ python -m vantage.validation --list                  # the checks, their referen
     </div>
     <h4>Validation</h4>
     <!-- validation:lidar_calib -->
-<table class="val"><caption>2 of 2 checks passed (Vantage 0.8.1, run 2026-11-04, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#lidar_calib">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>2 of 2 checks passed (Vantage 0.10.0, run 2026-11-14, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#lidar_calib">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#lidar_calib.closed_form">Plane-to-plane alignment recovers a known transform</a><br><code>lidar_calib.closed_form</code></td><td>the transform the planes were generated with</td><td>3.3e-15 matrix element</td><td>1e-09 matrix element</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#lidar_calib.recovery">An injected lidar mounting error is recovered</a><br><code>lidar_calib.recovery</code></td><td>the injected mounting error the captures were simulated with</td><td>4.08 mm</td><td>6 mm</td><td class="ok">✓ pass</td></tr>
 </table>
@@ -902,11 +918,14 @@ python -m vantage.validation --list                  # the checks, their referen
     </table>
     <h4>Validation</h4>
     <!-- validation:formats -->
-<table class="val"><caption>4 of 4 checks passed (Vantage 0.8.1, run 2026-11-04, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#formats">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>7 of 7 checks passed (Vantage 0.10.0, run 2026-11-14, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#formats">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#formats.nuscenes">nuScenes calibrated_sensor rows</a><br><code>formats.nuscenes</code></td><td>the nuScenes devkit&#x27;s convention (points into the sensor frame by −translation, then the rotation transposed); OpenCV&#x27;s fisheye projection</td><td>7.5e-07 px</td><td>0.05 px</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#formats.kitti">KITTI calib_cam_to_cam and calib_cams_to_vehicle</a><br><code>formats.kitti</code></td><td>the KITTI raw devkit&#x27;s (and pykitti&#x27;s) reading of the files</td><td>0.00064 px</td><td>0.05 px</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#formats.ros_camera_info">ROS camera_info files</a><br><code>formats.ros_camera_info</code></td><td>sensor_msgs/CameraInfo and the camera_calibration_parsers YAML layout; OpenCV</td><td>6.5e-07 px</td><td>0.05 px</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#formats.kalibr">Kalibr camchain</a><br><code>formats.kalibr</code></td><td>the Kalibr camera models&#x27; equations (Mei &amp; Rives; Usenko et al.; Khomutenko et al.; Kannala–Brandt) and Kalibr&#x27;s camchain.yaml conventions</td><td>6.2e-07 px</td><td>0.05 px</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#formats.project_dir_round_trip">Project folder round trip (zip → folder → zip)</a><br><code>formats.project_dir_round_trip</code></td><td>the project as loaded from its .vantage file (identity: nothing may change)</td><td>0 projects</td><td>0 projects</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#formats.project_diff_known_edits">Semantic diff of known edits</a><br><code>formats.project_diff_known_edits</code></td><td>the edits applied: a camera moved 50 mm forward and 14 mm up and yawed 2°, a lidar pitched 1.5°, a lens swapped, a tolerance changed</td><td>2.9e-13 mm or °</td><td>1e-06 mm or °</td><td class="ok">✓ pass</td></tr>
+<tr><td><a href="validation/validation.html#formats.project_merge_two_edits">Three-way merge of two edits</a><br><code>formats.project_merge_two_edits</code></td><td>the two edits applied by hand (different cameras: no conflict; the same value two ways: one conflict)</td><td>0 count</td><td>0 count</td><td class="ok">✓ pass</td></tr>
 </table>
 <!-- /validation:formats -->
     <p><b>Limits.</b> Pinhole-based formats cannot represent rays 90° or more off the axis: a wider fisheye is written
@@ -928,7 +947,7 @@ python -m vantage.validation --list                  # the checks, their referen
     </div>
     <h4>Validation</h4>
     <!-- validation:experiments -->
-<table class="val"><caption>4 of 4 checks passed (Vantage 0.8.1, run 2026-11-04, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#experiments">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>4 of 4 checks passed (Vantage 0.10.0, run 2026-11-14, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#experiments">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#experiments.sobol_ishigami">Sobol indices of the Ishigami function</a><br><code>experiments.sobol_ishigami</code></td><td>the analytic Sobol indices of the Ishigami function</td><td>0.00049 index</td><td>0.02 index</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#experiments.morris_linear">Morris elementary effects of a linear function</a><br><code>experiments.morris_linear</code></td><td>the elementary effects of a linear function, which are its coefficients exactly</td><td>7.9e-16 response per range</td><td>1e-09 response per range</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#experiments.wilson">Wilson&#x27;s interval for a share</a><br><code>experiments.wilson</code></td><td>scipy.stats.binomtest(k, n).proportion_ci(method=&#x27;wilson&#x27;)</td><td>1.1e-16 share</td><td>1e-09 share</td><td class="ok">✓ pass</td></tr>
@@ -985,7 +1004,7 @@ python -m vantage.validation --list                  # the checks, their referen
       the same seed.</p>
     <h4>Validation</h4>
     <!-- validation:recording -->
-<table class="val"><caption>2 of 2 checks passed (Vantage 0.8.1, run 2026-11-04, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#recording">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
+<table class="val"><caption>2 of 2 checks passed (Vantage 0.10.0, run 2026-11-14, seed 20261027); figures and the numbers behind each in the <a href="validation/validation.html#recording">validation report</a>.</caption><tr><th>Check</th><th>Reference</th><th>Error</th><th>Tolerance</th><th>Result</th></tr>
 <tr><td><a href="validation/validation.html#recording.frozen_runs">A frozen camera is found with its repeated frames</a><br><code>recording.frozen_runs</code></td><td>the runs as written into the sequence; rig health&#x27;s independent counter (pixel equality of the thumbnails)</td><td>0 frames</td><td>0 frames</td><td class="ok">✓ pass</td></tr>
 <tr><td><a href="validation/validation.html#recording.capture_skew">Rig health judges the capture skew against the sync plan</a><br><code>recording.capture_skew</code></td><td>the trigger times of a clockwise 10 Hz lidar sweep written out in the check (the front camera at 0 ms, the right one at 25 ms, the left one at 75 ms)</td><td>0.2 ms</td><td>0.5 ms</td><td class="ok">✓ pass</td></tr>
 </table>
@@ -1067,6 +1086,73 @@ python -m vantage.validation --list                  # the checks, their referen
 <li id="ref-mckay1979"><b>[mckay1979]</b> M. D. McKay, R. J. Beckman and W. J. Conover, &quot;A comparison of three methods for selecting values of input variables in the analysis of output from a computer code&quot;, Technometrics 21(2), 239–245, 1979.</li>
 <li id="ref-efron1993"><b>[efron1993]</b> B. Efron and R. J. Tibshirani, An Introduction to the Bootstrap, Chapman &amp; Hall, 1993.</li>
 <li id="ref-wilson1927"><b>[wilson1927]</b> E. B. Wilson, &quot;Probable inference, the law of succession, and statistical inference&quot;, Journal of the American Statistical Association 22(158), 209–212, 1927.</li>
+<li id="ref-wu2025_3dgut"><b>[wu2025_3dgut]</b> Q. Wu, J. Martinez Esturo, A. Mirzaei, N. Moenne-Loccoz, Z. Gojcic, &quot;3DGUT: Enabling Distorted Cameras and Secondary Rays in Gaussian Splatting&quot;, CVPR 2025, arXiv:2412.12507.</li>
+<li id="ref-winter2009"><b>[winter2009]</b> D. A. Winter, &quot;Biomechanics and Motor Control of Human Movement&quot;, 4th ed., Wiley, 2009.</li>
+<li id="ref-schlick1994"><b>[schlick1994]</b> C. Schlick, &quot;An Inexpensive BRDF Model for Physically-based Rendering&quot;, Computer Graphics Forum 13(3), 1994.</li>
+<li id="ref-widger1976"><b>[widger1976]</b> W. K. Widger, M. P. Woodall, &quot;Integration of the Planck blackbody radiation function&quot;, Bull. Am. Meteorol. Soc. 57(10), 1217–1219, 1976 (the series of the Planck integral).</li>
+<li id="ref-codata2018"><b>[codata2018]</b> E. Tiesinga et al., &quot;CODATA recommended values of the fundamental physical constants: 2018&quot;, Rev. Mod. Phys. 93, 025010, 2021 (h, c, k exact; σ derived).</li>
+<li id="ref-lynred_pico640s"><b>[lynred_pico640s]</b> Lynred, PICO640S datasheet (ref. 06/2020/01): recognition distances of a 1.80 m × 0.50 m human with 19, 50 and 75 mm lenses for Johnson&#x27;s criteria (read 2026-11-11).</li>
+<li id="ref-shettle1979"><b>[shettle1979]</b> E. P. Shettle, R. W. Fenn, &quot;Models for the aerosols of the lower atmosphere and the effects of humidity variations on their optical properties&quot;, AFGL-TR-79-0214, 1979 (the modified gamma fog drop distributions).</li>
+<li id="ref-hale1973"><b>[hale1973]</b> G. M. Hale, M. R. Querry, &quot;Optical constants of water in the 200-nm to 200-µm wavelength region&quot;, Appl. Opt. 12, 555–563, 1973.</li>
+<li id="ref-bohren1983"><b>[bohren1983]</b> C. F. Bohren, D. R. Huffman, Absorption and Scattering of Light by Small Particles, Wiley, 1983 (Appendix A, BHMIE, and its worked example).</li>
+<li id="ref-rebecq2018_esim"><b>[rebecq2018_esim]</b> H. Rebecq, D. Gehrig, D. Scaramuzza, &quot;ESIM: an Open Event Camera Simulator&quot;, Conference on Robot Learning (CoRL), 2018.</li>
+<li id="ref-hu2021_v2e"><b>[hu2021_v2e]</b> Y. Hu, S.-C. Liu, T. Delbruck, &quot;v2e: From Video Frames to Realistic DVS Events&quot;, IEEE/CVF CVPR Workshops, 2021 (arXiv:2006.07722).</li>
+<li id="ref-carla_dvs"><b>[carla_dvs]</b> CARLA 0.9.16, sensor.camera.dvs (DVSCamera.cpp, &quot;based on ESIM&quot;), https://carla.readthedocs.io.</li>
+<li id="ref-kleinrock1975"><b>[kleinrock1975]</b> L. Kleinrock, Queueing Systems, Vol. 1: Theory, Wiley, 1975 (Lindley&#x27;s recursion for a single-server queue).</li>
+<li id="ref-astm_g173"><b>[astm_g173]</b> ASTM G173-03, Standard Tables for Reference Solar Spectral Irradiances: Direct Normal and Hemispherical on 37° Tilted Surface (SMARTS v2.9.2); the rows used here as pvlib-python ships them, pvlib/data/ASTMG173.csv (https://github.com/pvlib/pvlib-python, read 2026-11-11).</li>
+<li id="ref-kasten1989"><b>[kasten1989]</b> F. Kasten and A. T. Young, &quot;Revised optical air mass tables and approximation formula&quot;, Applied Optics 28(22), 4735–4738, 1989.</li>
+<li id="ref-siegman1966"><b>[siegman1966]</b> A. E. Siegman, &quot;The antenna properties of optical heterodyne receivers&quot;, Applied Optics 5(10), 1588–1594, 1966.</li>
+<li id="ref-behroozpour2017"><b>[behroozpour2017]</b> B. Behroozpour, P. A. M. Sandborn, M. C. Wu and B. E. Boser, &quot;Lidar system architectures and circuits&quot;, IEEE Communications Magazine 55(10), 135–142, 2017.</li>
+<li id="ref-diehm2018"><b>[diehm2018]</b> A. L. Diehm, M. Hammer, M. Hebel and M. Arens, &quot;Mitigation of crosstalk effects in multi-LiDAR configurations&quot;, Proc. SPIE 10796, Electro-Optical Remote Sensing XII, 2018 (over 1000 interference points, 1.5 %, between two Velodyne HDL-64E; figure as cited by Robinson et al. 2025, §I).</li>
+<li id="ref-popko2020"><b>[popko2020]</b> G. B. Popko, T. K. Gaylord and C. R. Valenta, &quot;Interference measurements between single-beam, mechanical scanning, time-of-flight lidars&quot;, Optical Engineering 59(5), 053106, 2020 (1.04 % of points in the worst case; as cited by Robinson et al. 2025, §I).</li>
+<li id="ref-robinson2025"><b>[robinson2025]</b> J. Robinson, M. Lovric, R. Woodman, D. Croft and V. Donzella, &quot;Real-time mitigation of LiDAR mutual interference&quot;, University of Warwick, WRAP 190972 (CC BY 4.0), 2025, §I and §II.</li>
+<li id="ref-iau2015"><b>[iau2015]</b> IAU 2015 Resolution B3 on recommended nominal conversion constants for selected solar and planetary properties (R☉ = 6.957 × 10⁸ m, T_eff☉ = 5772 K).</li>
+<li id="ref-richards2014"><b>[richards2014]</b> M. A. Richards, Fundamentals of Radar Signal Processing, 2nd ed., McGraw-Hill, 2014 (§9.5 the MIMO virtual array; §7 the threshold SNR).</li>
+<li id="ref-balanis2016"><b>[balanis2016]</b> C. A. Balanis, Antenna Theory: Analysis and Design, 4th ed., Wiley, 2016, §6.3 (the uniform linear array: half-power beamwidth 0.886 λ / (N d) at broadside, first sidelobe −13.26 dB).</li>
+<li id="ref-harris1978"><b>[harris1978]</b> F. J. Harris, &quot;On the use of windows for harmonic analysis with the discrete Fourier transform&quot;, Proc. IEEE 66(1), 51–83, 1978, Table 1 (Hann: highest sidelobe −31.5 dB, 3 dB bandwidth 1.44 bins; rectangle −13 dB, 0.89 bins).</li>
+<li id="ref-doerry2017"><b>[doerry2017]</b> A. W. Doerry, &quot;Catalog of window taper functions for sidelobe control&quot;, Sandia report SAND2017-4042, 2017, §3.6 (the Taylor taper).</li>
+<li id="ref-ament1953"><b>[ament1953]</b> W. S. Ament, &quot;Toward a theory of reflection by a rough surface&quot;, Proc. IRE 41(1), 142–146, 1953; P. Beckmann and A. Spizzichino, The Scattering of Electromagnetic Waves from Rough Surfaces, Pergamon, 1963 (the specular roughness factor exp(−2 (k σ_h sin ψ)²)).</li>
+<li id="ref-kurz2021"><b>[kurz2021]</b> V. Kurz, H. Stuelzebach, F. Pfeiffer, C. van Driesten and E. Biebl, &quot;Road surface characteristics for the automotive 77 GHz band&quot;, Adv. Radio Sci. 19, 165–172, 2021, Table 2.</li>
+<li id="ref-deep2020"><b>[deep2020]</b> Y. Deep, P. Held, S. S. Ram et al., &quot;Polarimetric radar cross-sections of pedestrians at automotive radar frequencies&quot;, IET Radar, Sonar &amp; Navigation 14(4), 2020 (arXiv:1910.13706, §IV-A: co-polar RCS of a walking adult at 77 GHz −10 to +5 dBsm).</li>
+<li id="ref-ti_tiduen5"><b>[ti_tiduen5]</b> Texas Instruments, TIDEP-01012 Imaging Radar Using Cascaded mmWave Sensor Reference Design, TIDUEN5A, June 2019, revised March 2020 (Table 1; §2.3.1; §3.1, Figures 6–8; §4.2.2.1).</li>
+<li id="ref-ti_swru553"><b>[ti_swru553]</b> Texas Instruments, MMWCAS-RF-EVM user&#x27;s guide SWRU553A (antenna offsets in wavelengths at 78.5 GHz) and the mmWave Studio 4-chip cascade MATLAB example (TX/RX position indices).</li>
+<li id="ref-ti_spruj22"><b>[ti_spruj22]</b> Texas Instruments, AWR2944/AWR2944P Evaluation Module user&#x27;s guide SPRUJ22C, November 2021, revised September 2024, §2.5 (Figures 2-17 to 2-20).</li>
+<li id="ref-ti_swrs273"><b>[ti_swrs273]</b> Texas Instruments, AWR2943/AWR2944 datasheet SWRS273E, November 2021, revised February 2026, §6.8 RF specifications and the power-consumption table.</li>
+<li id="ref-arbe_phoenix"><b>[arbe_phoenix]</b> Arbe Robotics, Phoenix product page, https://arberobotics.com/product/ (read 2026-11-11); Frost &amp; Sullivan, Arbe award write-up, 2021 (4D point cloud over Ethernet).</li>
+<li id="ref-ti_spruis6"><b>[ti_spruis6]</b> Texas Instruments, MMWCAS-DSP-EVM user&#x27;s guide SPRUIS6 (NVMe SSD capture, 1 Gbit/s Ethernet).</li>
+<li id="ref-ars548"><b>[ars548]</b> AUMOVIO Engineering Solutions (Continental), ARS 548 RDI datasheet FS_ARS-548-RDI_EN (2025), and its figures as third-party listings reproduce them.</li>
+<li id="ref-ego_composite.layer_vs_gl_depth"><b>[ego_composite.layer_vs_gl_depth]</b> Independent: the same triangles rasterised by OpenGL (EGL, headless) into a 32-bit float depth buffer through the same pinhole, planar depth turned into range along each pixel&#x27;s ray</li>
+<li id="ref-ego_composite.layer_vs_occlusion_cube"><b>[ego_composite.layer_vs_occlusion_cube]</b> The analysis&#x27;s occlusion cube (core.occlusion, as core.asbuilt and core.rig_health look it up) and core.lens&#x27;s own unprojection, on every camera of the sample&#x27;s data rig</li>
+<li id="ref-usd.camera_projection"><b>[usd.camera_projection]</b> Independent: the USD camera&#x27;s standard attributes (OpenUSD UsdGeomCamera: tenths of a scene unit, aperture offsets) and NVIDIA&#x27;s OpenCV fisheye attributes, read back from the written text and projected by their own published formulas, against core.lens on 400 random rays per camera of the sample&#x27;s data rig</li>
+<li id="ref-framing.profile_mass"><b>[framing.profile_mass]</b> the makers&#x27; own section areas and 2700 kg/m³ (ASM, wrought aluminium)</li>
+<li id="ref-framing.cut_list_sum"><b>[framing.cut_list_sum]</b> the frame&#x27;s own member list</li>
+<li id="ref-fea.cantilever_eb"><b>[fea.cantilever_eb]</b> Euler–Bernoulli closed form, βL = 1.8751, 4.6941 (20 × 20 × 400 mm aluminium bar)</li>
+<li id="ref-fea.free_free_eb"><b>[fea.free_free_eb]</b> Euler–Bernoulli closed form, βL = 4.7300</li>
+<li id="ref-fea.plate_leissa"><b>[fea.plate_leissa]</b> Leissa (1969) Vibration of Plates, NASA SP-160: C-F-F-F square, λ = 3.492, 8.525 (ν = 0.3)</li>
+<li id="ref-aero.cylinder"><b>[aero.cylinder]</b> Wieselsberger&#x27;s measurements (Schlichting, Boundary-Layer Theory, Fig. 1.12) and Roshko 1954 (NACA TN 3169)</li>
+<li id="ref-aero.roof_rack_cr2020"><b>[aero.roof_rack_cr2020]</b> Consumer Reports, How Rooftop Carriers Affect Fuel Economy, 2020-05-28: rack only −2 % (RAV4) to −11 % (Altima) at 65 mph</li>
+<li id="ref-trigger_fw.exact_ticks"><b>[trigger_fw.exact_ticks]</b> the sync plan&#x27;s trigger times in exact rational arithmetic (Python Fractions), rounded to the 100 MHz tick</li>
+<li id="ref-trigger_fw.pio_cycles"><b>[trigger_fw.pio_cycles]</b> the core&#x27;s edge ticks; PPS edges placed at known cycles (RP2040 datasheet 3.2.2, 3.4.2, 3.5.4.2 instruction semantics)</li>
+<li id="ref-edge.knock_injection"><b>[edge.knock_injection]</b> the rotation applied to the rays in closed form</li>
+<li id="ref-edge.fault_detection"><b>[edge.fault_detection]</b> the injected faults (where and when they were written in)</li>
+<li id="ref-schott_glass"><b>[schott_glass]</b> SCHOTT AG, Optical Glass Data Sheets (collection, US edition, 2007): N-BK7 page 11 (as of 09/03/2001), N-LAK9 page 35, N-SF6 page 74: nd, α(−30/+70 °C) and the temperature coefficients of the refractive index Δn_rel/ΔT at the e line (546.1 nm), read 2026-11-11.</li>
+<li id="ref-jamieson1981"><b>[jamieson1981]</b> T. H. Jamieson, &quot;Thermal effects in optical systems&quot;, Optical Engineering 20(2), 156–160, 1981 (the thermo-optic coefficient of a thin lens, x_f = α − (dn/dT)/(n − 1)).</li>
+<li id="ref-apollo_polymers"><b>[apollo_polymers]</b> Apollo Optical Systems, &quot;Common Polymers for Optical Components&quot; (property table: nD, dn/dT, CTE of acrylic, polycarbonate, COC and COP), https://www.apollooptical.com/common-polymers-for-optical-components, read 2026-11-11.</li>
+<li id="ref-lu2010"><b>[lu2010]</b> S.-H. D. Lu, &quot;Tutorial for Plastic Optical Materials&quot;, OPTI 521, College of Optical Sciences, University of Arizona, 29 Nov 2010, Table 1 (PMMA, BK7, aluminium: CTE 23.6 ppm/°C).</li>
+<li id="ref-elias2020"><b>[elias2020]</b> M. Elias, A. Eltner, F. Liebold, H.-G. Maas, &quot;Assessing the Influence of Temperature Changes on the Geometric Stability of Smartphone- and Raspberry Pi Cameras&quot;, Sensors 20(3), 643, 2020, doi:10.3390/s20030643, Table 2 and sections 4.1-4.3, read 2026-11-11.</li>
+<li id="ref-hastie2009"><b>[hastie2009]</b> T. Hastie, R. Tibshirani, J. Friedman, The Elements of Statistical Learning, 2nd ed., Springer, 2009, §7.10 (cross-validation; the leave-one-out shortcut for linear smoothers, eq. 7.52).</li>
+<li id="ref-unece_r157"><b>[unece_r157]</b> UN Regulation No. 157, 01 series, Amendment 4 (E/ECE/TRANS/505/Rev.3/Add.156/Amend.4, 3 March 2023), Annex 3: the competent and careful human driver model and the fuzzy safety model.</li>
+<li id="ref-wsdot_1260"><b>[wsdot_1260]</b> Washington State DOT, Design Manual M 22-01.23, September 2024, Chapter 1260 Sight Distance, §1260.03 and Exhibit 1260-1.</li>
+<li id="ref-aashto_greenbook"><b>[aashto_greenbook]</b> AASHTO, A Policy on Geometric Design of Highways and Streets (the Green Book): stopping sight distance, 2.5 s brake reaction time and 11.2 ft/s² (3.4 m/s²) deceleration.</li>
+<li id="ref-wong2008"><b>[wong2008]</b> J. Y. Wong, Theory of Ground Vehicles, 4th ed., Wiley, 2008, Table 1.3.</li>
+<li id="ref-iso21448"><b>[iso21448]</b> ISO 21448:2022, Road vehicles — Safety of the intended functionality.</li>
+<li id="ref-incropera"><b>[incropera]</b> F. P. Incropera, D. P. DeWitt, T. L. Bergman, A. S. Lavine, Fundamentals of Heat and Mass Transfer, Wiley: flat-plate correlations (laminar, turbulent, mixed).</li>
+<li id="ref-pope2000"><b>[pope2000]</b> S. B. Pope, Turbulent Flows, Cambridge University Press, 2000, §5.1 and Table 5.1 (the round jet).</li>
+<li id="ref-econ_heater"><b>[econ_heater]</b> e-con Systems, &quot;What makes Automatic De-icing and Defogging Cameras Crucial in Dynamic Environments&quot;, 26 Mar 2026.</li>
+<li id="ref-cleaning.spray_cone"><b>[cleaning.spray_cone]</b> circle–circle intersection area and the cone&#x27;s elliptical section, written out in the check</li>
+<li id="ref-formats.project_dir_round_trip"><b>[formats.project_dir_round_trip]</b> the project as loaded from its .vantage file (identity: nothing may change)</li>
+<li id="ref-formats.project_diff_known_edits"><b>[formats.project_diff_known_edits]</b> the edits applied: a camera moved 50 mm forward and 14 mm up and yawed 2°, a lidar pitched 1.5°, a lens swapped, a tolerance changed</li>
+<li id="ref-formats.project_merge_two_edits"><b>[formats.project_merge_two_edits]</b> the two edits applied by hand (different cameras: no conflict; the same value two ways: one conflict)</li>
 <!-- /validation:references -->
     </ol>
     <p>Standards and recommendations are cited by number and the edition the model follows; the ITU-R recommendations
