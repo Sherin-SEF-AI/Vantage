@@ -712,3 +712,35 @@ def test_conversations_are_kept_and_can_be_continued(app, win, srv, tmp_path, mo
     assert ctl._resume is None and ctl.chat_id != first
     titles = [r['title'] for r in CH.listing(p.path, p.name)]
     assert titles[0].startswith('↪ Which camera') and 'Which camera sees the least?' in titles
+
+
+def test_claude_s_blind_volume_and_issue_counts_match_the_window_s(sample):
+    """Two answers to one question disagreed (found filming the Claude Code video): run_study's blind volume used a
+    coarser grid than the page and the scorecard (0 vs 0.018 m² for the 0.5 m pole), and compare_variants counted the
+    issues without the engine's checks the window's Issues list has."""
+    from vantage.core import requirements as RQ
+    from vantage.core import volume as VOL
+    p, e, res, mounts, _ = sample
+    tc = _tc(sample)
+    st = VOL.VolumeSettings.from_dict(p.analysis.volume)
+    vr = VOL.analyse_volume(p, e, res, st.height, st.dz, st.cell or None)
+    out = T.run_study(tc, study='blind_volume')
+    assert out['height_m'] == pytest.approx(st.height)
+    for n, d in vr.metrics['objects'].items():
+        assert out['objects'][n]['undetected_m2'] == pytest.approx(round(d['undetected_m2'], 3)), n
+    assert f'{100 * vr.cell:.0f} cm columns' in out['grid']
+    q = p.snapshot()
+    q.analysis.requirements = {'items': [{'id': 'R1', 'metric': 'volume.undetected_m2', 'params': {'object': 'Pole 0.5 m'},
+                                          'op': '<=', 'target': 1.0, 'priority': 'must', 'text': 'pole'}]}
+    (row,) = RQ.run(q, e).items
+    assert row.value == pytest.approx(out['objects']['Pole 0.5 m']['undetected_m2'], abs=1e-3)
+    # the window's list also holds findings of studies already run (the stitched view's warning): the active variant
+    # reports that list, as get_issues does
+    window = rules.collect_issues(p, res, e.vehicle_geom(p), mounts, e) + \
+        [rules.Issue('warning', 'A 0.9 m child can vanish from the stitched view', 'F | L', [], 'stitched')]
+    tc = T.ToolContext(p.snapshot(), res, e.share(), window, mounts)
+    got = T.compare_variants(tc)
+    active = next(r for r in got['variants'] if r['active'])
+    assert active['issues'] == {s: sum(1 for i in T.get_issues(tc)['issues'] if i['severity'] == s)
+                                for s in ('critical', 'serious', 'warning')}
+    assert 'rules only' in got['issues_counted']

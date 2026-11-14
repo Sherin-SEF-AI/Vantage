@@ -51,7 +51,27 @@ MODELS = (
     ('experiments', 'Designed experiments and sensitivity', 'vantage.core.experiments', 'experiments'),
     ('recording', 'Recording checks: frozen cameras and capture skew', 'vantage.core.drivelog, vantage.core.rig_health',
      'recording-checks'),
-)
+) + tuple((mid, title, f'vantage.core.{mod}', mid.replace('_', '-')) for mid, title, mod in (
+    # the models whose modules give their own checks (validation_checks() in the module, registered by checks_modules)
+    ('thermal', 'Thermal LWIR cameras and the night photon budget', 'thermal_ir'),
+    ('event', 'Event sensors', 'event_camera'),
+    ('fmcw', 'FMCW lidar: Doppler, sun and cross-talk', 'fmcw_lidar'),
+    ('imaging_radar', '4D imaging radar: array, sidelobes, ghosts', 'imaging_radar'),
+    ('neural_replay', 'Neural log replay: the unscented projection', 'neural_replay'),
+    ('relight', 'Relighting', 'relight'),
+    ('ego_composite', 'The user\'s body composited into simulator images', 'ego_composite'),
+    ('usd', 'OpenUSD rig export', 'usd_export'),
+    ('framing', 'Extrusion framing', 'framing'),
+    ('fea', 'Tetrahedral modal analysis', 'fea'),
+    ('aero', 'Aerodynamic drag and vortex shedding', 'aero'),
+    ('trigger_fw', 'Trigger firmware schedule', 'trigger_firmware'),
+    ('edge', 'The edge watchdog', 'edge_daemon'),
+    ('thermal_intrinsics', 'Intrinsics against temperature', 'thermal_intrinsics'),
+    ('sotif', 'SOTIF: stopping distance and the ODD bound', 'sotif'),
+    ('cleaning', 'Cleaning and de-icing', 'cleaning'),
+    ('project_dir', 'The unpacked project format', 'project_dir'),
+))
+MODULE_MODELS = MODELS[-17:]          # (id, title, module, anchor) of the models above
 MODEL_IDS = tuple(m[0] for m in MODELS)
 LIMITS = {'seed': (0, 2 ** 31 - 1)}
 
@@ -242,14 +262,19 @@ def environment() -> dict:
 def available_models() -> tuple:
     """The model ids whose modules this installation has (the experiments are optional)."""
     import importlib.util
-    return tuple(m for m in MODEL_IDS
-                 if m != 'experiments' or importlib.util.find_spec('vantage.core.experiments') is not None)
+    mod_of = {m[0]: m[2] for m in MODULE_MODELS}
+    from . import checks_modules  # noqa: F401  (registers the modules' checks)
+    with_checks = {c.model for c in CHECKS}           # a module model whose checks live under another (project_dir's
+    return tuple(m for m in MODEL_IDS                 # under formats) has none of its own
+                 if (m != 'experiments' or importlib.util.find_spec('vantage.core.experiments') is not None)
+                 and (m not in mod_of or (importlib.util.find_spec(mod_of[m]) is not None and m in with_checks)))
 
 
 def specs(settings: ValidationSettings | None = None) -> list:
     """The registered checks the settings select, in MODELS order (models whose module is not installed left out)."""
     from . import checks_optics, checks_ranging, checks_environment, checks_vehicle, checks_rig, \
-        checks_calibration, checks_formats, checks_experiments, checks_recording  # noqa: F401  (registration)
+        checks_calibration, checks_formats, checks_experiments, checks_recording, \
+        checks_modules  # noqa: F401  (registration)
     st = settings or ValidationSettings()
     use = (set(st.models) if st.models else set(MODEL_IDS)) & set(available_models())
     order = {m: i for i, m in enumerate(MODEL_IDS)}

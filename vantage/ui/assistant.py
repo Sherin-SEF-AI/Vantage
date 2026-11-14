@@ -135,6 +135,8 @@ PAGES = {'viewports': '3D and top views', 'camviews': 'Camera views', 'tolerance
          'rig_perception': 'Rig perception', 'foundation': 'Foundation models',
          'robust_perception': 'Robust perception', 'risk_coverage': 'Risk-weighted coverage',
          'designer': 'Design agent', 'perf_model': 'Learned detection model', 'fleet_twin': 'Fleet twin'}
+from .pages17 import PAGES as _PAGES17                                     # noqa: E402  (round 17's pages)
+PAGES.update({p['key']: p['label'] for p in _PAGES17})
 
 
 # ============================================================================================ controller
@@ -694,7 +696,8 @@ class AssistantController(QObject):
     _STUDY_PAGES = {'rig_perception': ('result', 'rig_perception'), 'foundation': ('result', 'foundation_range'),
                     'robust_perception': ('result', 'robust_perception'), 'risk_coverage': ('result', 'risk_coverage'),
                     'designer': ('res', 'rig_designer'), 'perf_model': ('result', 'perf_model'),
-                    'fleet_twin': ('result', 'fleet_twin'), 'redrive': ('rd_result', 'redrive')}
+                    'fleet_twin': ('result', 'fleet_twin'), 'redrive': ('rd_result', 'redrive'),
+                    **{p['key']: (p.get('result', 'result'), p['core']) for p in _PAGES17 if p.get('core')}}
 
     def _studies(self) -> dict:
         """The round-14 pages' last results in brief (their module's summary(): no paths), for the assistant's

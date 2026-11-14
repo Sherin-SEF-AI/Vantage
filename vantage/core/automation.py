@@ -737,7 +737,7 @@ def _regenerate(project, engine, st, variant, progress, cancel, rec, previous, r
         except Exception:                          # noqa: BLE001  as batch mode: a camera off the mesh has none
             pass
     try:
-        issues = rules.collect_issues(project, res, vg, mounts)
+        issues = rules.collect_issues(project, res, vg, mounts, eng)
     except Exception as e:                          # noqa: BLE001
         issues = []
         rec.notes.append(f'The Issues list could not be computed: {e}')

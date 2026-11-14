@@ -113,6 +113,23 @@ class Issue:
     where: tuple | None = None
 
 
+def largest_patch_centre(g, mask):
+    """(x, y) of the largest connected patch of mask on grid g: the cell of that patch nearest its centroid, so the
+    point lies in the patch (the mean of every cell can fall between separate patches, under the car)."""
+    jj, ii = np.nonzero(mask)
+    if not len(ii):
+        return None
+    from scipy import ndimage
+    lab, n = ndimage.label(mask, structure=np.ones((3, 3), bool))
+    if n > 1:
+        k = int(np.argmax(np.bincount(lab[jj, ii])[1:])) + 1
+        sel = lab[jj, ii] == k
+        jj, ii = jj[sel], ii[sel]
+    xs, ys = g.xs[ii], g.ys[jj]
+    m = int(np.argmin((xs - xs.mean()) ** 2 + (ys - ys.mean()) ** 2))
+    return float(xs[m]), float(ys[m])
+
+
 def collect_issues(project: Project, result, vg, mounts: dict | None = None, engine=None) -> list[Issue]:
     out: list[Issue] = []
     v = project.variant
@@ -124,8 +141,7 @@ def collect_issues(project: Project, result, vg, mounts: dict | None = None, eng
         if b > 0.0005:
             g = result.grid
             blind = g.roi & (result.count == 0)
-            jj, ii = np.nonzero(blind)
-            where = (float(g.xs[ii].mean()), float(g.ys[jj].mean())) if len(ii) else None
+            where = largest_patch_centre(g, blind)
             from .analysis import describe_location
             loc = describe_location(*where, project) if where else ''
             out.append(Issue('critical', f'{b:.3f} m² of ground in the ROI is blind' + (f', mostly {loc}.' if loc else '.'),
@@ -210,6 +226,7 @@ def collect_issues(project: Project, result, vg, mounts: dict | None = None, eng
     out += fleet_twin.issues(project, vg)         # sensors beyond, due or soon, knocks, outliers (its cached result only)
     from . import risk_coverage
     out += risk_coverage.issues(project, vg)      # a road user's pre-crash exposure covered below its threshold (cached)
+    out += _round17_issues(project, vg)           # round 17's studies (ISSUES17)
     out.sort(key=lambda i: SEVERITY_ORDER.get(i.severity, 9))
     return out
 
@@ -292,3 +309,23 @@ def sensor_issues(project: Project, vg) -> list[Issue]:
 
 def blocks_export(issues: list[Issue]) -> bool:
     return any(i.severity == 'critical' and i.action == 'snap' for i in issues)
+
+
+# round 17's studies with an issues(project, vg) of their own: cheap, cached on their inputs
+# thermal behind glass; the ODD bound; tanks, heaters, nozzles; the frame; drag; an FMCW velocity range too small;
+# a trigger line the firmware cannot run; a focal length drifting with temperature
+ISSUES17 = ('thermal_ir', 'sotif', 'cleaning', 'framing', 'aero', 'fmcw_lidar', 'trigger_firmware',
+            'thermal_intrinsics', 'imaging_radar', 'event_camera')
+
+
+def _round17_issues(project, vg) -> list:
+    import importlib
+    import logging
+    out = []
+    for name in ISSUES17:
+        try:
+            fn = importlib.import_module(f'{__package__}.{name}').issues
+            out += fn(project, vg) if fn.__code__.co_argcount > 1 else fn(project)
+        except Exception as e:                    # noqa: BLE001 — one study's check never hides the others
+            logging.getLogger(__name__).warning('issues of %s: %s: %s', name, type(e).__name__, e)
+    return out

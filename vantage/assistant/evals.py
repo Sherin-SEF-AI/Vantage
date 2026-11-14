@@ -485,7 +485,7 @@ def _analysed(p) -> dict:
             mounts[c.uid] = rules.mount_info(p, c, vg)
         except Exception:                    # noqa: BLE001 - as the controller: a camera off the body has none
             pass
-    issues = rules.collect_issues(p, res, vg, mounts) if res is not None else []
+    issues = rules.collect_issues(p, res, vg, mounts, eng) if res is not None else []
     worst = None
     if res is not None:
         worst = worst_single_camera(eng, p, p.analysis.tol_deg, p.analysis.tol_mm / 1000.0,

@@ -1595,7 +1595,8 @@ def to_doc(res: RedriveResult, project=None) -> dict:
             'notes': res.notes, 'timing': res.timing, 'seconds': res.seconds, 'assumptions': ASSUMPTIONS,
             'features': [{'name': f[0], 'direction': f[1], 'unit': f[2], 'reason': f[3], 'text': f[4]}
                          for f in FEATURES],
-            'reasons': REASON_TEXT}
+            'reasons': REASON_TEXT,
+            'neural_replay': neural_block((getattr(res, '_prepared', None) or {}).get('scene'))}
 
 
 def cameras_csv(res: RedriveResult) -> str:
@@ -2417,6 +2418,11 @@ def _write_frames(p, v, drive, scene, ev, calib, sst, ssr, st, plan, ts, root, n
                       'calibration_key': calib.key if calib is not None else None,
                       'budget': st.error_budget},
           'notes': ['Radars are not re-rendered: the re-shot drive has no radar channels.']}
+    nb = neural_block(scene)
+    if nb is not None:
+        ds['neural_replay'] = nb
+        if nb.get('relit'):
+            ds['notes'].append(f'Every camera image is {nb["relit"]}: relit, not recorded.')
     _write(root, 'dataset.json', (json.dumps(ds, indent=1, default=_jdef) + '\n').encode())
     _write(root, 'README.md', _readme(ds, p, v, drive).encode('utf-8'))
     pwm = [x for x in conf_pw if math.isfinite(x)]
@@ -2425,7 +2431,23 @@ def _write_frames(p, v, drive, scene, ev, calib, sst, ssr, st, plan, ts, root, n
             'confidence': {'budget': st.error_budget,
                            'mean_expected_error': round(float(np.nanmean(conf_err)), 3) if conf_err else None,
                            'within_share': round(float(np.mean(pwm)), 4) if pwm else None},
-            'ground_truth': bool(write_gt), 'rosbag': bag_rel, 'settings': st.to_dict()}
+            'ground_truth': bool(write_gt), 'rosbag': bag_rel, 'settings': st.to_dict(), 'neural_replay': nb}
+
+
+def neural_block(scene) -> dict | None:
+    """What core.neural_replay added to the scene (articulated walkers, emissive lights, lidar opacity, the
+    projection) and the relighting applied, for the exports and reports; None without its extension."""
+    ext = getattr(scene, 'neural', None) if scene is not None else None
+    if ext is None:
+        return None
+    info = getattr(ext, 'info', None) or {}
+    out = {'projection': getattr(scene, 'projection', 'ewa'),
+           'walkers': {k: v for k, v in (info.get('walkers') or {}).items() if k != 'fits'},
+           'lights': info.get('lights'), 'lidar_opacity': info.get('lidar_opacity')}
+    rl = getattr(ext, 'relight', None)
+    if rl:
+        out['relit'] = f'relit to {rl.get("condition")} ({rl.get("method")})'
+    return out
 
 
 def _jdef(o):
@@ -2466,6 +2488,19 @@ def _source_map(drive):
     return rows[0].get('token') or _token('map', rel), rel, path
 
 
+def _neural_readme(nb) -> str:
+    if not nb:
+        return ''
+    w = (nb.get('walkers') or {}).get('count') or 0
+    li = (nb.get('lights') or {}).get('count') or 0
+    txt = (f'- Neural replay: {"Unscented Transform" if nb.get("projection") == "ut" else "affine (EWA)"} projection; '
+           f'{w} pedestrians as articulated bodies; {li} traffic-light heads as emissive planes with their recorded '
+           'state.')
+    if nb.get('relit'):
+        txt += f'\n- **Every camera image is {nb["relit"]}: relit, not recorded.**'
+    return txt
+
+
 def _readme(ds, p, v, drive) -> str:
     rows = '\n'.join(f'| {c["channel"]} | {c["kind"]} | {c["frames"]} | {c["keyframes"]} |' for c in ds['channels'])
     return f"""# Vantage re-shot drive · {p.name} / {v.name}
@@ -2480,6 +2515,7 @@ the sample dataset and the CARLA bridge write a drive. It is not a real recordin
   {CONF_SCALE_PNG:g}) and `<name>.reason.png`.
 {('- Ground truth: `ground_truth/index.json` (vantage.ground_truth/1).' if ds.get('ground_truth') else '')}
 {('- ROS 2 bag: `' + ds['written']['rosbag'] + '/`.' if ds['written'].get('rosbag') else '')}
+{_neural_readme(ds.get('neural_replay'))}
 
 | Channel | Kind | Frames | Keyframes |
 |---|---|---:|---:|

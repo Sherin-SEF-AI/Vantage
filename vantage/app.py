@@ -53,6 +53,18 @@ def main(argv=None):
     if '--mcp' in (sys.argv[1:] if argv is None else argv):     # the MCP server: stdout is the protocol's alone
         from .mcp.server import main as mcp_main
         return mcp_main(sys.argv[1:] if argv is None else argv)
+    _argv = list(sys.argv[1:] if argv is None else argv)
+    if '--lab-server' in _argv:                     # the team's lab server (vantage.lab)
+        from .lab.server import main as lab_main
+        return lab_main(_argv)
+    if '--edge' in _argv:                           # the in-car watchdog (vantage.edge): no Qt, no OpenGL
+        from .edge.daemon import main as edge_main
+        return edge_main([a for a in _argv if a != '--edge'])
+    if _argv[:1] in (['diff'], ['merge-file'], ['convert']) or _argv[:1] == ['--merge-file']:
+        from .core.project_dir import main as pd_main   # project folders: vantage diff A B, the git merge driver
+        if _argv[0] == '--merge-file':
+            _argv[0] = 'merge-file'
+        return pd_main(_argv)
     for s in (sys.stdout, sys.stderr):              # batch output on a Windows console: never crash on → or ▸
         try:
             s.reconfigure(errors='replace')

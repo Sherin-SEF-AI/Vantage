@@ -244,8 +244,9 @@ def test_every_figure_matches_the_pages():
 
 def test_the_optical_format_matches_the_pixel_array():
     """The stated optical format (type 1/x": a diagonal of about 2/3 × 25.4 / x mm) agrees with resolution × pixel
-    pitch within 15 %: catches a pitch or a resolution typed wrong."""
-    for m in builtin_modules():
+    pitch within 15 %: catches a pitch or a resolution typed wrong. Modules whose datasheet states no optical format
+    (thermal cores, event sensors) leave it blank and are not checked."""
+    for m in (m for m in builtin_modules() if m.optical_format):
         a, b = m.optical_format.strip('"').split('/')               # 1/2.7" or 2/3": the type in inches
         nominal = 25.4 * float(a) / float(b) * 2 / 3
         diag = math.hypot(m.sensor_w_mm, m.sensor_h_mm)

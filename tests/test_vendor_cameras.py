@@ -12,6 +12,7 @@ from vantage.core import samples
 from vantage.core.analysis import Engine
 
 MODS = {m.id: m for m in L.builtin_modules() if m.vendor != 'e-con Systems'}
+RGB = {k for k, m in MODS.items() if m.modality == 'rgb'}       # the thermal and event modules date their own readings
 LENSES = {l.id: l for l in L.builtin_lenses() if l.module_id in MODS}
 
 
@@ -19,11 +20,13 @@ def test_every_vendor_module_is_sourced_and_has_a_lens():
     assert len(MODS) >= 12
     for m in MODS.values():
         assert m.builtin and m.vendor and m.url.startswith('https://'), m.id
-        assert m.url in m.note and L.VENDOR_CHECKED in m.note, m.id
-        assert m.width_px > 0 and m.height_px > 0 and m.pixel_um > 0 and m.fps > 0, m.id
+        assert m.url in m.note and (L.VENDOR_CHECKED in m.note or m.id not in RGB), m.id
+        assert m.width_px > 0 and m.height_px > 0 and m.pixel_um > 0, m.id
+        assert m.fps > 0 or m.modality == 'event', m.id          # an event sensor has no frame rate
         assert any(l.module_id == m.id for l in LENSES.values()), m.id
     for l in LENSES.values():
-        assert l.builtin and 'Source: https://' in l.note and L.VENDOR_CHECKED in l.note, l.id
+        assert l.builtin and 'Source: https://' in l.note, l.id
+        assert L.VENDOR_CHECKED in l.note or l.module_id not in RGB, l.id
 
 
 @pytest.mark.parametrize('lid', sorted(LENSES))

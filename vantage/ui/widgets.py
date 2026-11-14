@@ -70,6 +70,34 @@ def fit_width(sc, cap=560):
     return sc
 
 
+def hscroll(w):
+    """A bar of controls in a row that scrolls sideways when its page is narrower than the bar, instead of squeezing
+    its controls over each other or cutting them off: a scroll area as tall as the bar (plus a scroll bar's height
+    when one shows)."""
+    from PyQt6.QtWidgets import QScrollArea
+    sc = QScrollArea()
+    sc.setWidgetResizable(True)
+    sc.setFrameShape(QFrame.Shape.NoFrame)
+    sc.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    sc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    sc.setWidget(w)
+    w.setMinimumWidth(w.minimumSizeHint().width())
+
+    class _Fit(QObject):
+        def eventFilter(self, obj, ev):
+            if ev.type() in (QEvent.Type.Resize, QEvent.Type.LayoutRequest, QEvent.Type.Show):
+                bar = sc.horizontalScrollBar()
+                extra = bar.sizeHint().height() if w.minimumSizeHint().width() > sc.viewport().width() else 0
+                sc.setFixedHeight(w.minimumSizeHint().height() + extra)
+            return False
+    f = _Fit(sc)
+    sc.installEventFilter(f)
+    w.installEventFilter(f)
+    sc.setFixedHeight(w.minimumSizeHint().height())
+    sc._fit = f                                       # kept alive with the scroll area
+    return sc
+
+
 def hline():
     f = QFrame()
     f.setFixedHeight(1)

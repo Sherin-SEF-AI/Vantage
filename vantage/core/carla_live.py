@@ -1,7 +1,13 @@
 """CARLA as a live rig, the app's side: the rig the live server drives (vantage.sim.live), its command line, a whole
 live session with rig health watching its streams (the batch mode's), and the body-edge plan of CARLA's own car that
 rig health's drift indicator compares the live frames with. vantage.sim.live itself runs in CARLA's Python with only
-the bridge's sources, so what needs the rest of Vantage (rig health, the rig planner) lives here."""
+the bridge's sources, so what needs the rest of Vantage (rig health, the rig planner) lives here.
+
+The user's own body (core.ego_composite): build_rig() also casts the project's body and rig through every camera at
+its planned mount (analysis.ego_composite.live, on by default) and keeps them for the rig; command() writes them as
+sim_ego.npz beside the rig it starts, which the live server composites into every frame (its --no-ego, or the
+setting off, shows CARLA's car). Its /<TAG>.body.png is then the project's body, so body_view() and the drift
+indicator compare each frame with the body the camera really sees."""
 from __future__ import annotations
 
 import json
@@ -12,6 +18,56 @@ import time
 import numpy as np
 
 from ..sim import live as LV
+
+EGO_FILE = 'sim_ego.npz'
+_EGO_PENDING = {}                     # rig key -> sim_ego.npz bytes (built with the rig, written by command())
+
+
+def _rig_key(doc: dict) -> tuple:
+    return (doc.get('project'), doc.get('variant_uid'), doc.get('created'),
+            json.dumps([(c.get('tag'), c.get('pose_vehicle'), (c.get('image') or {}).get('width'))
+                        for c in doc.get('cameras', [])], sort_keys=True))
+
+
+def ego_layers(project, rig, settings=None, cancel=None) -> bytes | None:
+    """sim_ego.npz for a live rig (core.ego_composite.live_npz), kept for command(); None when the setting is off or
+    the project has no body (a note on the rig says why)."""
+    from . import ego_composite as EC
+    st = settings if settings is not None else EC.settings_of(project)
+    if not st.live:
+        rig.notes.append('The project\'s body is not composited into the live streams (analysis.ego_composite.live '
+                         'off): CARLA\'s car shows.')
+        return None
+    try:
+        data = EC.live_npz(project, rig.doc, None, st, cancel=cancel)
+    except InterruptedError:
+        raise
+    except Exception as e:                       # noqa: BLE001 (the live rig still works with CARLA's car)
+        rig.notes.append(f'The project\'s body cannot be composited live ({type(e).__name__}: {e}).')
+        return None
+    _EGO_PENDING.clear()
+    _EGO_PENDING[_rig_key(rig.doc)] = data
+    rig.ego_npz = data
+    return data
+
+
+def write_ego(rig_path: str, data: bytes | None = None) -> str | None:
+    """Write sim_ego.npz beside sim_rig.json (the layers built with that rig, or data); its path, or None."""
+    if data is None:
+        try:
+            with open(rig_path, encoding='utf-8') as fh:
+                doc = json.load(fh)
+        except (OSError, ValueError):
+            return None
+        data = _EGO_PENDING.get(_rig_key(doc))
+    if not data:
+        return None
+    out = os.path.join(os.path.dirname(os.path.abspath(rig_path)), EGO_FILE)
+    tmp = out + '.part'
+    with open(tmp, 'wb') as fh:
+        fh.write(data)
+    os.replace(tmp, out)
+    return out
 
 
 def body_view(png: bytes, sensor_size, key=(), width: int = 640):
@@ -62,10 +118,12 @@ def body_view(png: bytes, sensor_size, key=(), width: int = 640):
     return rh.ExpectedView(w, h, (W, H), valid, body, np.c_[ii, jj], n, contours, [], tuple(key))
 
 
-def build_rig(project, settings=None, cameras=None, scale: float = 0.25, variant=None, progress=None, cancel=None):
+def build_rig(project, settings=None, cameras=None, scale: float = 0.25, variant=None, progress=None, cancel=None,
+              ego: bool = True):
     """The simulator rig for live streaming (core.simrig.SimRig): the variant's cameras (only `cameras`, tags, when
     given), each at its module's frame rate, the step a whole multiple of every rate (LV.live_tick_hz), rendered at
-    `scale` of the sensor size; the lidars, radars, GNSS and IMUs left out. Raises ValueError when no camera is left."""
+    `scale` of the sensor size; the lidars, radars, GNSS and IMUs left out; with ego, the project's body layers for the
+    live server (ego_layers; analysis.ego_composite.live decides). Raises ValueError when no camera is left."""
     from . import simrig as SR
     st = settings if settings is not None else SR.settings_of(project)
     snap = project.snapshot()
@@ -90,7 +148,10 @@ def build_rig(project, settings=None, cameras=None, scale: float = 0.25, variant
     for k, v in (('faults', []), ('actors', []), ('scenario', {'name': 'free_drive', 'params': {}})):
         if k in d:
             d[k] = v
-    return SR.build(snap, SR.SimSettings.from_dict(d), progress=progress, cancel=cancel)
+    rig = SR.build(snap, SR.SimSettings.from_dict(d), progress=progress, cancel=cancel)
+    if rig is not None and ego:
+        ego_layers(snap, rig, cancel=cancel)
+    return rig
 
 
 def command(python: str, rig_path: str, http_port: int = 0, args=(), memory_gb: float = 4.0, scope: bool = True,
@@ -102,6 +163,9 @@ def command(python: str, rig_path: str, http_port: int = 0, args=(), memory_gb: 
     if not src:
         raise RuntimeError('The live rig needs Vantage\'s source folder (a frozen build has none): run it from a '
                            'source checkout.')
+    if '--no-ego' not in [str(x) for x in args]:
+        write_ego(rig_path)                      # the layers built with this rig (build_rig), if any; a file left from
+                                                 # another rig is checked camera by camera by the live server
     cmd = [python, '-m', 'vantage.sim.live', rig_path, '--http-port', str(int(http_port))] + [str(x) for x in args]
     if scope:
         cmd = SV.scoped(cmd, memory_gb)
@@ -113,11 +177,12 @@ def command(python: str, rig_path: str, http_port: int = 0, args=(), memory_gb: 
 
 def run_session(project, seconds: float, python: str, out_dir: str, settings=None, cameras=None, scale: float = 0.25,
                 faults=(), serve_size: str = 'sensor', extra_path: str = '', scope: bool = True,
-                check_server: bool = True, start_timeout: float = 600.0, progress=None) -> dict:
+                check_server: bool = True, start_timeout: float = 600.0, progress=None, ego: bool = False) -> dict:
     """A live session without the app (the batch mode, scripts): the live server on the settings' CARLA server, rig
     health (core.rig_health) on its streams for `seconds` after the first frames, each fault of `faults` ((at_s, fault)
     pairs) injected at its time, the drift indicator of every camera's last frame against CARLA's own car (its body
-    mask), then the live server stopped. Writes rig/, live.json and rig_health.json into out_dir and returns
+    mask; with ego, the project's own body composited into the frames and the drift measured against it: see the
+    module doc), then the live server stopped. Writes rig/, live.json and rig_health.json into out_dir and returns
     {'schema', 'status': 'ok' | 'failed', 'error', 'rig_health': snapshot, 'live': the server's report, 'faults'}.
     A RuntimeError when no CARLA server answers (check_server) or the live server does not stream."""
     import subprocess
@@ -130,13 +195,14 @@ def run_session(project, seconds: float, python: str, out_dir: str, settings=Non
     prog = progress or (lambda f, text='': None)
     os.makedirs(out_dir, exist_ok=True)
     prog(0.0, 'Writing the live rig')
-    rig = build_rig(project, st, cameras, scale)
+    rig = build_rig(project, st, cameras, scale, ego=ego)
     SR.export(rig, project, os.path.join(out_dir, 'rig'))
     tags = [c['tag'] for c in rig.doc['cameras']]
     rep_path = os.path.join(out_dir, 'live.json')
     cmd, env = command(python, os.path.join(out_dir, 'rig', 'sim_rig.json'), 0,
                        ['--port', st.port, '--tm-port', st.tm_port, '--timeout', f'{st.timeout_s:g}', '--serve-size',
-                        serve_size, '--parent-pid', os.getpid(), '--report', rep_path], scope=scope,
+                        serve_size, '--parent-pid', os.getpid(), '--report', rep_path] + ([] if ego else ['--no-ego']),
+                       scope=scope,
                        extra_path=extra_path)
     log = open(os.path.join(out_dir, 'live.log'), 'w', encoding='utf-8')
     proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=log, stdin=subprocess.DEVNULL, text=True,
@@ -188,8 +254,14 @@ def run_session(project, seconds: float, python: str, out_dir: str, settings=Non
             if f is not None and ev_ is not None:
                 x.drift, x.drift_checked = rh.alignment(f, ev_), True
         snap = rh.jsonable(mon.snapshot())
+        own = {t for t in views if (s['cameras'][t].get('body_mask') or {}).get('of') == 'project'}
+        try:
+            end = client.status()
+        except (OSError, LV.LiveError):
+            end = {'cameras': {}}
         for t, c in snap['cameras'].items():
-            c['drift_against'] = 'carla_body' if t in views else None
+            c['drift_against'] = ('project_body' if t in own else 'carla_body') if t in views else None
+            c['ego_composite'] = (end['cameras'].get(t) or {}).get('ego')
         snap.update(project=project.name, variant=project.variant.name, seconds=float(seconds),
                     time=time.strftime('%Y-%m-%dT%H:%M:%S'), settings=mon.settings.to_dict())
     finally:

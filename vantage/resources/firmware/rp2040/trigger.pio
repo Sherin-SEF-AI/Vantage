@@ -1,0 +1,70 @@
+; trigger.pio: the trigger box's two PIO programs (Vantage, generated with the project's sync plan).
+;
+; tb_trigger drives the trigger lines: per edge the CPU writes two words, a delay d and the new state of the lines;
+; the edge comes d + 3 cycles after the previous one (out x: 1, the loop: d + 1, out pins: 1), so pulses are placed
+; on the system clock's cycle (8 ns at 125 MHz) with no software jitter at all. Autopull at 32 bits; the CPU keeps
+; the joined 8-word TX FIFO fed (a stall would shift the timeline: the CPU watches FDEBUG.TXSTALL).
+;
+; tb_capture timestamps the GNSS PPS: x counts down once every two cycles (a test of the pin and a decrement) and each
+; rising edge of the PPS (the JMP pin) pushes the count. Per PPS pulse the program spends exactly two cycles more than
+; twice its decrements (in, push and jmp low, less the fall's decrement that has no test of its own), which the CPU
+; adds back (tb_rp2040.h): the edge is then known to one cycle. Every decrement's target is the instruction that
+; follows it (or the wrap), so x reaching zero changes nothing in the timing. Vantage's PIO simulation checks both
+; programs cycle by cycle against these statements.
+
+.program tb_trigger
+.wrap_target
+    out x, 32
+delay:
+    jmp x-- delay
+    out pins, 32
+.wrap
+
+.program tb_capture
+.wrap_target
+low:
+    jmp pin rise
+    jmp x-- low
+.wrap
+rise:
+    jmp x-- r1
+r1:
+    in x, 32
+    push noblock
+hdec:
+    jmp x-- high
+high:
+    jmp pin hdec
+    jmp x-- fall
+fall:
+    jmp low
+
+% c-sdk {
+#include "hardware/clocks.h"
+
+static inline void tb_trigger_program_init(PIO pio, uint sm, uint offset, uint base, uint count)
+{
+    pio_sm_config c = tb_trigger_program_get_default_config(offset);
+    sm_config_set_out_pins(&c, base, count);
+    sm_config_set_out_shift(&c, true, true, 32);         /* shift right, autopull at 32 bits */
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+    sm_config_set_clkdiv_int_frac(&c, 1, 0);             /* one instruction per system clock cycle */
+    for (uint i = 0; i < count; i++)
+        pio_gpio_init(pio, base + i);
+    pio_sm_set_consecutive_pindirs(pio, sm, base, count, true);
+    pio_sm_init(pio, sm, offset, &c);
+}
+
+static inline void tb_capture_program_init(PIO pio, uint sm, uint offset, uint pps_pin)
+{
+    pio_sm_config c = tb_capture_program_get_default_config(offset);
+    sm_config_set_jmp_pin(&c, pps_pin);
+    sm_config_set_in_shift(&c, false, false, 32);        /* no autopush: the program pushes */
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
+    sm_config_set_clkdiv_int_frac(&c, 1, 0);
+    pio_gpio_init(pio, pps_pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, pps_pin, 1, false);
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_exec(pio, sm, pio_encode_mov_not(pio_x, pio_null));   /* x = 0xffffffff before the start */
+}
+%}

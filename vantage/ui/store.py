@@ -48,9 +48,11 @@ class EditCommand(QUndoCommand):
             self.first = False
             return
         self.store._restore(self.keys, self.after)
+        self.store.project.add_log('redo', self.text())
 
     def undo(self):
         self.store._restore(self.keys, self.before)
+        self.store.project.add_log('undo', self.text())     # the log keeps the edit's entry; this one follows it
 
 
 class ProjectStore(QObject):

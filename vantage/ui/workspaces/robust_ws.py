@@ -606,13 +606,19 @@ class RobustPage(QWidget):
             note.setText('\n'.join(bits))
 
     # ------------------------------------------------------------------ running
-    def _on_store(self, *_):
+    def _on_store(self, sections=None, *_):
+        if sections is not None and 'variants' in sections:     # another variant: (a camera edit waits for Run)
+            self._sources = None                     # the sources' figures are per camera of the active variant
+            self._src_gen = getattr(self, '_src_gen', 0) + 1     # one still loading is for the variant before
+            if self.isVisible() and self.ctx.store.project is not None:
+                self.load_sources()
         self._sync_fields()
         self.refresh_status()
 
     def _replaced(self, *_):
         self._gen += 1
         self.result, self.busy, self._sources = None, False, None
+        self._src_gen = getattr(self, '_src_gen', 0) + 1
         self._sync_fields()
         self.refresh()
 
@@ -626,7 +632,7 @@ class RobustPage(QWidget):
         p = self.ctx.store.project
         project = p.snapshot()
         st = self.settings
-        gen = self._gen
+        gen = getattr(self, '_src_gen', 0)
         tags = [c.tag for c in project.variant.cameras if c.visible]
         studies = self.studies
         eng = self._engine()
@@ -640,7 +646,7 @@ class RobustPage(QWidget):
         threading.Thread(target=thread, daemon=True).start()
 
     def _sources_done(self, gen, src):
-        if gen != self._gen:
+        if gen != getattr(self, '_src_gen', 0):
             return
         self._sources = src
         self._fill_sources()

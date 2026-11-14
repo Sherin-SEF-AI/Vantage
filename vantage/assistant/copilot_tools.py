@@ -188,8 +188,8 @@ def _choices(kind, key):
         from ..core.weather import IDS
         return {'study': list(CP.STUDIES), 'condition': [''] + list(IDS)}.get(key)
     if kind == 'export':
-        return {'units': ['m', 'mm'], 'angles': ['deg', 'rad'],
-                'frame': ['rear_axle', 'front_axle', 'front_bumper', 'ground_centre', 'custom']}.get(key)
+        from ..core.project import FRAME_PRESETS
+        return {'units': ['m', 'mm'], 'angles': ['deg', 'rad'], 'frame': list(FRAME_PRESETS)}.get(key)
     if kind in CP.STUDY_KINDS:
         return _study_choices(kind, key)
     return None

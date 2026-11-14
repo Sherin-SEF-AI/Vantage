@@ -442,6 +442,77 @@ class Recorder:
         self.bag.write('/ground_truth/boxes', t_ns, {'data': json.dumps(doc, separators=(',', ':'))})
 
     # ------------------------------------------------------------------ the end
+    # ------------------------------------------------------------------ event cameras (round 17)
+    def events(self, doc: dict, streams: dict, frames: list, report: dict, duration_s: float) -> dict:
+        """One event camera's streams under events/<safe_tag>/: carla.npz and carla.evt2.raw (CARLA's DVS camera),
+        model.npz and model_linear.npz (core.event_camera's model on the reference RGB view: CARLA's algorithm, and
+        in linear light), reference_frames.npz (the first reference images, B, G, R, with their times). Returns its
+        index entry (events/index.json). Times: µs from the drive's t = 0."""
+        from . import dvs_model as EC                  # (core.event_camera's model, shipped with the bridge)
+        root = os.path.join(self.out_dir, 'events')
+        if root not in self.created:
+            if os.path.isdir(root) and os.path.isfile(os.path.join(root, 'index.json')):
+                shutil.rmtree(root, ignore_errors=True)     # (only one Vantage wrote: it holds its index)
+            self.created.append(root)
+        key = doc['safe_tag']
+        d = os.path.join(root, key)
+        os.makedirs(d, exist_ok=True)
+        files = {}
+        nbytes = 0
+
+        def put(name, data):
+            nonlocal nbytes
+            with open(os.path.join(d, name), 'wb') as fh:
+                fh.write(data)
+            nbytes += len(data)
+            return f'{key}/{name}'
+        w, h = int(doc['width']), int(doc['height'])
+        for k, name in (('carla', 'carla'), ('model', 'model'), ('linear', 'model_linear')):
+            ev = streams.get(k)
+            if ev is not None:
+                files[name] = put(f'{name}.npz', ev.to_npz())
+        if streams.get('carla') is not None:
+            head = EC.raw_header('EVT2.0', w, h, {'generator': 'Vantage (CARLA sensor.camera.dvs)',
+                                                  'time': 'microseconds from the drive\'s t = 0',
+                                                  'epoch_us': self.epoch_us})
+            files['carla_evt2'] = put('carla.evt2.raw', head + EC.encode_evt2(streams['carla']))
+        if frames:
+            buf = io.BytesIO()
+            np.savez_compressed(buf, t_s=np.array([f[0] for f in frames], float),
+                                bgr=np.stack([f[1] for f in frames]).astype(np.uint8))
+            files['reference_frames'] = put('reference_frames.npz', buf.getvalue())
+        self.nbytes['events'] = self.nbytes.get('events', 0) + nbytes
+        ev = streams.get('carla')
+        entry = dict(report, tag=doc['tag'], safe_tag=key, channel=doc['channel'], topic=doc['topic'],
+                     frame_id=doc['frame_id'], module=doc.get('module'), width=w, height=h,
+                     duration_s=float(duration_s), fov_deg=doc['fov_deg'], K=doc['K'],
+                     pose_vehicle=doc['pose_vehicle'], dvs=doc['dvs'], files=files, bytes=nbytes,
+                     events=len(ev) if ev is not None else 0,
+                     model_events=len(streams['model']) if streams.get('model') is not None else None,
+                     reference_frames=len(frames))
+        return entry
+
+    def events_index(self, channels: list):
+        """events/index.json (core.event_camera.EVENTS_SCHEMA)."""
+        if not channels:
+            return
+        from . import dvs_model as EC                  # (core.event_camera's model, shipped with the bridge)
+        doc = {'schema': EC.EVENTS_SCHEMA, 'generator': 'carla', 'project': self.rig.get('project'),
+               'variant': self.rig.get('variant'), 'epoch_us': self.epoch_us,
+               'conventions': {'time': 'µs from the drive\'s t = 0 (a sync pulse); the stamp is epoch_us + t',
+                               'pixels': 'x right, y down from the top-left pixel of the pinhole view (K)',
+                               'polarity': '+1 ON (brighter), −1 OFF',
+                               'npz': 'x, y uint16; t int64 µs; p int8; size [width, height]',
+                               'evt2': 'Prophesee EVT 2.0 words after a "% …" header (core.event_camera)',
+                               'model': 'core.event_camera.EventSim on the reference RGB view: carla=True reproduces '
+                                        'the DVS camera\'s algorithm; model_linear runs on the view in linear light '
+                                        '(CARLA\'s measured camera response) with the same thresholds'},
+               'channels': channels}
+        root = os.path.join(self.out_dir, 'events')
+        os.makedirs(root, exist_ok=True)
+        with open(os.path.join(root, 'index.json'), 'w', encoding='utf-8') as fh:
+            fh.write(json.dumps(doc, indent=1, default=_json_default) + '\n')
+
     def close_bag(self) -> dict | None:
         if self.bag is None:
             return None

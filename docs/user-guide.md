@@ -755,6 +755,180 @@ vantage rig.vantage --robust-perception robust/ --robust-recording drive/ --robu
 
 *The planned rig driven in CARLA.*
 
+## Every feature: new sensors, hardware and the lab
+
+### Thermal cameras at night
+
+On Analysis ▸ Thermal cameras at night… : Put a thermal camera on the rig (the page's *Add a
+thermal camera* places a Teledyne FLIR Boson+ 640 on the front bumper; the library also holds the Boson+ 320, the FLIR
+ADK, the Tura and Lynred's PICO640S with their datasheet figures) and the page tells you how far each camera detects,
+recognises and identifies a pedestrian, a cyclist and a car at night. Thermal cameras are modelled from Planck's law:
+the person's clothing temperature from the ISO 7730 heat balance, the background split between the road below the
+camera's height and the scene above it, water vapour, fog (by Mie theory for small or large drops) and rain along the
+path, and the camera's NETD scaled by its lens's f-number and transmission. Visible cameras are lit by UN R112
+headlamps (a typical lamp or the dimmest R112 allows) and counted in electrons. On the sample's data rig a Boson+ 640
+with a 32° lens detects a pedestrian at about 700 m on a clear night where the front fisheye sees 43 m in the low beam
+(154 m in the high beam). On a hot summer night the road behind the person is warmer than the person and the contrast
+inverts; the page says so. A thermal camera behind the windscreen sees nothing, since glass is opaque to the LWIR: mount
+it outside or behind a germanium window. These are typical models with cited figures, not measurements of a scene; a
+range is what the camera resolves, an upper bound for a trained detector. In batch: `--thermal OUT_DIR` (exit 2 when a thermal camera looks through glass); the assistant and Claude: `get_thermal_night`, `add_thermal_camera`.
+
+### Event cameras
+
+<p><b>Event cameras.</b> Neuromorphic sensors record per-pixel brightness changes as events, microseconds apart,
+over a dynamic range of 86–140 dB, instead of frames. Vantage's library has Prophesee's EVK4 HD (Sony IMX636), EVK5
+HD (IMX646) and GenX320 with their makers' figures. Analysis ▸ Event cameras renders a short drive through each event
+camera and runs an event model on it (ESIM with v2e's noise, the stated latency at each pixel's illuminance, the
+readout's cap): the event rate, the data rate in EVT 2.0, 2.1 and 3.0 and whether the camera's link keeps up; how
+sharply it places a moving edge where the RGB cameras smear it; and a tunnel exit with a stopped car ahead, where an RGB
+camera's exposure has to catch up. A variant without an event camera gets a virtual one beside its front camera. In
+CARLA an event camera records with the simulator's DVS camera, beside a reference view the model runs on, so each drive
+says how far the simulator and the model agree.</p>
+
+### FMCW lidar
+
+**FMCW lidar.** A coherent FMCW lidar measures with every return its radial velocity. Vantage gives each point of a
+lidar's sweep v_r = d · (v_point − v_sensor) from the scene's velocities (a scripted urban or highway scene, or a
+CARLA drive with CARLA's own velocities) plus the datasheet's velocity noise, fits the sensor's velocity from the
+static points (RANSAC), derives the car's speed and yaw rate, and flags moving points from Doppler alone — telling
+apart the motion across the ray that Doppler cannot see. A time-of-flight lidar is evaluated as an FMCW model at its
+pose. Under six sun conditions it compares a 905 nm time-of-flight receiver (range at a constant false-alarm rate,
+false returns, the sun's disc) with a 1550 nm coherent receiver, which picks up only the light in its oscillator's
+mode (Siegman 1966), and counts the interference points other test cars' lidars put in a frame. Figures are
+modelled, with the receivers' typical parameters as settings; on real drives the estimators were checked against
+CARLA's own radar Doppler (median difference 0.07–0.8 cm/s).
+
+### Imaging radar
+
+**Imaging radar.** Analysis ▸ Imaging radar treats every radar as a 4D imaging radar. A MIMO radar's Tx and Rx
+antennas form a virtual array (every Tx position plus every Rx position); its beam, tapered uniform, Hann or Taylor,
+gives the angular resolution (the −3 dB beamwidth, wider toward the field's edge), the sidelobes that let a car hide a
+pedestrian beside it, and any grating lobe that makes a target appear twice. The detection range of each class
+follows the radar equation from the datasheet's range (or the chip's link budget), the element pattern and the loss
+through the bumper; over the road the reflected path adds or cancels (two-ray), so a target can fade at some ranges.
+Behind a bumper fascia, part of every echo bounces between the fascia and the radar's front: the cavity images every
+target at twice the fascia's tilt, and the page lists these ghosts and the road's mirror targets, says which the radar
+resolves, and advises the gap, tilt, fascia thickness and pitch. *Evaluate as* tries any imaging radar on the rig
+without changing it; *Swap* puts it on the radar as one undo step. Figures a maker does not publish (an array layout,
+a range) are marked assumed.
+
+### Neural replay
+
+```html
+<h3>Neural replay</h3>
+<p>Log replay ▸ Neural replay makes a re-rendered drive closer to its recording, and measures each step on it.</p>
+<ul>
+<li><b>Exact lens projection.</b> Every Gaussian goes through the camera's exact lens by the Unscented Transform,
+as 3DGUT does. Even a 190° fisheye or a rolling shutter needs no approximation.</li>
+<li><b>Two opacities.</b> The lidar gets its own opacity per Gaussian, so glass can be see-through for the camera
+and still give a lidar return.</li>
+<li><b>Articulated pedestrians.</b> Pedestrians are posed per instant from their track and from 2D keypoints of the
+recorded views. You choose the body: Vantage's own, Anny's (CC0), or your own SMPL file if you accept its
+non-commercial licence.</li>
+<li><b>Traffic lights.</b> Traffic lights are drawn as emissive heads showing the state the recording shows.</li>
+<li><b>Relighting.</b> Any re-shot frame can be relit to a wet road, night under your headlamps, or snow, so you can
+judge a rig in conditions you never drove. Relit frames always say so.</li>
+</ul>
+<p>Measure rebuilds the drive with both projections. It scores the detector on the re-rendered drive with rigid and
+articulated walkers, and on the recorded images at the same instants. On a CARLA pedestrian-crossing drive, the
+re-shot drive's pedestrian recall rose from 18 % to 77 %; the real recording gives 83 %.</p>
+<p>The re-rendered images are still not recordings. Traffic lights on them are easier to detect than real ones, and
+relit frames are what-ifs, not weather recordings.</p>
+```
+
+### Your vehicle's body in CARLA, OpenUSD and NCore
+
+**Your own body in CARLA.** CARLA draws its own vehicle — the blueprint nearest yours by size — so a camera looking
+at the car sees CARLA's hood, mirrors and roof, not yours. `core.ego_composite` replaces it: every pixel of every
+camera is cast exactly through the camera's lens model against your project's body, its rig parts and the other
+sensors' housings, and wherever your body is nearer than what CARLA saw it is painted in, lit by CARLA's sun at the
+car's heading. CARLA's own car where your body does not reach is filled from the camera's neighbouring frames (moved
+through the drive's ego poses; moving objects left out) and inpainted where nothing saw behind it. The lidar loses
+the points your body blocks, and the ground truth marks your body as the ego (class 29, instance 65535, its range).
+On a recorded drive with ground truth, *Composite my body* writes a copy beside it (`<drive>-ego`, everything
+untouched hard-linked; `ego_composite.json` reports what changed). The live CARLA rig does it on every frame
+(`sim_ego.npz` beside the rig; `--no-ego` or the setting turns it off) and serves your body as the drift
+indicator's reference. With it, the as-built check (best with *Exact body outline*) and the drift indicator measure
+the cameras, not the difference between two cars. CARLA's own car still casts its shadow and still collides with
+the traffic: those are CARLA's.
+
+### Frame, frame modes and aerodynamics
+
+Vantage designs the frame that carries your rig. The Frame page builds the frame from the rig and the sensors standing on it:
+- crossbars on roof-rail feet, rails, and posts for the masts;
+- a cross member, arm or standoff wherever a sensor has nothing under it;
+- a CNC plate under every sensor.
+
+Every profile is a real catalogue section, with its source cited. The page writes the files a workshop needs:
+- a cut list, a stock plan and a BOM;
+- DXF plates and an STL per part;
+- a STEP assembly.
+
+Frame modes meshes the frame in quadratic tetrahedra, with the sensors as rigid masses. It finds the frame's lowest modes and drives them with the road, so you see how much each sensor's mount shakes, measured on this frame rather than estimated for one beam. Aerodynamics is not CFD. It applies published drag coefficients of simple shapes to the rig's own frontal areas, then gives:
+- the range the rig costs an EV at 100 and 130 km/h;
+- the speeds at which the rig's members shed vortices in step with its modes;
+- the wind load on each sensor in a highway crosswind.
+
+Each of the three models is checked against an independent reference: beam and plate closed forms, catalogue consistency, and a measured roof-rack fuel-economy test.
+
+### Trigger firmware, edge watchdog and thermal intrinsics
+
+**Trigger firmware.** Embedded ▸ Trigger firmware turns the sync plan into firmware for a trigger box: every camera
+trigger line fires at its planned time after the GNSS PPS edge, so the cameras expose as the lidar sweeps past them.
+Four projects are generated:
+- a Raspberry Pi Pico in C, whose PIO state machines place every edge on an 8 ns cycle;
+- an STM32F411 in C, whose timers place each edge on a 10 ns tick;
+- the same Pico design in Rust;
+- a Jetson or other Linux board through libgpiod, whose edges are only as good as the kernel wakes the thread.
+
+Each board disciplines its crystal to the PPS: a least-squares fit through the last 16 PPS edges gives its frequency
+and the start of each second. It holds over on the learned frequency when the PPS drops out. Before you download
+anything, Vantage compiles each project's scheduling core and simulates it against a crystal 30 ppm off and a
+jittered PPS, and the page shows how far every pulse lands from the plan. The firmware is not built for the boards
+here: each README lists what to install. The boards produce trigger pulses and nothing else.
+
+**Edge watchdog.** The edge watchdog runs in the car, on a Jetson Orin or any Linux computer, with only NumPy and
+OpenCV beside the Vantage package. It reads each camera's stream and judges it with the same checks as Live ▸ Rig
+health. A few times a second it also measures where each camera points: the direction the vehicle travels as the
+camera sees it, compared with the rest of the rig, and the camera's view of the vehicle's own body. A camera whose
+pointing steps by more than a degree and stays there is reported as knocked, with its size. Alerts go to a status page
+on the car's network, MQTT, a webhook, the log and an optional buzzer. The page exports the configuration and the
+systemd unit, and dry-runs the watchdog on a recorded drive with faults written in.
+
+**Thermal intrinsics.** Calibrate ▸ Thermal intrinsics fits how each camera's focal length, principal point and
+distortion move with temperature, from lens calibrations taken at several temperatures. Each fit is a line, or a
+quadratic when that predicts a left-out calibration at least 10 % better and its curvature stands 3σ out, with
+confidence and prediction intervals. A capture's intrinsics are then compensated for its own temperature, and the
+curves travel with the calibration in OpenCV YAML and Kalibr files. Simulate a sweep shows the method on synthetic
+data built from published material constants. It is not a measurement: calibrate your own units at several
+temperatures before relying on a curve.
+
+### SOTIF matrix, cleaning and de-icing
+
+**SOTIF matrix and the ODD bound.** Vantage lists the triggering conditions ISO 21448 asks a developer to consider:
+- rain, fog and snow at stated intensities;
+- night, low sun, lens dirt, the blind volume near the car, sensor housings and a tunnel exit.
+
+For each condition, it measures the rig's functional insufficiencies with its own studies:
+- the detection range in the ego lane ahead against the stopping distance, per critical class;
+- whether a child can hide in front of the bumper;
+- which sensors lose their view, and by how much.
+
+Each cell names the study, module and function it came from. The stopping distance follows UN Regulation 157's careful-driver model (0.4 s risk evaluation, 0.75 s to braking, 0.774 g reached in 0.6 s) on the condition's road surface. The highest speed whose stopping distance still fits in the detection range bounds the ODD, and the lowest bound over the included conditions is the ODD speed limit. The report groups the conditions into the standard's known and unknown, hazardous and not hazardous areas. It traces the cells to the requirements scorecard and proposes range requirements for the target speed. It supports a safety case; it is not a certification.
+
+**Cleaning and de-icing.**
+- **Placement:** place washer nozzles, air nozzles and lens heaters on the cameras and lidars, from makers' datasheets or your own figures.
+- **Spray:** Vantage tests each spray cone against the lens or window and says how much it covers and where it misses.
+- **Tank:** from the dirt the exposure study predicts, it works out how often each window needs a clean and how long the tank lasts over a shift. The dirt rates and cleaning doses are stated assumptions.
+- **Heaters:** a heat balance fitted to a maker's measured warm-ups, with forced convection at the vehicle's speed, gives the lens temperature and how long a heater takes to clear ice.
+- **Power and harness:** the pumps, valves, compressor and heaters go into the power budget, and the tubing and wiring into the harness.
+
+### Project folders and the lab
+
+File ▸ Save as… offers a **project folder** (`name.vantage.d`) beside the `.vantage` file: the same project as stable, sorted text files, one per variant and per study, that git can diff and merge (File ▸ Convert to project folder… turns the open project into one; File ▸ Open project folder… opens one). `vantage diff A B` says what changed between two projects or git revisions by meaning: cameras moved by so many millimetres and turned by so many degrees, lenses swapped, settings changed. `vantage diff --git-setup FOLDER` registers a merge driver, so two edits to different cameras or settings merge cleanly, and the same value changed two ways stays a conflict.
+
+A team can run a **lab server** of its own (`vantage --lab-server ROOT`: files plus SQLite, a backup is the folder). On File ▸ Lab… connect with the token its admin gave your team, register the project, then **Publish** (an immutable, digest-addressed version) or **Sync** (publish your changes, take your colleagues', or merge both three ways; a conflict publishes nothing). The page shows exactly which files a publish sends: never stream passwords, API keys or tokens. Pick a version to see its changes. **Run pooled twin** runs the fleet twin over every fleet the other teams share with yours, re-based onto this project's plan; perception records are pooled anonymised, opt-in per project. In batch: `--diff`, `--lab-publish`, `--lab-pull`, `--lab-sync`, `--lab-pooled-twin`.
+
 ## Every feature: the assistant and Claude
 
 Two optional ways to work with an AI on the design, both in the assistant panel (<kbd>Ctrl</kbd>+<kbd>J</kbd>). Its switch at the top chooses between them:
@@ -866,7 +1040,7 @@ vantage --watch rig.vantage --watch-runs 1                        # regenerate o
 
 ### Validation
 
-**Help ▸ Validate the models…** or `vantage --validate report/` checks every model against an independent reference (closed forms, OpenCV, ITU-R tables, Monte Carlo) and writes an HTML report. `--validate-quick` takes about 30 s. The [published report](https://sherin-sef-ai.github.io/Vantage/validation/validation.html) is on this site. [Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#validation)
+**Help ▸ Validate the models…** or `vantage --validate report/` checks every model against an independent reference (closed forms, OpenCV, ITU-R tables, Monte Carlo) and writes an HTML report. `--validate-quick` takes one to two minutes. The [published report](https://sherin-sef-ai.github.io/Vantage/validation/validation.html) is on this site. [Reference](https://sherin-sef-ai.github.io/Vantage/docs.html#validation)
 
 ### Reproducing a result
 

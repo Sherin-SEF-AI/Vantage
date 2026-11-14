@@ -44,6 +44,8 @@ REF_RCS = 10.0                       # m², the car-sized target a radar datashe
 MIN_FOOT_M = 0.002                   # a sensor's footprint never shrinks below 2 mm in the plan view
 
 
+RANGING = {'lidar': ('fmcw',), 'radar': ('mimo',)}     # SensorModel.ranging besides '' (the kind's usual model)
+
 @dataclass
 class SensorModel:
     """One lidar, radar, GNSS antenna or IMU product. Angles in degrees, ranges in metres."""
@@ -86,6 +88,12 @@ class SensorModel:
     note: str = ''                   # where the figures come from
     url: str = ''                    # the source page or datasheet
     builtin: bool = False
+    ranging: str = ''                # '' = the kind's usual model (lidar: pulsed time of flight; radar: the zone
+                                     # model); lidar 'fmcw' (coherent: range and radial velocity, core.fmcw_lidar);
+                                     # radar 'mimo' (a virtual array, core.imaging_radar)
+    params: dict = field(default_factory=dict)   # the ranging model's own datasheet figures (fmcw: velocity range and
+                                     # resolution, wavelength …; mimo: carrier, bandwidth, the virtual array …), owned by
+                                     # the module named above; a figure not stated is absent, never guessed
 
     def to_dict(self):
         d = asdict(self)
@@ -110,6 +118,8 @@ class SensorModel:
                 setattr(m, k, (int(v) if f.type == 'int' else v) if math.isfinite(v) else getattr(SensorModel(m.id), k))
         m.kind = m.kind if m.kind in KINDS else 'lidar'
         m.antennas = min(max(int(m.antennas), 0), 2)
+        m.ranging = m.ranging if m.ranging in RANGING.get(m.kind, ()) else ''
+        m.params = dict(m.params) if isinstance(m.params, dict) else {}
         for k in ('accel_noise_density', 'accel_random_walk', 'gyro_noise_density', 'gyro_random_walk'):
             setattr(m, k, max(float(getattr(m, k)), 0.0))
         m.heading_baseline_m = m.heading_baseline_m if m.heading_baseline_m > 0 else 2.0
@@ -492,7 +502,24 @@ def _radars() -> list[SensorModel]:
 
 
 def builtin_sensor_models() -> list[SensorModel]:
-    return _lidars() + _radars() + _gnss_imu()
+    return _lidars() + _radars() + _gnss_imu() + _ranging_library()
+
+
+RANGING_LIBRARIES = ('fmcw_lidar', 'imaging_radar')   # each offers library() -> [SensorModel] from its datasheets
+
+
+def _ranging_library() -> list:
+    import importlib
+    out = []
+    for name in RANGING_LIBRARIES:
+        try:
+            mod = importlib.import_module(f'{__package__}.{name}')
+        except ImportError:
+            continue
+        fn = getattr(mod, 'library', None)
+        if fn is not None:
+            out += list(fn())
+    return out
 
 
 def _gnss_imu() -> list[SensorModel]:

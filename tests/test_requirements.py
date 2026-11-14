@@ -106,6 +106,8 @@ def test_registry_ground_coverage_and_issues(done):
         assert _val(res, f'coverage.{key}') == pytest.approx(cov.metrics[key], abs=1e-9)
     vg = eng.vehicle_geom(p)
     mounts = {c.uid: rules.mount_info(p, c, vg) for c in p.variant.cameras}
+    from vantage.core import sotif
+    sotif.clear_cache()        # its issue reads the SOTIF study's cached result: the scorecard runs it after its issues
     iss = rules.collect_issues(p, cov, vg, mounts)
     so = SO.issue(SO.analyse(p, eng, cov))
     iss = [i for i in iss if i.action != 'requirement'] + ([so] if so is not None else [])
@@ -891,6 +893,13 @@ def test_page_add_run_undo_export(app, win, tmp_path):
     assert pg.show_proposals([{'metric': 'timing.blur_px', 'target': 2, 'text': 'Blur at most 2 px'},
                               {'metric': 'nope', 'target': 1}, {'metric': 'timing.blur_px', 'target': 'x'}]) == 1
     assert pg.prop_box.isVisible() and len(RQ.settings_of(st.project).items) == n_before + 1
+    # a second call keeps the first's proposals still waiting (it used to drop them); the same metric and
+    # parameters again replaces the earlier version
+    assert pg.show_proposals([{'metric': 'coverage.blind_m2', 'target': 0, 'text': 'No blind ground'}]) == 2
+    assert pg.show_proposals([{'metric': 'timing.blur_px', 'target': 1.5, 'text': 'Blur at most 1.5 px'}]) == 2
+    assert [o['item']['target'] for o in pg.proposals] == [1.5, 0.0] and len(pg.prop_checks) == 2
+    ids = [o['item']['id'] for o in pg.proposals] + [i['id'] for i in RQ.settings_of(st.project).items]
+    assert len(set(ids)) == len(ids), ids                 # no waiting row shares an id with another or a row added
     QTest.mouseClick(pg.b_dismiss, Qt.MouseButton.LeftButton)
     pump(app, 0.1)
     assert not pg.prop_box.isVisible() and len(RQ.settings_of(st.project).items) == n_before + 1
@@ -913,3 +922,30 @@ def test_page_add_run_undo_export(app, win, tmp_path):
     win.store.set_project(samples.tigor_sample_project())
     pump(app, 0.3)
     assert pg.full is None and pg.table.rowCount() == 0
+
+
+def test_brief_reads_an_object_seen_round_the_car_and_a_recording_day():
+    """'A 0.5 m tall child must be visible anywhere within 2 m of the car. We record 8 hours a day.' read nothing
+    before (found filming the Claude Code video): now the blind volume's object and one disk set for the day."""
+    p = _rig()
+    p.roi.distance = 1.5
+    got = RQ.parse_brief('A 0.5 m tall child must be visible anywhere within 2 m of the car. We record 8 hours a day.',
+                         p)
+    want = [('volume.undetected_m2', {'object': 'Pole 0.5 m'}, '<=', 0.0005),
+            ('recording.hours_per_set', {}, '>=', 8.0)]
+    assert [(o['item']['metric'], o['item']['params'], o['item']['op'], o['item']['target']) for o in got] == \
+        [w for w in want if RQ.metric_available(w[0])]
+    for o in got:
+        assert RQ.validate_item(o['item'], p)[0] and 'brief' in o['item']['note']
+    vol = next((o for o in got if o['item']['metric'] == 'volume.undetected_m2'), None)
+    if vol is not None:                                          # the ROI differs from the brief's distance: said
+        assert '1.5 m from the body' in vol['item']['note'] and 'says 2 m' in vol['item']['note']
+    # by the word when no height is given; a height between two objects takes the shorter (harder to see)
+    for text, obj in (('A child is seen all round the vehicle', 'Child 0.9 m'),
+                      ('An adult is detected anywhere around the car', 'Adult 1.8 m'),
+                      ('a 1.2 m tall object visible everywhere', 'Child 0.9 m'),
+                      ('a 0.3 m tall object visible everywhere', 'Pole 0.5 m')):
+        (o,) = RQ.parse_brief(text, p)
+        assert o['item']['params'] == {'object': obj}, text
+    for junk in ('Our children visit the plant on Fridays.', 'We drive 8 hours a day.'):
+        assert RQ.parse_brief(junk, p) == [], junk

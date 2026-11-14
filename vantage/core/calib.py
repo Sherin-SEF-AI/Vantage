@@ -28,17 +28,51 @@ _cache: dict = {}
 
 
 # ---------------------------------------------------------------- records
-def make_record(width, height, fx, fy, cx, cy, k, rms_px=0.0, serial='', source='', views=0, date=None) -> dict:
+def make_record(width, height, fx, fy, cx, cy, k, rms_px=0.0, serial='', source='', views=0, date=None,
+                temp_c=None) -> dict:
+    """temp_c: the camera's temperature while the calibration images were taken (°C), stored only when given (the
+    thermal curves, core.thermal_intrinsics, fit records taken at several temperatures)."""
     k = [float(x) for x in list(k)[:4]]
-    return {'model': 'kannala_brandt', 'width': int(width), 'height': int(height), 'fx': float(fx), 'fy': float(fy),
-            'cx': float(cx), 'cy': float(cy), 'k': k + [0.0] * (4 - len(k)), 'rms_px': float(rms_px),
-            'serial': str(serial or ''), 'source': str(source or ''), 'views': int(views),
-            'date': date or time.strftime('%Y-%m-%d')}
+    rec = {'model': 'kannala_brandt', 'width': int(width), 'height': int(height), 'fx': float(fx), 'fy': float(fy),
+           'cx': float(cx), 'cy': float(cy), 'k': k + [0.0] * (4 - len(k)), 'rms_px': float(rms_px),
+           'serial': str(serial or ''), 'source': str(source or ''), 'views': int(views),
+           'date': date or time.strftime('%Y-%m-%d')}
+    t = _temp(temp_c)
+    if t is not None:
+        rec['temp_c'] = t
+    return rec
+
+
+# a calibration file's temperature field, by the names calibration tools and camera metadata use
+TEMP_KEYS = ('temp_c', 'temperature_c', 'temperature', 'sensor_temp_c', 'sensor_temperature', 'calibration_temp_c')
+
+
+def _temp(v) -> float | None:
+    """A temperature in °C, or None when v is not a finite number in −100 … 300 °C."""
+    try:
+        t = float(v)
+    except (TypeError, ValueError):
+        return None
+    return t if math.isfinite(t) and -100.0 <= t <= 300.0 else None
+
+
+def temperature_of(d) -> float | None:
+    """The temperature (°C) a mapping states under one of TEMP_KEYS, or None."""
+    if not isinstance(d, dict):
+        return None
+    for k in TEMP_KEYS:
+        if k in d:
+            t = _temp(d[k])
+            if t is not None:
+                return t
+    return None
 
 
 def clean_record(rec: dict) -> dict:
-    """A record with only the stored keys (drops import hints such as 'hint' and 'file')."""
-    keep = ('model', 'width', 'height', 'fx', 'fy', 'cx', 'cy', 'k', 'rms_px', 'serial', 'source', 'views', 'date')
+    """A record with only the stored keys (drops import hints such as 'hint' and 'file'). 'temp_c' and a fitted
+    'thermal' curve (core.thermal_intrinsics) are kept when present."""
+    keep = ('model', 'width', 'height', 'fx', 'fy', 'cx', 'cy', 'k', 'rms_px', 'serial', 'source', 'views', 'date',
+            'temp_c', 'thermal')
     return {k: rec[k] for k in keep if k in rec}
 
 
@@ -683,7 +717,7 @@ def _kb_model(model: str) -> bool:
     return (model or '').lower().replace('-', '_') in ('fisheye', 'kannala_brandt', 'equidistant', 'kb4', 'kb', '')
 
 
-def _rec_from(K, D, w, h, model='', hint='', serial='', path='') -> dict:
+def _rec_from(K, D, w, h, model='', hint='', serial='', path='', temp_c=None, thermal=None) -> dict:
     K = np.asarray(K, float).reshape(3, 3)
     D = [] if D is None else np.asarray(D, float).ravel().tolist()
     if not _kb_model(model):
@@ -697,7 +731,9 @@ def _rec_from(K, D, w, h, model='', hint='', serial='', path='') -> dict:
     if not (w and h):
         raise ValueError('image size missing')
     r = make_record(w, h, K[0, 0], K[1, 1], K[0, 2], K[1, 2], D[:4], serial=serial,
-                    source=os.path.basename(path) if path else 'import')
+                    source=os.path.basename(path) if path else 'import', temp_c=temp_c)
+    if isinstance(thermal, dict) and thermal:
+        r['thermal'] = thermal
     r['hint'] = str(hint or '')
     r['file'] = path
     return r
@@ -745,8 +781,10 @@ def _opencv_storage(path) -> list:
             model = 'fisheye' if int(fm.real()) else 'pinhole'
         name = node('camera_name', 'name', 'tag', 'camera')
         sn = node('serial', 'serial_number')
+        tn = node(*TEMP_KEYS)
+        temp = _temp(tn.real() if tn.isReal() or tn.isInt() else tn.string()) if tn is not None else None
         return [_rec_from(K, D, w, h, model, name.string() if name is not None else '',
-                          sn.string() if sn is not None else '', path)]
+                          sn.string() if sn is not None else '', path, temp, _thermal_from_storage(fs))]
     finally:
         fs.release()
 
@@ -764,8 +802,11 @@ def _from_mapping(d: dict, path: str, hint='') -> list:
     if d.get('schema') == SCHEMA:
         out = []
         for c in d.get('cameras', []):
-            r = dict(make_record(**{k: c['calib'][k] for k in ('width', 'height', 'fx', 'fy', 'cx', 'cy', 'k')}),
+            r = dict(make_record(**{k: c['calib'][k] for k in ('width', 'height', 'fx', 'fy', 'cx', 'cy', 'k')},
+                                 temp_c=temperature_of(c['calib'])),
                      **{k: c['calib'][k] for k in ('rms_px', 'serial', 'source', 'views', 'date') if k in c['calib']})
+            if isinstance(c['calib'].get('thermal'), dict):
+                r['thermal'] = c['calib']['thermal']
             r['hint'] = c.get('tag', '')
             r['file'] = path
             out.append(r)
@@ -780,7 +821,7 @@ def _from_mapping(d: dict, path: str, hint='') -> list:
             w, h = c['resolution'][:2]
             K = [[fu, 0, pu], [0, fv, pv], [0, 0, 1]]
             out.append(_rec_from(K, c.get('distortion_coeffs'), w, h, c.get('distortion_model', ''),
-                                 c.get('rostopic', '') or k, '', path))
+                                 c.get('rostopic', '') or k, '', path, temperature_of(c), c.get('thermal')))
         return out
     if 'camera_matrix' in d or 'K' in d or 'k' in d and isinstance(d.get('k'), list) and len(d['k']) == 9:
         K = _mat(d.get('camera_matrix', d.get('K', d.get('k'))))
@@ -790,13 +831,13 @@ def _from_mapping(d: dict, path: str, hint='') -> list:
         if (not w or not h) and isinstance(d.get('resolution'), (list, tuple)):
             w, h = d['resolution'][:2]
         return [_rec_from(K, D, w, h, d.get('distortion_model', ''), d.get('camera_name', d.get('tag', hint)),
-                          d.get('serial', ''), path)]
+                          d.get('serial', ''), path, temperature_of(d), d.get('thermal'))]
     if all(k in d for k in ('fx', 'fy', 'cx', 'cy')) and ('width' in d or 'image_width' in d):
         D = d.get('k') if isinstance(d.get('k'), list) else [d.get(f'k{i}', 0.0) for i in range(1, 5)]
         K = [[d['fx'], 0, d['cx']], [0, d['fy'], d['cy']], [0, 0, 1]]
         return [_rec_from(K, D, d.get('width', d.get('image_width')), d.get('height', d.get('image_height')),
                           d.get('model', d.get('distortion_model', '')), d.get('tag', d.get('camera', hint)),
-                          d.get('serial', ''), path)]
+                          d.get('serial', ''), path, temperature_of(d), d.get('thermal'))]
     out = []
     for key in ('cameras', 'camera'):                           # Vantage exports and similar lists
         v = d.get(key)
@@ -895,4 +936,53 @@ def to_opencv_yaml(rec: dict, tag: str = '') -> str:
             f'camera_matrix: {mat(3, 3, K)}\n'
             f'distortion_coefficients: {mat(1, 4, rec["k"])}\n'
             f'rms_px: {float(rec.get("rms_px", 0))!r}\n'
-            f'calibration_date: "{q(rec.get("date", ""))}"\n')
+            f'calibration_date: "{q(rec.get("date", ""))}"\n'
+            + (f'temperature_c: {float(rec["temp_c"])!r}\n' if _temp(rec.get('temp_c')) is not None else '')
+            + _thermal_yaml(rec.get('thermal'), mat))
+
+
+# ---------------------------------------------------------------- thermal curves in OpenCV files
+# The fields a fitted thermal curve (core.thermal_intrinsics) adds to an OpenCV FileStorage calibration: the record's
+# fx fy cx cy k1..k4 are the values at thermal_reference_c; at temperature T each parameter is its value there plus
+# a1·(T − T_ref) + a2·(T − T_ref)² (thermal_coeffs, one row per parameter in thermal_params' order, px per K and
+# px per K² for fx fy cx cy at the file's resolution, per K and per K² for k1..k4); thermal_sigma is each parameter's
+# residual standard deviation about its curve; thermal_range_c the temperatures the curve was fitted over (it is not
+# extrapolated with confidence beyond them). OpenCV readers that do not know these keys ignore them.
+THERMAL_PARAMS = ('fx', 'fy', 'cx', 'cy', 'k1', 'k2', 'k3', 'k4')
+
+
+def _thermal_yaml(th, mat) -> str:
+    if not isinstance(th, dict) or not isinstance(th.get('coeffs'), dict):
+        return ''
+    try:
+        rows = [[float(x) for x in (list(th['coeffs'].get(p, [0.0, 0.0])) + [0.0, 0.0])[:2]] for p in THERMAL_PARAMS]
+        sig = [float((th.get('sigma') or {}).get(p, 0.0)) for p in THERMAL_PARAMS]
+        lo, hi = (list(th.get('range_c') or [0.0, 0.0]) + [0.0, 0.0])[:2]
+        return (f'thermal_reference_c: {float(th.get("reference_c", 20.0))!r}\n'
+                f'thermal_model: "{str(th.get("model", "polynomial"))}"\n'
+                f'thermal_params: "{" ".join(THERMAL_PARAMS)}"\n'
+                f'thermal_coeffs: {mat(len(THERMAL_PARAMS), 2, [v for r in rows for v in r])}\n'
+                f'thermal_sigma: {mat(len(THERMAL_PARAMS), 1, sig)}\n'
+                f'thermal_range_c: {mat(1, 2, [float(lo), float(hi)])}\n')
+    except (TypeError, ValueError):
+        return ''
+
+
+def _thermal_from_storage(fs) -> dict | None:
+    """The thermal block of an OpenCV FileStorage written by to_opencv_yaml, or None."""
+    try:
+        cn = fs.getNode('thermal_coeffs')
+        if cn.empty():
+            return None
+        C = np.asarray(cn.mat(), float).reshape(len(THERMAL_PARAMS), 2)
+        sn, rn = fs.getNode('thermal_sigma'), fs.getNode('thermal_range_c')
+        S = np.asarray(sn.mat(), float).ravel() if not sn.empty() else np.zeros(len(THERMAL_PARAMS))
+        Rg = np.asarray(rn.mat(), float).ravel() if not rn.empty() else np.zeros(2)
+        refn, mn = fs.getNode('thermal_reference_c'), fs.getNode('thermal_model')
+        return {'model': mn.string() if not mn.empty() else 'polynomial',
+                'reference_c': float(refn.real()) if not refn.empty() else 20.0,
+                'range_c': [float(Rg[0]), float(Rg[1])],
+                'coeffs': {p: [float(C[i, 0]), float(C[i, 1])] for i, p in enumerate(THERMAL_PARAMS)},
+                'sigma': {p: float(S[i]) for i, p in enumerate(THERMAL_PARAMS)}}
+    except Exception:                   # a malformed block: the calibration itself still reads
+        return None

@@ -73,6 +73,7 @@ class ToolContext:
     carla_live: dict | None = None       # the CARLA page's live rig panel (summary(): state, cameras, faults; no URLs)
     studies: dict = field(default_factory=dict)   # the round-14 pages' last results by page name (their summary())
     working_dir: str = ''                # where outputs go (workdir.get of the settings); never sent to the model
+    on_study: object = None              # callable(name, result): a project file's session keeps run_study's result
     plan: object = None                  # the Copilot plan on screen (copilot.Plan), which a follow-up revises
     request: str = ''                    # the user's words this turn (recorded with a plan)
     provider: str = ''
@@ -161,25 +162,32 @@ def _vehicle_box(tc):
 
 
 def _where(tc, x, y):
-    """'front-left corner', 'rear', 'left side', 'under the body' ..."""
-    lo, hi = _vehicle_box(tc)
-    if lo is None:
-        return ''
-    fx = 'front' if x > hi[0] else 'rear' if x < lo[0] else ''
-    sy = 'left' if y > hi[1] else 'right' if y < lo[1] else ''
-    if fx and sy:
-        return f'{fx}-{sy} corner'
-    if fx:
-        return fx
-    if sy:
-        return f'{sy} side'
-    return 'under the body'
+    """'front-left corner', 'below the rear bumper', 'left front wheel arch', 'under the body' ...: the words the
+    Issues list and look use (analysis.describe_location), 'under the body' only for a point inside the body's
+    footprint on the analysis grid."""
+    res = tc.result
+    g = getattr(res, 'grid', None)
+    if g is not None and getattr(g, 'body', None) is not None:
+        i, j = int(math.floor((x - g.x0) / g.cell)), int(math.floor((y - g.y0) / g.cell))
+        if 0 <= i < g.nx and 0 <= j < g.ny and bool(g.body[j, i]):
+            return 'under the body'
+    try:
+        from ..core.analysis import describe_location
+        return describe_location(x, y, tc.project)
+    except Exception:                                # no measured vehicle: the bounding box, as before
+        lo, hi = _vehicle_box(tc)
+        if lo is None:
+            return ''
+        fx = 'front' if x > hi[0] else 'rear' if x < lo[0] else ''
+        sy = 'left' if y > hi[1] else 'right' if y < lo[1] else ''
+        return f'{fx}-{sy} corner' if fx and sy else fx or (f'{sy} side' if sy else 'under the body')
 
 
-def dump(obj) -> str:
-    """Compact JSON, cut down if it would flood the conversation."""
+def dump(obj, cap=MAX_CHARS) -> str:
+    """Compact JSON, cut down if it would flood the conversation (cap characters; None: whole). Always valid JSON: long
+    lists are thinned first, and what still does not fit comes back as a string marked truncated."""
     s = json.dumps(obj, separators=(',', ':'), ensure_ascii=False, default=str)
-    if len(s) <= MAX_CHARS:
+    if cap is None or len(s) <= cap:
         return s
     if isinstance(obj, dict):
         o = dict(obj)
@@ -187,9 +195,16 @@ def dump(obj) -> str:
             if isinstance(v, list) and len(v) > 4:
                 o[k] = v[:max(4, len(v) // 3)] + [f'… {len(v) - max(4, len(v) // 3)} more']
                 s = json.dumps(o, separators=(',', ':'), ensure_ascii=False, default=str)
-                if len(s) <= MAX_CHARS:
+                if len(s) <= cap:
                     return s
-    return s[:MAX_CHARS] + '…(cut)'
+    note = (f'the result has {len(s):,} characters, more than the {cap:,} that fit; ask for less (one item, a narrower '
+            'scope)')
+    n = max(0, cap - 400)
+    while True:                                     # the start of the text, quoted: escaping can lengthen it
+        out = json.dumps({'truncated': True, 'note': note, 'start': s[:n]}, separators=(',', ':'), ensure_ascii=False)
+        if len(out) <= cap or n == 0:
+            return out
+        n = max(0, n - (len(out) - cap) - 16)
 
 
 # =========================================================================== read tools
@@ -615,6 +630,9 @@ def get_studies(tc, **_):
                 'vanish_now_m2': _r(tc.advice.vanish_now, 3), 'vanish_after_m2': _r(tc.advice.vanish_after, 3),
                 'moves': [{'seam': [tags.get(x.a), tags.get(x.b)], 'from_deg': _r(x.angle, 1), 'to_deg': _r(x.best, 1)}
                           for x in tc.advice.seams if x.moved]}
+    elif tc.on_study is not None:                   # a project file: no page runs the stitched study
+        out['objects_in_stitched_view'] = ('not kept on a project file: run_study(study="stitched_objects") computes '
+                                           'it each time')
     else:
         out['objects_in_stitched_view'] = 'not computed in the app yet: call run_study(study="stitched_objects")'
     v = tc.volume
@@ -627,7 +645,9 @@ def get_studies(tc, **_):
             'objects': {n: {'height_m': _r(o.get('height'), 2), 'undetected_m2': _r(o.get('undetected_m2'), 3),
                             'hides_up_to_m_from_body': _r(o.get('reach_m'), 2)} for n, o in m.get('objects', {}).items()}}
     else:
-        out['blind_volume'] = 'not run in the app yet: call run_study(study="blind_volume")'
+        out['blind_volume'] = ('not run for this revision yet: call run_study(study="blind_volume")'
+                               if tc.on_study is not None else
+                               'not run in the app yet: call run_study(study="blind_volume")')
     if tc.guidelines is not None:
         out['parking_guidelines'] = tc.guidelines
     if tc.worst and tc.worst[1]:
@@ -1231,16 +1251,54 @@ def get_requirement_metrics(tc, **_):
     return RQ.catalogue(tc.project)
 
 
+def _unknown_params(RQ, it, p) -> str:
+    """'' when the item's parameters are all the metric's own; else why not, with the parameters it does take and
+    their choices in this project (so the next try can be right)."""
+    if not isinstance(it, dict):
+        return ''
+    m = RQ.METRICS.get(str(it.get('metric') or ''))
+    raw = it.get('params')
+    if m is None or not isinstance(raw, dict):
+        return ''
+    keys = {p_.key for p_ in m.params}
+    unknown = [k for k in raw if k not in keys]
+    if not unknown:
+        return ''
+    v = p.variant if p is not None else None
+    takes = []
+    for p_ in m.params:
+        try:
+            opts = [str(k) for k, _ in p_.options(p, v)] if p is not None else []
+        except Exception:                      # noqa: BLE001 — the message is a help, never a failure
+            opts = []
+        takes.append(f'{p_.key!r} ({p_.label}' + (f': one of {", ".join(repr(o) for o in opts[:12])}' if opts else '')
+                     + ')')
+    return (f'{m.label} takes no parameter {", ".join(map(repr, unknown))}; '
+            + (f'its parameters: {"; ".join(takes)}.' if takes else 'it takes no parameters.'))
+
+
 def propose_requirements(tc, items=None, text=None, **_):
     from ..core import requirements as RQ
     p = tc.project
     if items is None:                      # parse the brief (or the given text)
         items = [o['item'] for o in RQ.parse_brief(text if text is not None else tc.brief, p)]
+        if text is not None:               # the request's own text, not the project brief
+            for it in items:
+                if it.get('note') == 'Proposed from the project brief.':
+                    it['note'] = 'Proposed from the request.'
     ok, bad = [], []
+    taken = {str(i.get('id')) for i in RQ.settings_of(p).items if isinstance(i, dict)}
     for it in items or []:
-        c = RQ.clean_item(it, p)
+        why = _unknown_params(RQ, it, p)       # clean_item drops a parameter it does not know (and would use the
+        if why:                                # default instead, a different requirement): say so, add nothing
+            bad.append({'item': it, 'error': why})
+            continue
+        c = RQ.clean_item(it, p, taken)
         good, why = RQ.validate_item(c, p) if c is not None else (False, 'not a mapping')
         if good:
+            if c['id'] in taken:           # two proposals (or one and an existing row) with the same id
+                c['id'] = RQ._new_id(taken)
+            taken.add(c['id'])
             ok.append(c)
         else:
             bad.append({'item': it, 'error': why})
@@ -1487,7 +1545,7 @@ def _evaluate(tc, p):
         except Exception:
             pass
     try:
-        issues = rules.collect_issues(p, res, vg, mounts)
+        issues = rules.collect_issues(p, res, vg, mounts, eng)   # as the window: with the engine's checks
     except Exception:
         issues = []
     return res, issues
@@ -1619,7 +1677,9 @@ def _simulate(tc, changes=None, seams=None, settings=None, stitched=False):
     sev = lambda lst: {s: sum(1 for i in lst if i.severity == s) for s in ('critical', 'serious', 'warning')}
     new = [i.message for i in i1 if i.message not in {j.message for j in i0}][:6]
     gone = [i.message for i in i0 if i.message not in {j.message for j in i1}][:6]
-    if sv is not None:                          # its issue counted as the app's Issues list holds it
+    if sv is not None and tc.stitched is not None:
+        # its issue counted as the window's Issues list holds it (the window runs the stitched study; on a project
+        # file no Issues list has it, so get_issues and edit_project count without it, and so does this)
         j0, j1 = _stitched_issue(s0), _stitched_issue(s1)
         i0, i1 = i0 + ([j0] if j0 else []), i1 + ([j1] if j1 else [])
         if j1 is not None and j0 is None:
@@ -1757,7 +1817,8 @@ def add_design_log(tc, kind='note', text='', about=None, **_):
         return {'error': f'give a kind ({", ".join(M.KINDS)}) and a short text'}
     if tc.on_log is not None:
         tc.on_log(e)
-    return {'proposed': M.for_model(tc.project, e), 'status': 'shown to the user; written to the design log only if '
+    shown = dict(M.for_model(tc.project, e), source='assistant (awaiting the user)')    # not accepted yet
+    return {'proposed': shown, 'status': 'shown to the user; written to the design log only if '
                                                                'they accept it'}
 
 
@@ -1781,13 +1842,19 @@ def compare_variants(tc, variants=None, **_):
             out.append({'variant': v.name, 'error': 'cannot be analysed'})
             continue
         m = res.metrics
-        out.append({'variant': v.name, 'active': v.uid == p.active_uid,
+        active = v.uid == p.active_uid
+        if active and tc.result is not None:   # a context with a live analysis carries its Issues list
+            issues = tc.issues        # the Issues list as the window shows it (with the findings of studies run)
+        out.append({'variant': v.name, 'active': active,
                     'cameras': [c.tag for c in v.cameras if c.visible],
                     'blind_m2': _r(m['blind_m2'], 3), 'covered_pct': _r(m['covered_pct'], 2),
                     'seen_by_2_or_more_pct': _r(m['multi_pct'], 1), 'min_density_px_cm': _r(m['min_density'], 2),
                     'above_min_density_pct': _r(m['min_ok_pct'], 1),
                     'issues': {s: sum(1 for i in issues if i.severity == s) for s in ('critical', 'serious', 'warning')}})
-    return {'variants': out}
+    return {'variants': out,
+            'issues_counted': 'the active variant: its Issues list as get_issues gives it (the design rules plus the '
+                              'findings of studies already run, such as the stitched view); other variants: the design '
+                              'rules only, since those studies are not run for them'}
 
 
 STUDIES = ('blind_volume', 'stitched_objects', 'load_cases', 'mounting_tolerance', 'perception_range', 'sensor_coverage',
@@ -1806,14 +1873,20 @@ def run_study(tc, study='', height=None, object_height=None, tolerance_deg=None,
     try:
         if study == 'blind_volume':
             from ..core import volume as V
-            h = min(max(float(height or 2.0), 0.3), 4.0)
+            # the project's own grid, as the Blind volume page and the requirements scorecard use: one answer
+            st = V.VolumeSettings.from_dict(p.analysis.volume)
+            h = min(max(float(height or st.height), 0.3), 4.0)
             tc.status(f'Blind volume up to {h:.1f} m…')
-            vr = V.analyse_volume(p, eng, res, height=h, dz=0.1, cell=max(res.cell, 0.1),
+            vr = V.analyse_volume(p, eng, res, height=h, dz=min(st.dz, h), cell=st.cell or None,
                                   cancel=tc.cancelled)                                     # a callable
             if vr is None:
                 return {'error': 'cancelled'}
+            if tc.on_study is not None and abs(h - st.height) < 1e-9:
+                tc.on_study('volume', vr)           # as the page's own result: get_studies gives it from now on
             m = vr.metrics
-            return {'study': study, 'grid': '10 cm columns, 10 cm levels', 'height_m': _r(h, 2),
+            return {'study': study, 'grid': f'{100 * vr.cell:.0f} cm columns, {100 * vr.dz:.0f} cm levels '
+                                            '(the project\'s blind-volume settings, as the page and the scorecard)',
+                    'height_m': _r(h, 2),
                     'blind_m3': _r(m['blind_m3'], 2), 'blind_pct_of_space': _r(m['blind_pct'], 1),
                     'ground_blind_m2': _r(m['ground_blind_m2'], 3), 'covered_up_to_m': _r(m['covered_to_m'], 2),
                     'worst_level': {'z_m': _r(m['worst_level_z'], 2), 'blind_m2': _r(m['worst_level_m2'], 2)},
@@ -2320,7 +2393,7 @@ TOOLS = [
     Tool('run_validation', 'Validate the models',
          'Check Vantage\'s models against independent references (closed forms, OpenCV, ITU-R tables, published '
          'examples, exact ray casting, Monte Carlo): checks passed, per model, and every failure with its error and '
-         'tolerance. quick (default true): about 30 s; models: ids to run (default all).',
+         'tolerance. quick (default true): one to two minutes on every model; models: ids to run (default all).',
          {'models': {'type': 'array', 'items': {'type': 'string'}}, 'quick': {'type': 'boolean'}}, run_validation,
          'compute'),
     Tool('list_validation_checks', 'List the validation checks',
@@ -2421,8 +2494,8 @@ TOOLS = [
          'All variants unless named.', {'variants': {'type': 'array', 'items': {'type': 'string'}}},
          compare_variants, 'compute'),
     Tool('run_study', 'Run a study',
-         'Compute a study now (10 cm grids, a few seconds): blind_volume (where a pole, child or adult goes unseen, '
-         'up to `height`), stitched_objects (where an object of `object_height` vanishes at the seams, with seam '
+         'Compute a study now (a few seconds; blind_volume on the project\'s own grid, the rest on 10 cm grids): '
+         'blind_volume (where a pole, child or adult goes unseen, up to `height`), stitched_objects (where an object of `object_height` vanishes at the seams, with seam '
          'advice), load_cases (the project\'s axle drops), mounting_tolerance (worst blind area when one camera is off '
          'by tolerance_deg / tolerance_mm), perception_range (how far out cars, pedestrians, cyclists and signs are '
          'resolved per sector against the required ranges, and the stereo camera pairs), sensor_coverage (with '
@@ -2544,6 +2617,14 @@ except Exception as _e:                     # noqa: BLE001 — a broken module n
                                              _e)
     _R14 = []
 TOOLS += [t for t in _R14 if t.name not in {x.name for x in TOOLS}]
+# round 17's study tools (assistant/r17_tools.py: thermal cameras, event cameras, FMCW lidar, imaging radar …)
+try:
+    from .r17_tools import TOOLS_R17 as _R17
+except Exception as _e:                     # noqa: BLE001 — a broken module never takes the assistant down
+    import logging as _logging
+    _logging.getLogger(__name__).warning('the round-17 study tools are not available: %s: %s', type(_e).__name__, _e)
+    _R17 = []
+TOOLS += [t for t in _R17 if t.name not in {x.name for x in TOOLS}]
 BY_NAME = {t.name: t for t in TOOLS}
 
 
@@ -2623,9 +2704,10 @@ def validate_args(name: str, args) -> list:
     return out
 
 
-def run_full(tc, name: str, args: dict) -> tuple[str, bool, list]:
+def run_full(tc, name: str, args: dict, cap=MAX_CHARS) -> tuple[str, bool, list]:
     """(JSON text for the model, ok, pictures): a tool that draws (look) hands its vision.Picture objects back
-    separately, so the provider can send them as images next to the text."""
+    separately, so the provider can send them as images next to the text. cap: the most characters of text (the
+    in-app chat's limit by default; the MCP server passes its own, larger one)."""
     t = BY_NAME.get(name)
     if t is None:
         return dump({'error': f'unknown tool {name!r}'}), False, []
@@ -2637,7 +2719,7 @@ def run_full(tc, name: str, args: dict) -> tuple[str, bool, list]:
     if isinstance(out, dict) and '_pictures' in out:
         out = dict(out)
         pics = list(out.pop('_pictures') or [])
-    return dump(out), not (isinstance(out, dict) and 'error' in out and len(out) <= 2), pics
+    return dump(out, cap), not (isinstance(out, dict) and 'error' in out and len(out) <= 2), pics
 
 
 def run(tc, name: str, args: dict) -> tuple[str, bool]:

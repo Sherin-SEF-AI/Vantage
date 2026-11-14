@@ -124,6 +124,8 @@
         "builtin": {"type": "boolean"}, "shutter": {"type": "string", "description": "rolling | global (empty: not given)."},
         "dynamic_range_db": {"type": "number", "minimum": 0}, "ip_rating": {"type": "string"},
         "temp_c": {"type": "array", "maxItems": 2, "items": {"type": "number"}, "description": "Operating temperature range, °C."},
+        "chroma": {"type": "string"}, "url": {"type": "string"}, "modality": {"type": "string", "enum": ["rgb", "nir", "lwir", "event"], "description": "What the module senses: rgb (default), nir, lwir (thermal, 8–14 µm) or event (a neuromorphic sensor)."},
+        "chroma": {"type": "string"}, "url": {"type": "string"}, "modality_params": {"type": "object", "description": "Datasheet figures of a thermal or event module (NETD, band, contrast threshold …), as core.thermal_ir and core.event_camera read them."},
         "chroma": {"type": "string"}, "url": {"type": "string"}, "note": {"type": "string"}
       }
     },
@@ -180,6 +182,8 @@
         "accel_random_walk": {"type": "number", "minimum": 0, "description": "m/s³/√Hz."},
         "gyro_noise_density": {"type": "number", "minimum": 0, "description": "rad/s/√Hz."},
         "gyro_random_walk": {"type": "number", "minimum": 0, "description": "rad/s²/√Hz."},
+        "ranging": {"type": "string", "enum": ["", "fmcw", "mimo"], "description": "How a lidar or radar ranges when it is not the usual: fmcw (a coherent FMCW lidar) or mimo (a 4D imaging radar); empty: the usual pulsed lidar or radar."},
+        "params": {"type": "object", "description": "The ranging model's datasheet figures (chirp, wavelength, array layout …), as core.fmcw_lidar and core.imaging_radar read them."},
         "note": {"type": "string"}, "url": {"type": "string", "description": "The maker's page or datasheet the figures are from."},
         "builtin": {"type": "boolean"}
       }
@@ -301,6 +305,21 @@
         "risk_coverage": {"type": "object", "description": "Coverage weighted by where hazards appear, from crash typologies and test scenarios (core/risk_coverage.py)."},
         "fleet_twin": {"type": "object", "description": "Calibration drift of every vehicle in the fleet over time and its forecast (core/fleet_twin.py)."},
         "critical_carla": {"type": "object", "description": "Critical targets as CARLA scenes (core/critical_carla.py CriticalCarlaSettings): town, weather, spawn_points, seed, duration_s, image_scale, frames, group, vehicle, actors {target uid: auto | standin | none | blueprint:<id>}."},
+        "thermal": {"type": "object", "description": "LWIR cameras: pedestrian contrast at night (core/thermal_ir.py)."},
+        "event_camera": {"type": "object", "description": "Neuromorphic sensors: event rate, blur, tunnel exits (core/event_camera.py)."},
+        "fmcw": {"type": "object", "description": "Coherent FMCW lidar: Doppler, sun, cross-talk (core/fmcw_lidar.py)."},
+        "imaging_radar": {"type": "object", "description": "4D MIMO radar: array, sidelobes, cavity ghosts (core/imaging_radar.py)."},
+        "neural_replay": {"type": "object", "description": "3DGUT, walkers, lights, relighting in log replay (core/neural_replay.py)."},
+        "ego_composite": {"type": "object", "description": "The user's body composited into CARLA streams (core/ego_composite.py)."},
+        "usd_export": {"type": "object", "description": "OpenUSD rig export settings (core/usd_export.py)."},
+        "framing": {"type": "object", "description": "Extrusion framing, cut lists, STEP (core/framing.py)."},
+        "fea": {"type": "object", "description": "Tetrahedral modal analysis of the roof structure (core/fea.py)."},
+        "aero": {"type": "object", "description": "Drag, range loss, vortex shedding of the rig (core/aero.py)."},
+        "trigger_fw": {"type": "object", "description": "Trigger-box firmware from the sync plan (core/trigger_firmware.py)."},
+        "edge_daemon": {"type": "object", "description": "The in-car watchdog's configuration (core/edge_daemon.py)."},
+        "thermal_intrinsics": {"type": "object", "description": "Focal drift per °C from temperature sweeps (core/thermal_intrinsics.py)."},
+        "sotif": {"type": "object", "description": "ISO 21448 triggering conditions and the ODD bound (core/sotif.py)."},
+        "cleaning": {"type": "object", "description": "Washer nozzles, air knives, heaters on the rig (core/cleaning.py)."},
         "copilot": {
           "type": "object",
           "description": "The Copilot's approval records (vantage/assistant/copilot.py): every plan the user approved, newest last (at most 60). An audit trail: undo never removes one, and the content hash leaves them out.",

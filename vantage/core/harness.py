@@ -845,6 +845,7 @@ class HarnessResult:
     variant: str = ''
     variant_uid: str = ''
     metrics: dict = field(default_factory=dict)
+    cleaning: list = field(default_factory=list)   # washer tubing, air lines, heater and valve wiring (core.cleaning)
 
     def run(self, rid):
         return next((r for r in self.runs if r['id'] == rid), None)
@@ -1111,8 +1112,24 @@ def run(project, engine=None, settings: HarnessSettings | None = None, variant=N
     res = HarnessResult(st, runs, [_entry_out(x) for x in entries], compute, findings, totals, g is not None,
                         var.name, var.uid)
     res.metrics = {'seconds': time.perf_counter() - t0, 'graph': dict(g.stats) if g is not None else None}
+    res.cleaning = _cleaning_runs(project)
     prog(1.0)
     return res
+
+
+def _cleaning_runs(project) -> list:
+    """The cleaning layout's tubing and wiring (core.cleaning.harness_runs), when the project has one."""
+    try:
+        from . import cleaning as CL
+        st = CL.settings_of(project)
+        if not st.devices:
+            return []
+        res = CL.cached(project) or CL.run(project)
+        return list(res.harness) if res is not None else []
+    except Exception as e:                        # noqa: BLE001 — the cleaning never breaks the harness
+        import logging
+        logging.getLogger(__name__).warning('cleaning runs: %s: %s', type(e).__name__, e)
+        return []
 
 
 def _entry_out(x) -> dict:
@@ -1600,6 +1617,10 @@ def to_doc(res: HarnessResult, project=None) -> dict:
                    'connectors': dict(t['connectors'])},
         'findings': [{'severity': f['severity'], 'kind': f['kind'], 'message': f['message'], 'devices': f['tags']}
                      for f in res.findings],
+        **({'cleaning_runs': [{'device': c['device'], 'what': c['what'], 'from': c['from'], 'to': c['to'],
+                               'length_m': _r(c['length_m']), 'route': c['route'], 'path': _pts(c['path'])}
+                              for c in res.cleaning],
+            'cleaning_length_m': _r(sum(c['length_m'] for c in res.cleaning))} if res.cleaning else {}),
     }
 
 
@@ -1622,6 +1643,10 @@ def to_csv(res: HarnessResult) -> str:
                     blank(r['limit_m']), blank(_r(margin)), blank(_r(r['loss_db'], 2)), blank(_r(r['margin_db'], 2)),
                     blank(_r(r['drop_pct'], 2)), r['severity'], ' | '.join(m for s, k, m in r['problems']),
                     '; '.join(' '.join(f'{v:.4f}' for v in q) for q in r['path'])])
+    for i, c in enumerate(res.cleaning):              # the cleaning's tubing and wiring (core.cleaning)
+        w.writerow([f'cleaning:{i}', c['to'], 'cleaning', c['what'], c['from'], c['to'], '', c['what'], '',
+                    _r(c['length_m']), '', '', '', '', '', '', 'ok', c['route'],
+                    '; '.join(' '.join(f'{v:.4f}' for v in q) for q in c['path'])])
     t = res.totals
     w.writerow(['total', '', '', '', '', '', '', f'{t["runs"]} cables', '', _r(t['length_m']), _r(t['manhattan_m']),
                 '', '', '', '', '', '', '', ''])

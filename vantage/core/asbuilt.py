@@ -112,7 +112,7 @@ LIMITS = {'frames': (4, 60), 'min_motion_m': (0.0, 50.0), 'min_change': (0.5, 60
           'tol_translation_m': (0.001, 0.5), 'tol_circle_pct': (0.1, 20.0), 'tol_blind_m2': (0.0, 10.0),
           'tol_multi_pct': (0.0, 50.0), 'tol_density_pct': (0.0, 50.0), 'tol_visible_pct': (0.0, 100.0)}
 INTS = ('frames',)
-BOOLS = ('fit_translation', 'lidar_check')
+BOOLS = ('fit_translation', 'lidar_check', 'exact_body')
 ASSUMPTIONS = (
     'The ego mask is what stays the same while the vehicle moves: it needs motion and texture in the scene. Plain road, '
     'sky and other surfaces without texture stay the same too; they are told from the vehicle by the static edges '
@@ -140,6 +140,8 @@ class AsBuiltSettings:
     search_deg: float = 3.0            # the band around the planned silhouette and the rotation search, ±
     fit_translation: bool = False      # also fit a translation (weakly observable)
     lidar_check: bool = True           # also run the drive-log rotation check against the lidar
+    exact_body: bool = False           # the simulated mask by exact ray casting (core.ego_composite.exact_mask), not
+                                       # the occlusion cube's 0.35° texels: no texel quantisation of the outline
     tol_boundary_px: float = 1.5       # mean outline distance a camera may show and hold, px …
     tol_boundary_deg: float = 0.3      # … and degrees
     tol_rotation_deg: float = 0.3      # a confident correction beyond this is a mounting error
@@ -770,10 +772,11 @@ def _W2O(cam, d=(0.0, 0.0, 0.0)):
     return BODY_TO_OPTICAL @ rot_zyx(cam.yaw + d[0], cam.pitch + d[1], cam.roll + d[2]).T
 
 
-def sim_mask(project, cam, intr, ashape, engine, delta=(0.0, 0.0, 0.0), shift=(0.0, 0.0, 0.0), ss=1):
+def sim_mask(project, cam, intr, ashape, engine, delta=(0.0, 0.0, 0.0), shift=(0.0, 0.0, 0.0), ss=1, exact=False):
     """(body, inside the lens circle, body depth m) per analysis sample (ss x ss per pixel) for the camera at the plan
     pose plus the rotation delta (deg) and the shift (m, vehicle frame): the pixel's ray looked up in the occlusion
-    cube at the camera's position, as core.synth renders the own vehicle."""
+    cube at the camera's position, as core.synth renders the own vehicle; exact: cast exactly against the body's,
+    the rig's and the housings' triangles (core.ego_composite.exact_mask)."""
     from .synth import NEAR_CLIP
     ha, wa = ashape
     d, th = _rays(intr, ashape, ss)
@@ -782,6 +785,11 @@ def sim_mask(project, cam, intr, ashape, engine, delta=(0.0, 0.0, 0.0), shift=(0
     if vg is None:
         z = np.zeros((ha * ss, wa * ss), bool)
         return z, circle, np.full(z.shape, np.inf, np.float32)
+    if exact:
+        from . import ego_composite as EC
+        b, _, dep = EC.exact_mask(project, cam, intr, d, th, _W2O(cam, delta), shift, engine)
+        sh = (ha * ss, wa * ss)
+        return b.reshape(sh), circle, dep.reshape(sh)
     pos = cam.pos() + np.asarray(shift, float)
     bd = engine.cube(pos).lookup(d @ _W2O(cam, delta))[0]
     body = (np.isfinite(bd) & (bd > NEAR_CLIP)).reshape(ha * ss, wa * ss) & circle
@@ -1504,7 +1512,7 @@ def check_camera(project, cam, ss: StreamScan | None, st: AsBuiltSettings, engin
     # the image circle: predicted and measured
     pc = predicted_circle(intr, ashape)
     det = detect_circle(M, static0, sigma, st.edge_contrast)
-    body_plan, circle_plan, _ = sim_mask(project, cam, intr, ashape, engine)
+    body_plan, circle_plan, _ = sim_mask(project, cam, intr, ashape, engine, exact=st.exact_body)
     circ = {'predicted': {'cx': pc['cx'], 'cy': pc['cy'], 'r': pc['r']}, 'visible_predicted': pc['visible'],
             'measured': None, 'visible': det is not None and det.get('fit') is not None}
     inside = circle_plan.copy()
@@ -1536,7 +1544,7 @@ def check_camera(project, cam, ss: StreamScan | None, st: AsBuiltSettings, engin
     row['_labels'] = labels                   # kept for the overlay picture (dropped from exports)
     row['iou_plan'] = _iou(veh, body_plan, decided)
     # the outlines: simulated (sub-pixel samples at the plan) and real
-    body2, circle2, depth2 = sim_mask(project, cam, intr, ashape, engine, ss=2)
+    body2, circle2, depth2 = sim_mask(project, cam, intr, ashape, engine, ss=2, exact=st.exact_body)
     vis2 = cv2.erode(circle2.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
     vis2[:2, :], vis2[-2:, :], vis2[:, :2], vis2[:, -2:] = False, False, False, False
     sp2, sn2 = _pairs(body2 & vis2, ~body2 & vis2)
@@ -1580,7 +1588,8 @@ def check_camera(project, cam, ss: StreamScan | None, st: AsBuiltSettings, engin
     row['check'] = 'fitted'
     row['outline_fit'] = _outline_distance(ol, x, band, x[6])
     row['offset_px'] = float(x[6])
-    body_fit, _, _ = sim_mask(project, cam, intr, ashape, engine, tuple(x[:3]), tuple(x[3:6]))
+    body_fit, _, _ = sim_mask(project, cam, intr, ashape, engine, tuple(x[:3]), tuple(x[3:6]),
+                              exact=st.exact_body)
     row['iou_fit'] = _iou(veh, body_fit, decided)
     row['contours']['fitted'] = _contours(body_fit)
     # per axis: precise (constrained to a third of the tolerance … two thirds), off (precise, beyond the tolerance and

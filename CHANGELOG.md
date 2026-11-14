@@ -2,6 +2,378 @@
 
 Versions follow [semantic versioning](https://semver.org). The top entry is what the release notes on GitHub show.
 
+## 0.10.0 — 2026-11-14
+
+A large release, and the last before a feature freeze: the next releases fix, harden and validate what exists. New
+sensors (thermal, event, FMCW lidar, 4D imaging radar), the rig's mechanics, firmware and safety analysis in the same
+project, projects in git and a team lab server; and the fixes found by filming real Claude Code sessions and by a bug
+hunt through the command line, the MCP tools and the window.
+
+**New sensors, hardware and the team's lab.** Thermal and event cameras, coherent FMCW lidar and 4D imaging radar join
+the rig; the mechanical, embedded and safety work around it is designed in the same project; projects live in git as
+folders and teams share them through a self-hosted lab server.
+
+**New sensors**
+
+- Thermal cameras: Teledyne FLIR Boson+ 640/320 (18 lenses), FLIR ADK, Teledyne FLIR Tura (24/42/70°) and the Lynred
+  PICO640S in the built-in library, every figure from the makers' datasheets (NETD, f-number, transmission, band, frame
+  rates, export variants).
+- Analysis ▸ Thermal cameras at night: detection, recognition and identification ranges of a pedestrian, cyclist and
+  car for every camera on a clear night, in fog (Mie-modelled radiation or advection fog), in heavy rain and on a hot
+  summer road, thermal (Planck, ISO 7730 clothing temperature, FLIR humidity transmission, NETD and f-number) against
+  visible cameras in UN R112 low and high beam (a photon budget); which camera sees the pedestrian first.
+- The hot-road contrast inversion is found and flagged; a thermal camera behind the windscreen is a critical issue
+  (glass is opaque from 8 to 14 µm) unless an IR window is set.
+- Five validation checks: Planck against its series, Johnson ranges against Lynred's datasheet, the R112 table points,
+  Mie against Bohren & Huffman, the model fogs' visibility.
+- **FMCW lidar** (Analysis ▸ FMCW lidar): the radial velocity of every lidar return (4D clouds as PCD, PLY and a ROS 2 bag), the
+  car's velocity and yaw rate from one sweep, moving points from Doppler alone, on a scripted scene or any CARLA drive
+  (with CARLA's own velocities; cross-checked against CARLA's radar Doppler).
+- Sunlight and cross-talk, time of flight against FMCW, per condition (night to low sun ahead), from the ASTM G173
+  solar spectrum and the heterodyne antenna theorem; interference from other test cars' lidars.
+- FMCW lidars in the library: Aeva Aeries II and Atlas, Voyant Carbon 30 and Carbon 60 (FMCW, ranging 'fmcw').
+- **Imaging radar** (Analysis ▸ Imaging radar): every radar as a 4D MIMO imaging radar: virtual array, resolution and
+  sidelobes with a uniform, Hann or Taylor taper, grating lobes, a beam map and a 3D lobe; detection range per class
+  over the road with two-ray fades; the bumper cavity's and the road's ghosts; mounting advice (gap, tilt, fascia
+  thickness, pitch); the zone model beside it.
+- Radar library: TI AWR2944EVM, TI MMWCAS cascade (4- and 2-device MIMO), Continental ARS 548 RDI as an array, Arbe
+  Phoenix (`ranging='mimo'`), every figure marked stated, derived or assumed.
+- Materials: measured 77 GHz road permittivities (Kurz et al. 2021) and the road's Fresnel reflection.
+- Validation: uniform-array beamwidth and taper sidelobes, the Taylor taper against SciPy, the fascia slab against
+  Fresnel, two-ray against its closed form, the TI cascade against its design guide.
+- Event cameras: Prophesee EVK4 HD (Sony IMX636), EVK5 HD (IMX646) and EVK3 GenX320 in the built-in library with the
+  makers' stated figures (threshold, latency at light levels, dynamic range, readout rate, formats) and their lenses.
+- **Event cameras** (Analysis ▸ Event cameras): each event camera's event rate and data rate over a drive (EVT 2.0 / 2.1 / 3.0), the
+  readout cap and the events it drops, motion blur against the RGB cameras' smear, and a tunnel exit with a stopped
+  car, where the RGB camera's ISP output loses the car while the event camera keeps it.
+- An event model (ESIM with v2e's mismatch, leak and shot noise, a latency-driven photoreceptor, refractory period,
+  dynamic range and readout cap) and EVT 2.0 / 3.0 writers and readers.
+- CARLA: event cameras are recorded with CARLA's DVS camera beside a reference view; the bridge writes events/ (npz
+  and EVT 2.0) and compares the DVS with the model on the same frames.
+- The recording budget and the Issues list know an event camera's data rate.
+
+**Safety and the rig's upkeep**
+
+- **SOTIF matrix** (Analysis ▸ SOTIF matrix): ISO 21448 triggering conditions against the rig's functional
+  insufficiencies.
+  - **Conditions:** rain, fog and snow bins, night, low sun, lens dirt, the blind volume, housings and a tunnel exit;
+    thermal and event cameras when fitted.
+  - **Columns:** range below the stopping distance per class, a child hidden ahead, field of view lost.
+  - **Sources:** every cell is measured by an existing study and cites it.
+  - **ODD speed limit:** UN R157's careful-driver model (or its ALKS model, or AASHTO's) on each road surface.
+  - **Areas:** ISO 21448's known and unknown areas.
+  - **Requirements:** a trace to the scorecard, and proposals added as one undo step.
+  - **Exports:** JSON, CSV, HTML and PDF. It supports a safety case; it is not a certification.
+- **Cleaning and de-icing** (Analysis ▸ Cleaning and de-icing): washer nozzles, air nozzles and lens heaters on
+  cameras and lidars, from makers' datasheets (ARaymond, HELLA, Solero, e-con Systems, LG Innotek) or your own
+  figures.
+  - **Spray:** exact cone coverage of each window, and where it misses.
+  - **Duty and tank:** clean time, duty cycle and tank runtime over a shift (dirt rates and doses marked as
+    assumptions).
+  - **Heaters:** steady lens temperature and ice-clearing time at speed and ambient, from a heat balance fitted to
+    e-con's measured warm-ups.
+  - **Hooks:** power-budget loads and harness runs, a 3D view of the cones, and a layout proposal.
+- Validation: five new checks:
+  - stopping distance against a time-stepped integration;
+  - WSDOT/AASHTO sight distance, exact on all 12 rows;
+  - spray cone against closed forms;
+  - flat-plate convection against two published worked examples;
+  - heater fit against e-con's measurements.
+
+**Building the rig**
+
+- **Frame** (Analysis ▸ Frame) turns the roof rig into a T-slot aluminium frame. Members come from cited 80/20, IPS
+  and Framing Technology profiles, with plates under every sensor, corner brackets or anchors, and roof-rail feet. The
+  page gives a cut list, a stock plan and a BOM (CSV and PDF), CNC plate DXFs, a watertight STL per part, and a STEP
+  AP214 assembly that OpenCASCADE reads back. "Add to rig" makes the frame the rig in one undo step.
+- **Frame modes** (Analysis ▸ Frame modes) is a quadratic-tetrahedron modal analysis of the frame: sensors as rigid
+  masses, feet fixed or on roof springs, and animated mode shapes. It takes the ISO 8608 road through the modes to
+  each sensor's angular jitter, beside the one-mode beam estimate. It is validated against Euler–Bernoulli (cantilever
+  and free-free beams, within 0.9 %) and Leissa's cantilever plate (within 1.4 %).
+- **Aerodynamics** (Analysis ▸ Aerodynamics) gives the rig's drag from cited bluff-body coefficients (not CFD), the EV
+  range it costs at 100 and 130 km/h, and vortex-shedding lock-in speeds against the frame's modes with Scruton
+  numbers. It also builds a 130 km/h + crosswind wind load per sensor and passes it to the vibration model
+  (`thermo_vib.wind_response`) and the FE model.
+
+**Embedded hardware and calibration**
+
+- **Trigger-box firmware (Embedded ▸ Trigger firmware):**
+  - Buildable projects that fire every camera trigger line at the sync plan's times, disciplined to the GNSS PPS, for
+    four targets: RP2040 (C, pico-sdk, PIO), STM32F411 (C, timer output compare), RP2040 (Rust, rp2040-hal) and Jetson
+    (libgpiod).
+  - Each has a self-test pattern, the pins you choose, and a README with wiring, build and flash commands.
+  - Each project's scheduling core is compiled and simulated here: every pulse on its tick with an exact clock; within
+    35 ns of the plan with a 30 ppm crystal and 20 ns PPS jitter; the RP2040 PIO programs checked cycle by cycle; the
+    Rust core identical to the C core, number for number.
+- **Edge watchdog** (`python -m vantage.edge`, Embedded ▸ Edge watchdog):
+  - A headless in-car service that watches every camera stream (frame rate, drops, stalls, frozen and dark images,
+    sync skew) and whether a camera has been knocked.
+  - It alerts on a local status page, MQTT, a webhook, its log and a buzzer line. No Qt, no OpenGL, no cloud.
+  - Knocks are detected from each camera's direction of travel against the rest of the rig, and from the own body's
+    edge.
+  - One configuration file and a hardened systemd unit are exported from the design. Dry runs on recordings have
+    faults written in and scored.
+- **Thermal intrinsics (Calibrate ▸ Thermal intrinsics):**
+  - Each camera's fx, fy, cx, cy and k1–k4 as curves of temperature, cross-validated linear or quadratic, with
+    intervals.
+  - Compensation for a capture's temperature.
+  - Calibration files carry `temp_c` and the curves, in OpenCV YAML and a Kalibr `thermal` block.
+  - Simulated sweeps from cited material data, labelled as synthetic.
+
+**Simulation**
+
+- **Your own vehicle in CARLA** (Simulate ▸ Composite my body into a drive…; Live rig ▸ My vehicle's body). CARLA
+  renders its own car; Vantage now composites your project's body, rig parts and
+  sensor housings into CARLA's camera images — exact through each camera's lens, lit by CARLA's sun — into the lidar
+  sweeps (points your body blocks) and the ground truth (ego class, an ego instance id, the body's range). Recorded
+  drives get a composited copy; the live CARLA rig composites every frame (3–7 ms at 480 × 384) and can be switched
+  off. CARLA's own car where your body does not cover it is filled from neighbouring frames or inpainted.
+- **The as-built check and the drift indicator now work on CARLA drives.** On CARLA's own car the check gave false
+  corrections of 1.7–3.6° on 7 of 11 correct cameras and could not check the front camera; on the composited body it
+  found 6 of 7 turned cameras to within 0.02° (front camera included), with one false alarm.
+- **Exact body outline for the as-built check** (`exact_body`): the planned outline traced exactly instead of through
+  the 0.35° occlusion cube, removing a ~0.3° bias on cameras that see a straight body edge.
+- **OpenUSD export** of the rig: the body with materials, rig parts, every camera as a USD camera with exact
+  intrinsics (fisheyes through NVIDIA's OpenCV-fisheye lens schema), lidars and radars with their parameters, bumper
+  fascia and glass with their 77 GHz permittivity and loss tangent; checked with usd-core.
+- **NVIDIA NCore V4 export** of the rig (NuRec's input format), read back by NVIDIA's own nvidia-ncore; a log replay's
+  Gaussians as an OpenUSD ParticleField3DGaussianSplat.
+- **Log replay, exact lens projection (3DGUT).** Each Gaussian is projected through the camera's own model by the
+  Unscented Transform and evaluated along each pixel's ray; the rolling shutter is exact per row; lidar beams are cast
+  along their exact directions. Measured on the CARLA fisheye drive:
+  - held-out PSNR 21.55 dB against 21.50 dB (affine), better on 5 of 6 cameras;
+  - lidar p90 range error 2.86 m against 3.33 m;
+  - optimisation 23 % faster.
+  - It is the new default (`analysis.neural_replay.projection`, `'ewa'` for the old projection).
+- **Two opacities.** A lidar opacity per Gaussian, fitted to the training sweeps (glass: see-through for the camera, a
+  return for the lidar). Held-out lidar:
+  - median error 5.8 cm against 6.9 cm;
+  - p90 0.79 m against 2.81 m;
+  - beam agreement 92 % against 89 %.
+- **Articulated pedestrians.** Walkers are rebuilt as articulated bodies posed per instant: a gait prior from the
+  track, fitted to ViTPose-B keypoints of the recorded views (Apache-2.0, downloaded on request). The body is
+  Vantage's capsule body, Anny's MakeHuman mesh (CC0, on request) or your own SMPL file (opt-in, non-commercial).
+  - YOLOX-S pedestrian rig recall on the re-shot CARLA drive: **77 %** against 18 % with rigid walkers, and 83 % on
+    the real recording.
+  - On the re-rendered recorded rig: 85 %, the same as the recorded images.
+- **Traffic lights.** Traffic-light heads become emissive planes showing the state the recording shows over time.
+  - The re-shot drive carries 174 of the recording's 175 traffic-light objects (28 before).
+  - Drives without boxes use the detector's lights.
+- **Relighting.** Re-rendered frames can be relit to wet road, night (R112 headlamps) or snow, physically (always
+  available) or with InstructPix2Pix (MIT, on request, needs diffusers). Relit frames are labelled "relit, not
+  recorded" in every export. Measured on the CARLA drive (physical): pedestrians keep their recall in wet and snow and
+  lose 25 points at night outside the beam; cars lose 32–55 points. InstructPix2Pix rewrites the scene's content (the
+  pedestrian disappears at its default guidance), so it is an appearance what-if only.
+- **Log replay page: a "Neural replay" tab** with these settings, the downloads, Measure and Export.
+- **Re-drive exports record the extension:** `dataset.json` and the README carry `neural_replay`.
+
+**Projects in git and the lab**
+
+- **Project folders:** save a project as `name.vantage.d/`, a folder of stable, sorted text files (one per variant and
+  per study) that git can diff and merge. Saving writes only what changed and never deletes your own files. Zip →
+  folder → zip gives identical content.
+- **`vantage diff A B`:** a semantic diff of two projects or two git revisions (`rig.vantage.d@HEAD~1`): cameras moved
+  by how many mm and turned by how many degrees, lens changes, settings, the fleet, the design log. As text or JSON.
+- **Merge driver:** an optional git merge driver (`vantage diff --git-setup`) merges project files by meaning (cameras
+  by identity, settings key by key), including zipped `.vantage` files.
+- **The lab server** (`vantage --lab-server ROOT`): a small self-hosted registry for a team, with token auth per team,
+  immutable digest-addressed versions, compare, sync with a three-way merge, a pooled fleet twin across teams and
+  pooled perception records (opt-in per project). It stores files plus SQLite; a backup is the folder.
+- **Lab page:** publish, sync, the version history with diffs, the pooled fleet twin; it shows exactly which files a
+  publish sends.
+
+**Limits of the new sensors, hardware and lab**
+
+- **Modelled, not measured:** the thermal, event, FMCW and imaging-radar figures come from models with stated
+  sources; figures no maker states (event thresholds and noise, the FMCW receiver, the ARS 548's and Phoenix's
+  arrays) are marked assumed. CARLA has no Doppler lidar, so FMCW velocities are synthesised from CARLA's own; the
+  imaging radar is not a full-wave simulation (no diffraction, multipath off other vehicles, sidelobes or
+  interference).
+- **Firmware:** the trigger firmware for the RP2040, STM32, Rust and Jetson has not been built or flashed here (no
+  cross-compilers); the PIO programs are checked by a simulator written from the datasheet, not by `pioasm`.
+- **Thermal intrinsics:** every temperature sweep is synthetic. Sweep your own cameras before trusting a curve.
+- **Structure and airflow:** the frame's beams are closed tubes and its joints rigid, so frequencies are upper bounds;
+  the airflow figures are not CFD.
+- **Your body in CARLA:** on CARLA's own car the as-built check is unusable on a correct rig (false corrections of
+  0.7–4.2°); composite your vehicle's body first.
+- **SOTIF:** the matrix organises the studies' figures by ISO 21448's areas; it is an engineering estimate, not a
+  safety case or a certification.
+- **Lab:** git merges files, not meaning, unless each clone registers Vantage's merge driver; binary files (the mesh,
+  the thumbnail) cannot be merged. One SQLite file serialises publishes; tested to 16 at once.
+
+**Fixed in the hardening pass** (found by filming real Claude Code sessions and by a bug hunt through the command
+line, the MCP tools and the window)
+
+- **One answer to one question.** Claude's `run_study blind_volume` used a coarser grid than the Blind volume page
+  and the requirements scorecard, so the same 0.5 m pole read 0 m² unseen there and 0.018 m² here; it now uses the
+  project's own blind-volume settings, and says which grid.
+- **Issue counts agree.** `compare_variants` and `simulate_changes` counted a different set of issues than
+  `get_issues`: the active variant now reports the Issues list as the window holds it (with the findings of studies
+  already run), other variants say they count the design rules only, and every place that builds the list passes the
+  engine's checks too.
+- **The blind ground is placed where it is.** The Issues list placed "mostly …" at the mean of every blind cell, which
+  for separate patches fell under the car ("right rear wheel arch" for patches at the rear bumper and two corners); it
+  now names the largest patch, at a point inside it. `find_blind_regions` and `look` name places in the same words.
+- **Locked devices stay the user's.** Over MCP, fitting a roof rack lifted a locked lidar on the mast, and removing a
+  variant deleted its locked cameras; both are refused now, naming the devices, and a preset's reply names what it
+  lifts.
+- **Whole results over MCP.** Results longer than the in-app chat's 14,000 characters reached Claude cut into invalid
+  JSON (`get_requirement_metrics` listed 25 of its 77 metrics, `get_edge_config` stopped inside a lens table); over
+  MCP they now come whole, and anything cut is still valid JSON that says so.
+- **The requirement reader** reads "a 0.5 m tall child visible anywhere within 2 m" (the blind volume's object, with
+  a note when the ROI's distance differs) and "we record 8 hours a day" (one disk set for the day); "we drive 8 hours
+  a day" is no longer taken for a disk drive.
+- `propose_requirements` refuses a parameter its metric does not take, naming the ones it does (it silently used the
+  default object); proposals from separate calls are kept with unique ids; Edit ▸ Undo and Redo name the step.
+- On a project file: `get_studies` gives the blind volume `run_study` just computed (it kept asking for it); undo and
+  redo are written to the project's log, in the window too; a job cancelled while queued ends at once (`get_job`
+  waited for the job ahead of it); an unknown template lists the valid ones; the overview resource no longer
+  promises coverage figures it does not hold.
+- **Pages follow the active variant.** After a switch the Optimiser kept the variant before's free variables (Start
+  then varied nothing, and Apply named a copy of the old variant after the new one); it now rebuilds for the active
+  variant and names applied candidates after the variant they came from. The Tolerance study's result is marked for
+  the variant and cameras it ran on, and its rows cannot be pinned on another; Imaging radar names the right variant
+  without radars; Robust perception's sources follow the variant.
+- **Layout ▸ Duplicate variant keeps the hand-set seam angles** (they were dropped).
+- **Small screens:** at 1366 × 768 the Optimiser's settings drew over each other and the Camera views and Event
+  cameras pages cut controls off; the panels and bars now scroll instead.
+- **Command line:**
+  - the vehicle-centre export frame is `centre` everywhere. The help, the website and the Copilot called it
+    `ground_centre`, which failed after the analysis, and a Copilot export step asking for `centre` silently got
+    rear-axle coordinates; an unknown frame is now refused at once;
+  - a modifier given without its option (`--formats` without `--export`, `--tolerance` without `--reproduce`, …) is
+    refused with a message; before, the window opened, which hangs a headless CI job;
+  - the 34 formats the default `--export` leaves out are listed in the docs, and exit code 1 (a usage error) is
+    documented;
+  - `--reproduce` says when a `--tolerance` pattern matches no number (a typo applied to nothing);
+  - the KITTI README no longer points to object files a rig without a lidar does not get, and the blind volume's
+    OBJ and JSON say they are in metres at the rear axle, whatever the export frame and units;
+  - the sample's recommended layout no longer claims "no blind ground within 2 m" above its own critical issue.
+
+**What it does**
+
+Place cameras (visible, thermal, event), lidars (time-of-flight and FMCW), radars (including 4D imaging), GNSS
+antennas and IMUs on the vehicle and the rig; prove what they record, through every study from coverage to timing,
+heat, vibration and perception in the loop; design the frame, brackets, trigger firmware and cleaning around them;
+calibrate and check them against recordings; hand the calibration to the data pipeline; drive the rig in CARLA with
+ground truth, faults, detection quality and campaigns; keep the project in git and share it through a lab server;
+and let the Copilot, or Claude over MCP, do the work with you, every change an undo step and every run your
+approval. Free software under the GNU General Public License,
+version 3 or later; the reference stitchers are Apache-2.0.
+
+**Downloads**
+
+| System | File | Needs |
+|---|---|---|
+| Windows | `Vantage-0.10.0-windows-x64-setup.exe` (installer), or the `.zip` | Windows 10 or 11, x64 |
+| macOS | `Vantage-0.10.0-macos-arm64.zip` | macOS 14 or later, Apple silicon |
+| Linux x86_64 | `Vantage-0.10.0-linux-x86_64.tar.gz` | glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer) |
+| Linux arm64 | `Vantage-0.10.0-linux-arm64.tar.gz` | glibc 2.35 or later: NVIDIA Jetson Orin with JetPack 6, Ubuntu 22.04 arm64 and newer |
+
+`SHA256SUMS.txt` lists each file's SHA-256. Every bundle carries its own Python and libraries and can check itself
+on your machine: the *Vantage self-test* entry in the Start menu on Windows, `vantage --self-test` on Linux once
+installed, `/Applications/Vantage.app/Contents/MacOS/vantage-cli --self-test` on macOS. On a Jetson, GStreamer
+camera pipelines need `gst-launch-1.0` (JetPack installs it; else `sudo apt install gstreamer1.0-tools`).
+
+**Unsigned builds**
+
+The downloads are not code-signed, so the system warns the first time:
+
+- **Windows** (SmartScreen, "Windows protected your PC"): choose *More info*, then *Run anyway*.
+- **macOS** ("Vantage cannot be opened" or "Apple could not verify Vantage"): open *System Settings ▸ Privacy &
+  Security* and choose *Open Anyway* next to the message about Vantage (on macOS 14 you can instead Control-click the
+  app and choose *Open*). If macOS says the app is damaged, run in Terminal:
+  `xattr -dr com.apple.quarantine /Applications/Vantage.app`.
+- **Linux**: nothing to approve; check the download against `SHA256SUMS.txt`.
+
+**Known limits**
+
+- **Not yet validated on a real fitted rig.** Every figure comes from models, simulation (CARLA) and synthetic
+  captures. The validation suite shows the models compute what their methods say against independent references; it
+  does not show that they match your vehicle. The as-built check and the drive-log check are ready for the first
+  recording of a fitted rig, which will tell how close the plan comes in practice.
+- Library figures are the makers' stated values (see the library's sources), not measurements of your units.
+- The drift indicator of the live rig health is an indicator, not a measurement: it misses a rotation along a body
+  edge (a mirror camera's yaw) and featureless edges, and frame times are when frames reached Vantage, not sensor time.
+- STEP import needs the optional gmsh package, which the downloads do not include: run from source with
+  `pip install .[step]` for it.
+- No Intel Mac or Windows on Arm build (Windows on Arm runs the x64 build emulated); run from source there.
+- The Linux arm64 bundle needs glibc 2.35 or later: JetPack 6 on a Jetson (Ubuntu 22.04), not JetPack 5 (Ubuntu
+  20.04; run from source there). It carries Qt 6.7 rather than 6.11, because PyQt6's later arm64 builds need Ubuntu
+  24.04; the whole test suite passes on both. The bundle was built and self-tested on GitHub's arm64 machines, not yet on
+  a Jetson; on a Jetson, OpenGL comes from NVIDIA's driver. Running from source on a Jetson AGX Orin with JetPack 7
+  was tested on the device ([docs/install.md](docs/install.md)).
+- Without OpenGL 2.1 the 3D view falls back to a slower software renderer.
+- ROS 2 bags: rosbag2's whole-file compression (`.mcap.zstd`) is not read (`ros2 bag decompress` first), nor XCDR2
+  messages.
+- The assistant sends what it reads of the design (figures, issues, the project brief) to Groq; it is off until you
+  give it a key, and it proposes design changes for you to apply rather than making them.
+- Since 0.2.0: the road surface is used by the coverage analysis and the road study; the optimiser, tolerance study,
+  perception range, stitched-objects study, installation check and critical targets still assume flat ground. The
+  material, weather, headlamp and cable figures are typical values with their sources stated, not measurements of your
+  vehicle, parts or units. The automation command runs with your own permissions, unsandboxed.
+- Since 0.3.0: CARLA's cameras need a GPU. CARLA's lidar has no reflectivity and its radar no cross-section.
+- Since 0.4.0:
+  - CARLA renders a fisheye's views one after another: all six live fisheyes reach about 2.8 fps. One camera at a small
+    size keeps real time.
+  - **CARLA's car is not your vehicle's body.** The as-built check cannot judge mounts on a CARLA drive. The cameras
+    share a small common pitch of −0.04 to −0.10° there.
+  - **CARLA's lidar and radar ignore weather.**
+  - **Ground truth at full image size** exceeds the render budget, so use image scale 0.5.
+  - **The fog calibration** covers one town and CARLA 0.9.16.
+  - **Detector:** YOLOX sees fisheye images as they are; pinhole views cut from them find more cars.
+- Since 0.5.0:
+  - Groq's prices are not bundled: a Groq conversation shows a cost only once you enter Groq's prices in Preferences.
+  - An estimate is an estimate: CARLA minutes come from this machine's earlier drives (the development machine's
+    figures before the first one), the disk from the sample dataset's estimator for the same rig with the ground truth
+    as uncompressed PNG (an upper bound).
+  - In batch mode a CARLA step needs a server already running (`--run-plan` never starts one), and a live-rig step with
+    no duration watches until 5 s after its last fault (10 s without faults).
+  - Claude's effort changes between a planning turn and a question; Anthropic documents that a change of the top-level
+    effort invalidates the prompt cache of the conversation's messages, so such a turn reads fewer cached tokens.
+  - Tested against Groq's real API in a recorded session and against a local stand-in of Anthropic's API: the first
+    real Claude request (its betas, strict tools and streamed tool input) has not been made in development.
+- New in 0.6.0:
+  - The pitch suggestion for a selected camera tries only ±2° and ±4° of pitch, and only while the assistant panel is
+    open.
+  - Whether the last CARLA drive was checked or scored is known for the current session only, and the CARLA server's
+    state only once the CARLA page has been opened.
+  - The perception-range and requirements recommendations use those pages' last results; they do not run the studies.
+- New in 0.7.0:
+  - **Gradient refinement and log replay need PyTorch**, which the downloads leave out: they say so when started. Run
+    Vantage from source with `pip install torch` for them; log replay is practical only on an NVIDIA GPU with CUDA.
+  - **Log replay** compares rigs on re-rendered images, not real ones. It scores only what the lidar rebuilt, so its
+    absolute recall reads higher than real frames give; traffic lights are mostly not rebuilt and are not assessed; a
+    narrower lens cannot be credited with detail the recording never held.
+  - **Online self-calibration** uses depth edges by default; its outline and ground factors are off because they gave
+    false readings on CARLA drives. It has been checked on CARLA drives only.
+  - **SUMO traffic** needs SUMO (`eclipse-sumo`) in the Python that runs the CARLA bridge. The road networks CARLA ships
+    for Town01, Town04 and Town05 have no traffic lights (choose *generate*); SUMO's pedestrians are not synchronised.
+    CARLA's radar gives every point of a vehicle the vehicle's own velocity, so a turning vehicle's yaw rate is not in
+    its radial velocities.
+  - The clock-tree, exposure and thermal-vibration figures are typical values with their sources, not measurements of
+    your units.
+  - A busy camera frame with no calibration board takes up to about 1.5 s to reject in the lidar–camera board
+    search (about 2 s in the lens calibration's).
+- New in 0.7.1:
+  - Saved projects whose sensor mast passes through a roof rack are not changed on load; move the mast, or remove
+    and re-add it, to stand it on the rack.
+  - The C++ bird's-eye stitcher still clips exposure gains to 0.4–2.5 without saying so.
+- New in 0.8.0:
+  - The Claude Code terminal needs a pseudo-terminal: Linux and macOS (Windows runs the MCP server, not the
+    terminal panel). From source it needs the optional `pyte` package (`sudo apt install python3-pyte` or
+    `pip install pyte`); the Linux and macOS downloads include it.
+  - Claude Code itself is not part of Vantage: install it and sign in with your Claude account. Claude's answers
+    and changes can be wrong; each change is an undo step, and runs still need your approval.
+  - Tested with Claude Code 2.1. The terminal covers what Claude Code, shells and common tools use; other
+    full-screen programs may draw imperfectly.
+  - A conversation continued from the history carries a summary of the old one, not the old conversation itself.
+- The validation suite checks the models on the cases it builds against independent references; it does not
+  replace measuring a fitted rig.
+- New in 0.9.0: the limits of perception in the loop and of the library and the bridges are in the 0.9.0 entry
+  below.
+- New in 0.10.0: the limits of the new sensors, hardware and lab are in their own section above.
+
 ## 0.9.0 — 2026-11-13
 
 A feature release: the **Install guide** takes a rig fitted to a car from its live streams to a verified

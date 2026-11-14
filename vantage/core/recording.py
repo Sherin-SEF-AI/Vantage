@@ -171,6 +171,15 @@ def budget(project, variant=None, settings: RecordingSettings | None = None) -> 
         if not c.visible:
             continue
         m = project.module_for(c)
+        if getattr(m, 'modality', 'rgb') == 'event':          # an event camera: its event rate, not frames
+            from . import event_camera as EC
+            er = EC.recording_row(project, c)
+            cap = er['link_mbps']
+            load = er['mbps'] / cap if cap else None
+            rows.append(_row(c.uid, c.tag, 'camera', m.name, c.slot, er['text'], True, er['mbps'],
+                             m.interface or 'USB 3.0', f'{c.port}' if c.port else '', er['mbps'], cap, load,
+                             _link_severity(load, st.link_warn, 'serious')))
+            continue
         mbps = _num(m.width_px) * _num(m.height_px) * _num(m.fps) * bpp / 1e6
         wire = R.camera_gbps(project, c) * 1000.0
         load = wire / gmsl if gmsl > 0 else None

@@ -2678,3 +2678,139 @@ def watch_once(project, state: WatchState, engine=None, progress=None, cancel=No
 def _drive_name(path) -> str:
     n = os.path.basename(path.rstrip(os.sep))
     return os.path.basename(os.path.dirname(path.rstrip(os.sep))) if n == 'nuscenes' else n
+
+
+# =========================================================================== pooled fleets (several projects or teams)
+POOL_SCHEMA = 'vantage.fleet_twin.pool/1'
+POOL_TEXT = (
+    'Pooled: the vehicles of several projects (or teams, through a lab server: vantage.lab) in one twin. Each '
+    'vehicle\'s measurements are taken against its own project\'s plan and re-based onto this plan, sensor by tag '
+    '(measured − its plan + this plan, per axis; angles wrapped), so the deltas mean the same thing in every project; '
+    'a tag this plan does not have is left out. The drift-rate prior then borrows strength across every team\'s '
+    'vehicles. Vehicles are named "<source> · <name>".')
+
+
+def pool_source(project, label: str, variant=None) -> dict:
+    """One project's fleet as a pooled input (what a lab server hands out): {'schema', 'label', 'plan': [{'tag',
+    'kind', 'pose'}], 'vehicles': core.fleet's cleaned vehicles, 'observations', 'events', 'settings' (the twin's)}.
+    No paths: a record's source and an observation's drive keep only their file names."""
+    st = settings_of(project)
+    v = variant or plan_variant(project, st)
+    plan = [{'tag': p['tag'], 'kind': p['kind'], 'pose': dict(p['pose'])} for p in FL.plan_sensors(project, v)]
+
+    def base(s):
+        s = str(s or '')
+        return os.path.basename(s.rstrip('/\\')) if ('/' in s or '\\' in s) else s
+    vs = FL.vehicles(project)
+    for veh in vs:
+        for r in veh['records']:
+            r['source'] = base(r['source'])
+    obs = observations(project)
+    for o in obs:
+        o['source'], o['drive'] = base(o['source']), base(o['drive'])
+    evs = events(project)
+    for e in evs:
+        e['source'] = base(e['source'])
+    return {'schema': POOL_SCHEMA, 'label': str(label), 'plan': plan, 'vehicles': vs, 'observations': obs,
+            'events': evs, 'settings': st.to_dict()}
+
+
+def _rebase_pose(pose: dict, src: dict, dst: dict) -> dict:
+    out = {}
+    for k in FL.POSE_KEYS:
+        if k in ('x', 'y', 'z'):
+            out[k] = float(dst[k] + (pose[k] - src[k]))
+        else:
+            out[k] = float(wrap180(dst[k] + wrap180(pose[k] - src[k])))
+    return out
+
+
+def pooled_project(base, sources: list, settings: FleetTwinSettings | None = None):
+    """A snapshot of base whose fleet is every source's vehicles (pool_source docs) re-based onto base's plan
+    (POOL_TEXT): its fleet settings and twin settings are base's. Returns (project, notes)."""
+    st = settings or settings_of(base)
+    q = base.snapshot()
+    v = plan_variant(q, st)
+    plan = {p['tag'].lower(): p for p in FL.plan_sensors(q, v)}
+    vehicles, obs, evs, notes = [], [], [], []
+    labels = set()
+    for i, src in enumerate(sources or []):
+        if not isinstance(src, dict):
+            continue
+        label = str(src.get('label') or f'source {i + 1}')
+        while label in labels:
+            label += '+'
+        labels.add(label)
+        splan = {str(p.get('tag', '')).lower(): p for p in src.get('plan') or [] if isinstance(p, dict)}
+        skipped = set()
+        for veh in FL.vehicles({'vehicles': src.get('vehicles') or []}):
+            nid = f'{label}/{veh["id"]}'
+            recs = []
+            for r in veh['records']:
+                poses = {}
+                for tag, pose in r['poses'].items():
+                    t = tag.lower()
+                    if t in plan and t in splan and FL.clean_pose(splan[t].get('pose')) is not None:
+                        poses[plan[t]['tag']] = _rebase_pose(pose, splan[t]['pose'], plan[t]['pose'])
+                    elif t in plan and not splan:
+                        poses[plan[t]['tag']] = pose          # no plan given: taken as measured against this one
+                    else:
+                        skipped.add(tag)
+                if poses:
+                    recs.append(dict(r, poses=poses, quality={k: q_ for k, q_ in r['quality'].items()}))
+            vehicles.append({'id': nid, 'name': f'{label} · {veh["name"]}', 'vin': veh['vin'],
+                             'note': f'pooled from {label}', 'records': recs})
+        for o in src.get('observations') or []:
+            c = clean_observation(o)
+            if c is None:
+                continue
+            t = c['tag'].lower()
+            if t not in plan:
+                skipped.add(c['tag'])
+                continue
+            sp = splan.get(t, {}).get('pose') or plan[t]['pose']
+            new_plan = {}
+            for ax in AXES:
+                if ax not in c['values']:
+                    continue
+                op = c['plan'].get(ax, sp[ax])
+                new_plan[ax] = (plan[t]['pose'][ax] + op - sp[ax]) if ax in ('x', 'y', 'z') else \
+                    wrap180(plan[t]['pose'][ax] + wrap180(op - sp[ax]))
+            obs.append(dict(c, vehicle=f'{label}/{c["vehicle"]}', tag=plan[t]['tag'], plan=new_plan))
+        for e in src.get('events') or []:
+            c = clean_event(e)
+            if c is not None and c['tag'].lower() in plan:
+                evs.append(dict(c, vehicle=f'{label}/{c["vehicle"]}', tag=plan[c['tag'].lower()]['tag']))
+        if skipped:
+            notes.append(f'{label}: {len(skipped)} sensor tag(s) this plan does not have were left out '
+                         f'({", ".join(sorted(skipped)[:8])}).')
+    fleet = {'vehicles': vehicles}
+    if isinstance(q.fleet, dict) and isinstance(q.fleet.get('settings'), dict):
+        fleet['settings'] = copy_settings = dict(q.fleet['settings'])
+        copy_settings['variant'] = v.uid
+    q.fleet = fleet
+    slot_ = {'settings': st.to_dict(), 'observations': obs, 'events': evs}
+    q.analysis.fleet_twin = slot_
+    return q, notes
+
+
+def run_pooled(base, sources: list, engine=None, settings: FleetTwinSettings | None = None, progress=None,
+               cancel=None):
+    """The fleet twin of several projects' vehicles together (pooled_project): a TwinResult whose notes and
+    metrics['pooled'] say which sources went in. None when cancelled."""
+    st = settings or settings_of(base)
+    q, notes = pooled_project(base, sources, st)
+    res = run(q, engine, settings=st, variant=plan_variant(q, st), progress=progress, cancel=cancel)
+    if res is None:
+        return None
+    res.notes = [POOL_TEXT] + notes + list(res.notes)
+    per = []
+    for s in sources or []:
+        if isinstance(s, dict):
+            lab = str(s.get('label') or '')
+            per.append({'label': lab, 'vehicles': len(s.get('vehicles') or []),
+                        'records': sum(len(x.get('records') or []) for x in s.get('vehicles') or []
+                                       if isinstance(x, dict)),
+                        'observations': len(s.get('observations') or [])})
+    res.metrics['pooled'] = per
+    return res

@@ -1464,4 +1464,6 @@ _G = [
           after=(Next('tolerance', 'Use the measured drift as the mounting tolerance.', 'b_tol', here=True),
                  Next('robust_perception', 'Carry the measured spread to detection.'))),
 ]
+from .page_guide17 import guides as _guides17                                  # noqa: E402  (round 17's pages)
+_G += _guides17(Guide, Need, Next, NEED_CAMERAS, NEED_LIDAR)
 GUIDES: dict = {g.page: g for g in _G}

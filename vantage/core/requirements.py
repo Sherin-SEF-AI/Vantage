@@ -413,7 +413,7 @@ def _run_issues(ev):
             mounts[c.uid] = rules.mount_info(ev.p, c, vg)
         except Exception:
             pass
-    out = [i for i in rules.collect_issues(ev.p, res, vg, mounts) if i.action != 'requirement']
+    out = [i for i in rules.collect_issues(ev.p, res, vg, mounts, ev.engine) if i.action != 'requirement']
     if res is not None and not any(i.action == 'stitched' for i in out):
         sres = ev.optional('stitched')
         from . import stitched_objects as SO
@@ -2045,6 +2045,48 @@ def _m_risk(ev, prm):
     return float(v), _ev(_risk_figures(res, ev), d.get('text') or f'{c}: {v:.1f} %')
 
 
+def _run_sotif(ev):
+    so = _mod('sotif')
+    if not any(c.visible for c in ev.v.cameras):
+        raise NotEvaluated('No visible camera in the variant.')
+    res = so.run(ev.p, ev.engine, so.settings_of(ev.p), variant=ev.v, progress=ev.sub_progress('sotif'),
+                 cancel=ev.cancel)
+    if res is None:
+        raise _Cancelled()
+    return res
+
+
+def _sotif_figures(res, ev):
+    o = res.odd
+    return [_fig(f'ODD speed limit (target {o.get("target_kmh", res.settings.target_kmh):g} km/h)',
+                 o.get('speed_kmh') or 0.0, 'km/h', 1),
+            _fig('Insufficient cells', res.metrics.get('insufficient', 0), '', 0)]
+
+
+_study(id='sotif', label='SOTIF matrix', page='sotif', menu='Analysis ▸ SOTIF matrix…', cost='study', run=_run_sotif,
+       figures=_sotif_figures, module='sotif', weight=0.5, assumptions=lambda r: _mod('sotif').ASSUMPTIONS)
+
+
+@_metric('sotif.odd_speed_kmh', 'ODD speed limit', 'km/h', 'sotif', '>=', 1, (),
+         'The highest speed whose stopping distance (UN R157\'s careful-driver model on the condition\'s road surface) '
+         'still fits in the detection range under every triggering condition inside the ODD (Analysis ▸ SOTIF matrix)')
+def _m_sotif_speed(ev, prm):
+    res = ev.study('sotif')
+    v = res.odd.get('speed_kmh')
+    if v is None:
+        raise NotEvaluated('No condition inside the ODD has a detection range.')
+    b = res.odd.get('binding')
+    return float(v), _ev(_sotif_figures(res, ev), f'{v:.1f} km/h, bound by {b or "nothing"}')
+
+
+@_metric('sotif.insufficient_cells', 'SOTIF insufficient cells', 'cells', 'sotif', '<=', 0, (),
+         'How many cells of the SOTIF matrix (triggering condition × insufficiency × class) the rig fails')
+def _m_sotif_cells(ev, prm):
+    res = ev.study('sotif')
+    n = int(res.metrics.get('insufficient', 0))
+    return float(n), _ev(_sotif_figures(res, ev), f'{n} insufficient cells')
+
+
 # =========================================================================== items and settings
 def _new_id(taken=()) -> str:
     taken = set(taken)
@@ -2788,6 +2830,37 @@ def parse_brief(text, project=None) -> list:
     return uniq
 
 
+_VOL_OBJ = re.compile(r'\b(?:child(?:ren)?|kids?|toddlers?|poles?|bollards?|adults?|objects?|obstacles?)\b|'
+                      r'\b\d+(?:[.,]\d+)?\s*(?:m|cm|met(?:re|er)s?)\s+(?:tall|high)\b')
+_VISIBLE = re.compile(r'\b(?:visible|seen|see|detected|detect|unseen|hidden|hides?|invisible)\b.*\b(?:anywhere|'
+                      r'everywhere|all\s*(?:a)?round|around|360|within)\b|\b(?:anywhere|everywhere|all\s*(?:a)?round)'
+                      r'\b.*\b(?:visible|seen|detected|unseen)\b')
+
+
+def _vol_object_for(phrase, qs, word, project) -> str:
+    """The blind-volume object for 'a 0.5 m child' (by its height: the tallest of the study's objects no taller than
+    the one asked for, a shorter object being the harder to see), else by the word (child, pole, adult)."""
+    from .volume import DEFAULT_OBJECTS
+    low = phrase.lower()
+    h = None
+    for v, u, a, b in qs:
+        if u == 'm' and re.match(r'\s*(?:tall|high|child|kid|toddler|pole|bollard|adult|object|obstacle)', low[b:]):
+            h = v
+            break
+    if h is None:
+        mt = re.search(r'\b(?:tall|high)\s*(?:of\s*)?' + _NUM + r'\s*(?:m|met(?:re|er)s?)\b', low)
+        h = float(mt.group(1).replace(',', '.')) if mt else None
+    objs = [(n, ht) for n, ht in DEFAULT_OBJECTS]
+    if h is not None:
+        fit = [o for o in objs if o[1] <= h + 1e-9]
+        return (max(fit, key=lambda o: o[1]) if fit else min(objs, key=lambda o: o[1]))[0]
+    w = word.lower()
+    for key, name in (('pole', 'Pole'), ('bollard', 'Pole'), ('adult', 'Adult')):
+        if key in w:
+            return next(n for n, _ in objs if n.startswith(name))
+    return next(n for n, _ in objs if n.startswith('Child'))
+
+
 def _parse_phrase(phrase, pnames, project, context_cls=None) -> list:
     low = phrase.lower()
     qs = _quantities(phrase)
@@ -2808,6 +2881,20 @@ def _parse_phrase(phrase, pnames, project, context_cls=None) -> list:
 
     def q(*units):
         return next(((v, u) for v, u, _, _ in qs if u in units), None)
+    # ---- an object seen anywhere round the car ('a 0.5 m tall child visible anywhere within 2 m'): the blind volume
+    obj = _VOL_OBJ.search(low)
+    if obj and _VISIBLE.search(low) and metric_available('volume.undetected_m2'):
+        prop('volume.undetected_m2', {'object': _vol_object_for(phrase, qs, obj.group(0), project)}, 0.0005, '<=')
+        if props:
+            it = props[-1]['item']
+            notes = ['Proposed from the project brief: no ground where the object stays unseen.']
+            within = re.search(r'\bwithin\s+' + _NUM + r'\s*(?:m|met(?:re|er)s?)\b', low)
+            roi = getattr(getattr(project, 'roi', None), 'distance', None)
+            if within and roi is not None and abs(float(within.group(1).replace(',', '.')) - roi) > 1e-6:
+                notes.append(f'Checked over the ROI, {roi:g} m from the body; the brief says '
+                             f'{within.group(1)} m (Analysis ▸ ROI sets it).')
+            it['note'] = ' '.join(notes)
+        return props
     # ---- ranges: an object class and a length
     lng = q('m')
     # 'around the vehicle', 'ahead of the car': the own vehicle, not an object class
@@ -2827,8 +2914,17 @@ def _parse_phrase(phrase, pnames, project, context_cls=None) -> list:
         return props
     # ---- recording: hours per disk set
     hrs = q('h')
-    if hrs and re.search(r'\b(disks?|drives?|ssds?|storage|recorder|disk\s*sets?|media)\b', low):
+    if hrs and re.search(r'\b(disks?|ssds?|storage|recorder|disk\s*sets?|media)\b|'
+                         r'\b(?:per|each|one|a|every|the)\s+(?:hard\s+|solid[\s-]+state\s+)?drives?\b', low):
         prop('recording.hours_per_set', {}, hrs[0])
+        return props
+    if hrs and re.search(r'\brecord(?:s|ed|ing)?\b', low) and re.search(r'\b(?:a|per|each|every)\s+(?:day|shift)\b|'
+                                                                     r'\bdaily\b', low):
+        # 'we record 8 hours a day': the day on one disk set (no swap during the day)
+        prop('recording.hours_per_set', {}, hrs[0])
+        if props:
+            props[-1]['item']['note'] = ('Proposed from the project brief: the whole day on one disk set, with no '
+                                         'swap during the day; lower the target if the disks are swapped.')
         return props
     # ---- engine-off runtime (power budget)
     if re.search(r'engine[\s-]*off|parked|on (?:the )?battery|battery runtime|without the engine', low):

@@ -60,6 +60,11 @@ class ObjectClass:
     base: float = 0.0
 
 
+try:                                    # thermal (LWIR) cameras at night: core.thermal_ir's radiometry
+    from . import thermal_ir as _TH
+except ImportError:                     # pragma: no cover
+    _TH = None
+
 def clean_class(c) -> dict | None:
     """An object class as stored ({name, height, width, min_px, base}), or None when it is not a usable one."""
     try:
@@ -349,12 +354,13 @@ def analyse(project, engine, res=None, settings: PerceptionSettings | None = Non
     for ci, c in enumerate(cams):
         intr = resolve(project.module_for(c), project.lens_for(c))
         intrs.append(intr)
-        floors.append(W.camera_floor(project.module_for(c), project.lens_for(c), wst) if wx else None)
+        lwir = _TH is not None and _TH.is_thermal(project.module_for(c))      # thermal: its own radiometry, no light
+        floors.append(W.camera_floor(project.module_for(c), project.lens_for(c), wst) if wx and not lwir else None)
         cube = engine.cube(c.pos()) if vg is not None else None
         for k, cls in enumerate(classes):
             if cancel is not None and cancel():
                 return None
-            hpx, _, seen = object_pixels(c, intr, G, cls, cube)
+            hpx, wpx, seen = object_pixels(c, intr, G, cls, cube)
             ok = seen & ~inside & (hpx >= cls.min_px)
             far0 = _far_range(ok.reshape(A, R), (seen & ~inside).reshape(A, R), hpx.reshape(A, R),
                               ranges, cls.min_px, rows)
@@ -365,7 +371,10 @@ def analyse(project, engine, res=None, settings: PerceptionSettings | None = Non
                 mid = np.c_[G, np.full(len(G), cls.base + cls.height / 2)]
                 d_cam = np.linalg.norm(mid - c.pos(), axis=1)
                 for w in wx:
-                    m = W.camera_margin(w, wst, d_cam, looks[k][0], lum[(w.id, k)], floors[ci]['l_min'])
+                    if lwir:
+                        m = _TH.perception_margin(project, c, cls.name, w, d_cam, wpx=wpx, hpx=hpx)
+                    else:
+                        m = W.camera_margin(w, wst, d_cam, looks[k][0], lum[(w.id, k)], floors[ci]['l_min'])
                     okw = ok & (m >= 0)
                     farw = _far_range_wx(okw.reshape(A, R), (seen & ~inside).reshape(A, R), hpx.reshape(A, R),
                                          ranges, cls.min_px, rows, m.reshape(A, R))

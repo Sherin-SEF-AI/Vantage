@@ -21,7 +21,9 @@ from PyQt6.QtWidgets import (QAbstractItemView, QComboBox, QFileDialog, QGridLay
 
 from ... import workdir
 from ...core import detection as DT
+from ...core import neural_replay as NR
 from ...core import redrive as RD
+from ...core import relight as RL
 from ...core import splat_reproject as SP
 from ..theme import STATUS, THEME, sans
 from ..widgets import fit_width, ScrubSpinBox, SegmentedControl, StatusLine, ToggleSwitch, button, hline, label
@@ -154,6 +156,7 @@ class SplatPage(QWidget):
         self.sig.failed.connect(self._failed)
         self.sig.progress.connect(self._progress)
         self.sig.nudge.connect(self._nudge_done)
+        self.nr_result: NR.NeuralResult | None = None    # the neural replay study (Neural replay tab)
         self.rd_result: RD.RedriveResult | None = None   # the data-reuse report (Re-drive tab)
         self.rd_prepared: dict | None = None             # its scene, evidence and calibration (the nudge renders on it)
         self.rd_export: dict | None = None               # the last re-shot export
@@ -417,6 +420,7 @@ class SplatPage(QWidget):
         fs.setWidgetResizable(True)
         fs.setWidget(fw)
         self.tabs.addTab(fs, 'Findings')
+        self.tabs.addTab(self._neural_tab(), 'Neural replay')
         self.tabs.addTab(self._redrive_tab(), 'Re-drive')
         rl.addWidget(self.tabs, 1)
         return w
@@ -514,6 +518,291 @@ class SplatPage(QWidget):
         self.nudge_label = label('', small=True, wrap=True)
         lay.addWidget(self.nudge_label)
         return w
+
+    # ------------------------------------------------------------------ neural replay (core.neural_replay)
+    def _neural_tab(self):
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 4, 0, 0)
+        lay.addWidget(label('Each Gaussian projected through the camera\'s exact model (the Unscented Transform, as '
+                            '3DGUT), a lidar opacity of its own, pedestrians as articulated bodies posed from the '
+                            'recorded images, traffic lights as emissive heads with their recorded state, and the '
+                            're-shot frames relit to weather that was never driven. The settings apply to the log '
+                            'replay, the A/B and the re-drive; Measure compares each addition with the log replay.',
+                            muted=True, small=True, wrap=True))
+        g = QGridLayout()
+        g.setHorizontalSpacing(8)
+        g.setVerticalSpacing(4)
+        self.nr_projection = SegmentedControl([('ut', 'Unscented (3DGUT)'), ('ewa', 'Affine (EWA)')])
+        self.nr_projection.setToolTip('How each Gaussian is projected: the Unscented Transform through the exact lens '
+                                      '(rolling shutter exact per row), or the affine approximation at its centre')
+        self.nr_projection.changed.connect(lambda k: self.nr_set(f'projection {k.upper()}', projection=k))
+        g.addWidget(label('Projection', ink2=True), 0, 0)
+        g.addWidget(self.nr_projection, 0, 1)
+        self.nr_walkers = SegmentedControl([('articulated', 'Articulated'), ('rigid', 'Rigid')])
+        self.nr_walkers.setToolTip('Pedestrians as articulated bodies (a skeleton posed per instant) or as the rigid '
+                                   'point clouds of their boxes')
+        self.nr_walkers.changed.connect(lambda k: self.nr_set(f'walkers {k}', walkers=k))
+        g.addWidget(label('Walkers', ink2=True), 1, 0)
+        g.addWidget(self.nr_walkers, 1, 1)
+        self.nr_lights = ToggleSwitch('Traffic lights as emissive heads')
+        self.nr_lights.setToolTip('Each traffic-light head of the ground truth (or a detector) drawn as a housing and '
+                                  'three lamps showing the recorded state over time')
+        self.nr_lights.toggled.connect(lambda on: self.nr_set('traffic lights ' + ('on' if on else 'off'),
+                                                              traffic_lights=bool(on)))
+        g.addWidget(self.nr_lights, 0, 2)
+        self.nr_lidar = ToggleSwitch('Lidar opacity of its own')
+        self.nr_lidar.setToolTip('Fit a lidar opacity per Gaussian to the training sweeps (glass: see-through for '
+                                 'the camera, a return for the lidar)')
+        self.nr_lidar.toggled.connect(lambda on: self.nr_set('lidar opacity ' + ('on' if on else 'off'),
+                                                             lidar_opacity=bool(on)))
+        g.addWidget(self.nr_lidar, 1, 2)
+        self.nr_body = SegmentedControl([('capsules', 'Capsule body'), ('anny', 'Anny (CC0)'),
+                                         ('smpl', 'SMPL (yours)')])
+        self.nr_body.setToolTip('Vantage\'s own capsule body; Anny\'s MakeHuman base mesh (CC0, downloaded on '
+                                'request); or an SMPL model file you downloaded yourself (non-commercial licence: '
+                                'never bundled)')
+        self.nr_body.changed.connect(lambda k: self.nr_set(f'body {k}', body_model=k))
+        g.addWidget(label('Body', ink2=True), 2, 0)
+        g.addWidget(self.nr_body, 2, 1)
+        brow = QHBoxLayout()
+        b = button('SMPL file…', 'ghost', 'folder', 'Your SMPL model (.npz) from smpl.is.tue.mpg.de')
+        b.clicked.connect(lambda: self._nr_pick_smpl())
+        brow.addWidget(b)
+        self.nr_smpl_accept = ToggleSwitch('I accept SMPL\'s non-commercial licence')
+        self.nr_smpl_accept.setToolTip(NR.SMPL_LICENCE)
+        self.nr_smpl_accept.toggled.connect(lambda on: self.nr_set('SMPL licence ' + ('accepted' if on else
+                                                                                      'not accepted'),
+                                                                   smpl_accept=bool(on)))
+        brow.addWidget(self.nr_smpl_accept)
+        brow.addStretch(1)
+        g.addLayout(brow, 2, 2)
+        self.nr_relight = SegmentedControl([('none', 'As recorded'), ('wet', 'Wet'), ('night', 'Night'),
+                                            ('snow', 'Snow')])
+        self.nr_relight.setToolTip('Relight the re-rendered frames (previews, A/B, re-shot drive): relit, not '
+                                   'recorded')
+        self.nr_relight.changed.connect(lambda k: self.nr_set(f'relight {k}', relight=dict(
+            NR.settings_of(self.ctx.store.project).relight, condition=k)))
+        g.addWidget(label('Relight', ink2=True), 3, 0)
+        g.addWidget(self.nr_relight, 3, 1)
+        self.nr_method = SegmentedControl([('physical', 'Physical'), ('diffusion', 'Diffusion')])
+        self.nr_method.setToolTip('The physically based relighting (always available), or InstructPix2Pix (MIT; '
+                                  'downloaded on request; needs diffusers and a GPU)')
+        self.nr_method.changed.connect(lambda k: self.nr_set(f'relight method {k}', relight=dict(
+            NR.settings_of(self.ctx.store.project).relight, method=k)))
+        g.addWidget(self.nr_method, 3, 2)
+        lay.addLayout(g)
+        mrow = QHBoxLayout()
+        self.nr_models = StatusLine()
+        mrow.addWidget(self.nr_models, 1)
+        self.b_nr_pose = button('Download keypoint model', 'ghost', 'import',
+                                'ViTPose-B, 344 MB, Apache-2.0, from its pinned revision (SHA-256 checked)')
+        self.b_nr_pose.clicked.connect(lambda: self.nr_download('pose'))
+        mrow.addWidget(self.b_nr_pose)
+        self.b_nr_anny = button('Download Anny body', 'ghost', 'import',
+                                'Anny\'s MakeHuman base mesh and skinning weights, 3.4 MB, CC0, from a pinned commit '
+                                'of github.com/naver/anny (SHA-256 checked)')
+        self.b_nr_anny.clicked.connect(lambda: self.nr_download('anny'))
+        mrow.addWidget(self.b_nr_anny)
+        self.b_nr_diff = button('Download relighting model', 'ghost', 'import',
+                                'InstructPix2Pix (fp16), 2.1 GB, MIT, from its pinned revision (SHA-256 checked)')
+        self.b_nr_diff.clicked.connect(lambda: self.nr_download('diffusion'))
+        mrow.addWidget(self.b_nr_diff)
+        lay.addLayout(mrow)
+        row = QHBoxLayout()
+        self.b_nr_run = button('Measure', 'primary', 'play', 'Rebuild with both projections, fit the walkers and '
+                                                           'lights, and score them against the log replay and the '
+                                                           'recorded images (a background job; minutes on a GPU)')
+        self.b_nr_run.clicked.connect(lambda: self.nr_measure())
+        row.addWidget(self.b_nr_run)
+        self.b_nr_export = button('Export…', 'ghost', 'export', 'neural_replay.json, the CSVs and the previews')
+        self.b_nr_export.clicked.connect(lambda: self.nr_export())
+        row.addWidget(self.b_nr_export)
+        row.addStretch(1)
+        lay.addLayout(row)
+        self.nr_table = _table((('Measure', ''), ('Log replay', 'The affine projection, rigid walkers, no lights, '
+                                                               'one opacity'),
+                                ('Neural', 'This tab\'s settings'), ('Recorded', 'The recorded images at the same '
+                                                                                 'instants')))
+        self.nr_table.setMaximumHeight(230)
+        lay.addWidget(self.nr_table)
+        g2 = QGridLayout()
+        self.nr_walk_view = ImageView('Measure to see the walkers and lights.')
+        self.nr_relit_view = ImageView('')
+        g2.addWidget(self.nr_walk_view, 0, 0)
+        g2.addWidget(self.nr_relit_view, 0, 1)
+        lay.addLayout(g2, 1)
+        return w
+
+    def nr_settings(self) -> NR.NeuralSettings:
+        return NR.settings_of(self.ctx.store.project)
+
+    def nr_set(self, text, **kw) -> bool:
+        """Change the neural replay settings (one undoable edit)."""
+        if self._syncing:
+            return False
+        st = self.nr_settings()
+        for k, v in kw.items():
+            setattr(st, k, v)
+        new = NR.NeuralSettings.from_dict(st.to_dict()).to_dict()
+        if new == self.nr_settings().to_dict():
+            return False
+
+        def fn(p):
+            p.analysis.neural_replay = new
+        self.ctx.store.edit('analysis', fn, f'Neural replay · {text}')
+        return True
+
+    def _nr_pick_smpl(self):
+        f, _ = QFileDialog.getOpenFileName(self, 'Your SMPL model (.npz)', '', 'SMPL model (*.npz)')
+        if f:
+            self.nr_set(f'SMPL file {os.path.basename(f)}', smpl_path=f, body_model='smpl')
+
+    def nr_status_text(self) -> str:
+        st = self.nr_settings()
+        ps = NR.pose_status(st.pose_model, verify=False)
+        ds = RL.diffusion_status(verify=False)
+        parts = [ps['text']]
+        if st.relight.get('method') == 'diffusion' or ds['present']:
+            miss = RL.diffusion_missing()
+            parts.append(ds['text'] + (f' {miss}' if miss else ''))
+        if st.body_model == 'anny':
+            parts.append(NR.anny_status(verify=False)['text'])
+        if st.body_model == 'smpl':
+            why = NR.smpl_usable(st)
+            parts.append('SMPL body ready (your file).' if why is None else why)
+        return ' · '.join(parts)
+
+    def _nr_sync(self):
+        st = self.nr_settings()
+        self.nr_projection.set_value(st.projection)
+        self.nr_walkers.set_value(st.walkers)
+        self.nr_lights.setChecked(st.traffic_lights)
+        self.nr_lidar.setChecked(st.lidar_opacity)
+        self.nr_body.set_value(st.body_model)
+        self.nr_smpl_accept.setChecked(st.smpl_accept)
+        rl = RL.RelightSettings.from_dict(st.relight)
+        self.nr_relight.set_value(rl.condition)
+        self.nr_method.set_value(rl.method)
+        ps = NR.pose_status(st.pose_model, verify=False)
+        self.nr_models.set('good' if ps['verified'] else 'note', self.nr_status_text())
+        self.b_nr_pose.setVisible(not ps['verified'])
+        self.b_nr_anny.setVisible(st.body_model == 'anny' and not NR.anny_status(verify=False)['verified'])
+        self.b_nr_diff.setVisible(rl.method == 'diffusion' and not RL.diffusion_status(verify=False)['verified'])
+
+    def nr_download(self, what) -> bool:
+        """Download the keypoint model ('pose') or the relighting model ('diffusion'): a background job."""
+        if self.busy:
+            return False
+        st = self.nr_settings()
+
+        def work(progress, cancel):
+            if what == 'pose':
+                return ('pose', NR.download_pose_model(st.pose_model, progress, cancel))
+            if what == 'anny':
+                return ('anny', NR.download_anny(progress, cancel))
+            return ('diffusion', RL.download_diffusion(progress, cancel))
+        self._begin('nr_download', 'Downloading…')
+        ok = self._start('nr_download', 'Neural replay · download', work)
+        if not ok:
+            self.busy = ''
+        self.refresh()
+        return ok
+
+    def nr_measure(self) -> bool:
+        """The neural replay study on the chosen drive: a background job."""
+        if self.busy:
+            return False
+        if not self.settings.drive:
+            self.status_text = 'Choose a drive first.'
+            self.refresh()
+            return False
+        p, eng, root, det = self.ctx.store.project, self._engine(), self._cache_root(), self.detector
+        drive = self.drive
+
+        def work(progress, cancel):
+            return NR.run(p, eng, None, None, progress, cancel, det, root, drive)
+        self._begin('neural', 'Measuring the neural replay…')
+        ok = self._start('neural', 'Log replay · neural replay', work)
+        if not ok:
+            self.busy = ''
+        self.refresh()
+        return ok
+
+    def nr_export(self, folder=None) -> list:
+        res = self.nr_result
+        if res is None:
+            return []
+        if folder is None:
+            folder = QFileDialog.getExistingDirectory(self, 'Export the neural replay study into')
+            if not folder:
+                return []
+        paths = NR.export(res, self.ctx.store.project, folder)
+        self.ctx.msg(f'Neural replay · {len(paths)} files written to {folder}', 5000)
+        return paths
+
+    def _nr_done(self, kind, out):
+        if kind == 'nr_download':
+            what, path = out if isinstance(out, tuple) else ('', out)
+            self.status_text = 'Download cancelled' if path is None else f'Downloaded: {os.path.basename(str(path))}'
+            self._sync_fields()
+            return
+        self.nr_result = out
+        s = NR.summary(out)
+        self.status_text = (f'Neural replay measured in {out.seconds:.0f} s' +
+                            (f': PSNR {s["psnr_ut_db"]:.2f} dB (UT) against {s["psnr_ewa_db"]:.2f} dB (EWA)'
+                             if s.get('psnr_ut_db') is not None and s.get('psnr_ewa_db') is not None else ''))
+        self.ctx.store.project.add_log('neural_replay', self.status_text)
+        self._nr_show()
+
+    def _nr_show(self):
+        res = self.nr_result
+        t = self.nr_table
+        t.setRowCount(0)
+        if res is None:
+            self.nr_walk_view.set_image(None)
+            self.nr_relit_view.set_image(None)
+            return
+        rows = []
+        pj = res.projection or {}
+        f = lambda v, d=2, u='': '–' if v is None else f'{v:.{d}f}{u}'  # noqa: E731
+        if pj:
+            rows.append(('Held-out PSNR', f(pj.get('ewa', {}).get('psnr_db'), 2, ' dB'),
+                         f(pj.get('ut', {}).get('psnr_db'), 2, ' dB'), ''))
+            rows.append(('Held-out SSIM', f(pj.get('ewa', {}).get('ssim'), 3), f(pj.get('ut', {}).get('ssim'), 3), ''))
+            rows.append(('Lidar median error', f((pj.get('ewa', {}).get('lidar_median_abs_error_m') or 0) * 100, 1,
+                                                  ' cm'),
+                         f((pj.get('ut', {}).get('lidar_median_abs_error_m') or 0) * 100, 1, ' cm'), ''))
+        L = res.lidar or {}
+        if L:
+            rows.append(('Lidar return agreement (opacity)', _pc(L['camera_opacity'].get('return_agreement')),
+                         _pc(L['lidar_opacity'].get('return_agreement')), ''))
+        pc = res.perception or {}
+        for cls in ('pedestrian', 'traffic_light', 'car', 'vehicle'):
+            r = (pc.get('rigid') or {}).get(cls)
+            n = (pc.get('neural') or {}).get(cls)
+            real = (pc.get('recorded') or {}).get(cls)
+            if not (r or n or real):
+                continue
+            g = lambda x: '–' if not x else (f'{_pc(x["recall"])} of {x["objects"]}' if x.get('recall') is not None  # noqa: E731
+                                             else f'{x["objects"]} shown')
+            rows.append((f'{cls.replace("_", " ").capitalize()} rig recall', g(r), g(n), g(real)))
+        for cond, d in (res.relight or {}).items():
+            ch = d.get('change') or {}
+            rows.append((f'Relit {cond}: recall change', '', ', '.join(f'{c} {100 * v:+.0f} pt' for c, v in ch.items()
+                                                                      if c in ('pedestrian', 'car')) or '–', ''))
+        t.setRowCount(len(rows))
+        for i, r in enumerate(rows):
+            for j, v in enumerate(r):
+                _cell(t, i, j, v, num=j > 0)
+        import cv2
+        for view, fn in ((self.nr_walk_view, NR.walkers_png), (self.nr_relit_view, NR.relight_png)):
+            png = fn(res)
+            if png:
+                img = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
+                view.set_image(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+            else:
+                view.set_image(None)
 
     @property
     def rd_settings(self) -> RD.RedriveSettings:
@@ -904,12 +1193,15 @@ class SplatPage(QWidget):
         self.refresh()
 
     def _build_key(self):
-        return json.dumps(self.settings.build_key(), sort_keys=True, default=str)
+        nst = NR.settings_of(self.ctx.store.project)
+        return json.dumps({'splat': self.settings.build_key(), 'neural': nst.build_key(),
+                           'projection': nst.projection, 'relight': nst.relight}, sort_keys=True, default=str)
 
     def _on_replaced(self, *_):
         self._gen += 1
         self.drive = self.scene = self.result = self.preview_out = None
         self.rd_result = self.rd_prepared = self.rd_export = self.nudge_out = None
+        self.nr_result = None
         self._nudge_gen += 1
         self._for, self.busy, self.status_text = None, '', ''
         self._sync_fields()
@@ -953,6 +1245,7 @@ class SplatPage(QWidget):
                     box.addItem(v.name, v.uid)
                 want = st.variant_a if side == 'a' else (st.variant_b or p.variant.uid)
                 box.setCurrentIndex(max(box.findData(want), 0))
+            self._nr_sync()
             ds = DT.status(self._det_model())
             self.model_status.set('good' if ds['verified'] else 'note',
                                   ds['text'] if st.detect else 'Detection off: the figures are the objects each rig '
@@ -1124,6 +1417,8 @@ class SplatPage(QWidget):
             self.status_text = f'Preview at t = {out["t"]:.2f} s'
         elif kind in ('redrive', 'reshoot'):
             self._rd_done(kind, out)
+        elif kind in ('neural', 'nr_download'):
+            self._nr_done(kind, out)
         elif kind == 'run':
             key, self.drive, self.scene, self.result = out
             self._for = key
@@ -1168,6 +1463,8 @@ class SplatPage(QWidget):
         self.b_rd_run.setEnabled(not busy and bool(st.drive))
         self.b_rd_export.setEnabled(not busy and bool(st.drive))
         self.b_nudge_apply.setEnabled(self.rd_prepared is not None)
+        self.b_nr_run.setEnabled(not busy and bool(st.drive))
+        self.b_nr_export.setEnabled(self.nr_result is not None and not busy)
         self.bar.setVisible(busy)
         txt = self.status_text
         if self.stale and not busy:

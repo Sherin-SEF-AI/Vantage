@@ -63,4 +63,8 @@ vantage = [
     "runtime/*.cpp",
     "runtime/README.md",
     "runtime/LICENSE",
+    "resources/firmware/*/*",
+    "resources/firmware/*/*/*",
+    "resources/firmware/rust/*/src/*",
+    "resources/firmware/rust/firmware/.cargo/config.toml",
 ]

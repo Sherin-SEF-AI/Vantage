@@ -150,10 +150,15 @@ class LiveLink:
         def watch():
             while not stop.is_set():
                 if cancel.wait(0.2):
-                    try:
-                        self.request('cancel', call_id=cid)
-                    except LinkError:
-                        pass
+                    # tell the window until it confirms (a busy window can drop or delay one request); stop trying
+                    # once the call has returned
+                    while not stop.is_set():
+                        try:
+                            if self.request('cancel', call_id=cid).get('cancelled'):
+                                return
+                        except LinkError:
+                            pass
+                        stop.wait(0.5)
                     return
         th = threading.Thread(target=watch, daemon=True)
         th.start()
@@ -187,6 +192,7 @@ class FileSession:
         self.undo_stack, self.redo_stack = [], []
         self.rev = 0
         self._an = None
+        self._studies = {}                     # run_study results of the current revision ({'rev': n, name: result})
         self._mtime = 0.0
         self._backed_up = set()
         self._dirty = False
@@ -198,8 +204,9 @@ class FileSession:
         from ..core.project import Project
         if path:
             path = os.path.abspath(os.path.expanduser(path))
-            if not path.lower().endswith('.vantage') or not os.path.isfile(path):
-                return {'error': f'{path} is not a .vantage project file'}
+            from ..core import project_dir as PD
+            if not (path.lower().endswith('.vantage') and os.path.isfile(path)) and not PD.is_project_dir(path):
+                return {'error': f'{path} is not a .vantage project file or a project folder'}
             open_in = [w for w in windows() if same_file(w.get('path', ''), path)]
             if open_in:
                 return {'error': f'{os.path.basename(path)} is open in a Vantage window (pid {open_in[0]["pid"]}): Claude '
@@ -208,18 +215,22 @@ class FileSession:
                 p = Project.load(path)
             except (OSError, ValueError, KeyError) as e:
                 return {'error': f'cannot open {path}: {e}'}
-            self._mtime = os.path.getmtime(path)
+            self._mtime = PD.mtime(path)
         elif sample:
             p = samples.tigor_sample_project()
         elif template:
             try:
                 p = samples.template_project(template)
             except (KeyError, ValueError) as e:
-                return {'error': f'template: {e}'}
+                from ..core import vehicles as VH
+                names = sorted(VH.ALIASES) + ['tigor'] + sorted(VH.by_id())
+                return {'error': f'no template {template!r} ({e}); templates: {", ".join(names)}; or "ref:<rig>" for a '
+                                 'published AV rig'}
         else:
             return {'error': 'give path (a .vantage file), sample: true or template'}
         self.p = p
         self.undo_stack, self.redo_stack, self.rev, self._an, self._dirty = [], [], 0, None, False
+        self._studies = {}
         return {'opened': p.path or f'{p.name} (not saved yet: save_project with a path keeps it)',
                 'variant': p.variant.name, 'variants': [v.name for v in p.variants]}
 
@@ -247,9 +258,18 @@ class FileSession:
         if self._an is None or self._an[0] != self.rev:
             self._an = (self.rev, _analysed(self.p))
         a = self._an[1]
+        rev = self.rev
+        kept = self._studies if self._studies.get('rev') == rev else {}
+
+        def keep(name, result):                     # run_study's result, for get_studies, until the next change
+            if self.rev == rev:
+                if self._studies.get('rev') != rev:
+                    self._studies = {'rev': rev}
+                self._studies[name] = result
         return T.ToolContext(self.p.snapshot(), a['result'], a['engine'].share(), list(a['issues']), dict(a['mounts']),
-                             a['worst'], revision=self.rev, brief=self.p.analysis.assistant.get('brief', ''),
-                             working_dir=workdir.default(), provider='claude', model='mcp')
+                             a['worst'], volume=kept.get('volume'), revision=rev,
+                             brief=self.p.analysis.assistant.get('brief', ''), working_dir=workdir.default(),
+                             provider='claude', model='mcp', on_study=keep)
 
     def edit(self, keys, fn, text):
         self._need()
@@ -277,7 +297,8 @@ class FileSession:
 
     def _check_disk(self):
         path = self.p.path
-        if path and os.path.exists(path) and self._mtime and abs(os.path.getmtime(path) - self._mtime) > 1e-3:
+        from ..core import project_dir as PD
+        if path and os.path.exists(path) and self._mtime and abs(PD.mtime(path) - self._mtime) > 1e-3:
             raise RuntimeError(f'{os.path.basename(path)} changed on disk since Claude opened it: open_project it again '
                                'before changing it (nothing was changed)')
         if path and any(same_file(w.get('path', ''), path) for w in windows()):
@@ -285,12 +306,13 @@ class FileSession:
                                '(nothing was changed here)')
 
     def _write(self, path):
+        from ..core import project_dir as PD
         if os.path.exists(path):
             if path not in self._backed_up:
-                shutil.copy2(path, path + '.bak')
+                PD.backup(path)                     # <name>.vantage.bak, or a folder's files in <name>.vantage.d.bak/
                 self._backed_up.add(path)
         self.p.save(path)
-        self._mtime = os.path.getmtime(path)
+        self._mtime = PD.mtime(path)
         self._dirty = False
 
     def undo(self) -> str:
@@ -302,6 +324,7 @@ class FileSession:
         for k, st in before.items():
             self.p.restore(k, _copy(k, st))
         self.redo_stack.append((text, before, after))
+        self.p.add_log('undo', text)                 # as the window does: the edit's entry stays, this one follows it
         self._changed()
         return f'undid: {text}'
 
@@ -314,20 +337,23 @@ class FileSession:
         for k, st in after.items():
             self.p.restore(k, _copy(k, st))
         self.undo_stack.append((text, before, after))
+        self.p.add_log('redo', text)
         self._changed()
         return f'redid: {text}'
 
     def save(self, path=None) -> str:
         self._need()
         if path:
+            from ..core import project_dir as PD
             path = os.path.abspath(os.path.expanduser(path))
-            if not path.lower().endswith('.vantage'):
+            if not PD.wants_dir(path) and not path.lower().endswith('.vantage'):
                 path += '.vantage'
             if any(same_file(w.get('path', ''), path) for w in windows()):
                 return f'{os.path.basename(path)} is open in a Vantage window: not overwritten'
+            os.makedirs(os.path.dirname(path), exist_ok=True)        # a new folder for it, as a save dialog would
             self.p.path = path
-            self.p.name = os.path.splitext(os.path.basename(path))[0]
-            self._mtime = os.path.getmtime(path) if os.path.exists(path) else 0.0
+            self.p.name = PD.name_from_path(path)
+            self._mtime = PD.mtime(path) if os.path.exists(path) else 0.0
         if not self.p.path:
             return 'not saved: the project has no file yet; give path'
         self._write(self.p.path)

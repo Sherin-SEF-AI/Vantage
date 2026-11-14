@@ -25,6 +25,10 @@ Radiance Field Rendering", ACM TOG 42(4), 2023), written here in plain torch: no
 Limits: the affine approximation of the projection is poor for a Gaussian that spans a large angle (one close to the
 camera, on a fisheye's rim); the depth order is the centres' (overlapping Gaussians of different sizes can pop); no
 view-dependent colour (spherical-harmonics degree 0).
+
+splat_ut (core.neural_replay): the same compositing with each Gaussian placed by the Unscented Transform of its seven
+sigma points through the projection (3DGUT, Wu et al., CVPR 2025) and its response evaluated in 3D along each pixel's
+ray (no affine approximation; a rolling shutter as a rigid motion per row, RowPoses). splat() is unchanged.
 """
 from __future__ import annotations
 
@@ -492,3 +496,342 @@ def psnr(a: np.ndarray, b: np.ndarray, mask=None) -> float | None:
         return None
     mse = float(d.mean())
     return 99.0 if mse <= 1e-10 else float(10 * math.log10(1.0 / mse))
+
+
+# =========================================================================== the Unscented Transform (3DGUT)
+# Wu, Martinez Esturo, Mirzaei, Moenne-Loccoz and Gojcic, "3DGUT: Enabling Distorted Cameras and Secondary Rays in
+# Gaussian Splatting", CVPR 2025, arXiv:2412.12507 (v2, 24 Mar 2025; read 2026-11-11): Sec. 3.2 and its evaluation
+# settings, α = 1, β = 2, κ = 0 (λ = α²(3 + κ) − 3 = 0: the centre's mean weight 0, its covariance weight 2, the six
+# others 1/6). NVIDIA's reference code (github.com/nv-tlabs/3dgrut) is Apache-2.0 (its LICENSE, read 2026-11-11); none
+# of it is copied: what follows is written for Vantage's own torch rasteriser.
+UT_ALPHA, UT_BETA, UT_KAPPA = 1.0, 2.0, 0.0
+UT_ITER = 2                          # rolling shutter: fixed-point passes of each sigma point's row time
+PROJECTIONS = ('ewa', 'ut')
+
+
+def ut_weights(alpha: float = UT_ALPHA, beta: float = UT_BETA, kappa: float = UT_KAPPA, D: int = 3):
+    """(mean weights, covariance weights, spread √(D + λ)) of the 2D + 1 sigma points."""
+    lam = alpha * alpha * (D + kappa) - D
+    wm = [lam / (D + lam)] + [1.0 / (2 * (D + lam))] * (2 * D)
+    wc = [lam / (D + lam) + (1 - alpha * alpha + beta)] + [1.0 / (2 * (D + lam))] * (2 * D)
+    return wm, wc, math.sqrt(D + lam)
+
+
+def sigma_points(P, rot, scales, alpha: float = UT_ALPHA, kappa: float = UT_KAPPA):
+    """(7, N, 3): the centres, then μ ± √(3 + λ)·σₖ·rₖ along each principal axis k (rot's columns; torch)."""
+    import torch
+    _, _, c = ut_weights(alpha, UT_BETA, kappa)
+    cols = rot * scales[:, None, :]                     # (N, 3, 3): the square root R S of Σ, by columns
+    pts = [P]
+    for sgn in (1.0, -1.0):
+        for k in range(3):
+            pts.append(P + sgn * c * cols[:, :, k])
+    return torch.stack(pts, 0)
+
+
+class RowPoses:
+    """A rolling shutter (or a lidar's sweep) as a rigid motion per image row (axis 'v') or column (axis 'u'): a point
+    X in the reference frame is X' = A(s) X + b(s) in the sensor's frame at the instant the row (column) s is read,
+    A and b linear between K tabulated rows (torch, (K, 3, 3) and (K, 3), row k at s = (k + ½)·extent / K... spaced
+    evenly over [0, extent]). The identity (no motion) is A = I, b = 0."""
+
+    def __init__(self, A, b, extent: float, axis: str = 'v'):
+        self.A, self.b, self.extent, self.axis = A, b, float(extent), axis
+
+    def _lerp(self, s):
+        import torch
+        K = self.A.shape[0]
+        f = torch.clamp(s / max(self.extent, 1e-9), 0.0, 1.0) * (K - 1)
+        i = torch.clamp(torch.floor(f).long(), 0, max(K - 2, 0))
+        w = (f - i.to(f.dtype)).clamp(0, 1) if K > 1 else torch.zeros_like(f)
+        j = torch.clamp(i + 1, max=K - 1)
+        A = self.A[i] * (1 - w)[..., None, None] + self.A[j] * w[..., None, None]
+        b = self.b[i] * (1 - w)[..., None] + self.b[j] * w[..., None]
+        return A, b
+
+    def apply(self, X, s):
+        A, b = self._lerp(s)
+        return torch_einsum_ij(A, X) + b
+
+    def at_pixels(self, width: int, height: int):
+        """(A (H·W, 3, 3), b (H·W, 3)) of every pixel (row-major), at its row (or column) centre."""
+        import torch
+        dev = self.A.device
+        if self.axis == 'v':
+            s = (torch.arange(height, device=dev, dtype=self.A.dtype) + 0.5)[:, None].expand(height, width)
+        else:
+            s = (torch.arange(width, device=dev, dtype=self.A.dtype) + 0.5)[None, :].expand(height, width)
+        return self._lerp(s.reshape(-1))
+
+
+def torch_einsum_ij(A, X):
+    import torch
+    return torch.einsum('...ij,...j->...i', A, X)
+
+
+def ut_project(P, rot, scales, proj, rs: RowPoses | None = None, iters: int = UT_ITER):
+    """The Unscented Transform of each Gaussian through the projection: (u, v) the weighted mean of its seven sigma
+    points' images, cov (N, 2, 2) their weighted covariance, ok where every sigma point projects. With a rolling
+    shutter (rs) each sigma point is moved by the sensor's motion at the row (column) it lands on, found by iters
+    fixed-point passes from the centre's (3DGUT: "each sigma point transformed with a different extrinsic")."""
+    import torch
+    wm, wc, _ = ut_weights()
+    X = sigma_points(P, rot, scales)                     # (7, N, 3)
+    S = X.reshape(-1, 3)
+    if rs is None:
+        u, v, ok = proj(S)
+    else:
+        s = torch.full((len(S),), rs.extent / 2, device=S.device, dtype=S.dtype)
+        for _ in range(max(1, iters)):
+            u, v, ok = proj(rs.apply(S, s.detach()))
+            s = (v if rs.axis == 'v' else u)
+            s = torch.where(torch.isfinite(s), s, torch.full_like(s, rs.extent / 2))
+        u, v, ok = proj(rs.apply(S, s.detach()))
+    u, v, ok = u.reshape(7, -1), v.reshape(7, -1), ok.reshape(7, -1)
+    Wm = torch.tensor(wm, device=P.device, dtype=P.dtype)[:, None]
+    Wc = torch.tensor(wc, device=P.device, dtype=P.dtype)[:, None]
+    mu = (Wm * u).sum(0), (Wm * v).sum(0)
+    du, dv = u - mu[0], v - mu[1]
+    a = (Wc * du * du).sum(0)
+    b = (Wc * du * dv).sum(0)
+    c = (Wc * dv * dv).sum(0)
+    cov = torch.stack([torch.stack([a, b], -1), torch.stack([b, c], -1)], 1)
+    return mu[0], mu[1], cov, ok.all(0)
+
+
+def ewa_project(P, cov3, proj):
+    """The local affine (EWA) projection of core.splat_raster.splat, for comparison: (u, v) of the centre, J Σ Jᵀ."""
+    import torch
+    u, v, ok = proj(P)
+    r = torch.linalg.norm(P, dim=-1)
+    h = (1e-3 * r.detach()).clamp(min=1e-5)
+    eye = torch.eye(3, device=P.device, dtype=P.dtype)
+    Q = torch.cat([P[None] + h[None, :, None] * eye[:, None, :], P[None] - h[None, :, None] * eye[:, None, :]])
+    uq, vq, _ = proj(Q.reshape(-1, 3))
+    uq, vq = uq.reshape(6, -1), vq.reshape(6, -1)
+    J = torch.stack([torch.stack([(uq[k] - uq[k + 3]) / (2 * h) for k in range(3)], -1),
+                     torch.stack([(vq[k] - vq[k + 3]) / (2 * h) for k in range(3)], -1)], 1)
+    return u, v, J @ cov3 @ J.transpose(1, 2), ok, J
+
+
+def projector_rays(proj, width: int, height: int, dtype=None, device=None):
+    """(H·W, 3) unit rays of the pixel centres (row-major) in the projector's frame, and (H·W,) bool where valid:
+    a LensProjector's by inverting its image height (core.lens.theta_of_r: Kannala-Brandt by Newton's method), a
+    SphereProjector's from its azimuth and elevation."""
+    import torch
+    uu, vv = np.meshgrid(np.arange(width) + 0.5, np.arange(height) + 0.5)
+    if isinstance(proj, SphereProjector):
+        a = np.radians(proj.az_centre + proj.a_lo + uu * proj.a_step)
+        e = np.radians(proj.e_hi - vv * proj.e_step)
+        d = np.stack([np.cos(e) * np.cos(a), np.cos(e) * np.sin(a), np.sin(e)], -1)
+        ok = np.abs(np.degrees(e)) < 85.0
+    else:
+        from .lens import theta_of_r
+        x = (uu - proj.cx) / proj.fx
+        y = (vv - proj.cy) / proj.fy
+        r = np.hypot(x, y)
+        th = theta_of_r(r, 1.0, proj.projection, proj.kb)
+        s = np.where(r > 1e-12, np.sin(th) / np.where(r > 1e-12, r, 1.0), 0.0)
+        d = np.stack([x * s, y * s, np.cos(th)], -1)
+        d /= np.maximum(np.linalg.norm(d, axis=-1, keepdims=True), 1e-12)
+        ok = (th <= proj.max_theta) & np.isfinite(th)
+    dt = dtype or torch.float32
+    return (torch.tensor(d.reshape(-1, 3), dtype=dt, device=device),
+            torch.tensor(ok.reshape(-1), dtype=torch.bool, device=device))
+
+
+def splat_ut(P, rot, scales, feats, opacity, proj, width: int, height: int, rays_d, rays_o=None,
+             rs: RowPoses | None = None, bg=None, near: float = 0.05, block: int = 256, max_per_tile: int = 4096,
+             want_index: bool = False, chunk_elems: int | None = None, depth_col: int | None = None,
+             lowpass: float = LOWPASS) -> dict:
+    """Render Gaussians through any projection by the Unscented Transform (3DGUT), the counterpart of splat().
+
+    P (N, 3) centres, rot (N, 3, 3) rotations and scales (N, 3) σ in the reference frame (the projector's at the
+    reference instant), feats (N, F), opacity (N,); rays_d (H·W, 3) each pixel's unit ray in the reference frame and
+    rays_o (H·W, 3) its origin (None: the frame's origin; with a rolling shutter each row's ray from its own pose);
+    rs the sensor motion per row (RowPoses) for the sigma points.
+    * Where each Gaussian lands, and its footprint (which tiles it touches): the UT of its seven sigma points
+      through the projection (ut_project), its 3σ ellipse (or where its opacity falls to 1/255) and a pixel's margin.
+    * Its response at a pixel: evaluated in 3D along the pixel's ray, as 3DGUT does (Sec. 3.3): the maximum of the
+      Gaussian along the ray, exp(−½ d²) with d the ray's least Mahalanobis distance to the centre (in the Gaussian's
+      whitened frame: |o' × d'| / |d'| with o' = S⁻¹Rᵀ(o − μ), d' = S⁻¹Rᵀ d), at range t* = −o'·d' / |d'|² along the
+      ray. No projection is approximated: a fisheye's rim, a Gaussian across the camera's field and a lidar's
+      spherical grid are all exact.
+    * Anti-aliasing: the 3DGS dilation in 3D, an isotropic δ² = lowpass / √det(J Jᵀ) added to σ² (J the projection's
+      Jacobian at the centre: δ is lowpass px² worth of the local pixel size), as the 2D 0.3 px² in splat().
+    * Compositing and the outputs as splat() ('image', 'alpha', 'index', 'rendered', 'cut', 'pairs', 'median');
+      depth_col: that feature is replaced per pixel by t*, the range along the ray to where the Gaussian peaks (exact
+      for a flat Gaussian: the ray's crossing of its plane), so no planar-depth approximation is needed."""
+    import torch
+    from torch.utils.checkpoint import checkpoint
+    dev = P.device
+    W, H = int(width), int(height)
+    F = feats.shape[1]
+    TH = (H + TILE - 1) // TILE
+    grad = torch.is_grad_enabled() and any(x.requires_grad for x in (P, rot, scales, feats, opacity))
+    if chunk_elems is None:
+        cuda = dev.type == 'cuda'
+        chunk_elems = ((1 << 21 if cuda else 1 << 19) if grad else (1 << 22 if cuda else 1 << 20))
+    bgf = bg if bg is not None else torch.zeros(H * W, F, device=dev, dtype=feats.dtype)
+    out = {'image': bgf, 'alpha': torch.zeros(H * W, device=dev, dtype=feats.dtype),
+           'index': torch.full((H * W,), -1, dtype=torch.long, device=dev) if want_index else None,
+           'rendered': torch.ones(H * W, dtype=torch.bool, device=dev), 'cut': 0, 'pairs': 0}
+    if depth_col is not None and not grad:
+        out['median'] = torch.full((H * W,), float('nan'), device=dev, dtype=feats.dtype)
+    if len(P) == 0:
+        return out
+    rng = torch.linalg.norm(P, dim=-1)
+    with torch.no_grad():
+        if rs is None:
+            _, _, ok0 = proj(P)
+        else:
+            u0, v0, _ = proj(P)
+            s0 = torch.where(torch.isfinite(v0 if rs.axis == 'v' else u0), v0 if rs.axis == 'v' else u0,
+                             torch.full_like(u0, rs.extent / 2))
+            _, _, ok0 = proj(rs.apply(P, s0))
+    ok = ok0 & (rng > near) & (opacity > ALPHA_MIN)
+    idx = torch.nonzero(ok).squeeze(1)
+    if len(idx) == 0:
+        return out
+    Pi, Ri, si = P[idx], rot[idx], scales[idx]
+    # ---- the 3D dilation from the local pixel size (no gradient: a filter, not a parameter)
+    with torch.no_grad():
+        _, _, _, _, J = ewa_project(Pi.detach(), torch.zeros(len(idx), 3, 3, device=dev, dtype=P.dtype), proj)
+        JJ = J @ J.transpose(1, 2)
+        detJ = (JJ[:, 0, 0] * JJ[:, 1, 1] - JJ[:, 0, 1] ** 2).clamp(min=1e-18)
+        d2 = lowpass / torch.sqrt(detJ)
+    se = torch.sqrt(si * si + d2[:, None])
+    uu, vv, S2, _ = ut_project(Pi, Ri, se, proj, rs)
+    op = opacity[idx]
+    with torch.no_grad():
+        a, b, c = S2[:, 0, 0] + 1e-4, S2[:, 0, 1], S2[:, 1, 1] + 1e-4
+        det = torch.clamp(a * c - b * b, min=1e-12)
+        mid = 0.5 * (a + c)
+        lam = mid + torch.sqrt(torch.clamp(mid * mid - det, min=0.0))
+        m = torch.sqrt(torch.clamp(2.0 * torch.log(torch.clamp(op * 255.0, min=1.0 + 1e-6)), min=0.0)).clamp(max=3.0)
+        rad = torch.ceil(m * torch.sqrt(lam) + 1.0)
+        # a sigma point beyond the lens's field still places the footprint (the response itself is exact in 3D)
+        good = torch.isfinite(rad) & torch.isfinite(uu) & torch.isfinite(vv) & (rad < 4 * max(W, H))
+        order = torch.argsort(rng[idx].detach(), stable=True)
+        tile, gid_s, TW = _tile_lists(uu.detach()[order], vv.detach()[order], rad[order], good[order], W, H,
+                                      (0, TH))
+    gid = order[gid_s]
+    out['pairs'] = int(len(gid))
+    if len(gid) == 0:
+        return out
+    with torch.no_grad():
+        counts = torch.bincount(tile, minlength=TW * TH)
+        starts = torch.cumsum(counts, 0) - counts
+        live = torch.nonzero(counts).squeeze(1)
+        live = live[torch.argsort(counts[live], descending=True, stable=True)]
+        cnt_live = counts[live].tolist()
+    # whitening per Gaussian: M = S⁻¹ Rᵀ, and the frame origin in its whitened frame
+    M = Ri.transpose(1, 2) / se[:, :, None]
+    m0 = -torch.einsum('nij,nj->ni', M, Pi)
+    fv = feats[idx]
+    lx = torch.arange(TILE, device=dev)
+    gy, gx = torch.meshgrid(lx, lx, indexing='ij')
+    gx, gy = gx.reshape(-1), gy.reshape(-1)
+    Dr = rays_d
+    Or = rays_o
+    pieces_i, pieces_v, pieces_a, pieces_x, pieces_m = [], [], [], [], []
+    i = 0
+    nl = len(live)
+    while i < nl:
+        nmax = cnt_live[i]
+        kmax = min(nmax, max_per_tile) if grad else nmax
+        kb = min(block, kmax)
+        n_c = max(1, min(nl - i, chunk_elems // (TILE * TILE * kb)))
+        tiles = live[i:i + n_c]
+        i += n_c
+        tx, ty = tiles % TW, tiles // TW
+        px = tx[:, None] * TILE + gx[None]
+        py = ty[:, None] * TILE + gy[None]
+        pix_ok = (px < W) & (py < H)
+        flat = (py.clamp(max=H - 1) * W + px.clamp(max=W - 1)).long()
+        dpix = Dr[flat]                                         # (c, 256, 3)
+        opix = Or[flat] if Or is not None else None
+        Tcur = torch.ones(len(tiles), TILE * TILE, device=dev, dtype=P.dtype)
+        acc = torch.zeros(len(tiles), TILE * TILE, F, device=dev, dtype=feats.dtype)
+        best_w = torch.zeros(len(tiles), TILE * TILE, device=dev, dtype=P.dtype) if want_index else None
+        best_g = torch.full((len(tiles), TILE * TILE), -1, dtype=torch.long, device=dev) if want_index else None
+        med = torch.full((len(tiles), TILE * TILE), float('nan'), device=dev, dtype=feats.dtype)
+        tc = counts[tiles]
+        if grad:
+            out['cut'] += int(torch.clamp(tc - max_per_tile, min=0).sum())
+            tc = torch.clamp(tc, max=max_per_tile)
+        ts = starts[tiles]
+        for k0 in range(0, kmax, kb):
+            kk = min(kb, kmax - k0)
+            ar = torch.arange(k0, k0 + kk, device=dev)
+            valid = ar[None, :] < tc[:, None]
+            pos = torch.clamp(ts[:, None] + ar[None, :], max=len(gid) - 1)
+            g = gid[pos]
+            if grad:
+                add, Tb_last = checkpoint(_block_ut, dpix, opix, M, m0, op, fv, g, valid, Tcur, near, False,
+                                          depth_col, use_reentrant=False)
+            else:
+                add, Tb_last, wgt, md, mh = _block_ut(dpix, opix, M, m0, op, fv, g, valid, Tcur, near, True,
+                                                      depth_col)
+                if md is not None:
+                    med = torch.where(mh & torch.isnan(med), md, med)
+                if want_index:
+                    bw, bk = wgt.max(-1)
+                    better = bw > best_w
+                    best_w = torch.where(better, bw, best_w)
+                    best_g = torch.where(better, torch.gather(g, 1, bk), best_g)
+            acc = acc + add
+            Tcur = Tcur * Tb_last
+            if not grad and bool((Tcur < T_STOP).all()):
+                break
+        pieces_i.append(flat[pix_ok])
+        pieces_v.append(acc[pix_ok])
+        pieces_a.append(Tcur[pix_ok])
+        if want_index:
+            pieces_x.append(best_g[pix_ok])
+        pieces_m.append(med[pix_ok])
+    pi = torch.cat(pieces_i)
+    T = torch.cat(pieces_a)
+    out['image'] = bgf.index_copy(0, pi, torch.cat(pieces_v) + T[:, None] * bgf[pi])
+    out['alpha'] = out['alpha'].index_copy(0, pi, 1.0 - T)
+    if depth_col is not None and not grad:
+        out['median'] = out['median'].index_copy(0, pi, torch.cat(pieces_m))
+    if want_index:
+        bx = torch.cat(pieces_x)
+        out['index'] = out['index'].index_copy(0, pi, torch.where(bx >= 0, idx[bx.clamp(min=0)], bx))
+    return out
+
+
+def _block_ut(dpix, opix, M, m0, op, fv, g, valid, Tcur, near, keep_w=False, depth_col=None):
+    """One block of tiles × Gaussians, the response in 3D along each pixel's ray (splat_ut)."""
+    import torch
+    Mg = M[g]                                                       # (c, k, 3, 3)
+    dw = torch.einsum('ckij,cpj->cpki', Mg, dpix)                   # (c, p, k, 3)
+    if opix is None:
+        ow = m0[g][:, None, :, :].expand_as(dw)
+    else:
+        ow = torch.einsum('ckij,cpj->cpki', Mg, opix) + m0[g][:, None, :, :]
+    dd = (dw * dw).sum(-1).clamp(min=1e-20)
+    od = (ow * dw).sum(-1)
+    tstar = -od / dd
+    cr = torch.linalg.cross(ow, dw)
+    dist2 = (cr * cr).sum(-1) / dd
+    al = torch.clamp(op[g][:, None, :] * torch.exp(-0.5 * dist2), max=ALPHA_MAX)
+    al = torch.where(valid[:, None, :] & (al >= ALPHA_MIN) & (tstar > near), al, torch.zeros_like(al))
+    Tb = torch.cumprod(1.0 - al, -1)
+    Tex = torch.cat([torch.ones_like(Tb[..., :1]), Tb[..., :-1]], -1) * Tcur[..., None]
+    wgt = al * Tex
+    f = fv[g]                                                       # (c, k, F)
+    add = torch.einsum('cpk,ckf->cpf', wgt, f)
+    if depth_col is not None:
+        dep = (wgt * tstar).sum(-1)
+        add = torch.cat([add[..., :depth_col], dep[..., None], add[..., depth_col + 1:]], -1)
+    if keep_w:
+        med = has = None
+        if depth_col is not None:
+            cross = (Tex >= 0.5) & (Tex * (1.0 - al) < 0.5)
+            has = cross.any(-1)
+            kx = cross.to(torch.int8).argmax(-1, keepdim=True)
+            med = torch.gather(tstar, 2, kx)[..., 0]
+        return add, Tb[..., -1], wgt, med, has
+    return add, Tb[..., -1]

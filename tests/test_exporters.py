@@ -30,7 +30,7 @@ from vantage.core import exporters as ex  # noqa: E402
 
 # the formats written here: the research and AV-stack bridges (exporters._BRIDGES) have their own tests in
 # tests/test_research_exports.py and the bridged modules' test files
-CLASSIC = [f for f in ex.FORMATS if f.id not in ex._BRIDGES]
+CLASSIC = [f for f in ex.FORMATS if f.id not in ex._BRIDGES and f.id not in ex._F17]   # round 17's: test_round17_wiring
 from vantage.core.analysis import Engine  # noqa: E402
 from vantage.core.lens import Lens, r_of_theta, resolve  # noqa: E402
 from vantage.core.mathutil import BODY_TO_OPTICAL, rot_zyx  # noqa: E402
@@ -114,7 +114,7 @@ def test_formats_registry():
                                                             'redrive', 'foundation_range', 'robust_perception',
                                                             'design_options', 'perf_model', 'sim_rig',
                                                             'perception_records']
-    assert {f.group for f in CLASSIC} | {'Research', 'AV stack'} == set(ex.GROUPS)
+    assert {f.group for f in CLASSIC} | {'Research', 'AV stack', 'Embedded'} == set(ex.GROUPS)
     for f in CLASSIC:
         assert f.kind in ('text', 'binary')
         assert f.label and f.ext_label

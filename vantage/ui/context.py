@@ -23,6 +23,7 @@ OVERLAYS = [('frustums', 'Frustums', 'frustum', True), ('footprints', 'Footprint
             ('critical', 'Critical targets', 'target', False),   # Analysis ▸ Critical targets, in the plan and 3D
             ('harness', 'Cable harness', 'cable', False),        # the routed cables, in the plan and 3D
             ('wipers', 'Wiper sweep', 'layers', False),          # Analysis ▸ Materials: the wipers on the windscreen
+            ('cleaning', 'Cleaning cones', 'weather', False),    # Analysis ▸ Cleaning and de-icing: nozzles, heaters
             ('clocktree', 'Timestamp error (lidar points × 50)', 'sync', False)]   # Analysis ▸ Clock tree and time sync
 HEATMAPS = [('none', 'None'), ('coverage', 'Coverage'), ('density', 'Density'), ('redundancy', 'Redundancy'),
             ('stitched', 'Objects'),       # objects standing in the stitched bird's-eye view

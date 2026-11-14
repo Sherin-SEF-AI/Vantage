@@ -347,6 +347,20 @@ def _device(st, key, uid, tag, kind, model, source, steady, peak, slot, circuit=
             'cable_severity': None, 'cable_problem': ''}
 
 
+def _cleaning_loads(project) -> list:
+    """The washer pumps, valves, compressor and lens heaters the project's cleaning layout adds (core.cleaning; its
+    average over the duty as steady, its peak), so the budget counts them without the user typing them."""
+    try:
+        from . import cleaning as CL
+        if not CL.settings_of(project).devices:
+            return []
+        return CL.power_loads(project)
+    except Exception as e:                        # noqa: BLE001 — the cleaning never breaks the power budget
+        import logging
+        logging.getLogger(__name__).warning('cleaning loads: %s: %s', type(e).__name__, e)
+        return []
+
+
 def run(project, engine=None, settings: PowerSettings | None = None, variant=None, progress=None,
         cancel=None) -> PowerResult:
     """The power budget of a variant (default the active one). Rows: every visible camera, lidar, radar, GNSS antenna
@@ -390,6 +404,9 @@ def run(project, engine=None, settings: PowerSettings | None = None, variant=Non
             rows.append(_device(st, key, '', tag, key, model or project.ecu.name, 'setting', w, st.peak_of(key, w), i))
     for i, (name, steady, peak, circ, enc) in enumerate(st.other):
         rows.append(_device(st, f'other:{i}', '', name, 'other', 'Other load', 'user', steady, peak, i, circ, enc))
+    typed = any(str(o[0]).startswith('Cleaning:') for o in st.other)       # cleaning.power_budget added them already
+    for i, (name, steady, peak, circ, enc) in enumerate([] if typed else _cleaning_loads(project)):
+        rows.append(_device(st, f'cleaning:{i}', '', name, 'other', 'Cleaning', 'cleaning', steady, peak, i, circ, enc))
     circuits = _circuits(st, rows)
     res = PowerResult(st, rows, circuits, _totals(st, rows, circuits), [], v.name, v.uid)
     res.findings = _findings(res)

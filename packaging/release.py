@@ -64,8 +64,23 @@ def page_modules(root: str = ROOT) -> list[str]:
         if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'PAGE_CLASSES'
                                                 for t in node.targets):
             table = ast.literal_eval(node.value)
-            return [f'vantage.ui.workspaces.{mod}' for mod, _ in table.values()]
+            return [f'vantage.ui.workspaces.{mod}' for mod, _ in table.values()] + _pages17(root)
     raise ValueError('no PAGE_CLASSES table in vantage/ui/mainwindow.py')
+
+
+def _pages17(root: str) -> list[str]:
+    """Round 17's pages, which mainwindow adds from vantage/ui/pages17.py's PAGES table (read the same way)."""
+    path = os.path.join(root, 'vantage', 'ui', 'pages17.py')
+    with open(path, encoding='utf-8') as fh:
+        tree = ast.parse(fh.read(), path)
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'PAGES' for t in node.targets):
+            out = []
+            for call in node.value.elts:            # dict(key=…, module=…, …)
+                kw = {k.arg: ast.literal_eval(k.value) for k in call.keywords}
+                out.append(f'vantage.ui.workspaces.{kw["module"]}')
+            return out
+    raise ValueError('no PAGES table in vantage/ui/pages17.py')
 
 
 _LICENCE = re.compile(r'(LICEN[CS]E|COPYING|NOTICE)', re.I)

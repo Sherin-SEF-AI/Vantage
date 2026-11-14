@@ -958,8 +958,29 @@ class OverlayController(QObject):
             dk = (u, id(sw), dark)
             if dk not in self._draws:
                 self._draws = {kk: v for kk, v in self._draws.items() if kk[0] != u}
-                self._draws[dk] = sweep_draws(sw, dark)
+                self._draws[dk] = self._fmcw(u, sw) or sweep_draws(sw, dark)
             out += self._draws[dk]
+        return out
+
+    def _fmcw(self, uid, sw) -> list | None:
+        """An FMCW lidar's sweep coloured by radial velocity at the FMCW study's ego speed (core.fmcw_lidar); None for
+        a time-of-flight lidar, which keeps its range colours."""
+        if not len(sw.points):
+            return None
+        try:
+            from ..core import fmcw_lidar as FM
+            p = self.ctx.store.project
+            sensor = next((x for x in p.variant.sensors if x.uid == uid), None)
+            rgba = FM.sweep_velocity_rgba(p, sensor, sw.points) if sensor is not None else None
+        except Exception:                          # noqa: BLE001 — the colours never break the view
+            return None
+        if rgba is None:
+            return None
+        out = [PointDraw(sw.points, np.asarray(rgba, np.float32), POINT_SIZE, True)]
+        if len(sw.self_points):
+            c = np.array(QColor(STATUS['critical']).getRgbF()[:3])
+            out.append(PointDraw(sw.self_points, np.tile(np.r_[c, 1.0], (len(sw.self_points), 1)).astype(np.float32),
+                                 SELF_SIZE, True))
         return out
 
     def fresh_sweeps(self) -> list:

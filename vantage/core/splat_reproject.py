@@ -115,6 +115,16 @@ per class and range, against those the re-rendered recorded rig shows; what the 
 and thin objects the lidar caught too few points of) is not scored by either rig. Traffic lights, thin and high, are
 mostly not rebuilt: their recall is not assessed (their rows stay in the table, but no finding is drawn from them).
 
+Neural replay (core.neural_replay, optional)
+--------------------------------------------
+When a project's neural replay settings ask for them (project.analysis.neural_replay, the defaults included), the
+scene is optimised and rendered through the Unscented Transform (projection 'ut': core.splat_raster.splat_ut, the
+rolling shutter exact per row, lidar beams along their exact directions), and build_scene adds the scene's extension
+(articulated walkers in place of the rigid pedestrians, emissive traffic-light heads, a lidar opacity per Gaussian)
+cached beside the scene; TorchScene poses, colours and casts beams through it, and _render_rig_frame relights the
+re-rendered images (core.relight) when a condition is set. Without a project (or with projection 'ewa', walkers
+'rigid', no lights, no lidar opacity) everything is as described above.
+
 Limits
 ------
 The re-rendered images are not real images: Gaussians from a lidar's points and a few hundred photometric steps blur
@@ -1081,6 +1091,8 @@ class Scene:
     origin: np.ndarray
     source: str = 'lidar'
     info: dict = field(default_factory=dict)
+    projection: str = 'ewa'             # how its Gaussians are projected: 'ewa' (affine) or 'ut' (core.neural_replay)
+    neural: object = None               # core.neural_replay's extension (walkers, lights, lidar opacity), or None
 
     @property
     def n(self) -> int:
@@ -1095,8 +1107,8 @@ class Scene:
                             actor_ids=np.asarray(self.actor_ids, np.int64), sky=self.sky, origin=self.origin)
         os.replace(tmp, p)
         with open(os.path.join(folder, 'scene.json'), 'w', encoding='utf-8') as fh:
-            json.dump({'schema': SCHEMA + '#scene', 'source': self.source, 'info': self.info}, fh, indent=1,
-                      default=float)
+            json.dump({'schema': SCHEMA + '#scene', 'source': self.source, 'info': self.info,
+                       'projection': self.projection}, fh, indent=1, default=float)
         return p
 
     @staticmethod
@@ -1109,7 +1121,8 @@ class Scene:
             with np.load(p, allow_pickle=False) as z:
                 return Scene(z['means'], z['scales'], z['quats'], z['opacity'], z['colours'], z['actor'], z['obj'],
                              [int(x) for x in z['actor_ids']], z['sky'], z['origin'], str(meta.get('source', 'lidar')),
-                             dict(meta.get('info') or {}))
+                             dict(meta.get('info') or {}),
+                             'ut' if meta.get('projection') == 'ut' else 'ewa')
         except (OSError, ValueError, KeyError):
             return None
 
@@ -1233,8 +1246,10 @@ def _sky_dir_to_uv(D):
     return u, v
 
 
-def reconstruct(drive: Drive, st: SplatSettings, project=None, engine=None, progress=None, cancel=None) -> Scene:
-    """The drive's street scene as Gaussians (module docstring); raises Cancelled when cancelled."""
+def reconstruct(drive: Drive, st: SplatSettings, project=None, engine=None, progress=None, cancel=None,
+                projection: str | None = None) -> Scene:
+    """The drive's street scene as Gaussians (module docstring); raises Cancelled when cancelled. projection: 'ewa' or
+    'ut' (None: the project's, core.neural_replay)."""
     t_start = time.perf_counter()
     stop = cancel or (lambda: False)
     rng = np.random.default_rng(st.seed)
@@ -1371,6 +1386,7 @@ def reconstruct(drive: Drive, st: SplatSettings, project=None, engine=None, prog
                   'actors': len(actor_ids), 'coloured_share': round(float(seen), 4), 'sweeps': len(jobs),
                   'dynamic': 'boxes' if use_boxes else ('ignore' if st.dynamic == 'ignore' else 'no boxes'),
                   'box_source': drive.box_source}
+    scene.projection = projection if projection in SR.PROJECTIONS else projection_of(project)
     if st.optimise and st.iterations > 0:
         opt = optimise(scene, drive, st, project, engine, rng,
                        progress=lambda f, t='': _prog(progress, 0.45 + 0.5 * f, t), cancel=stop)
@@ -1512,6 +1528,13 @@ class TorchScene:
         self.actor = T(scene.actor, torch.long)
         self.obj = T(scene.obj, torch.long)
         self.na = len(scene.actor_ids)
+        # core.neural_replay: the projection ('ut': the Unscented Transform), and its extension (articulated walkers,
+        # emissive traffic lights, a lidar opacity per Gaussian, relighting) when the scene carries one
+        self.projection = getattr(scene, 'projection', 'ewa') or 'ewa'
+        self.op_lidar_logit = None
+        self.relight = None
+        ext = getattr(scene, 'neural', None)
+        self._ext = ext.attach(self) if ext is not None and hasattr(ext, 'attach') else None
 
     def params(self) -> list:
         return [self.means, self.log_s, self.quat, self.op_logit, self.col_logit, self.sky_logit]
@@ -1530,7 +1553,20 @@ class TorchScene:
             sc.sky = torch.sigmoid(self.sky_logit)[0].permute(1, 2, 0).detach().cpu().numpy().astype(np.float32)
 
     def posed(self, t: float):
-        """(world centres (N, 3), world rotations (N, 3, 3), shown (N,) bool) at time t (actors at their box poses)."""
+        """(world centres (N, 3), world rotations (N, 3, 3), shown (N,) bool) at time t (actors at their box poses;
+        with core.neural_replay's extension, walkers in their fitted body pose)."""
+        if self._ext is not None:
+            return self._ext.posed(t)
+        return self.posed_rigid(t)
+
+    def colours_at(self, t: float, col):
+        """The Gaussians' colours at time t: col, except where the extension changes them (a traffic light's lamps)."""
+        if self._ext is not None:
+            return self._ext.colours_at(t, col)
+        return col
+
+    def posed_rigid(self, t: float):
+        """posed() with every actor a rigid body in its box."""
         import torch
         Rq = SR.quat_to_rot(self.quat)
         if self.na == 0 or self.drive is None:
@@ -1595,6 +1631,8 @@ def render_view(ts: TorchScene, traj: Trajectory, model: CamModel, R_cv, t_cv, t
     'depth' (h, w) expected range in m (depth), 'index' (h, w) the dominant Gaussian (want_index), 'cut'}. A rolling
     shutter (readout_s > 0) renders up to MAX_BANDS row bands, each at its own ego pose."""
     import torch
+    if getattr(ts, 'projection', 'ewa') == 'ut':
+        return render_view_ut(ts, traj, model, R_cv, t_cv, t, readout_s, want_index, depth, grad)
     w, h = model.width, model.height
     dev = ts.dev
     TH = (h + SR.TILE - 1) // SR.TILE
@@ -1619,10 +1657,11 @@ def render_view(ts: TorchScene, traj: Trajectory, model: CamModel, R_cv, t_cv, t
             P, Rg, shown = ts.posed(tb)
             Pc = (P - torch.tensor(o, dtype=torch.float32, device=dev)) @ Wt.T
             cov = SR.covariance(Wt[None] @ Rg, s)
-            feats = col
+            colt = ts.colours_at(tb, col) if hasattr(ts, 'colours_at') else col
+            feats = colt
             nrm = None
             if depth:
-                feats = torch.cat([col, torch.linalg.norm(Pc, dim=1, keepdim=True).detach()], 1)
+                feats = torch.cat([colt, torch.linalg.norm(Pc, dim=1, keepdim=True).detach()], 1)
                 nrm = _normals(Wt[None] @ Rg, s, Pc).detach()
             bg = ts.sky_at(Dt @ Wt)
             if depth:
@@ -1640,6 +1679,78 @@ def render_view(ts: TorchScene, traj: Trajectory, model: CamModel, R_cv, t_cv, t
         res['depth'] = (img[:, 3] / alpha.clamp(min=1e-6)).reshape(h, w)
     if want_index:
         res['index'] = idx.reshape(h, w)
+    return res
+
+
+ROW_SAMPLES = 33                             # UT rolling shutter: the ego pose tabulated at this many rows
+
+
+def _row_poses(traj: Trajectory, R_xv, t_xv, t_ref: float, times, extent: float, axis: str, dev):
+    """SR.RowPoses of a sensor (rotation sensor -> vehicle R_xv, centre t_xv) whose rows (columns) are read at
+    times (K,) evenly over [0, extent], relative to its frame at t_ref; (None, frame at t_ref) when it does not move."""
+    import torch
+    Rw, pw = traj.pose(t_ref)
+    o_ref = Rw @ np.asarray(t_xv, float) + pw
+    W2X_ref = (Rw @ np.asarray(R_xv, float)).T
+    Rk, pk = traj.at(np.asarray(times, float))
+    ok = np.einsum('kij,j->ki', Rk, np.asarray(t_xv, float)) + pk
+    W2X = np.transpose(Rk @ np.asarray(R_xv, float), (0, 2, 1))
+    A = W2X @ W2X_ref.T
+    b = np.einsum('kij,kj->ki', W2X, o_ref[None] - ok)
+    if np.abs(A - np.eye(3)).max() < 1e-9 and np.abs(b).max() < 1e-7:
+        return None, (o_ref, W2X_ref)
+    T = lambda a: torch.tensor(a, dtype=torch.float32, device=dev)  # noqa: E731
+    return SR.RowPoses(T(A), T(b), extent, axis), (o_ref, W2X_ref)
+
+
+def render_view_ut(ts: TorchScene, traj: Trajectory, model: CamModel, R_cv, t_cv, t: float, readout_s: float = 0.0,
+                   want_index: bool = False, depth: bool = False, grad: bool = False) -> dict:
+    """render_view through the Unscented Transform (core.splat_raster.splat_ut; core.neural_replay): every pixel's
+    response evaluated along its own ray, and a rolling shutter exact per row: each pixel's ray leaves the camera
+    where it was when its row was read, each Gaussian's sigma points are moved by the camera's motion at the row they
+    land on (the ego pose tabulated at ROW_SAMPLES rows, linear between them). Moving actors are posed at the frame's
+    middle-row time."""
+    import torch
+    w, h = model.width, model.height
+    dev = ts.dev
+    D, okr = _rays_of(model)
+    D = D.reshape(-1, 3)
+    rs = None
+    if readout_s > 0:
+        rows = (np.arange(ROW_SAMPLES) + 0.5) / ROW_SAMPLES
+        times = t + (rows - 0.5) * readout_s
+        rs, (o, W2O) = _row_poses(traj, R_cv, t_cv, t, times, float(h), 'v', dev)
+    else:
+        Rw, pw = traj.pose(t)
+        o, W2O = Rw @ np.asarray(t_cv, float) + pw, (Rw @ np.asarray(R_cv, float)).T
+    Dt = torch.tensor(D, dtype=torch.float32, device=dev)
+    Ot = None
+    if rs is not None:
+        Ap, bp = rs.at_pixels(w, h)
+        Ot = -torch.einsum('nji,nj->ni', Ap, bp)                   # Aᵀ(0 − b): the row's camera centre
+        Dt = torch.einsum('nji,nj->ni', Ap, Dt)
+        Dt = Dt / torch.linalg.norm(Dt, dim=1, keepdim=True).clamp(min=1e-12)
+    Wt = torch.tensor(W2O, dtype=torch.float32, device=dev)
+    with torch.set_grad_enabled(grad):
+        s = torch.exp(ts.log_s)
+        op = torch.sigmoid(ts.op_logit)
+        col = torch.sigmoid(ts.col_logit)
+        P, Rg, shown = ts.posed(t)
+        col = ts.colours_at(t, col)
+        Pc = (P - torch.tensor(o, dtype=torch.float32, device=dev)) @ Wt.T
+        Rc = Wt[None] @ Rg
+        feats = torch.cat([col, torch.zeros_like(col[:, :1])], 1) if depth else col
+        bg = ts.sky_at(torch.tensor(D, dtype=torch.float32, device=dev) @ Wt)
+        if depth:
+            bg = torch.cat([bg, torch.zeros_like(bg[:, :1])], 1)
+        out = SR.splat_ut(Pc, Rc, s, feats, torch.where(shown, op, torch.zeros_like(op)), model.projector(), w, h,
+                          Dt, Ot, rs, bg=bg, want_index=want_index, depth_col=3 if depth else None)
+    img, alpha = out['image'], out['alpha']
+    res = {'rgb': img[:, :3].reshape(h, w, 3), 'alpha': alpha.reshape(h, w), 'cut': out['cut'], 'field': okr}
+    if depth:
+        res['depth'] = (img[:, 3] / alpha.clamp(min=1e-6)).reshape(h, w)
+    if want_index:
+        res['index'] = out['index'].reshape(h, w)
     return res
 
 
@@ -1988,13 +2099,9 @@ def recorded_lidar_spec(L: DriveLidar) -> LidarSpec:
 
 
 # =========================================================================== lidar rendering
-def render_lidar(ts: TorchScene, traj: Trajectory, spec: LidarSpec, t_start: float, st: SplatSettings) -> dict:
-    """One sweep of a lidar starting at drive time t_start (module docstring: Rendering through a rig). Returns
-    {'range' (rings, columns) m, NaN where no return, 'acc', 'cos', 'points' (n, 5) x y z (sensor frame at the firing
-    pose) intensity (0: not modelled) ring, 'col' (n,) column of each point, 'time' (columns,) firing times,
-    'returns', 'beams', 'self_hits', 'dropped_opacity', 'dropped_incidence'}."""
-    import torch
-    dev = ts.dev
+def _lidar_grid(spec: LidarSpec):
+    """The beam grid a lidar is rendered on: (rings' elevations, row of each ring, e_hi, e_step, height, azimuth
+    step, sectors)."""
     el = np.asarray(spec.elevations, float)
     R, C = len(el), len(spec.az)
     e_step = float(min(np.min(np.diff(np.sort(el))) if R > 1 else 0.5, 0.5))
@@ -2005,32 +2112,37 @@ def render_lidar(ts: TorchScene, traj: Trajectory, spec: LidarSpec, t_start: flo
     # rings off the even grid are read from the row they fall in (at most half a row, ≤ 0.25°, from its centre)
     step = 360.0 / C if spec.spinning else (float(np.median(np.abs(np.diff(spec.az)))) if C > 1 else 1.0)
     nsec = SECTORS if (spec.spinning and C >= SECTORS * 4) else 1
-    rng_g = np.full((R, C), np.nan)
-    acc_g = np.zeros((R, C))
-    cos_g = np.zeros((R, C))
-    s = torch.exp(ts.log_s)
-    op = torch.sigmoid(ts.op_logit)
-    smin = s.min(1).values
-    jmin = s.argmin(1)
-    iso = smin > 0.5 * s.median(1).values
-    with torch.no_grad():
-        for k in range(nsec):
+    return el, rows, e_hi, e_step, height, step, nsec
+
+
+def lidar_beams(ts: TorchScene, traj: Trajectory, spec: LidarSpec, t_start: float, st: SplatSettings,
+                sectors=None, grad: bool = False, opacity=None) -> list:
+    """The beams of one sweep against the Gaussians, sector by sector (module docstring: Rendering through a rig):
+    [(columns (n,), acc (rings, n), expected range (rings, n), median range (rings, n) or None, |cos| incidence
+    (rings, n))] as torch tensors (with gradients when grad). opacity: the Gaussians' opacities (None: the lidar
+    opacity of core.neural_replay's extension when the scene has one, else the camera's). With the UT projection
+    (ts.projection 'ut') each beam is cast along its exact direction (ring elevation, column azimuth) from where the
+    sensor was when that column fired (core.splat_raster.splat_ut), so no planar-depth approximation is needed."""
+    import torch
+    dev = ts.dev
+    el, rows, e_hi, e_step, height, step, nsec = _lidar_grid(spec)
+    C = len(spec.az)
+    ut = getattr(ts, 'projection', 'ewa') == 'ut'
+    out = []
+    with torch.set_grad_enabled(grad):
+        s = torch.exp(ts.log_s)
+        if opacity is None:
+            lo = getattr(ts, 'op_lidar_logit', None)
+            opacity = torch.sigmoid(lo if lo is not None else ts.op_logit)
+        op = opacity
+        smin = s.min(1).values
+        jmin = s.argmin(1)
+        iso = smin > 0.5 * s.median(1).values
+        for k in (range(nsec) if sectors is None else sectors):
             cols = np.arange(k * C // nsec, (k + 1) * C // nsec)
             if not len(cols):
                 continue
             tm = t_start + float(np.mean(spec.frac[cols])) * spec.period_s
-            Rw, pw = traj.pose(tm)
-            o = Rw @ np.asarray(spec.t, float) + pw
-            W2S = (Rw @ np.asarray(spec.R, float)).T
-            Wt = torch.tensor(W2S, dtype=torch.float32, device=dev)
-            P, Rg, shown = ts.posed(tm)
-            Ps = (P - torch.tensor(o, dtype=torch.float32, device=dev)) @ Wt.T
-            Rs = Wt[None] @ Rg
-            cov = SR.covariance(Rs, s)
-            rr = torch.linalg.norm(Ps, dim=1)
-            nrm = torch.gather(Rs, 2, jmin[:, None, None].expand(-1, 3, 1))[..., 0]
-            cs = torch.where(iso, torch.ones_like(rr), (nrm * Ps).sum(1).abs() / rr.clamp(min=1e-6))
-            nrm = torch.where(iso[:, None], Ps / rr[:, None].clamp(min=1e-6), nrm)
             azc = np.degrees(np.arctan2(np.mean(np.sin(np.radians(spec.az[cols]))),
                                         np.mean(np.cos(np.radians(spec.az[cols])))))
             rel = (spec.az[cols] - azc + 180.0) % 360.0 - 180.0
@@ -2038,22 +2150,82 @@ def render_lidar(ts: TorchScene, traj: Trajectory, spec: LidarSpec, t_start: flo
             a_lo = float(rel.min()) - (m + 0.5) * step
             width = int(math.ceil((rel.max() - rel.min()) / step)) + 2 * m + 2
             proj = SR.SphereProjector(azc, a_lo, step, e_hi, e_step, width, height)
-            out = SR.splat(Ps, cov, torch.stack([rr, cs], 1), torch.where(shown, op, torch.zeros_like(op)), proj,
-                           width, height, normals=nrm, depth_col=0, lowpass=LIDAR_LOWPASS)
             ci = np.clip(np.floor((rel - a_lo) / step).astype(int), 0, width - 1)
-            img = out['image'].reshape(height, width, 2).cpu().numpy()
-            if st.lidar_depth == 'median':
-                img[..., 0] = out['median'].reshape(height, width).cpu().numpy() * \
-                    out['alpha'].reshape(height, width).cpu().numpy()
-            al = out['alpha'].reshape(height, width).cpu().numpy()
-            a_ = al[rows[:, None], ci[None, :]]
-            acc_g[:, cols] = a_
-            with np.errstate(invalid='ignore', divide='ignore'):
-                rng_g[:, cols] = img[rows[:, None], ci[None, :], 0] / np.maximum(a_, 1e-6)
-                cos_g[:, cols] = img[rows[:, None], ci[None, :], 1] / np.maximum(a_, 1e-6)
+            rs = None
+            if ut and spec.spinning and len(cols) > 1:
+                us = np.linspace(0.0, width, 9)
+                o_ = np.argsort(rel)
+                fr = np.interp(a_lo + us * step, rel[o_], spec.frac[cols][o_])
+                rs, (o, W2S) = _row_poses(traj, spec.R, spec.t, tm, t_start + fr * spec.period_s, float(width),
+                                          'u', dev)
+            else:
+                Rw, pw = traj.pose(tm)
+                o, W2S = Rw @ np.asarray(spec.t, float) + pw, (Rw @ np.asarray(spec.R, float)).T
+            Wt = torch.tensor(W2S, dtype=torch.float32, device=dev)
+            P, Rg, shown = ts.posed(tm)
+            Ps = (P - torch.tensor(o, dtype=torch.float32, device=dev)) @ Wt.T
+            Rs = Wt[None] @ Rg
+            rr = torch.linalg.norm(Ps, dim=1)
+            nrm = torch.gather(Rs, 2, jmin[:, None, None].expand(-1, 3, 1))[..., 0]
+            cs = torch.where(iso, torch.ones_like(rr), (nrm * Ps).sum(1).abs() / rr.clamp(min=1e-6))
+            nrm = torch.where(iso[:, None], Ps / rr[:, None].clamp(min=1e-6), nrm)
+            opk = torch.where(shown, op, torch.zeros_like(op))
+            feats = torch.stack([rr.detach() if not grad else rr, cs], 1)
+            if ut:
+                Dg, _ = SR.projector_rays(proj, width, height, device=dev)
+                # each beam's pixel carries the beam's exact direction (ring elevation, column azimuth)
+                from . import sensors as SN
+                bd = SN.directions(el, spec.az[cols])                          # (R, n, 3)
+                pix = (rows[:, None] * width + ci[None, :]).ravel()
+                Dg[torch.tensor(pix, device=dev)] = torch.tensor(bd.reshape(-1, 3), dtype=torch.float32, device=dev)
+                Og = None
+                if rs is not None:
+                    Ap, bp = rs.at_pixels(width, height)
+                    Og = -torch.einsum('nji,nj->ni', Ap, bp)
+                    Dg = torch.einsum('nji,nj->ni', Ap, Dg)
+                    Dg = Dg / torch.linalg.norm(Dg, dim=1, keepdim=True).clamp(min=1e-12)
+                res = SR.splat_ut(Ps, Rs, s, feats, opk, proj, width, height, Dg, Og, rs, depth_col=0,
+                                  lowpass=LIDAR_LOWPASS)
+            else:
+                cov = SR.covariance(Rs, s)
+                res = SR.splat(Ps, cov, feats, opk, proj, width, height, normals=nrm.detach(), depth_col=0,
+                               lowpass=LIDAR_LOWPASS)
+            img = res['image'].reshape(height, width, 2)
+            al = res['alpha'].reshape(height, width)
+            ri, cj = torch.tensor(rows, device=dev)[:, None], torch.tensor(ci, device=dev)[None, :]
+            a_ = al[ri, cj]
+            den = a_.clamp(min=1e-6)
+            r_exp = img[ri, cj, 0] / den
+            cos_ = img[ri, cj, 1] / den
+            r_med = None
+            if res.get('median') is not None:
+                r_med = res['median'].reshape(height, width)[ri, cj]
+            out.append((cols, a_, r_exp, r_med, cos_))
+    return out
+
+
+def render_lidar(ts: TorchScene, traj: Trajectory, spec: LidarSpec, t_start: float, st: SplatSettings) -> dict:
+    """One sweep of a lidar starting at drive time t_start (module docstring: Rendering through a rig). Returns
+    {'range' (rings, columns) m, NaN where no return, 'acc', 'cos', 'points' (n, 5) x y z (sensor frame at the firing
+    pose) intensity (0: not modelled) ring, 'col' (n,) column of each point, 'time' (columns,) firing times,
+    'returns', 'beams', 'self_hits', 'dropped_opacity', 'dropped_incidence'}."""
+    el = np.asarray(spec.elevations, float)
+    R, C = len(el), len(spec.az)
+    rng_g = np.full((R, C), np.nan)
+    acc_g = np.zeros((R, C))
+    cos_g = np.zeros((R, C))
+    for cols, a_, r_exp, r_med, cos_ in lidar_beams(ts, traj, spec, t_start, st):
+        a_ = a_.detach().cpu().numpy()
+        acc_g[:, cols] = a_
+        if st.lidar_depth == 'median' and r_med is not None:
+            rng_g[:, cols] = r_med.detach().cpu().numpy()
+        else:
+            rng_g[:, cols] = r_exp.detach().cpu().numpy()
+        cos_g[:, cols] = cos_.detach().cpu().numpy()
     ok_op = acc_g >= st.lidar_min_opacity
     ok_inc = cos_g >= math.cos(math.radians(st.lidar_max_incidence_deg))
-    ok_rng = (rng_g >= spec.range_min) & (rng_g <= spec.range_max)
+    with np.errstate(invalid='ignore'):
+        ok_rng = (rng_g >= spec.range_min) & (rng_g <= spec.range_max)
     body = spec.body if spec.body is not None else np.zeros((R, C), bool)
     ret = ok_op & ok_inc & ok_rng & ~body
     out_rng = np.where(ret, rng_g, np.nan)
@@ -2219,7 +2391,9 @@ def _render_rig_frame(ts: TorchScene, drive: Drive, rig: RigSpec, t: float, scen
             ids = torch.where((idx >= 0) & (r['alpha'] > 0.5), obj[idx.clamp(min=0)], torch.zeros_like(idx))
             ids = ids.cpu().numpy().astype(np.int32)
             rng = r['depth'].cpu().numpy().astype(np.float32)
-            rng[r['alpha'].cpu().numpy() < 0.5] = 0.0
+            al_np = r['alpha'].cpu().numpy()
+            rng_rl = np.where(al_np >= 0.05, rng, 0.0)     # the relighting's surface: any visible opacity
+            rng[al_np < 0.5] = 0.0
             fld = r['field']
             rgb[~fld] = 0
             ids[~fld] = 0
@@ -2229,6 +2403,14 @@ def _render_rig_frame(ts: TorchScene, drive: Drive, rig: RigSpec, t: float, scen
                 rgb[c.body] = np.repeat(np.clip(g, 30, 220)[:, None], 3, 1)
                 ids[c.body] = 0
                 rng[c.body] = 0
+            rl = getattr(ts, 'relight', None)
+            if rl is not None:
+                # core.neural_replay / core.relight: the re-rendered image under another condition (wet, night,
+                # snow), from its range and its dominant Gaussians' normals; said so wherever it is reported
+                if c.body is not None:
+                    rng_rl[c.body] = 0.0
+                rng_rl[~fld] = 0.0
+                rgb = rl(rgb, rng_rl, idx.cpu().numpy(), c, t)
             out[c.tag] = (rgb, ids, rng)
     return out
 
@@ -2558,15 +2740,19 @@ def cache_folder(cache_root, drive: Drive, st: SplatSettings) -> str:
 
 
 def build_scene(drive: Drive, st: SplatSettings, project=None, engine=None, progress=None, cancel=None,
-                cache_root=None, rebuild=False) -> Scene:
+                cache_root=None, rebuild=False, projection: str | None = None, neural=None) -> Scene:
     """The scene for the drive and settings: from the cache when it was built with the same inputs, else built (or
-    imported) and cached."""
+    imported) and cached. projection: 'ewa' or 'ut' (None: the project's); neural: core.neural_replay's settings for
+    its extension (None: the project's; False: none)."""
     folder = cache_folder(cache_root, drive, st) if cache_root else None
+    proj = projection if projection in SR.PROJECTIONS else projection_of(project)
+    if folder and proj != 'ewa' and st.source != 'ply':
+        folder += '-' + proj                    # a scene optimised through another projection is another scene
     if folder and not rebuild:
         sc = Scene.load(folder)
         if sc is not None and sc.info.get('drive_key') == drive.key:
             sc.info['cached'] = True
-            return sc
+            return _neural_augment(sc, drive, st, project, engine, progress, cancel, folder, neural)
     if st.source == 'ply':
         if not st.ply_path or not os.path.isfile(st.ply_path):
             raise ValueError('Choose the .ply file to import.')
@@ -2574,12 +2760,48 @@ def build_scene(drive: Drive, st: SplatSettings, project=None, engine=None, prog
         _prog(progress, 0.3, 'Sky from the images')
         colour_sky_only(sc, drive, st, project, engine, cancel)
         sc.info['drive_key'] = drive.key
+        sc.projection = proj
     else:
-        sc = reconstruct(drive, st, project, engine, progress, cancel)
+        sc = reconstruct(drive, st, project, engine, progress, cancel, proj)
     sc.info['cached'] = False
     if folder:
         sc.save(folder)
-    return sc
+    return _neural_augment(sc, drive, st, project, engine, progress, cancel, folder, neural)
+
+
+# =========================================================================== hooks of core.neural_replay
+def _neural():
+    """core.neural_replay when it is importable (it is optional: the log replay works without it)."""
+    try:
+        from . import neural_replay as NR
+    except ImportError:                                   # pragma: no cover
+        return None
+    return NR
+
+
+def projection_of(project) -> str:
+    """How a project's log replay projects its Gaussians: 'ut' or 'ewa' (core.neural_replay's setting; 'ewa' without
+    a project or without that module)."""
+    NR = _neural()
+    if NR is None or project is None:
+        return 'ewa'
+    try:
+        return NR.settings_of(project).projection
+    except Exception:                                     # noqa: BLE001 — never let an extension break the replay
+        return 'ewa'
+
+
+def _neural_augment(sc, drive, st, project, engine, progress, cancel, folder, neural=None):
+    """The scene with core.neural_replay's articulated walkers, emissive traffic lights and lidar opacities when the
+    project asks for them (cached beside the scene); unchanged otherwise (neural False: never)."""
+    NR = _neural()
+    if NR is None or neural is False or (project is None and neural is None):
+        sc.neural = None
+        return sc
+    try:
+        return NR.augment(sc, drive, st, project, engine, progress, cancel, folder, settings=neural)
+    except NR.Cancelled:
+        raise Cancelled()
 
 
 def colour_sky_only(scene: Scene, drive: Drive, st: SplatSettings, project=None, engine=None, cancel=None):
@@ -2706,7 +2928,11 @@ def run(project, engine=None, settings: SplatSettings | None = None, variant=Non
 
 def _scene_doc(scene: Scene) -> dict:
     d = dict(scene.info)
+    ext = getattr(scene, 'neural', None)
+    if ext is not None and getattr(ext, 'info', None):
+        d['neural'] = dict(ext.info)
     d.update({'source': scene.source, 'gaussians': scene.n, 'actors': len(scene.actor_ids),
+              'projection': getattr(scene, 'projection', 'ewa'),
               'origin_global_m': [round(float(x), 4) for x in scene.origin],
               'extent_m': [round(float(x), 2) for x in (scene.means.max(0) - scene.means.min(0))] if scene.n else []})
     return d
@@ -2743,11 +2969,20 @@ def _findings(drive, scene, val, ra, rb, ab, st, de_st, detected) -> list:
                     if lv.get('median_abs_error_steep_m') is not None else '')
                  + f'grazing beams are where a centimetre of height is metres of range), '
                  f'{_pc(lv["return_agreement"])} of the beams agree on returning or not.')
+    ninfo = (getattr(getattr(scene, 'neural', None), 'info', None) or {})
     if drive.tracks and st.dynamic == 'boxes':
         n_dyn = len(scene.actor_ids)
-        _finding(out, 'note', 'dynamic',
-                 f'{n_dyn} moving object{"s" if n_dyn != 1 else ""} rebuilt as rigid bodies in their annotated boxes '
-                 f'({drive.box_source}); the rest of the scene is static.')
+        n_w = int((ninfo.get('walkers') or {}).get('count') or 0)
+        if n_w:
+            _finding(out, 'note', 'dynamic',
+                     f'{n_dyn} moving object{"s" if n_dyn != 1 else ""} rebuilt in their annotated boxes '
+                     f'({drive.box_source}): {n_w} pedestrian{"s" if n_w != 1 else ""} as articulated bodies '
+                     f'({(ninfo.get("walkers") or {}).get("method", "")}), the rest as rigid bodies; the rest of the '
+                     'scene is static.')
+        else:
+            _finding(out, 'note', 'dynamic',
+                     f'{n_dyn} moving object{"s" if n_dyn != 1 else ""} rebuilt as rigid bodies in their annotated '
+                     f'boxes ({drive.box_source}); the rest of the scene is static.')
     else:
         _finding(out, 'warning', 'dynamic',
                  'Everything is treated as static' + (' (Moving objects: ignore)' if drive.tracks else
@@ -2756,8 +2991,17 @@ def _findings(drive, scene, val, ra, rb, ab, st, de_st, detected) -> list:
     rows = ab.get('recall') or []
     cov = ab.get('coverage') or []
     classes = ab.get('classes') or []
-    if 'traffic_light' in classes and (any(r['class'] == 'traffic_light' for r in rows + cov) or
-                                       any(t.cls == 'traffic_light' for t in drive.tracks.values())):
+    n_lights = int((ninfo.get('lights') or {}).get('count') or 0)
+    if 'traffic_light' in classes and n_lights:
+        n_rec = sum(r['recorded'] for r in cov if r['class'] == 'traffic_light')
+        n_ren = sum(r['rendered'] for r in cov if r['class'] == 'traffic_light')
+        _finding(out, 'note', 'coverage',
+                 f'Traffic lights are inserted as emissive planes ({n_lights} heads, their state over time from '
+                 f'{(ninfo.get("lights") or {}).get("state_source", "the recording")})'
+                 + (f': the re-rendered recorded rig shows {n_ren} of the {n_rec} the recording\'s ground truth shows '
+                    f'at these instants' if n_rec else '') + '.')
+    elif 'traffic_light' in classes and (any(r['class'] == 'traffic_light' for r in rows + cov) or
+                                         any(t.cls == 'traffic_light' for t in drive.tracks.values())):
         n_rec = sum(r['recorded'] for r in cov if r['class'] == 'traffic_light')
         n_ren = sum(r['rendered'] for r in cov if r['class'] == 'traffic_light')
         _finding(out, 'note', 'coverage',
@@ -2778,7 +3022,7 @@ def _findings(drive, scene, val, ra, rb, ab, st, de_st, detected) -> list:
                      + ' that the recording\'s ground truth shows at these instants: objects the lidar did not rebuild '
                        'finely enough are not scored, so recall there is on an easier set than the recorded images\'.')
     for r in rows:
-        if r['objects'] < max(de_st.min_gt, 3) or r['class'] == 'traffic_light':
+        if r['objects'] < max(de_st.min_gt, 3) or (r['class'] == 'traffic_light' and not n_lights):
             continue
         if detected and r.get('delta') is not None and abs(r['delta']) >= 0.05:
             sev = 'warning' if r['delta'] <= -0.10 else 'note'
@@ -2835,6 +3079,7 @@ def to_doc(res: SplatResult, project=None) -> dict:
             'drive': res.drive, 'scene': res.scene, 'validation': res.validation, 'rig_a': res.rig_a,
             'rig_b': res.rig_b, 'ab': ab, 'detector': res.detector, 'findings': res.findings, 'notes': res.notes,
             'timing': res.timing, 'seconds': res.seconds, 'assumptions': ASSUMPTIONS,
+            'projection': res.scene.get('projection', 'ewa'), 'neural': res.scene.get('neural'),
             'limits': ('Static scene except annotated actors (rigid bodies); no view-dependent colour or exposure '
                        'model; holes where the lidar never reached; the affine (EWA) projection of each Gaussian; '
                        'the depth order per Gaussian, not per pixel; the A/B instants are the recording\'s camera '

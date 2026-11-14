@@ -64,6 +64,9 @@ PAGE_CLASSES = {
     'risk_coverage': ('risk_ws', 'RiskPage'), 'rig_perception': ('rig_perception_ws', 'RigPerceptionPage'),
     'foundation': ('foundation_ws', 'FoundationPage'), 'guide': ('guide_ws', 'GuidePage'),
 }
+from .pages17 import PAGES as _PAGES17                     # noqa: E402  (round 17's pages, one table)
+PAGE_CLASSES.update({p['key']: (p['module'], p['cls']) for p in _PAGES17})
+NEW_MENUS17 = {'Embedded': 'Simulate'}                    # round 17's new top-level menus: the menu each follows
 
 
 class MainWindow(QMainWindow):
@@ -292,6 +295,16 @@ class MainWindow(QMainWindow):
         self.actions_by_id[aid] = a
         return a
 
+    def _undo_texts(self, *_):
+        """Edit ▸ Undo and Redo say which step they take back or redo (a change Claude made over MCP reads
+        "Undo Claude · camera F: x 3.23 → 3.26"); plain Undo and Redo when there is none."""
+        st = self.store.undo
+        for aid, word, text in (('undo', 'Undo', st.undoText()), ('redo', 'Redo', st.redoText())):
+            a = self.actions_by_id.get(aid)
+            if a is not None:
+                t = ' '.join(str(text or '').split())
+                a.setText(f'{word} {t[:57] + "…" if len(t) > 58 else t}' if t else word)
+
     def _build_actions(self):
         A = self.act
         c = self.ctx
@@ -301,6 +314,10 @@ class MainWindow(QMainWindow):
         A('open', 'Open…', self.open_project, 'Ctrl+O', 'folder', category='File')
         A('save', 'Save', self.save, 'Ctrl+S', 'file', category='File')
         A('saveas', 'Save as…', self.save_as, 'Ctrl+Shift+S', category='File')
+        A('open_folder', 'Open project folder…', self.open_folder, None, 'folder', category='File',
+          tip='Open a project saved as a folder of text files (name.vantage.d) that git can diff and merge')
+        A('to_folder', 'Convert to project folder…', self.convert_to_folder, None, category='File',
+          tip='Save this project as a folder of text files (name.vantage.d) beside its file, and work on the folder')
         A('import_vehicle', 'Vehicle model…', self.import_vehicle, 'Ctrl+I', 'import', category='File ▸ Import')
         A('import_photos', 'Reference photo set…', self.load_photos, None, 'photo-spin', category='File ▸ Import')
         A('import_module', 'Camera module…', self.import_module, None, 'camera-wide', category='File ▸ Import')
@@ -316,6 +333,8 @@ class MainWindow(QMainWindow):
         # edit
         A('undo', 'Undo', st.undo.undo, 'Ctrl+Z', 'undo', category='Edit')
         A('redo', 'Redo', st.undo.redo, 'Ctrl+Shift+Z', 'redo', category='Edit')
+        st.undo.undoTextChanged.connect(self._undo_texts)     # Edit ▸ Undo names the step ("Undo Claude · …")
+        st.undo.redoTextChanged.connect(self._undo_texts)
         A('duplicate', 'Duplicate', lambda: ops.duplicate_cameras(c, list(st.sel_cams)), 'Ctrl+D', 'copy', category='Edit')
         A('delete', 'Delete', self.delete_selection, 'Del', 'trash', category='Edit')
         A('mirror', 'Mirror to other side', lambda: ops.mirror_to_other_side(c, list(st.sel_cams)), 'Ctrl+M', 'mirror', category='Edit')
@@ -651,6 +670,13 @@ class MainWindow(QMainWindow):
           tip='Stand the critical targets in CARLA as walkers, cars and props and compare what each camera sees with '
               'the critical-targets study')
         # export
+        A('neural_replay', 'Neural replay…', self.open_neural_replay, None, 'sparkle', category='Simulate',
+          tip='Exact-lens (3DGUT) projection, articulated pedestrians, traffic-light states and relighting for the log '
+              'replay, measured against it')
+        A('ego_composite', 'Composite my body into a drive…', self.composite_drive, None, 'car-side',
+          category='Simulate',
+          tip='Paint the project\'s own body, rig and housings into a recorded CARLA drive (images, lidar, ground '
+              'truth) in place of CARLA\'s car, then run the as-built check and the drift indicator on the copy')
         A('export', 'Export…', self.export_dialog, 'Ctrl+E', 'export', category='Export')
         for fid, text in (('mount_sheet_pdf', 'Mount sheet (PDF)'), ('report_html', 'Report (HTML)'), ('report_pdf', 'Report (PDF)'),
                           ('extrinsics_json', 'JSON'), ('extrinsics_yaml', 'YAML'), ('extrinsics_csv', 'CSV'),
@@ -713,6 +739,9 @@ class MainWindow(QMainWindow):
           tip='Check every model against independent references (closed forms, OpenCV, ITU-R tables, published '
               'examples, exact ray casting, Monte Carlo) and open the report')
         A('about', 'About Vantage', self.about, None, 'app', category='Help')
+        for pg in _PAGES17:                                # round 17's pages (ui/pages17.py)
+            A(pg['key'], pg['text'], lambda k=pg['key']: self.set_page(k), None, pg.get('icon'),
+              category=pg['menu'], tip=pg.get('tip', ''))
 
     def _build_menus(self):
         mb = self.menuBar()
@@ -746,11 +775,11 @@ class MainWindow(QMainWindow):
                            + ('' if rig.placed else ' (no published positions: not placed)'))
             act.setEnabled(bool(rig.placed))
         rm.setToolTipsVisible(True)
-        f.addAction(a['open'])
+        f.addActions([a['open'], a['open_folder']])
         self.recent_menu = f.addMenu('Open recent')
         self.recent_menu.aboutToShow.connect(self._fill_recent)
         f.addSeparator()
-        f.addActions([a['save'], a['saveas']])
+        f.addActions([a['save'], a['saveas'], a['to_folder']])
         f.addSeparator()
         sub(f, 'Import', ['import_vehicle', 'import_photos', 'import_module', 'import_layout'])
         sub(f, 'Export', ['export', '-', 'exp_mount_sheet_pdf', 'exp_report_html', 'exp_extrinsics_json', 'exp_ros2'])
@@ -854,7 +883,8 @@ class MainWindow(QMainWindow):
         si = menu('Simulate')
         si.addActions([a['carla'], a['carla_live']])
         si.addSeparator()
-        si.addActions([a['detection'], a['splat'], a['campaign'], a['critical_carla']])
+        si.addActions([a['detection'], a['splat'], a['neural_replay'], a['campaign'], a['critical_carla'],
+                       a['ego_composite']])
         si.addSeparator()
         si.addActions([a['rig_perception'], a['foundation'], a['robust_perception']])
         ex = menu('Export')
@@ -882,6 +912,27 @@ class MainWindow(QMainWindow):
         h.addAction(a['validate_models'])
         h.addSeparator()
         h.addAction(a['about'])
+        menus = {act.menu().title().replace('&', ''): act.menu() for act in mb.actions() if act.menu() is not None}
+        for title in dict.fromkeys(pg['menu'] for pg in _PAGES17):     # round 17's pages, at the end of their menus
+            m = menus.get(title)
+            if m is None and title in NEW_MENUS17:           # a menu of its own (Embedded), after the one it follows
+                after = menus.get(NEW_MENUS17[title])
+                nxt = mb.actions()[mb.actions().index(after.menuAction()) + 1] if after is not None else None
+                m = QMenu(title, mb)
+                if nxt is not None:
+                    mb.insertMenu(nxt, m)
+                else:
+                    mb.addMenu(m)
+                menus[title] = m
+            if m is not None:
+                acts = [a[pg['key']] for pg in _PAGES17 if pg['menu'] == title]
+                if a['quit'] in m.actions():             # File: before the separator above Quit
+                    i = m.actions().index(a['quit'])
+                    m.insertActions(m.actions()[i - 1], acts)   # … Start window, ─, Lab…, ─, Quit
+                    m.insertSeparator(acts[0])
+                else:
+                    m.addSeparator()
+                    m.addActions(acts)
         corner = QWidget()
         cl = QHBoxLayout(corner)
         cl.setContentsMargins(0, 0, 10, 0)
@@ -1970,7 +2021,8 @@ class MainWindow(QMainWindow):
                 c.uid = nu
             for c in v.cameras:
                 c.link_uid = uid_map.get(c.link_uid, '')
-            v.seams = {}
+            # the hand-set seam angles go with the cameras they sit between (as the assistant's new variants do)
+            v.seams = {'|'.join(uid_map.get(u, u) for u in k.split('|')): a for k, a in cur.seams.items()}
             p.variants.append(v)
             p.active_uid = v.uid
         self.store.edit('variants', fn, f'Duplicated variant {cur.name}')
@@ -2072,6 +2124,95 @@ class MainWindow(QMainWindow):
         self.add_recent(path)
         self.msg(f'Opened {os.path.basename(path)}')
 
+    def open_folder(self):
+        """File ▸ Open project folder…: a project saved as a folder (core.project_dir)."""
+        path = QFileDialog.getExistingDirectory(self, 'Open project folder',
+                                                self.ctx.settings.value('dir/projects', os.path.expanduser('~')))
+        if path and self._open_ok(path):
+            self.open_project(path)                  # asks to save the current project first
+
+    def _open_ok(self, path) -> bool:
+        from ..core import project_dir as PD
+        if PD.is_project_dir(path):
+            return True
+        QMessageBox.warning(self, 'Not a project folder', f'{os.path.basename(path)} holds no Vantage project '
+                                                          '(no project.json written by Vantage).')
+        return False
+
+    def convert_to_folder(self):
+        """File ▸ Convert to project folder…: the project as name.vantage.d beside its file; the window then works
+        on the folder (the file stays as it was)."""
+        from ..core import project_dir as PD
+        p = self.store.project
+        start = PD.default_dir_for(p.path) if p.path else os.path.join(
+            self.ctx.settings.value('dir/projects', os.path.expanduser('~')), f'{p.name}{PD.DIR_SUFFIX}')
+        path, _ = QFileDialog.getSaveFileName(self, 'Convert to project folder', start,
+                                              f'{PD.DIALOG_TEXT} (*.vantage.d)')
+        if not path:
+            return False
+        path = PD.default_dir_for(path)
+        why = PD.check_folder(path)
+        if why:
+            QMessageBox.warning(self, 'Cannot use that folder', why)
+            return False
+        p.path = path
+        p.name = PD.name_from_path(path)
+        self.ctx.settings.setValue('dir/projects', os.path.dirname(path))
+        return self.save()
+
+    def open_neural_replay(self):
+        """Simulate ▸ Neural replay…: the Log replay page on its Neural replay tab."""
+        self.set_page('splat')
+        pg = getattr(self, '_page_widgets', {}).get('splat')
+        tabs = getattr(pg, 'tabs', None)
+        if tabs is not None:
+            for i in range(tabs.count()):
+                if tabs.tabText(i) == 'Neural replay':
+                    tabs.setCurrentIndex(i)
+
+    def composite_drive(self):
+        """Simulate ▸ Composite my body into a drive…: core.ego_composite on a recorded CARLA drive with ground
+        truth, as a background job; the copy goes next to it (<drive>-ego) and is checked (as-built with the exact
+        body, the drift indicator). The drive and the copy are remembered in the project (one undo step)."""
+        from ..core import ego_composite as EC
+        p = self.store.project
+        st = EC.settings_of(p)
+        start = st.drive or self.ctx.settings.value('dir/projects', os.path.expanduser('~'))
+        drive = QFileDialog.getExistingDirectory(self, 'A recorded CARLA drive (with ground truth)', start)
+        if not drive:
+            return False
+        d = st.to_dict()
+        d.update(drive=drive, out_dir='')
+        run_st = EC.EgoSettings.from_dict(d)
+        snap, eng = p.snapshot(), self._shared_engine()
+
+        def work(progress, cancel):
+            return EC.run(snap, eng, run_st, progress=progress, cancel=cancel, check=True)
+
+        def done(res):
+            if res is None:
+                self.msg('Compositing cancelled')
+                return
+            s = EC.summary(res)
+
+            def fn(pj):
+                pj.analysis.ego_composite = dict(d, out_dir=s.get('out_dir') or '')
+            self.store.edit('analysis', fn, f'Composited my body into {os.path.basename(drive)}')
+            chk = (s.get('check') or {}).get('cameras') or {}
+            def deg(v):
+                if isinstance(v, (list, tuple)):
+                    return ', fitted yaw/pitch/roll ' + ' / '.join(f'{x:+.2f}°' for x in v)
+                return f', fitted {v:+.2f}°' if isinstance(v, (int, float)) else ''
+            lines = [f'{t}: {str(c.get("verdict")).replace("_", " ")}{deg(c.get("fit_deg"))}' for t, c in chk.items()]
+            QMessageBox.information(self, 'Body composited',
+                                    f'The composited drive is in\n{s.get("out_dir")}\n\n'
+                                    + ('\n'.join(lines) if lines else 'No check was run.')
+                                    + '\n\nOpen it on Calibrate ▸ As-built check (Exact body outline on).')
+
+        def failed(message):
+            QMessageBox.warning(self, 'Could not composite the drive', message.split('\n')[0])
+        return self.run_job('ego_composite', 'Compositing my body into the drive', work, done, failed)
+
     def thumbnail_png(self) -> bytes:
         from .planview import PlanView
         try:
@@ -2108,13 +2249,18 @@ class MainWindow(QMainWindow):
     def save_as(self):
         p = self.store.project
         start = p.path or os.path.join(self.ctx.settings.value('dir/projects', os.path.expanduser('~')), f'{p.name}.vantage')
-        path, _ = QFileDialog.getSaveFileName(self, 'Save project as', start, 'Vantage project (*.vantage)')
+        from ..core import project_dir as PD
+        folder_filter = f'{PD.DIALOG_TEXT} (*.vantage.d)'
+        path, chosen = QFileDialog.getSaveFileName(self, 'Save project as', start,
+                                                   f'Vantage project (*.vantage);;{folder_filter}')
         if not path:
             return False
-        if not path.endswith('.vantage'):
+        if chosen == folder_filter or PD.wants_dir(path):
+            path = PD.default_dir_for(path[:-len('.vantage')] if path.endswith('.vantage') else path)
+        elif not path.endswith('.vantage'):
             path += '.vantage'
         p.path = path
-        p.name = os.path.splitext(os.path.basename(path))[0]
+        p.name = PD.name_from_path(path)
         self.ctx.settings.setValue('dir/projects', os.path.dirname(path))
         return self.save()
 
@@ -2787,3 +2933,6 @@ def _spec_from_vehicle(v):
     s.height = m.get('Height', s.height)
     s.rear_overhang = -m.get('rear_x', -s.rear_overhang)
     return s
+
+
+MainWindow.PAGE_DOCKS.update({p['key']: tuple(p.get('docks', ())) for p in _PAGES17})

@@ -72,7 +72,10 @@ TOGGLES = (('lidar_check', 'Drive-log estimate', 'Also run the drive-log check\'
                                                  'estimate, and the one used when a camera\'s outline cannot tell'),
            ('fit_translation', 'Fit a shift', 'Also fit a shift of each camera (weakly observable: a distant edge moves '
                                               'the same for a turn as for a shift); held at the plan when the outline '
-                                              'does not constrain it'))
+                                              'does not constrain it'),
+           ('exact_body', 'Exact body outline', 'Trace the planned body exactly instead of through the 0.35° occlusion '
+                                                'cube: slower, removes a ~0.3° bias on cameras that see a straight '
+                                                'body edge'))
 CAM_COLS = (('Camera', ''), ('Frames', 'Frames kept while moving'),
             ('IoU plan', 'Overlap of the real and the simulated mask at the plan\'s pose, over the pixels the frames '
                          'decide'),

@@ -703,15 +703,18 @@ def describe_location(x, y, project: Project) -> str:
     hw = meas.get('Width', 1.7) / 2
     wc = project.vehicle.wheel_centres
     side = 'left' if y > 0 else 'right'
-    if x > xf - 0.05:
+    reach = 0.35                     # ground under the bumper's overhang: the ROI starts at the body's outline
+    if x > xf - reach:
         if abs(y) < hw * 0.6:
             return 'below the front bumper' if x - xf < 0.25 else 'ahead of the front bumper'
         return f'front-{side} corner'
-    if x < xr + 0.05:
+    if x < xr + reach:
         if abs(y) < hw * 0.6:
             return 'below the rear bumper' if xr - x < 0.25 else 'behind the rear bumper'
         return f'rear-{side} corner'
     for k, v in wc.items():
         if abs(x - v[0]) < 0.45 and np.sign(y) == np.sign(v[1]):
             return f"{side} {'front' if k[0] == 'F' else 'rear'} wheel arch"
+    if abs(y) < hw * 0.6:
+        return 'under the body'
     return f'{side} sill, beside the doors'

@@ -132,12 +132,23 @@ that runs that kind into `OUT_DIR/step-<n>-<kind>` (default: the plan's folder i
 provenance naming the plan (a perception-study step runs its study headless; `--save` keeps what a fleet-twin watch
 step adds); CARLA steps need a server already running, as `--carla-run` does. A modifier without its
 option is refused.
-`--export` without `--formats` leaves out the experiment, the CARLA rig, the simulation campaign, the detection
-quality (minutes, tens of MB), the calibration coach, the gradient refinement, the log replay, rig perception, re-drive,
-foundation models, robust perception, the design agent, the learned model and its perception records; the last two export what is on disk (the campaign's drives and checks, the recordings'
-cached detections) and drive nothing.
+`--export` without `--formats` writes the quick formats and leaves out these 34, which are slow, large or for a
+research stack (name them in `--formats` to write them):
+- documents: `calib_coach`, `diff_optim`, `experiment`, `sim_campaign`, `detection_quality` (minutes, tens of MB),
+  `log_replay`, `rig_perception`, `redrive`, `foundation_range`, `robust_perception`, `design_options`, `perf_model`,
+  `event_cameras`;
+- simulation: `sim_rig` (the CARLA rig);
+- research: `plucker_rays`, `occupancy_density`, `rectify_maps`, `rectify_canonical`, `rig_gap`, `stress_test`,
+  `gsplat_bridge`, `perception_records`, `foxglove_mcap`, `fmcw`, `neural_replay`, `usd_rig`;
+- AV stacks: `stack_autoware`, `stack_navsim`, `stack_hugsim`, `stack_mmdet3d`, `stack_openpcdet`, `stack_lerobot`;
+- hardware: `trigger_firmware`, `fea`.
+
+The campaign, detection-quality and perception-record formats export what is on disk (the campaign's drives and
+checks, the recordings' cached detections) and drive nothing.
 Captures are matched to cameras by tag in the file name (`F.png`, `cam_QR.jpg`, `ML-capture.tif`); imported
-calibrations by the camera name or ROS topic in the file, the file name, or the serial number. Exit code: 0 fine, 2 the
+calibrations by the camera name or ROS topic in the file, the file name, or the serial number. Exit code: 0 fine, 1 a
+usage error, said on stderr (an unknown format, variant or project; a modifier without its option; with `--diff`, 1
+means the projects differ, so check stderr there), 2 an option value argparse refuses (an unknown `--frame`), or the
 plan has critical issues (with `--analyse` or `--export`; with `--recording-budget`, the recorder or a sensor's link
 cannot keep up; with `--power-budget`, the DC-DC converter or a fuse is over its rating; with `--gnss`, an antenna has no
 sky; with `--brackets`, a camera cannot take a printed bracket as planned; with `--suspension`, a load case lifts a wheel
@@ -192,6 +203,39 @@ The perception, design and fleet options (each also on its page; a modifier with
 | `--robust-perception OUT_DIR` (`--robust-recording`, `--robust-mode`, `--robust-samples`, `--robust-sobol`, `--robust-no-detect`, `--robust-min-recall`) | `robust_perception.json`, region and sensitivity CSVs, a figure per recording | 2 no recording, 3 a 5th-percentile rig recall below `--robust-min-recall`, 8 the detector model missing |
 | `--risk-coverage [OUT.json\|DIR]` (`--risk-weight`, `--risk-metric`, `--risk-min CLASS=PCT`) | the risk-weighted coverage per class, regions, weights and maps | 3 a class below its `--risk-min` |
 | `--fleet-twin OUT_DIR` (`--as-of`), `--fleet-twin-online VEHICLE FILE…` (`--fleet-twin-date`), `--fleet-twin-watch` (`--watch-runs`, `--watch-interval`) | the twin (JSON, CSV, schedule, PNG, tolerance inputs); online calibrations added to a vehicle; watch folders read headless | 3 a sensor due or beyond its limit, 4 it cannot run, or a file or vehicle not found |
+| `--thermal OUT_DIR` | thermal cameras at night: `thermal.json`, the range and curve CSVs, two PNGs | 2 a thermal camera looks through glass with no IR window |
+| `--event-cameras OUT_DIR` | event rate and data rate per event camera against its link, motion blur, the tunnel exit (JSON, CSVs, PNGs) | 3 an event camera's data over its link |
+| `--event-drive DRIVE_DIR` | a CARLA drive's recorded events: rate per camera, CARLA's DVS against the model (JSON on stdout) | 2 no events in the drive |
+| `--fmcw OUT_DIR` (`--fmcw-recording DRIVE_DIR`, `--fmcw-sweeps N`) | the FMCW lidar study: JSON, CSVs, 4D clouds (PCD, PLY with velocity), a ROS 2 bag | 3 an FMCW lidar's velocity range below the closing speed, 2 no lidar or an unreadable recording |
+| `--framing OUT_DIR` | the rig frame: cut list, stock plan, BOM (CSV, PDF), plate DXFs, STL parts, STEP assembly | 3 a serious finding, 2 nothing to frame |
+| `--fea OUT_DIR` (`--fea-mesh MM`) | the frame's modes, road jitter per sensor and the crosswind case (about a minute) | 3 a mode in the body-bounce or wheel-hop band, 2 no frame |
+| `--aero OUT_DIR` | the rig's drag, EV range loss, lock-in and wind loads (not CFD) | 3 a range or lock-in warning, 2 nothing above the roof |
+| `--imaging-radar [OUT.json\|DIR]` (`--imaging-radar-as MODEL_ID`) | every radar as a 4D imaging radar: resolution, ranges over the road, cavity ghosts, advice (JSON, CSVs, PNG) | 2 a grating lobe or a serious cavity ghost in the field, 4 no radar |
+| `--trigger-firmware OUT_DIR` | the trigger-box projects (RP2040 C and Rust, STM32F411, Jetson), the schedule and the check run here | 3 a plan problem or a failed check, 8 a toolchain to prove a target is missing |
+| `--edge-config OUT_DIR` | the edge watchdog's `edge.json`, systemd unit and README | |
+| `--edge-dry-run OUT_DIR` (`--edge-recording PATH`, `--edge-faults FAULTS.json`) | the watchdog over a recording (or a synthetic drive) with faults written in: alerts JSON and CSV | 3 a fault missed or a false alarm, 4 an unreadable recording |
+| `--thermal-intrinsics OUT_DIR` | the cameras' intrinsics against temperature: JSON, CSV, PNG, OpenCV and Kalibr files | 3 a drift past the limit, 2 nothing to fit |
+| `--usd-export OUT_DIR` (`--usd-splats CACHE_DIR`) | the OpenUSD stage, its JSON and the NCore V4 store of the rig | 4 the splat folder holds no scene (the stage is still written) |
+| `--ego-composite DRIVE_DIR` (`--ego-out DIR`, `--ego-check`) | the project's body composited into a recorded CARLA drive; with `--ego-check` the as-built check and drift on the copy | 3 a camera to re-mount, 4 an unreadable drive or one without ground truth |
+| `--neural-replay OUT_DIR` (`--neural-projection ut\|ewa`, `--neural-relight wet,night,snow`) | the neural replay study on the log replay's drive: projection, walkers, lights, lidar opacity, relit frames, each measured (JSON, CSVs, PNGs) | 3 the chosen projection validates worse on this drive, 4 no drive or no PyTorch |
+| `--sotif [OUT.json\|DIR]` (`--sotif-speed KMH`, `--sotif-model`, `--sotif-basis`) | the SOTIF matrix and the ODD speed limit (a DIR: JSON, CSVs, HTML, PDF) | 3 the ODD speed limit is below the target, 2 no visible camera |
+| `--cleaning [OUT.json\|DIR]` (`--cleaning-propose`) | cleaning and de-icing: coverage, tank over the shift, heaters, power (JSON, CSV, PNG) | 3 a serious finding |
+| `--diff OTHER` (`--diff-json OUT.json`) | what OTHER (a `.vantage` file, a project folder or `path@REV`) changes against the project, by meaning, on stdout | 1 they differ |
+| `--lab-publish URL ID` (`--lab-message`) | the project published to a lab server as a new version (the token from the keyring, `lab-tokens.json` or `VANTAGE_LAB_TOKEN`) | 3 refused (409: someone published first), 4 unreachable |
+| `--lab-pull URL ID[@REF] DEST` | a version pulled into DEST (`name.vantage.d`: a project folder) | 3 refused, 4 unreachable |
+| `--lab-sync URL ID` (`--lab-message`) | publish, pull or a three-way merge, saved over the project | 5 conflicts (nothing published), 3, 4 |
+| `--lab-pooled-twin URL OUT_DIR` (`--lab-projects`) | the fleet twin of every fleet the lab shares with your team | 3 refused, 4 unreachable |
+
+## Project folders and the lab server
+
+```sh
+vantage diff rig.vantage.d@HEAD~1             # what changed since the last commit, by meaning (--json OUT for JSON)
+vantage diff a.vantage b.vantage.d            # two projects: exit 0 the same, 1 different, 2 error
+vantage diff --git-setup rig.vantage.d        # register the merge driver in that folder's git repository
+vantage convert rig.vantage rig.vantage.d     # a .vantage file to a project folder, or back
+vantage --edge --config /etc/vantage/edge.json   # the in-car watchdog (also python -m vantage.edge)
+vantage --lab-server /srv/vantage-lab         # the team's lab server (python -m vantage.lab init|token|backup|gc …)
+```
 
 ## Claude over MCP (Claude Code, Claude Desktop)
 
@@ -225,11 +269,19 @@ Claude Desktop takes the same command in `claude_desktop_config.json` under `mcp
   placement (`"props": {"auto": true}`). `get_seams` gives the advised angles, and `simulate_changes` compares them by
   where a standing object vanishes at each seam.
 - `undo_last_change`, which only ever undoes Claude's own last step, and `redo_change`.
-- `run_batch`, which runs any of batch mode's 94 job options on the project as it is now, unsaved changes included,
+- `run_batch`, which runs any of batch mode's job options on the project as it is now, unsaved changes included,
   in a run folder beside the project. That covers studies, checks of drive logs, as-built recordings and installation
   photos, lens calibration and import, online calibration, log replay, refinement, experiments, validation and
   reproducing results. It returns the exit code and its meaning, the files written and the small JSON ones. CARLA
   runs, model downloads and the automation command are not available through it.
+- Round 17's tools: `get_thermal_night` and `add_thermal_camera` (thermal cameras at night), `get_event_cameras` (event
+  cameras), `get_fmcw_lidar` (the FMCW lidar study), `get_imaging_radar` (4D imaging radar), `get_ego_composite` (the
+  last drive your body was composited into), `get_neural_replay` (the log replay's neural settings and models), `get_trigger_firmware`,
+  `get_edge_config`, `edge_dry_run` and `get_thermal_intrinsics` (embedded hardware and calibration), `get_frame`,
+  `get_frame_modes`, `get_aerodynamics` and `add_frame_to_rig` (the rig's frame), `get_sotif` (the SOTIF matrix and the
+  ODD speed limit), `get_cleaning` (cleaning and de-icing), `diff_projects` (two
+  projects or git revisions compared by meaning), `lab_versions`, `lab_compare` and `lab_pooled_twin` (the team's lab
+  server; publishing stays on the Lab page).
 - `save_project`, `export_files`, `get_recent_activity` (what you changed in the window), `get_project_data` and
   `vantage_status`.
 - `import_vehicle`, which replaces the vehicle with a model file as File ▸ Import ▸ Vehicle model does: units, up and
@@ -245,7 +297,7 @@ Claude Desktop takes the same command in `claude_desktop_config.json` under `mcp
 - Background jobs: `start_job` runs any tool in the background and returns at once; `get_job` reads its progress and
   result (`wait_s` waits for it), `cancel_job` stops it and `list_jobs` lists them. Jobs run one after another.
 
-**Beyond tools.** The server speaks MCP 2024-11-05 to 2025-11-25 (97 tools):
+**Beyond tools.** The server speaks MCP 2024-11-05 to 2025-11-25 (118 tools):
 - **Resources:** the project by URI, read through the tool that computes it, so always current:
   `vantage://status`, `vantage://overview`, `vantage://project-data`, `vantage://coverage`, `vantage://issues`,
   `vantage://seams`, `vantage://requirements`, `vantage://design-log`, `vantage://view/top.png` and more.

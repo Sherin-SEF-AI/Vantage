@@ -52,6 +52,8 @@ OBSTACLE_FIELDS = ('name', 'x', 'y', 'height', 'radius')
 TARGET_FIELDS = ('name', 'x', 'y', 'yaw', 'pattern', 'rows', 'cols', 'square_mm')
 VARIANT_FIELDS = ('name', 'note', 'blend_m')
 ANALYSIS_LOCKED = ('copilot', 'assistant_log', 'assistant', 'automation')       # audit trail, log, brief, commands
+# keys inside a study's settings only the user sets: accepting a non-commercial body model's licence and naming its file
+ANALYSIS_USER_ONLY = {'neural_replay': ('smpl_accept', 'smpl_path')}
 CHOICES = {'sync': tuple('ABCDEFGH'), 'kind@rig_part': ('box', 'cylinder', 'bar'),
            'pattern': ('checkerboard', 'charuco', 'aprilgrid'), 'mode@roi': ('offset', 'polygon'),
            'measured_from': ('outline', 'bbox'), 'corners': ('round', 'square'),
@@ -139,6 +141,8 @@ def _set_fields(obj, props, allowed, target, label):
         v = _value(target, k, v, cur)
         if k in ('yaw',):
             v = _wrap(v)
+            if isinstance(cur, (int, float)) and abs(_wrap(cur) - v) < 1e-9:
+                continue                     # the same heading (180 and -180): no change
         if v != cur:
             setattr(obj, k, v)
             done.append(f'{k} {_fmt(cur)} → {_fmt(v)}')
@@ -268,6 +272,12 @@ def _set(p, op, touched):
     if t == 'analysis':
         touched.add('analysis')
         allowed = tuple(f for f in P.AnalysisSettings.__dataclass_fields__ if f not in ANALYSIS_LOCKED)
+        for slot, keys in ANALYSIS_USER_ONLY.items():
+            mine = [k for k in keys if isinstance(props, dict) and isinstance(props.get(slot), dict)
+                    and k in props[slot] and props[slot][k] != (getattr(p.analysis, slot, None) or {}).get(k)]
+            if mine:
+                raise EditError(f'analysis.{slot}: {", ".join(mine)} only the user sets (a licence they accept, a '
+                                'file they choose)')
         if isinstance(props, dict):
             props = {k: ({**getattr(p.analysis, k), **v} if isinstance(v, dict) and
                          isinstance(getattr(p.analysis, k, None), dict) else v) for k, v in props.items()}
@@ -455,6 +465,11 @@ def _add(p, op, touched):
                 raise EditError('a preset is sized from the vehicle model, and this project has none')
             plan = R.fit_plan(p, preset)
             parts, dz, moved = plan
+            held = [d.tag for _, d, _ in moved if getattr(d, 'locked', False)]
+            if held:
+                raise EditError(f'fitting the {dict(R.PRESETS)[preset].lower()} would lift {", ".join(held)}, which '
+                                f'{"is" if len(held) == 1 else "are"} locked (the user\'s): ask the user to unlock '
+                                f'{"it" if len(held) == 1 else "them"} first')
             R.apply_fit(p, plan)
             touched.add('rig')
             if moved:
@@ -462,6 +477,9 @@ def _add(p, op, touched):
             line = f'added {dict(R.PRESETS)[preset].lower()} ({", ".join(q.name for q in parts)})'
             if dz:
                 line += f'; lifted {len(dz)} part(s) onto it by up to {max(dz.values()) * 1000:.0f} mm'
+            if moved:
+                line += (f', with {", ".join(sorted({d.tag for _, d, _ in moved}))} mounted on '
+                         f'{"it" if len(dz) == 1 else "them"}')
             return line
         part = P.RigPart()
         _set_fields(part, props, RIG_FIELDS, 'rig_part', 'new rig part')
@@ -556,6 +574,10 @@ def _remove(p, op, touched):
         v = _variant(p, ref)
         if len(p.variants) == 1:
             raise EditError('the last variant cannot be removed')
+        held = [o.tag for o in list(v.cameras) + list(v.sensors) if getattr(o, 'locked', False)]
+        if held:
+            raise EditError(f'variant {v.name!r} holds locked devices ({", ".join(held)}), which are the user\'s: '
+                            'ask the user to unlock them or remove the variant')
         p.variants = [o for o in p.variants if o.uid != v.uid]
         if p.active_uid == v.uid:
             p.active_uid = p.variants[0].uid

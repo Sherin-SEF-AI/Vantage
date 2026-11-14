@@ -1,0 +1,26 @@
+# The RP2040 firmware in Rust (Vantage). Needs: rustup target add thumbv6m-none-eabi; cargo install flip-link
+# elf2uf2-rs. Its own package (not in the host workspace): it needs crates.io, the host core does not.
+[package]
+name = "vantage-trigger"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace]
+
+[dependencies]
+trigger-core = { path = "../core" }
+rp2040-hal = { version = "0.12", features = ["rt", "critical-section-impl"] }
+rp2040-boot2 = "0.3"
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+embedded-hal = "1.0"
+panic-halt = "0.2"
+pio = "0.3"
+pio-proc = "0.3"
+
+[profile.release]
+opt-level = "s"
+lto = true
+debug = 2
+overflow-checks = true

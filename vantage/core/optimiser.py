@@ -145,7 +145,9 @@ class Optimiser:
         self.st = st
         self.variant = variant or project.variant
         self.base = {c.uid: copy.deepcopy(c) for c in self.variant.cameras}
-        self.vars = {v.uid: v for v in (st.vars or default_vars(project, self.variant))}
+        # free variables of this variant's cameras only (a page's list can be of the variant before)
+        given = [v for v in (st.vars or []) if v.uid in self.base]
+        self.vars = {v.uid: v for v in (given or default_vars(project, self.variant))}
         self.vg = engine.vehicle_geom(project)
         self.grid = engine.roi_grid(project, st.cell)
         self.P = self.grid.points(0.0)[self.grid.roi]

@@ -14,19 +14,23 @@ full reference. A 70-minute tour of the app is on YouTube: <https://youtu.be/s0T
 - **Plan the rig.** Each camera is modelled through its real lens: what it sees, where the body, the rig and the other
   sensors' housings block it, and how many pixels land on the ground and on objects. You also see where cameras overlap,
   and how sensitive the layout is to mounting errors, load and road motion. Lidars, radars, GNSS and IMUs sit on the
-  same rig, using real products from their makers' datasheets.
-- **Engineer it.** Brackets ready to 3D-print, the cable harness, the power budget, the clock tree and trigger plan, and
-  the recording budget. A requirements scorecard you can run as a CI gate.
+  same rig, using real products from their makers' datasheets, and so do thermal and event cameras, coherent FMCW lidars
+  and 4D imaging radars.
+- **Engineer it.** Brackets ready to 3D-print, a T-slot frame with its cut list, STEP and modal analysis, the cable
+  harness, the power budget, the clock tree and the trigger-box firmware, cleaning and de-icing, and the recording
+  budget. A requirements scorecard you can run as a CI gate, and an ISO 21448 SOTIF matrix with the ODD's speed bound.
 - **Drive it in CARLA.** Every frame comes labelled (semantic, instance, range, 2D and 3D boxes) through each fisheye's
-  own lens model. Inject faults of known size, run standard scenarios and campaigns, and measure detection quality per
-  rig and per region around the car.
+  own lens model, with your own vehicle's body painted in place of CARLA's car. Inject faults of known size, run
+  standard scenarios and campaigns, and measure detection quality per rig and per region around the car.
 - **Calibrate and verify.** Unit lens calibration, camera-lidar calibration with an observability plan, an installation
-  check, online calibration over a recorded drive, and a drive-log check of the real rig against the plan.
-- **Hand it off.** Exports to OpenCV, ROS 2 (URDF, TF and bags), Kalibr, nuScenes, KITTI, Autoware and more. Each one is
-  checked against the tool that reads it, and every number carries provenance.
+  check, online calibration over a recorded drive, thermal intrinsics, a drive-log check of the real rig against the
+  plan, and an in-car watchdog that alerts on stream faults and knocked cameras.
+- **Hand it off.** Exports to OpenCV, ROS 2 (URDF, TF and bags), Kalibr, nuScenes, KITTI, Autoware, OpenUSD and more.
+  Each one is checked against the tool that reads it, and every number carries provenance. Projects can live in git as
+  folders, and teams share them through a self-hosted lab server.
 - **Ask for it.** The **Copilot** (Groq or Claude, with your own key) turns a request into a plan with every value and
   its reason, and nothing runs until you approve it. Claude Code and Claude Desktop can also work on a design over MCP
-  (97 tools, resources, prompts and background jobs).
+  (118 tools, resources, prompts and background jobs).
 
 The same engine serves production surround-view systems: stitched bird's-eye remap tables, a 3D bowl view, parking
 guidelines, and where standing people vanish at stitch seams.

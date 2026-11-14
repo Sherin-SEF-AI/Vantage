@@ -204,13 +204,15 @@ def _lens_opencv_fisheye(ctx):
 
 @check('lens.opencv_undistort', 'lens', 'Pixel to ray against OpenCV\'s fisheye undistortion',
        'largest angle between Intrinsics.unproject\'s ray and the ray cv2.fisheye.undistortPoints gives for the same '
-       'pixel, every built-in fisheye lens, pixels up to 75° off the axis',
+       'pixel, every built-in fisheye lens, pixels up to 75° off the axis (where OpenCV\'s answer projects back onto '
+       'the pixel: its iteration does not converge far out on a strongly bent wide-angle fit; those pixels are '
+       'counted)',
        'OpenCV cv2.fisheye.undistortPoints (iterated to 10⁻¹⁴)', 1e-4, 'degrees', refs=('opencv', 'kannala2006'))
 def _lens_opencv_undistort(ctx):
     import cv2
     from ..core.lens import resolve
     rng = ctx.rng('lens.opencv_undistort')
-    worst, rows = 0.0, {}
+    worst, rows, unconverged = 0.0, {}, {}
     crit = (cv2.TERM_CRITERIA_COUNT + cv2.TERM_CRITERIA_EPS, 100, 1e-14)
     for ln, m in _library(fisheye=True):
         it = resolve(m, ln)
@@ -225,11 +227,18 @@ def _lens_opencv_undistort(ctx):
         except TypeError:                                   # an OpenCV without the criteria argument
             n = cv2.fisheye.undistortPoints(pts, K, np.asarray(it.kb, float).reshape(4, 1))
         cv = np.c_[n[:, 0, 0], n[:, 0, 1], np.ones(len(u))]
+        # OpenCV's own iteration does not always converge (a strongly bent wide-angle fit far off the axis): its
+        # answer is a reference only where it projects back onto the pixel (cv2.fisheye.projectPoints, 1e-3 px)
+        back, _ = cv2.fisheye.projectPoints(cv.reshape(-1, 1, 3), np.zeros(3), np.zeros(3), K,
+                                            np.asarray(it.kb, float).reshape(4, 1))
+        conv = np.hypot(back[:, 0, 0] - (u - 0.5), back[:, 0, 1] - (v - 0.5)) < 1e-3
+        if not conv.all():
+            unconverged[ln.id] = int((~conv).sum())
         cv /= np.linalg.norm(cv, axis=1, keepdims=True)
-        ang = np.degrees(np.arccos(np.clip(np.sum(cv * ray, axis=1), -1, 1)))
-        rows[ln.id] = float(ang.max())
+        ang = np.degrees(np.arccos(np.clip(np.sum(cv * ray, axis=1), -1, 1)))[conv]
+        rows[ln.id] = float(ang.max()) if len(ang) else 0.0
         worst = max(worst, rows[ln.id])
-    return Outcome(worst, {'per_lens_deg': rows})
+    return Outcome(worst, {'per_lens_deg': rows, 'opencv_unconverged_pixels': unconverged})
 
 
 @check('lens.builtin_fov', 'lens', 'Built-in lenses reproduce their makers\' stated field of view',

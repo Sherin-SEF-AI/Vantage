@@ -357,6 +357,21 @@ class AnalysisSettings:
     robust_perception: dict = field(default_factory=dict)  # tolerances carried to detection (core.robust_perception)
     risk_coverage: dict = field(default_factory=dict)  # coverage weighted by where hazards appear (core.risk_coverage)
     fleet_twin: dict = field(default_factory=dict)    # calibration drift across the fleet over time (core.fleet_twin)
+    thermal: dict = field(default_factory=dict)       # LWIR cameras: pedestrian contrast at night (core.thermal_ir)
+    event_camera: dict = field(default_factory=dict)  # neuromorphic sensors: event rate, blur, tunnel exits (core.event_camera)
+    fmcw: dict = field(default_factory=dict)          # coherent FMCW lidar: Doppler, sun, cross-talk (core.fmcw_lidar)
+    imaging_radar: dict = field(default_factory=dict)  # 4D MIMO radar: array, sidelobes, cavity ghosts (core.imaging_radar)
+    neural_replay: dict = field(default_factory=dict)  # 3DGUT, walkers, lights, relighting in log replay (core.neural_replay)
+    ego_composite: dict = field(default_factory=dict)  # the user's body composited into CARLA streams (core.ego_composite)
+    usd_export: dict = field(default_factory=dict)    # OpenUSD rig export settings (core.usd_export)
+    framing: dict = field(default_factory=dict)       # extrusion framing, cut lists, STEP (core.framing)
+    fea: dict = field(default_factory=dict)           # tetrahedral modal analysis of the roof structure (core.fea)
+    aero: dict = field(default_factory=dict)          # drag, range loss, vortex shedding of the rig (core.aero)
+    trigger_fw: dict = field(default_factory=dict)    # trigger-box firmware from the sync plan (core.trigger_firmware)
+    edge_daemon: dict = field(default_factory=dict)   # the in-car watchdog's configuration (core.edge_daemon)
+    thermal_intrinsics: dict = field(default_factory=dict)  # focal drift per °C from temperature sweeps (core.thermal_intrinsics)
+    sotif: dict = field(default_factory=dict)         # ISO 21448 triggering conditions and the ODD bound (core.sotif)
+    cleaning: dict = field(default_factory=dict)      # washer nozzles, air knives, heaters on the rig (core.cleaning)
     copilot: dict = field(default_factory=dict)       # the Copilot's approval records: {'plans': [record, ...]}
                                                       # (vantage.assistant.copilot; an audit trail: undo keeps it)
     assistant_log: list = field(default_factory=list)  # the design log: decisions, rejected ideas, constraints,
@@ -736,8 +751,15 @@ class Project:
             'log': [[e.t, e.kind, e.text] for e in self.log[-400:]],
         }
 
-    def save(self, path: str, thumb_png: bytes | None = None):
+    def save(self, path: str, thumb_png: bytes | None = None, text_mesh: bool | None = None):
+        """Save as a .vantage file, or as a project folder when path is a folder or ends in .vantage.d
+        (core.project_dir: stable text files git can diff and merge; text_mesh: the body as OBJ, None keeps the
+        folder's)."""
         thumb_png = thumb_png if thumb_png is not None else self.thumb_png     # re-saving keeps the stored thumbnail
+        from . import project_dir as _pdir
+        if _pdir.wants_dir(path):
+            _pdir.save_dir(self, path, thumb_png, text_mesh=text_mesh)
+            return
         data = self.to_json()
         buf = io.BytesIO()
         m = self.vehicle.mesh
@@ -759,7 +781,11 @@ class Project:
 
     @staticmethod
     def load(path: str) -> 'Project':
+        """Open a .vantage file, or a project folder (core.project_dir)."""
         import os
+        if os.path.isdir(path):
+            from . import project_dir as _pdir
+            return _pdir.load_dir(path)
         if os.path.getsize(path) > 2_000_000_000:
             raise ValueError('File is larger than 2 GB.')
         with zipfile.ZipFile(path) as z:
@@ -769,6 +795,18 @@ class Project:
             data = json.loads(z.read('project.json').decode('utf-8'))
             mesh_bytes = z.read('mesh.npz') if 'mesh.npz' in names else None
             thumb = z.read('thumb.png') if 'thumb.png' in names else b''
+        if data.get('format') != 'vantage':
+            raise ValueError('Not a Vantage project.')
+        arrays = None
+        if mesh_bytes:
+            with np.load(io.BytesIO(mesh_bytes), allow_pickle=False) as npz:
+                arrays = {k: npz[k] for k in ('vertices', 'faces', 'face_part', 'face_zone')}
+        return Project.from_data(data, arrays, thumb, path)
+
+    @staticmethod
+    def from_data(data: dict, mesh: dict | None = None, thumb: bytes = b'', path: str = '') -> 'Project':
+        """A project from project.json's content (as to_json writes it), the mesh arrays (vertices, faces, face_part,
+        face_zone, as mesh.npz holds them; None: no body) and the thumbnail: what load does after reading the file."""
         if data.get('format') != 'vantage':
             raise ValueError('Not a Vantage project.')
         p = Project()
@@ -783,13 +821,12 @@ class Project:
             if k in vm:
                 setattr(veh, k, vm[k])
         veh.landmarks = {k: tuple(v) for k, v in vm.get('landmarks', {}).items()}
-        if mesh_bytes:
-            with np.load(io.BytesIO(mesh_bytes), allow_pickle=False) as npz:
-                parts = [Part.from_dict(d) for d in vm.get('parts', [])] or [Part('Body')]
-                zones = [Zone.from_dict(d) for d in vm.get('zones', [])]
-                fp = npz['face_part']
-                fp = np.clip(fp, 0, len(parts) - 1)
-                veh.mesh = Mesh(npz['vertices'].astype(np.float64), npz['faces'], fp, parts, npz['face_zone'], zones)
+        if mesh is not None:
+            parts = [Part.from_dict(d) for d in vm.get('parts', [])] or [Part('Body')]
+            zones = [Zone.from_dict(d) for d in vm.get('zones', [])]
+            fp = mesh['face_part']
+            fp = np.clip(fp, 0, len(parts) - 1)
+            veh.mesh = Mesh(mesh['vertices'].astype(np.float64), mesh['faces'], fp, parts, mesh['face_zone'], zones)
         p.vehicle = veh
         # the built-in modules and lenses stay available in older projects; a saved entry (edited or custom) wins
         p.modules, p.lenses = merge_builtins({k: Module.from_dict(m) for k, m in (data.get('modules') or {}).items()},
@@ -865,6 +902,9 @@ def _retire_generic_models(p) -> list[tuple[str, str, list]]:
 
 def read_thumbnail(path: str) -> tuple[bytes, dict]:
     """Cheap peek for the start window: (thumb png bytes, summary dict)."""
+    if os.path.isdir(path):                       # a project folder (core.project_dir)
+        from .project_dir import read_thumbnail as rt
+        return rt(path)
     try:
         with zipfile.ZipFile(path) as z:
             names = set(z.namelist())

@@ -345,6 +345,11 @@ SENSOR_DEFAULTS = {
                                        'rotation_frequency': 10.0, 'upper_fov': 10.0, 'lower_fov': -30.0,
                                        'horizontal_fov': 360.0, 'sensor_tick': 0.0, 'role_name': 'front'},
 }
+# the DVS camera: the RGB camera's attributes and its own (CARLA 0.9.16's defaults; round 17)
+SENSOR_DEFAULTS['sensor.camera.dvs'] = dict(SENSOR_DEFAULTS['sensor.camera.rgb'], positive_threshold=0.3,
+                                            negative_threshold=0.3, sigma_positive_threshold=0.0,
+                                            sigma_negative_threshold=0.0, refractory_period_ns=0, use_log=True,
+                                            log_eps=0.001)
 for _k in ('semantic_segmentation', 'instance_segmentation', 'depth'):
     SENSOR_DEFAULTS['sensor.camera.' + _k] = {'image_size_x': 800, 'image_size_y': 600, 'fov': 90.0, 'sensor_tick': 0.0,
                                              'lens_k': -1.0, 'lens_kcube': 0.0, 'lens_circle_multiplier': 0.0,
@@ -717,6 +722,17 @@ class Image(SensorData):
     def __init__(self, frame, t, transform, w, h, fov, raw):
         super().__init__(frame, t, transform)
         self.width, self.height, self.fov, self.raw_data = w, h, fov, raw
+
+
+class DVSEventArray(SensorData):
+    """carla.DVSEventArray: raw_data packed x, y (uint16), t (int64 ns), pol (bool), 13 bytes an event."""
+
+    def __init__(self, frame, t, transform, w, h, fov, raw):
+        super().__init__(frame, t, transform)
+        self.width, self.height, self.fov, self.raw_data = w, h, fov, raw
+
+    def __len__(self):
+        return len(self.raw_data) // 13
 
 
 class LidarMeasurement(SensorData):
@@ -1195,6 +1211,8 @@ class World:
             return self._radar(s, M, dt, boxes, f, t, tr)
         if kind == 'sensor.camera.rgb':
             return self._camera(s, M, boxes, f, t, tr)
+        if kind == 'sensor.camera.dvs':
+            return self._dvs(s, M, boxes, f, t, tr)
         if kind == 'sensor.other.imu':
             p = M[:3, 3].copy()
             y0, y1 = s._prev
@@ -1303,6 +1321,49 @@ class World:
         img = render(M[:3, 3], d_loc @ M[:3, :3].T, boxes).reshape(H, W, 3)
         bgra = np.concatenate([img[..., ::-1], np.full((H, W, 1), 255, np.uint8)], -1)
         return Image(f, t, tr, W, H, fov, bgra.tobytes())
+
+    def _dvs(self, s, M, boxes, f, t, tr):
+        """CARLA's DVS camera (DVSCamera.cpp, ESIM), transcribed pixel by pixel: the RGB camera's image at this pose,
+        grey = 0.2989 R + 0.5870 G + 0.1140 B, L = ln(log_eps + grey) as float32; from each pixel's reference, steps of
+        the threshold (float32) strictly beyond the previous frame's value and within the new one are events, timed by
+        linear interpolation between the frames (ns, the simulation time); the first frame only sets the state."""
+        img = self._camera(s, M, boxes, f, t, tr)
+        bp = s._bp
+        W, H = img.width, img.height
+        a = np.frombuffer(img.raw_data, np.uint8).reshape(H, W, 4)
+        eps = bp._f('log_eps', 0.001)
+        g = 0.2989 * a[..., 2].astype(np.float64) + 0.5870 * a[..., 1] + 0.1140 * a[..., 0]
+        cur = (np.log(eps + g) if str(bp._a.get('use_log', True)).lower() in ('true', '1') else g).astype(
+            np.float32).reshape(-1)
+        t_ns = int(round(t * 1e9))
+        st = getattr(s, '_dvs_state', None)
+        dtype = np.dtype([('x', np.uint16), ('y', np.uint16), ('t', np.int64), ('pol', bool)])
+        if st is None:
+            s._dvs_state = {'prev': cur, 'ref': cur.copy(), 'last': np.zeros(len(cur), np.int64), 'time': t_ns}
+            return DVSEventArray(f, t, tr, W, H, img.fov, b'')
+        Cp, Cm = np.float32(bp._f('positive_threshold', 0.3)), np.float32(bp._f('negative_threshold', 0.3))
+        refr = int(bp._f('refractory_period_ns', 0))
+        dtn = t_ns - st['time']
+        prev, ref, last = st['prev'], st['ref'], st['last']
+        out = []
+        for i in np.nonzero(np.abs(prev.astype(np.float64) - cur) > 1e-6)[0]:
+            it, itdt = prev[i], cur[i]
+            pol = 1.0 if itdt >= it else -1.0
+            C = Cp if pol > 0 else Cm
+            cross = ref[i]
+            while True:
+                cross = np.float32(cross + np.float32(pol) * C)
+                if (pol > 0 and it < cross <= itdt) or (pol < 0 and itdt <= cross < it):
+                    te = st['time'] + int(float(np.float32(cross - it)) * dtn / float(np.float32(itdt - it)))
+                    if last[i] == 0 or te - last[i] >= refr:
+                        out.append((i % W, i // W, te, pol > 0))
+                        last[i] = te
+                    ref[i] = cross
+                else:
+                    break
+        out.sort(key=lambda e: e[2])
+        st['prev'], st['time'] = cur, t_ns
+        return DVSEventArray(f, t, tr, W, H, img.fov, np.array(out, dtype).tobytes())
 
     def _gt_camera(self, s, M, boxes, f, t, tr):
         """A semantic, instance or depth image: one ray cast per view and step, shared by the views' cameras at the

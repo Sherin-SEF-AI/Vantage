@@ -729,7 +729,7 @@ def test_batch_flags_of_round_seven(tmp_path, capsys, monkeypatch):
                     ('reproduce', ['r.json'])):
         assert batch.wanted(_args(**{flag: v})), flag
     for flag, v in (('validate_models', 'lens'), ('validate_quick', True), ('carla_python', 'py')):
-        assert not batch.wanted(_args(**{flag: v})), flag                 # modifiers, like --variant
+        assert batch.wanted(_args(**{flag: v})), flag     # modifiers: batch mode, refused alone (not the window)
     with pytest.raises(SystemExit):
         batch.run(_args(validate_quick=True))                  # --validate-quick needs --validate
     with pytest.raises(SystemExit):
@@ -1035,7 +1035,7 @@ def test_round8_batch_modifiers_and_wanted():
                    ('live_fault', ['1:{}']), ('live_cameras', 'F'), ('detection_recording', ['d']),
                    ('detection_download', True), ('campaign_template', 'rig_ab'), ('campaign_phase', 'drive'),
                    ('critical_carla_drives', 'd')):
-        assert not batch.wanted(_args(**{mod: v})), mod                  # modifiers, like --variant
+        assert batch.wanted(_args(**{mod: v})), mod       # modifiers: batch mode, refused alone (not the window)
         with pytest.raises(SystemExit):
             batch.run(_args(**{mod: v}))                                 # … and never without their option
     with pytest.raises(SystemExit):

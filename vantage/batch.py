@@ -201,10 +201,10 @@ def load_project(args):
         return samples.tigor_sample_project()
     if args.template:
         return samples.template_project(args.template)
-    if args.path and args.path.lower().endswith('.vantage'):
-        return Project.load(args.path)
+    if args.path and (args.path.lower().endswith('.vantage') or os.path.isdir(args.path)):
+        return Project.load(args.path)              # a .vantage file or a project folder (core.project_dir)
     if args.path:
-        raise SystemExit('Batch mode needs a .vantage project (import vehicle models in the app).')
+        raise SystemExit('Batch mode needs a .vantage project or a project folder (import vehicle models in the app).')
     raise SystemExit('Give a .vantage project, --sample or --template.')
 
 
@@ -1040,6 +1040,10 @@ def _run(args) -> int:
                 code = max(code, 3)
     if any(getattr(args, k) not in (None, False) for k in ROUND14_OPTIONS):
         code = max(code, _round14(project, eng, args))
+    from .batch17 import run_round17
+    if any(getattr(args, k, None) not in (None, False) for k in ROUND17_OPTIONS):
+        code = max(code, run_round17(project, eng, args, {'out': _out, 'stamped': _stamped,
+                                                           'progress': _progress_line}))
     if args.campaign:
         code = max(code, _campaign(project, args))
     if args.run_plan:
@@ -1265,7 +1269,9 @@ _GOES_WITH = {
     ('critical_carla_drives',): ('critical_carla',),
     ('replay_variant',): ('log_replay',),
     ('live_cameras', 'live_scale', 'live_fault'): ('carla_live',),
-    ('install_picks',): ('install_check',),
+    ('install_picks', 'lut_out', 'as_built'): ('install_check',),
+    ('formats',): ('export', 'watch'),
+    ('tolerance',): ('reproduce',),
     ('refine_from',): ('refine_rig',),
     ('perception_recording', 'perception_backend', 'perception_records'): ('rig_perception',),
     ('scene_variants', 'scene_seeds'): ('perception_scene_set',),
@@ -1279,6 +1285,19 @@ _GOES_WITH = {
     ('risk_weight', 'risk_metric', 'risk_min'): ('risk_coverage',),
     ('fleet_twin_date',): ('fleet_twin_online',),
     ('as_of',): ('fleet_twin',),
+    # round 17 (batch17.py)
+    ('fmcw_recording', 'fmcw_sweeps'): ('fmcw',),
+    ('edge_recording', 'edge_faults'): ('edge_dry_run',),
+    ('imaging_radar_as',): ('imaging_radar',),
+    ('usd_splats',): ('usd_export',),
+    ('ego_out', 'ego_check'): ('ego_composite',),
+    ('neural_projection', 'neural_relight'): ('neural_replay',),
+    ('sotif_speed', 'sotif_model', 'sotif_basis'): ('sotif',),
+    ('cleaning_propose',): ('cleaning',),
+    ('fea_mesh',): ('fea',),
+    ('diff_json',): ('diff',),
+    ('lab_message',): ('lab_publish', 'lab_sync'),
+    ('lab_projects',): ('lab_pooled_twin',),
 }
 
 
@@ -2155,6 +2174,7 @@ def reproduce(args) -> int:
 # ============================================================================ round 14
 # perception in the loop, re-driven logs, the design agent, the learned rig model, foundation models, tolerances to
 # detection, risk-weighted coverage and the fleet twin
+from .batch17 import ROUND17_OPTIONS                           # noqa: E402  (round 17's options: batch17.py)
 ROUND14_OPTIONS = ('rig_perception', 'perception_scene_set', 'redrive', 'design', 'read_requirements', 'perf_model',
                    'perf_records_import', 'perf_records_export', 'suggest_simulations', 'foundation_range',
                    'robust_perception', 'risk_coverage', 'fleet_twin', 'fleet_twin_online', 'fleet_twin_watch')
@@ -3026,10 +3046,12 @@ def add_arguments(ap):
     g.add_argument('--refine-from', metavar='VARIANT',
                    help='with --refine-rig: the variant (name or uid) to refine; default the active one')
     g.add_argument('--export', metavar='DIR', help='export into DIR')
-    g.add_argument('--formats', help='comma-separated export format ids (default: every non-image format but the '
-                                     'experiment and the CARLA rig)')
+    g.add_argument('--formats', help='comma-separated export format ids (default: the quick non-image formats; the '
+                                     'slow, large and research ones are left out unless named: docs/command-line.md '
+                                     'lists them)')
     g.add_argument('--variant', help='variant name or 1-based index (default: the active one)')
-    g.add_argument('--frame', help='export frame: rear_axle, front_axle, front_bumper, ground_centre, custom')
+    from .core.project import FRAME_PRESETS
+    g.add_argument('--frame', choices=list(FRAME_PRESETS), help=f'export frame: {", ".join(FRAME_PRESETS)}')
     g.add_argument('--units', default='m', choices=['m', 'mm'])
     g.add_argument('--angles', default='deg', choices=['deg', 'rad'])
     g.add_argument('--install-check', metavar='DIR', help='check the installation from one image per camera in DIR '
@@ -3168,6 +3190,8 @@ def add_arguments(ap):
     g.add_argument('--replay-variant', metavar='NAME|N',
                    help='with --log-replay: the proposed rig (rig B), a variant name or 1-based index')
     add_round14_arguments(g)
+    from .batch17 import add_round17_arguments
+    add_round17_arguments(g)
     g.add_argument('--run-plan', nargs='+', metavar=('ID', 'OUT_DIR'),
                    help='run a Copilot plan approved in the app (its approval record in the project; ID or '
                         'ID:VERSION) from its stored settings, each step through the option that runs it, into OUT_DIR '
@@ -3187,6 +3211,13 @@ def add_arguments(ap):
 
 
 def wanted(args) -> bool:
+    """Batch mode: a batch option, or a modifier of one (given alone it is refused with a message, rather than the
+    window opening, which would hang a headless CI job)."""
+    if any(_given(getattr(args, m, None)) for mods in _GOES_WITH for m in mods):
+        return True
+    if getattr(args, 'on_change', None) or getattr(args, 'verify', 0) or getattr(args, 'validate_models', None) \
+            or getattr(args, 'validate_quick', False) or getattr(args, 'carla_python', None):
+        return True
     return any(getattr(args, k) not in (None, False) for k in ('analyse', 'load_cases', 'export', 'install_check',
                                                                'calibrate_lens', 'import_calib', 'blind_volume',
                                                                'perception_range', 'rig_health',
@@ -3205,4 +3236,4 @@ def wanted(args) -> bool:
                                                                'carla_run', 'carla_live', 'ground_truth_summary',
                                                                'detection_quality', 'campaign', 'critical_carla',
                                                                'log_replay',
-                                                               'run_plan') + ROUND14_OPTIONS)
+                                                               'run_plan') + ROUND14_OPTIONS + ROUND17_OPTIONS)

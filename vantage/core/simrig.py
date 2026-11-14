@@ -916,9 +916,11 @@ def build(project, settings: SimSettings | None = None, variant=None, progress=N
     period = tp.period_ms / 1000.0 if tp.period_ms else None
     ctags, stags = EX.safe_tags(v), EX.sensor_tags(v)
     cams = [c for c in v.cameras if c.visible]
+    events = [c for c in cams if getattr(p.module_for(c), 'modality', 'rgb') == 'event']
+    cams = [c for c in cams if c not in events]       # event cameras record as CARLA's DVS (core.event_camera)
     sens = [s for s in v.sensors if s.visible]
     lid = [s for s in sens if s.kind == 'lidar']
-    if not cams and not any(s.kind in ('lidar', 'radar') for s in sens):
+    if not cams and not events and not any(s.kind in ('lidar', 'radar') for s in sens):
         raise ValueError('Nothing to simulate: the variant has no visible camera, lidar or radar.')
     # ---- rates and the schedule
     cam_rate = {}
@@ -1256,6 +1258,9 @@ def build(project, settings: SimSettings | None = None, variant=None, progress=N
         'assumptions': ASSUMPTIONS,
         'notes': notes,
     }
+    if events:
+        from . import event_camera as EVC
+        EVC.add_to_sim_rig(doc, p, v)                 # (doc['notes'] is notes: its note lands there too)
     prog(1.0, 'Done')
     return SimRig(st, p.name, v.name, v.uid, doc, remaps, notes, time.perf_counter() - t0)
 

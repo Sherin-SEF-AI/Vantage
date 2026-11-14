@@ -31,7 +31,11 @@ DENY = {'--carla-run': 'starts CARLA: propose a Copilot plan (propose_plan) for 
         '--perf-records-import': "writes into the user's own record store: the user imports on the page",
         '--perf-save': "replaces the user's saved model: the user trains and saves it on the page",
         '--sample': 'the run is on this project', '--template': 'the run is on this project',
-        '--self-test': 'not a job on the project'}
+        '--self-test': 'not a job on the project',
+        '--lab-publish': 'sends the project to a lab server: the user publishes on File ▸ Lab',
+        '--lab-sync': 'sends the project to a lab server and may change it: the user syncs on File ▸ Lab',
+        '--lab-pull': "writes a lab version into the user's files: the user pulls on File ▸ Lab",
+        '--lab-pooled-twin': 'reads other teams\' fleets from a lab server: lab_pooled_twin does it'}
 EXIT = {0: 'done: fine',
         2: 'done: the plan has critical issues (or the job\'s own failure condition, e.g. a fuse over its rating, a '
            'cable too long, an antenna with no sky); see the Issues in the output',

@@ -31,8 +31,9 @@ class CamViewsPage(QWidget):
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
         ll.setSpacing(2)
+        from ..widgets import hscroll
         self.guide_bar = GuideBar(ctx)
-        ll.addWidget(self.guide_bar)
+        ll.addWidget(hscroll(self.guide_bar))       # scrolls sideways on a narrow screen instead of cutting controls
         self.grid_w = QWidget()
         self.grid_w.setObjectName('base')
         self.grid = QGridLayout(self.grid_w)
@@ -80,7 +81,8 @@ class CamViewsPage(QWidget):
         bl = QVBoxLayout(bw)
         bl.setContentsMargins(0, 0, 0, 0)
         bl.setSpacing(0)
-        bl.addWidget(self._bowl_bar())
+        from ..widgets import hscroll
+        bl.addWidget(hscroll(self._bowl_bar()))
         bl.addWidget(self.bowl, 1)
         right.addWidget(bw)
         split.addWidget(right)

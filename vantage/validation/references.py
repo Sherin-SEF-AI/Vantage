@@ -118,6 +118,15 @@ REFERENCES = {
                   'the American Statistical Association 22(158), 209–212, 1927.',
 }
 
+# round 17's citations that its modules' checks name but do not carry themselves
+REFERENCES.update({
+    'wu2025_3dgut': 'Q. Wu, J. Martinez Esturo, A. Mirzaei, N. Moenne-Loccoz, Z. Gojcic, "3DGUT: Enabling Distorted '
+                    'Cameras and Secondary Rays in Gaussian Splatting", CVPR 2025, arXiv:2412.12507.',
+    'winter2009': 'D. A. Winter, "Biomechanics and Motor Control of Human Movement", 4th ed., Wiley, 2009.',
+    'schlick1994': 'C. Schlick, "An Inexpensive BRDF Model for Physically-based Rendering", Computer Graphics Forum '
+                   '13(3), 1994.',
+})
+
 
 def cite(keys) -> list:
     """[(key, text)] for the keys known (unknown ones are left out)."""

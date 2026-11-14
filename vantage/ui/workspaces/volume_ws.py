@@ -120,7 +120,7 @@ class VolumePage(QWidget):
             f.setToolTip(tip)
             f.committed.connect(lambda v, k=key, s=scale: self.ctl.set_settings(**{k: v / s}))
             a = label(text, ink2=True)
-            a.setFixedWidth(110)
+            a.setFixedWidth(84)                  # (110 overlapped the field in a narrow panel)
             grid.addWidget(a, i, 0)
             grid.addWidget(f, i, 1)
             if key == 'cell':

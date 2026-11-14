@@ -1,0 +1,10 @@
+# Host simulation of the scheduling core (any C99 compiler on the build machine; Vantage runs it with gcc).
+HOSTCC ?= cc
+HOST_CFLAGS ?= -O2 -std=c99 -Wall -Wextra -ffp-contract=off
+host_sim: host_sim.c trigger_core.c trigger_core.h trigger_plan.h
+	$(HOSTCC) $(HOST_CFLAGS) -I. trigger_core.c host_sim.c -lm -o host_sim
+check: host_sim
+	./host_sim seconds=30 ppm=30 jitter_ns=20 drop_start=12 drop_len=5 | tail -n 1
+clean-host:
+	rm -f host_sim
+.PHONY: check clean-host

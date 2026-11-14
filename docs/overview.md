@@ -9,7 +9,7 @@ This document describes what the application is, who it is for, and everything i
 
 | | |
 |---|---|
-| Current release | **0.9.0** (2026-11-13). |
+| Current release | **0.10.0** (2026-11-14). |
 | Platforms | Windows 10/11 x64 · macOS 14+ (Apple silicon) · Linux x86_64 · Linux arm64 (NVIDIA Jetson Orin, JetPack 6) |
 | Built with | Python 3.10+, PyQt6, NumPy, SciPy, OpenCV, PyOpenGL (GLSL shader renderer) |
 | Size | about 188,000 lines of Python; 84 test files, about 2,050 tests; a validation suite of 71 model checks |
@@ -166,7 +166,7 @@ narrow lenses.
 
 | Variant | Description |
 |---|---|
-| 6-cam · v3 | Recommended layout: no blind ground within 2 m |
+| 6-cam · v3 | Recommended 6-camera layout: the 2 m ROI is covered but for small patches by the bumpers (see Issues) |
 | 4-cam | Best aim found for four cameras |
 | 4-cam, mirror cameras 5° off | Tolerance case: mirror units 5° off and 10 cm back |
 | 6-cam front-heavy | An extra pair on the front bumper corners |
@@ -1818,7 +1818,7 @@ on a Claude subscription, reads and changes rig designs. Add it once with
   - The assistant's tools.
   - `edit_project`: anything the user can change in the design, stitch seams included, checked as a whole before
     anything changes.
-  - `run_batch`: any of batch mode's 94 job options, on the design as it is now, in a run folder beside it.
+  - `run_batch`: any of batch mode's job options, on the design as it is now, in a run folder beside it.
   - Undo and redo of Claude's own steps only; save, export, recent activity, project data and status.
   - `import_vehicle` (the import wizard's steps, headless: `core.vehicle_import`) and `import_layout`; the `aim`
     operation; `set_view`, `render_view` and `turntable_video` in the window; background jobs (`start_job`,

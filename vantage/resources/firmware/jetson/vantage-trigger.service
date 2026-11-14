@@ -1,0 +1,23 @@
+# The trigger program as a service (Vantage). After `sudo make install`: sudo systemctl enable --now vantage-trigger
+[Unit]
+Description=Vantage camera trigger pulses (@@PROJECT@@)
+After=chrony.service phc2sys.service time-sync.target
+Wants=time-sync.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/vantage-trigger --clock @@JETSON_CLOCK@@
+Restart=on-failure
+RestartSec=2
+# real-time scheduling and locked memory for even edges; nothing else is allowed
+LimitRTPRIO=90
+LimitMEMLOCK=infinity
+AmbientCapabilities=CAP_SYS_NICE CAP_IPC_LOCK
+SupplementaryGroups=gpio
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

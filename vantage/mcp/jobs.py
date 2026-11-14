@@ -26,16 +26,33 @@ class Job:
         self.result = None                       # the tool's MCP result (content, isError, structuredContent)
         self.cancel = threading.Event()
         self.done = threading.Event()
+        self.note = ''
 
     def summary(self) -> dict:
         now = time.time()
         d = {'job_id': self.id, 'tool': self.tool, 'label': self.label, 'state': self.state,
-             'queued_s': round((self.started or now) - self.created, 1)}
+             'queued_s': round((self.started or self.finished or now) - self.created, 1)}
         if self.started:
             d['running_s' if self.state == 'running' else 'ran_s'] = round((self.finished or now) - self.started, 1)
         if self.result is not None:
             d['is_error'] = bool(self.result.get('isError'))
+        if self.note:
+            d['note'] = self.note
         return d
+
+
+def _stopped(res) -> bool:
+    """Whether a tool result says the tool was stopped: cancelled: true, a batch run's exit code -15, or an error
+    that mentions the cancel."""
+    if not isinstance(res, dict):
+        return False
+    sc = res.get('structuredContent')
+    if isinstance(sc, dict) and (sc.get('cancelled') is True or sc.get('exit_code') == -15):
+        return True
+    if not res.get('isError'):
+        return False
+    text = ' '.join(str(c.get('text', '')) for c in res.get('content') or [] if isinstance(c, dict))
+    return 'cancel' in text.lower() or 'stopped' in text.lower()
 
 
 class Jobs:
@@ -57,14 +74,18 @@ class Jobs:
     def _loop(self):
         while True:
             job = self._q.get()
-            if job.state == 'cancelled':
-                job.done.set()
+            if job.state == 'cancelled':           # cancelled while queued: cancel() has already ended it
                 continue
             job.state, job.started = 'running', time.time()
             try:
                 res = self.run(job.tool, job.args, job.cancel)
                 job.result = res
-                job.state = 'cancelled' if job.cancel.is_set() else ('failed' if res.get('isError') else 'done')
+                if job.cancel.is_set() and _stopped(res):
+                    job.state = 'cancelled'
+                else:                               # it ran to its end, even if a cancel came too late to stop it
+                    job.state = 'failed' if res.get('isError') else 'done'
+                    if job.cancel.is_set():
+                        job.note = 'finished before the cancel could stop it'
             except Exception as e:                  # noqa: BLE001 — a job never takes the server down
                 job.result = {'content': [{'type': 'text', 'text': f'{type(e).__name__}: {e}'}], 'isError': True}
                 job.state = 'failed'
@@ -110,6 +131,12 @@ class Jobs:
         job.cancel.set()
         if job.state == 'queued':
             job.state, job.finished = 'cancelled', time.time()
+            job.done.set()                          # it never runs: a get_job waiting on it returns now
+            if self.on_done is not None:
+                try:
+                    self.on_done(job)
+                except Exception:                   # noqa: BLE001
+                    pass
         return {**job.summary(), 'note': 'cancelling' if job.state == 'running' else 'cancelled before it started'}
 
     def list(self) -> list:

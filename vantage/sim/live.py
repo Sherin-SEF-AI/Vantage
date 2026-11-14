@@ -18,10 +18,13 @@ What it does
                           rest of the image, 0: outside it), at the rendered size: what rig health's body-edge drift
                           indicator should compare with here, since CARLA's car is not the project's
                           (vantage.core.carla_live.body_view())
+     GET  /<TAG>.carla_body.png  CARLA's own car mask as above, always (with the project's body composited in,
+                          /<TAG>.body.png is the project's body instead: see 6.)
      GET  /status         JSON (vantage.sim_live/1): state, real-time factor, per camera served fps, latency, faults
      POST /fault          {"tag": "F", "deg": [yaw, pitch, roll]} or {"tag", "kind": rotation | translation | freeze
                           | drop | delay | clock_offset, ...}: the fault as applied, with its id
      POST /fault/clear    {"tag": "F"} | {"id": 3} | {} (every fault)
+     POST /ego            {"on": true | false}: the project's body composited into the frames, or not (see 6.)
      POST /stop           stop and tidy up
    POSTs must be JSON (a web page cannot send them without the browser asking first) and the Host must be local.
 2. Connects, loads the town, synchronous mode at the rig's step, the weather (a CARLA preset or the rig's mapped
@@ -59,6 +62,14 @@ What it does
    it), and tidies up as the recording bridge does: the vehicles off the autopilot, a step, every sensor stopped,
    everything spawned destroyed, a step, the traffic manager and the world back to their original asynchronous
    settings; then the HTTP server closes. --report writes the session (live.json) at the end.
+
+6. The user's own body (core.ego_composite): when sim_ego.npz lies beside the rig (or --ego names one; carla_live
+   writes it) and --no-ego is not given, every frame gets the project's body and rig composited in at the camera's
+   current mount (a mount fault casts the body's layer again), lit by the weather's sun at the ego's heading, CARLA's
+   own car (its body mask, turned with the camera) inpainted or marked invalid, at the render size before the noise
+   and the resize. /<TAG>.body.png then serves the project's body at the planned mount, so rig health's drift
+   indicator measures the camera against the body it really sees. POST /ego turns it off and on; /status gives each
+   camera's compositing time (ego.ms_median).
 
 Latency is measured from the start of the step that rendered a frame to the frame being served: CARLA's render and
 delivery, the remap and encoding, and any delay fault. A client's own read and decode come on top (on one machine,
@@ -339,8 +350,13 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json(200, {'faults': live.active_faults(), 'log': live.fault_log()})
         if path in ('/', '/index.html'):
             return self._send(200, live.index_html().encode('utf-8'), 'text/html; charset=utf-8')
+        if path.endswith('.carla_body.png') and path[1:-15] in live.cams:
+            png = live.body_mask_png(path[1:-15], 'carla')
+            if not png:
+                return self._json(404, {'error': f'{path[1:-15]}: no body mask of CARLA\'s car'})
+            return self._send(200, png, 'image/png')
         if path.endswith('.body.png') and path[1:-9] in live.cams:
-            png = live.cams[path[1:-9]].body_png
+            png = live.body_mask_png(path[1:-9])
             if not png:
                 return self._json(404, {'error': f'{path[1:-9]}: no body mask (not made yet, or turned off)'})
             return self._send(200, png, 'image/png')
@@ -406,6 +422,9 @@ class _Handler(BaseHTTPRequestHandler):
             if path == '/fault/clear':
                 body = body if isinstance(body, dict) else {}
                 return self._json(200, {'cleared': live.clear_faults(body.get('tag'), body.get('id'))})
+            if path == '/ego':
+                body = body if isinstance(body, dict) else {}
+                return self._json(200, {'ego_composite': live.set_ego(body.get('on'))})
             if path == '/stop':
                 live.request_stop('stop requested over HTTP')
                 return self._json(202, {'state': 'stopping'})
@@ -525,12 +544,59 @@ class LiveRig:
             cam.devignette, cam.blend = self._tables(c)
             self.cams[c['tag']] = cam
         self.hubs = {t: Hub(t) for t in self.cams}
+        self.ego_comp, self.ego_on, self.ego_error, self.ego_path = None, False, '', ''
+        self._load_ego(args)
         if not getattr(args, 'keep_vignette', False):
             self._note('Unreal\'s vignette (in every pinhole view) taken out of each pixel in linear light through '
                        'CARLA\'s measured camera response (vantage.sim.tonemap), as the recording bridge does.')
         if float(getattr(args, 'noise', 0.0)) > 0:
             self._note(f'Uniform noise of 0…{2 * int(round(float(args.noise)))} levels added per frame (CARLA renders '
                        'none; a still scene would read as frozen).')
+
+    # ------------------------------------------------------------------ the user's own body (core.ego_composite)
+    def _load_ego(self, args):
+        """The project's body layers (sim_ego.npz beside the rig, or --ego), unless --no-ego."""
+        path = getattr(args, 'ego_path', '') or ''
+        rig_path = getattr(args, 'rig', '') or ''
+        if not path and rig_path:
+            cand = os.path.join(os.path.dirname(os.path.abspath(rig_path)), 'sim_ego.npz')
+            path = cand if os.path.isfile(cand) else ''
+        if not path or getattr(args, 'no_ego', False):
+            return
+        try:
+            from . import ego_layers as EC                # (core.ego_composite's live compositor, shipped here)
+            self.ego_comp = EC.LiveEgo.load(path, self.rig)
+            self.ego_on, self.ego_path = True, path
+            self._note('The project\'s own body and rig composited into every frame at the camera\'s mount '
+                       '(core.ego_composite); /<TAG>.body.png serves the project\'s body, /<TAG>.carla_body.png '
+                       'CARLA\'s car.')
+        except Exception as e:                         # noqa: BLE001 (the stream goes on with CARLA's car)
+            self.ego_error = f'{type(e).__name__}: {e}'
+            self._note(f'The project\'s body could not be loaded ({self.ego_error}): CARLA\'s car is shown.')
+
+    def set_ego(self, on) -> dict:
+        """Turn the compositing of the project's body on or off (POST /ego)."""
+        if not isinstance(on, bool):
+            raise ValueError('"on" must be true or false.')
+        with self.lock:
+            if on and self.ego_comp is None:
+                raise ValueError('No body layers loaded (sim_ego.npz): ' + (self.ego_error or 'none beside the rig.'))
+            self.ego_on = on
+        return self.ego_status()
+
+    def ego_status(self) -> dict:
+        return {'loaded': self.ego_comp is not None, 'on': bool(self.ego_on and self.ego_comp is not None),
+                'path': os.path.basename(self.ego_path) if self.ego_path else '', 'error': self.ego_error,
+                'cameras': sorted(self.ego_comp.planned) if self.ego_comp is not None else [],
+                'skipped': list(getattr(self.ego_comp, 'skipped', []))}
+
+    def body_mask_png(self, tag, which='auto') -> bytes:
+        """The body mask a camera's drift indicator compares with: the project's body when it is composited in
+        (which 'auto'), CARLA's car (which 'carla')."""
+        c = self.cams[tag]
+        if which == 'auto' and self.ego_on and self.ego_comp is not None and tag in self.ego_comp.planned:
+            return self.ego_comp.body_png(tag)
+        return c.body_png
 
     # ------------------------------------------------------------------ helpers
     def _note(self, text):
@@ -709,17 +775,28 @@ class LiveRig:
                     'latency_ms': _stats(lat), 'tick_ms': _stats(comp[:, 0]), 'views_ms': _stats(comp[:, 1]),
                     'make_ms': _stats(comp[:, 2]),
                     'last_frame_s': meta.get('sim_s'), 'mount': {'deg': deg, 'm': m}, 'mount_method': c.method,
-                    'body_mask': dict(c.body_info, url=f'/{quote(tag, safe="")}.body.png') if c.body_info else None,
+                    'body_mask': self._body_mask_status(tag, c),
+                    'ego': self.ego_comp.stats(tag) if self.ego_comp is not None else None,
                     'faults': [_public(f) for f in self.faults.values() if f['tag'] == tag]}
             return {'schema': SCHEMA, 'state': self.state, 'error': self.error, 'stop_reason': self.stop_reason,
                     'tick_hz': self.R, 'steps': self.steps, 'sim_s': round(self._sim_t(), 4),
                     'wall_s': round(now - self.t_stream, 3) if self.t_stream is not None else 0.0,
                     'realtime_factor': round(rtf, 4) if rtf is not None else None,
                     'lag_resets': self.lag_resets, 'behind_s': round(self.behind_s, 3),
-                    **self.info, 'cameras': cams, 'faults': [_public(f) for f in self.faults.values()],
+                    **self.info, 'cameras': cams, 'ego_composite': self.ego_status(), 'faults': [_public(f) for f in self.faults.values()],
                     'notes': list(self.notes), 'limits': LIMITS_TEXT,
                     'clock': 'latency: from the start of the step that rendered a frame to the frame being served '
                              '(time.monotonic on this machine)'}
+
+    def _body_mask_status(self, tag, c):
+        """(lock held) What /<TAG>.body.png serves."""
+        own = self.ego_on and self.ego_comp is not None and tag in self.ego_comp.planned
+        if own:
+            return dict(self.ego_comp.body_info(tag), url=f'/{quote(tag, safe="")}.body.png', of='project',
+                        carla=dict(c.body_info, url=f'/{quote(tag, safe="")}.carla_body.png') if c.body_info else None)
+        if c.body_info:
+            return dict(c.body_info, url=f'/{quote(tag, safe="")}.body.png', of='carla')
+        return None
 
     def index_html(self) -> str:
         imgs = ''.join(f'<figure><img src="/{quote(t, safe="")}.mjpg" width="480"><figcaption>{_esc(t)}</figcaption>'
@@ -784,6 +861,12 @@ class LiveRig:
         s.fixed_delta_seconds = self.dt
         world.apply_settings(s)
         weather, night = self._weather(world)
+        try:                                           # the sun CARLA really uses (a preset's azimuth -1 keeps the level's)
+            wv = world.get_weather()
+            weather = dict(weather, measured_azimuth=float(wv.sun_azimuth_angle),
+                           measured_altitude=float(wv.sun_altitude_angle))
+        except Exception:                              # noqa: BLE001 (a client without get_weather)
+            pass
         self.info['weather'] = weather
         lib = world.get_blueprint_library()
         spawns = list(world.get_map().get_spawn_points())
@@ -908,6 +991,8 @@ class LiveRig:
                 c.body_png = buf.tobytes() if ok else b''
                 c.body_info = {'pixels': int(body.sum()), 'share': round(float(body.sum()) / max(int(inside.sum()), 1),
                                                                           4), 'size': [m.shape[1], m.shape[0]]}
+                if self.ego_comp is not None:
+                    self.ego_comp.set_carla(c.tag, body)
             self._note('Body masks: CARLA\'s own car in each camera at its planned mount (instance segmentation), '
                        'served as /<TAG>.body.png for the body-edge drift indicator.')
         except Cancelled:
@@ -1087,7 +1172,7 @@ class LiveRig:
                     continue
                 c.inflight += 1
             c.last_sent = f
-            m = dict(meta, frame=f, t_views=time.monotonic())
+            m = dict(meta, frame=f, t_views=time.monotonic(), mount=c.mount)
             self.pool.submit(self._make, c, views, m)
 
     def _make(self, c, views, meta):
@@ -1107,6 +1192,8 @@ class LiveRig:
             if dv is not None:
                 out = dv[0].apply(out)
             out = self.CB.feather(out, atlas, c.blend, dv[1:] if dv is not None else None)
+            if self.ego_on and self.ego_comp is not None:
+                out = self.ego_comp.apply(c.tag, out, meta.get('mount'), meta.get('ego_yaw'), self.info.get('weather'))
             if c.noise:
                 out = cv2.add(out, c.noise[meta['frame'] % len(c.noise)])
             if c.serve_size != c.render_size:
@@ -1191,6 +1278,11 @@ class LiveRig:
                 self.steps = i
                 self.timeline.append((t_tick, i))
             frames_meta[frame] = {'t_step': t_step, 't_tick': t_tick, 'sim_s': i * self.dt, 'step': i}
+            if self.ego_comp is not None:
+                try:
+                    frames_meta[frame]['ego_yaw'] = float(self.ego.get_transform().rotation.yaw)
+                except Exception:                      # noqa: BLE001 (a client without it: heading 0)
+                    pass
             for f in [f for f in frames_meta if f < frame - 4 * max(c.n for c in self.cams.values()) - 8]:
                 frames_meta.pop(f)
             for c in self.cams.values():
@@ -1329,6 +1421,10 @@ class LiveClient:
     def stop(self) -> dict:
         return self._req('POST', '/stop', {})
 
+    def ego(self, on: bool) -> dict:
+        """Composite the project's body (True) or show CARLA's car (False)."""
+        return self._req('POST', '/ego', {'on': bool(on)})['ego_composite']
+
     def body(self, tag: str) -> bytes:
         """The camera's body mask (/<TAG>.body.png): PNG bytes."""
         import urllib.error
@@ -1380,6 +1476,10 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument('--keep-vignette', action='store_true', help='keep Unreal\'s vignette in every pinhole view')
     ap.add_argument('--no-body-masks', dest='body_masks', action='store_false',
                     help='do not render CARLA\'s own car per camera at the start (/<TAG>.body.png)')
+    ap.add_argument('--ego', dest='ego_path', default='', metavar='NPZ',
+                    help='the project\'s body layers (core.ego_composite; default: sim_ego.npz beside the rig)')
+    ap.add_argument('--no-ego', dest='no_ego', action='store_true',
+                    help='show CARLA\'s own car, not the project\'s body')
     ap.add_argument('--parent-pid', type=int, default=0, help='stop when this process exits')
     ap.add_argument('--report', default='', help='write the session (live.json) here at the end')
     return ap

@@ -1,0 +1,9 @@
+# The scheduling core and its host simulation: no external crates, builds offline (`cargo test --offline`).
+# The RP2040 firmware is its own package in firmware/ (it needs crates.io and the thumbv6m-none-eabi target).
+[workspace]
+members = ["core", "hostsim"]
+exclude = ["firmware"]
+resolver = "2"
+
+[profile.release]
+overflow-checks = true

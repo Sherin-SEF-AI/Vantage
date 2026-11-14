@@ -127,7 +127,7 @@ def test_link_capacity_from_the_interface():
     # every built-in sensor's data interface is known (a GNSS antenna's coax carries RF to its receiver)
     # (the BMI088 is a chip on SPI: it goes on a board, not a cable)
     assert [m.id for m in sensors.builtin_sensor_models() if m.kind != 'gnss' and not cap(m.interface)] == \
-        ['bosch_bmi088']
+        ['bosch_bmi088', 'arbe_phoenix']    # Arbe states its point cloud goes "over Ethernet", at no speed
 
 
 # ----------------------------------------------------------------------------- findings and the Issues list

@@ -533,6 +533,61 @@ heading, which is also their CARLA velocity (SUMO's speed is taken should CARLA 
 | `traffic_source.timing.net_s`, `demand_s`, `launch_s`, `step_s`, `sync_s` | seconds getting the net, writing the demand, starting SUMO; stepping SUMO and moving vehicles both ways over the run |
 | `traffic_source.walkers`, `limits` | the co-simulation's limits in words |
 
+## Event cameras (round 17)
+
+A camera whose module is an event sensor (`Module.modality` `event`: the Prophesee EVK4 HD with the Sony IMX636, the
+EVK5 HD with the IMX646, the GenX320; `core/event_camera.py`) records events, not frames. The rig file lists such
+cameras in `event_cameras` (written by `core.event_camera.add_to_sim_rig`, which also takes them out of `cameras` and
+adds their static transforms); a rig without event cameras has no `event_cameras` key and a bridge writes nothing of
+this section. A bridge that cannot record events leaves them out and says so in its notes.
+
+### The rig file's `event_cameras`
+
+| key | meaning |
+|---|---|
+| `event_cameras[].uid`, `tag`, `safe_tag`, `name`, `module`, `module_id` | identity in the project and the event sensor |
+| `event_cameras[].channel`, `topic`, `frame_id` | `EVENTS_<SAFE_TAG>`, `/<safe_tag>/events`, `<safe_tag>_optical_frame` |
+| `event_cameras[].pose_vehicle` | the optical centre and orientation, vehicle frame |
+| `event_cameras[].carla.location`, `rotation` | **CARLA**: the mount, relative to the ego origin (as every sensor) |
+| `event_cameras[].width`, `height`, `image_scale`, `sensor_size` | the events' pixel grid (the sensor's at `image_scale`) and the sensor's own [w, h] |
+| `event_cameras[].fov_deg`, `f_px`, `K` | one pinhole view at the lens model's horizontal field (CARLA's DVS camera is a pinhole: the real lens's distortion is not applied to the events); `K` in OpenCV pixel-centre coordinates |
+| `event_cameras[].dvs` | **CARLA**: the DVS camera's attributes: `positive_threshold`, `negative_threshold` (θ = ln(1 + the module's contrast threshold), ln units), `sigma_positive_threshold`, `sigma_negative_threshold` (0: CARLA draws a fresh spread per pixel and frame, not a sensor's fixed pattern), `refractory_period_ns`, `use_log`, `log_eps` |
+| `event_cameras[].reference_rgb`, `reference_frames` | **CARLA**: also render an RGB view at the same pose, size and step, run `core.event_camera`'s model on it in the loop, and keep its first `reference_frames` images |
+| `event_cameras[].model`, `lens_note`, `virtual` | the thresholds the model uses and their source; the pinhole caveat; a virtual camera (the study's stand-in for a variant without one) |
+
+**CARLA** records each with `sensor.camera.dvs` (DVSCamera.cpp, "based on ESIM"): every step it renders the view
+with the RGB camera's pipeline (the rig's exposure; motion blur, bloom, flare and CARLA's lens effect off), takes
+grey = 0.2989 R + 0.5870 G + 0.1140 B of the 8-bit image, L = ln(log_eps + grey), and emits an event for every
+threshold step between the previous frame and this one, timed by linear interpolation (ns, the simulation clock; the
+run checks it). It works on the display-referred 8-bit image: what the RGB pipeline clips, the DVS camera loses too,
+and a gamma-encoded image changes less in log than linear light does (the bridge's linear-light model measures by how
+much).
+
+### What a bridge writes: `events/`
+
+```
+OUT/events/index.json                  schema vantage.events/1
+OUT/events/<safe_tag>/carla.npz        the DVS camera's events: x, y (uint16), t (int64 µs from t = 0), p (int8 ±1), size
+OUT/events/<safe_tag>/carla.evt2.raw   the same as Prophesee EVT 2.0 words after a '% …' header (Metavision RAW style)
+OUT/events/<safe_tag>/model.npz        core.event_camera's model on the reference view, CARLA's algorithm
+OUT/events/<safe_tag>/model_linear.npz the model on the reference view in linear light (CARLA's measured response)
+OUT/events/<safe_tag>/reference_frames.npz   the first reference images (bgr uint8) and their times (t_s)
+```
+
+| key | meaning |
+|---|---|
+| `schema`, `generator`, `project`, `variant`, `epoch_us`, `conventions` | `vantage.events/1`, `carla`, the rig's names, the drive's t = 0 as µs since the Unix epoch, the units |
+| `channels[].tag`, `safe_tag`, `channel`, `topic`, `frame_id`, `module` | the event camera |
+| `channels[].width`, `height`, `fov_deg`, `K`, `pose_vehicle`, `dvs` | its pixel grid, pinhole and mount, the DVS attributes asked for |
+| `channels[].dvs_attributes`, `blueprint_attributes` | **CARLA**: what the blueprint took, and every attribute it has |
+| `channels[].duration_s`, `events`, `model_events`, `arrays`, `reference_frames`, `bytes` | the drive, the counts, the DVS arrays received, the images kept, the bytes written |
+| `channels[].time_check` | `median_last_event_minus_frame_ns`, `on_simulation_clock`: each DVS array's last event against its frame's timestamp |
+| `channels[].compare`, `compare_linear` | `core.event_camera.compare_dvs` of the DVS's events against the model's (CARLA's algorithm; linear light): counts, their ratio, per-pixel count correlation, the share matched exactly (pixel, polarity, ±1 µs), the rate series' correlation |
+| `channels[].files` | the files above, relative to `events/` |
+
+`run.json` then has `event_cameras[]` (`tag`, `channel`, `events`, `model_events`, `arrays`, `compare`,
+`compare_linear`, `time_check`, `files`) and `performance.events_s`; a run without event cameras has neither.
+
 ## Timing and synchronisation
 
 The CARLA bridge runs the world in synchronous mode at `simulation.tick_hz`: every sensor samples the same world state

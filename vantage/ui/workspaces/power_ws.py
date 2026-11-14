@@ -717,7 +717,8 @@ class PowerPage(QWidget):
             key = r['key']
             src = {'missing': 'no stated power figure: 0 W', 'library': 'the maker\'s stated figure',
                    'module': 'the module\'s figure', 'setting': 'the setting on the left',
-                   'user': 'your figure (Other loads)'}[r['source']]
+                   'user': 'your figure (Other loads)',
+                   'cleaning': 'the cleaning layout (Analysis ▸ Cleaning and de-icing)'}.get(r['source'], r['source'])
             cell(i, 0, r['tag'], swatch=row_color(r), tip=f'{r["tag"]}: {r["supply"]}')
             cell(i, 1, PW.KIND_LABEL[r['kind']])
             cell(i, 2, r['model'])

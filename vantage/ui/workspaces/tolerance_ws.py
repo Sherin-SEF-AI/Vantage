@@ -186,11 +186,32 @@ class TolerancePage(QWidget):
         self.pinned_result = None
         self.pinned_cams = None
         self.pinned_index = None
-        ctx.store.changed.connect(lambda *_: self._cams())
+        self._for = None                        # (key, variant name) of the design the result was run on
+        ctx.store.changed.connect(self._on_store)
         ctx.store.project_replaced.connect(self._cams)
         ctx.window.jobs.progress.connect(self._progress)
         ctx.window.jobs.failed.connect(lambda k, m: self.b_run.setEnabled(True) if k == 'tolerance' else None)
         self._cams()
+
+    def _key(self):
+        v = self.ctx.store.variant
+        return (v.uid, tuple((c.uid, c.visible, round(c.x, 6), round(c.y, 6), round(c.z, 6), round(c.yaw, 6),
+                              round(c.pitch, 6), round(c.roll, 6), c.module_id, c.lens_id) for c in v.cameras))
+
+    def stale(self) -> bool:
+        """The result is for another variant or for cameras since changed: its rows cannot be pinned on this one."""
+        return self.result is not None and self._for is not None and self._for[0] != self._key()
+
+    def _on_store(self, *_):
+        self._cams()
+        if self.result is None or self._for is None:
+            return
+        old = self.stale()                          # (an undo back to the design it ran on makes it current again)
+        self.last.setText(f'For {self._for[1]} as it was before the change: run again' if old else self._last_text)
+        for i in range(self.table.rowCount()):
+            w = self.table.cellWidget(i, 5)
+            if w is not None:
+                w.setEnabled(not old)
 
     def activate(self):
         self._cams()
@@ -235,12 +256,14 @@ class TolerancePage(QWidget):
 
     def show_result(self, r):
         self.result = r
+        self._for = (self._key(), self.ctx.store.variant.name)
         self.b_run.setEnabled(True)
         st = r.settings
         self.bar.setValue(int(1000 * len(r.blind) / max(st.samples, 1)))
         self.count.setText(f'{len(r.blind)} / {st.samples}' + (' · cancelled' if r.cancelled else ''))
-        self.last.setText(f'Last run {time.strftime("%H:%M", time.localtime(r.finished_at))} · {r.seconds:.1f} s · {r.threads} threads'
-                          + (f' · cancelled after {len(r.blind)} samples' if r.cancelled else ''))
+        self._last_text = (f'Last run {time.strftime("%H:%M", time.localtime(r.finished_at))} · {r.seconds:.1f} s · '
+                           f'{r.threads} threads' + (f' · cancelled after {len(r.blind)} samples' if r.cancelled else ''))
+        self.last.setText(self._last_text)
         self.hist.title = f'Blind area in ROI · {len(r.blind)} samples' + (' (cancelled)' if r.cancelled else '')
         self.hist.set_data(r.blind, bins=20, markers=[(r.pct(95), 'P95', True), (r.pct(99), 'P99', True), (float(r.blind.max()), 'max', False)],
                            xlabel='blind area, m²')
@@ -286,7 +309,7 @@ class TolerancePage(QWidget):
         return cams
 
     def preview(self, i, pin=False):
-        if self.result is None or not (0 <= i < len(self.result.worst)):
+        if self.result is None or not (0 <= i < len(self.result.worst)) or self.stale():
             return
         case = self.result.worst[i]
         cams = self._perturbed_cams(case)

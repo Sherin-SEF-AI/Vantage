@@ -88,7 +88,8 @@ def tigor_variants(mesh) -> list[Variant]:
         return Camera(tag=tag, name=name, location=loc, slot=slot, x=x, y=y, z=z, yaw=yaw, pitch=pitch, port=port,
                       standoff_mm=float(round(d * 1000)))
 
-    v3 = Variant(name='6-cam · v3', note='Recommended layout: no blind ground within 2 m.')
+    v3 = Variant(name='6-cam · v3', note='Recommended 6-camera layout: the 2 m ROI is covered but for small patches by '
+                                         'the bumpers (see Issues).')
     v3.cameras = [cam('F', 'Front', 'Front, grille above plate', 3.230, 0.000, 0.620, 0.0, 40.0, 0, 1),
                   cam('R', 'Rear', 'Rear, bumper top edge', -0.800, 0.000, 0.560, 180.0, 40.0, 1, 2),
                   cam('ML', 'Mirror left', 'Under left mirror', 1.880, 0.940, 0.950, 65.0, 45.0, 2, 3),

@@ -115,7 +115,9 @@ A **zone** is a painted mount area (`face_zone`): `name`, `kind` (`allowed`, `fo
 A **module** (camera module): `id`, `name`, `vendor`, `sensor`, `width_px`, `height_px`, `pixel_um` (pixel pitch,
 µm), `optical_format`, `interface`, `fps`, `hw_sync`, `size_mm` [w, h, length], `weight_g`, `cables_m` (lengths
 offered), `power_w`, `shutter`, `dynamic_range_db`, `ip_rating`, `temp_c` [min, max], `chroma`, `url`, `builtin`,
-`note` (where the figures come from).
+`note` (where the figures come from), `modality` (what it senses: `rgb`, the default; `nir`; `lwir`, a thermal camera,
+8–14 µm; `event`, a neuromorphic sensor) and `modality_params` (a thermal or event module's datasheet figures: NETD,
+band, f-number and transmission, or contrast threshold and latency; read by `thermal_ir.py` and `event_camera.py`).
 
 A **lens**: `id`, `name`, `label`, `module_id` (the module it was characterised on, empty: any), `focal_mm`,
 `f_number` (0: not given), `focus_near_m` (0: not given), `focus_far_m` (null: infinity), `projection`
@@ -131,7 +133,10 @@ A **sensor model** (lidar, radar, GNSS antenna, IMU): `id`, `name`, `kind`, `ven
 elevation half-angle °]], `data_mbps`; GNSS: `mask_deg`, `lna_gain_db` (the antenna's LNA gain, dB; 0 if not stated); IMU/INS: `antennas`, `heading_sigma_deg` at
 `heading_baseline_m`, `pos_sigma_cm`, `attitude_sigma_deg`, noise densities `accel_noise_density` (m/s²/√Hz),
 `accel_random_walk` (m/s³/√Hz), `gyro_noise_density` (rad/s/√Hz), `gyro_random_walk` (rad/s²/√Hz); and for all:
-`interface`, `time_sync`, `size_mm`, `optical_z_mm` (optical centre above the base), `power_w`, `builtin`, `note`, `url` (the maker's page or datasheet).
+`interface`, `time_sync`, `size_mm`, `optical_z_mm` (optical centre above the base), `power_w`, `builtin`, `note`, `url` (the maker's page or datasheet);
+`ranging` (empty: the usual pulsed lidar or radar; `fmcw`: a coherent FMCW lidar; `mimo`: a 4D imaging radar) and
+`params` (that ranging model's datasheet figures: chirp, wavelength, velocity resolution, or the virtual array; read by
+`fmcw_lidar.py` and `imaging_radar.py`).
 Library figures are the makers' stated values, as each entry's `note` and `url` say (a figure a maker does not state is 0 or blank).
 
 ### variants
@@ -211,6 +216,21 @@ drop mm, rear axle drop mm]), `live` and `heatmap` (view settings), and one obje
 | `robust_perception` | tolerances carried through to detection (`robust_perception.py`) |
 | `risk_coverage` | coverage weighted by where hazards appear (`risk_coverage.py`) |
 | `fleet_twin` | calibration drift across the fleet over time (`fleet_twin.py`) |
+| `thermal` | LWIR cameras: pedestrian contrast at night (`thermal_ir.py`) |
+| `event_camera` | neuromorphic sensors: event rate, blur, tunnel exits (`event_camera.py`) |
+| `fmcw` | coherent FMCW lidar: Doppler, sun, cross-talk (`fmcw_lidar.py`) |
+| `imaging_radar` | 4D MIMO radar: array, sidelobes, cavity ghosts (`imaging_radar.py`) |
+| `neural_replay` | 3DGUT, walkers, lights, relighting in log replay (`neural_replay.py`) |
+| `ego_composite` | the user's body composited into CARLA streams (`ego_composite.py`) |
+| `usd_export` | OpenUSD rig export settings (`usd_export.py`) |
+| `framing` | extrusion framing, cut lists, STEP (`framing.py`) |
+| `fea` | tetrahedral modal analysis of the roof structure (`fea.py`) |
+| `aero` | drag, range loss, vortex shedding of the rig (`aero.py`) |
+| `trigger_fw` | trigger-box firmware from the sync plan (`trigger_firmware.py`) |
+| `edge_daemon` | the in-car watchdog's configuration (`edge_daemon.py`) |
+| `thermal_intrinsics` | focal drift per °C from temperature sweeps (`thermal_intrinsics.py`) |
+| `sotif` | ISO 21448 triggering conditions and the ODD bound (`sotif.py`) |
+| `cleaning` | washer nozzles, air knives, heaters on the rig (`cleaning.py`) |
 | `copilot` | the Copilot's approval records: the plans the user approved and their runs (`vantage/assistant/copilot.py`) |
 | `assistant_log` | the design log: decisions, rejected ideas, constraints and notes the assistant remembers (`vantage/assistant/memory.py`) |
 
@@ -273,6 +293,112 @@ the range sweep's `sweep_cameras`, `sweep_classes`, `ranges_m`, `offsets_deg`, `
 `ncap`), `dataset` (`swanson2019` or `najm2007`), `metric` (`resolved`, `seen`, `redundant`), `ttc_min`, `ttc_max`,
 `ttc_samples`, `extended`, `cell_m`, `area_m`, `map_m`, `issue_min` (per class, the % below which the Issues list
 flags it; not part of the result).
+
+`analysis.thermal` (`ThermalSettings` in `thermal_ir.py`): `conditions` (`clear_night`, `fog`, `rain`, `hot_road`),
+`params` (per condition id, edits of its preset: `t_air_c`, `rh_pct`, `t_road_c`, `sky`, `visibility_m`, `fog`,
+`rain_mm_h`, `snow_mm_h`, `clo`, `ambient_lux`), `classes`, `criteria` (`dri` or `johnson`), `snr_min`, `lateral_m`,
+`max_range_m`, `samples`, `skin_share`, `met_w_m2`, `air_speed`, `clothing`, `clothing_value`, `beam_model`
+(`typical` or `r112_min`), `bg_reflectance`, `dark_current_e_s`, `assumed_f_number`, `assumed_transmission`, `windows`
+(per camera uid its IR window: `none`, `ge_ar`, `ge`, `znse_ar`, `znse`, `chalcogenide_ar`).
+
+`analysis.event_camera` (`EventSettings` in `event_camera.py`): `speed_kmh`, `object_m`, `duration_s`, `render_scale`,
+`max_step_px`, `max_frames`, `scene_white_cd`, `f_number`, `lens_transmission`, `threshold_pct`, `sigma_ln`,
+`refractory_us`, `latency_us`, `shot_noise_hz`, `leak_hz`, `photoreceptor`, `bandwidth_mode`, `fifo_events`,
+`erc_window_us`, `event_format`, `edge_contrast`, `exposure_ms`, `tunnel_pre_s`, `tunnel_post_s`, `tunnel_hz`,
+`tunnel_scale`, `supersample`, `ae_tau_s`, `target_m`, `target_albedo`, `min_contrast`, `min_target_events`,
+`window_ms`, `lamp_cd`, `activity_hz`, `evt3_bits`, `link_warn`, `rgb_tag`, `virtual_module`, `virtual_lens`,
+`virtual_pitch_deg`, `virtual_offset_m`, `seed`. `bandwidth_mode` is `erc` (the readout drops events over its cap) or
+`fifo` (it queues them); `event_format` is `EVT3.0`, `EVT2.1` or `EVT2.0`; the `virtual_*` keys place the virtual
+event camera used when the rig has none; out-of-range values are clamped to `event_camera.LIMITS`.
+
+`analysis.fmcw` (`FmcwSettings` in `fmcw_lidar.py`): `source`, `scene`, `ego_speed_kmh`, `yaw_rate_dps`, `walls`,
+`recording`, `recording_tag`, `max_sweeps`, `counterpart`, `moving_mps`, `velocity_sigma_mps`, `max_rays`, `seed`,
+`conditions`, `tof_reference`, `tof_wavelength_nm`, `tof_filter_nm`, `tof_aperture_mm`, `tof_ifov_mrad`, `tof_optics`,
+`tof_receiver`, `tof_pde`, `tof_dcr`, `tof_qe`, `tof_excess_noise`, `tof_noise_e`, `tof_bin_ns`, `tof_adapt_deg`,
+`target_reflectivity`, `scene_reflectivity`, `ground_reflectivity`, `p_false_ref`, `fmcw_eta`, `crosstalk_cars`,
+`crosstalk_distance_m`, `crosstalk_lateral_m`, `crosstalk_rate`. `source` is `scene` (a scripted `urban` or `highway`
+scene) or `recording` (a CARLA drive folder in `recording`, its lidar `recording_tag`); `counterpart` is the FMCW
+model a time-of-flight lidar is evaluated as; the `tof_*` keys are the time-of-flight receiver's typical figures the
+sun and cross-talk comparison uses.
+
+`analysis.trigger_fw` (`FirmwareSettings` in `trigger_firmware.py`): `target`, `groups`, `width_us`, `latency_us`,
+`active_low`, `rp_base_pin`, `rp_pps_pin`, `rp_selftest_pin`, `stm_board`, `stm_pins`, `stm_pps_pin`,
+`stm_selftest_pin`, `jetson_chip`, `jetson_offsets`, `jetson_clock`, `sim_ppm`, `sim_jitter_ns`, `sim_seconds`,
+`sim_drop_s`, `seed`, `jetson_seconds`. `target` is `rp2040`, `stm32f411`, `rust_rp2040` or `jetson`; `groups` is
+`plan` (the sync plan's trigger lines) or `suggested`; the `sim_*` keys set the crystal error, PPS jitter, length and
+PPS dropout of the check run here.
+
+`analysis.edge_daemon` (`EdgeSettings` in `edge_daemon.py`): `sources`, `analysis_hz`, `analysis_width`, `knock_deg`,
+`body_knock_deg`, `knock_z`, `baseline_s`, `window_s`, `hold_s`, `min_inlier_share`, `knock_enabled`, `raise_s`,
+`clear_s`, `grace_s`, `http_bind`, `http_port`, `mqtt_host`, `mqtt_port`, `mqtt_topic`, `mqtt_user`, `webhook_url`,
+`log_path`, `log_mb`, `gpio_backend`, `gpio_chip`, `gpio_line`, `gpio_path`, `service_user`, `python`, `config_path`,
+`memory_mb`, `cpu_percent`, `health`. `sources` maps camera uids to their streams (passwords stay in the keyring);
+`health` holds the stream-health thresholds; the `mqtt_*`, `webhook_url`, `log_*` and `gpio_*` keys set the alert
+outputs.
+
+`analysis.thermal_intrinsics` (`ThermalSettings` in `thermal_intrinsics.py`): `reference_c`, `degree`, `confidence`,
+`warn_px`, `operating_lo_c`, `operating_hi_c`, `lens_material`, `housing_material`, `image_scale`, `mount_ecc_mm`,
+`sweep_lo_c`, `sweep_hi_c`, `sweep_steps`, `views`, `scale`, `noise`, `seed`, and `sweeps` ({camera uid: [calibration
+records with `temp_c`]}). `degree` is `auto`, `linear` or `quadratic`. A unit calibration (`Camera.calib`) may carry
+`temp_c` and a `thermal` block (`model`, `reference_c`, `range_c`, `coeffs`, `sigma`, `degree`, `n`).
+
+`analysis.imaging_radar` (`ImagingRadarSettings` in `imaging_radar.py`): `window`, `taylor_sll_db`, `taylor_nbar`,
+`road`, `roughness_mm`, `polarisation`, `face_reflection_db`, `ghost_floor_db`, `max_range_m`, `link_snr_db`,
+`link_loss_db`, `integration_ms`, `map_step_deg`, `tilt_max_deg`, `swap_model`, `classes`, `radars`. `window` is
+`uniform`, `hann` or `taylor`; `road` is `none` or a measured 77 GHz surface (`asphalt_concrete`, `split_mastic`,
+`low_noise_asphalt`, `concrete`); `swap_model` evaluates every radar as that imaging radar; `classes` lists each
+class's `name`, `rcs_m2`, `height_m`, `span_m` and `source`.
+
+`analysis.ego_composite` (`EgoSettings` in `ego_composite.py`): `live`, `paint`, `carla_car`, `neighbours`,
+`inpaint_px`, `shadows`, `heading_step_deg`, `depth_test`, `lidar`, `ground_truth`, `keep_rosbag`, `jpeg_quality`,
+`drive`, `out_dir`. `live` composites the project's body into the live CARLA streams; `carla_car` is `inpaint` or
+`invalid` (what fills CARLA's own car where the body does not cover it); `drive` and `out_dir` are the recorded drive
+last composited and its copy.
+
+`analysis.usd_export` (`UsdSettings` in `usd_export.py`): `body`, `rig`, `housings`, `cameras`, `lidars`, `radars`,
+`rf`, `ncore`, `splats`, `max_splats`, `decimate_tris`, `name`. `splats` is a log replay's cache folder whose
+Gaussians go in as a USD ParticleField; `ncore` also writes the rig as an NCore V4 store.
+`analysis.asbuilt.exact_body` traces the planned body exactly in the as-built check.
+
+`analysis.neural_replay` (`NeuralSettings` in `neural_replay.py`): `projection`, `lidar_opacity`, `lidar_steps`,
+`lidar_lr`, `walkers`, `body_model`, `smpl_path`, `smpl_accept`, `keypoints`, `pose_model`, `walker_gaussians`,
+`fit_steps`, `min_kp_score`, `min_walker_px`, `max_pose_crops`, `kp_sigma_rel`, `prior_weight`, `smooth_weight`,
+`traffic_lights`, `light_source`, `min_light_px`, `relight`, `eval_instants`, `compare_projection`, `compare_walkers`,
+`compare_lidar`, `real_reference`, `relight_conditions`, `gpu_mem_gb`, `seed`. `projection` is `ut` (the exact lens,
+3DGUT; the default) or `ewa` (affine); `walkers` is `articulated` or `rigid`; `body_model` is `capsules`, `anny` or
+`smpl` (your own file; `smpl_path` and `smpl_accept` are set only by you, never by the assistant);
+`relight_conditions` lists `wet`, `night` and `snow`. An empty dict gives the defaults; the log replay before round 17
+is `{"projection": "ewa", "walkers": "rigid", "traffic_lights": false, "lidar_opacity": false}`.
+
+Its `relight` (`RelightSettings` in `relight.py`): `condition`, `method`, `strength`, `sun_az_deg`, `sun_el_deg`,
+`wet_darkening`, `night_ambient_lux`, `exposure_lux`, `lamp_height_m`, `snow_rate_mm_h`, `read_noise`, `seed`,
+`diffusion_steps`, `image_guidance`, `text_guidance`, `diffusion_px`. `condition` is `none`, `wet`, `night` or `snow`;
+`method` is `physical` (the default) or `diffusion` (InstructPix2Pix: it can rewrite the scene, not for judging
+detection).
+
+`analysis.sotif` (`SotifSettings` in `sotif.py`): `stop_model` (`r157`, `r157_fsm`, `aashto`, `custom`), `target_kmh`,
+`margin_m`, `classes`, `basis` (`two`, `any`, `cameras`, `lidars`, `radars`), `lane_half_m`, `odd` (the triggering
+condition ids inside the ODD), `roads` (per condition id: `dry`, `wet`, `snow`, `ice`), `perception_s`, `reaction_s`,
+`decel_g`, `jerk_ms3` (the custom model), `sun_min_share`, `dirt_min_score`, `fov_max_share`, `cleaning_min_cover`,
+`ae_ev_per_s`.
+
+`analysis.cleaning` (`CleaningSettings` in `cleaning.py`): `devices` (each: `id`, `kind` (`washer`, `air`, `heater`),
+`product`, `target` (a camera or lidar uid), `side`, `standoff_mm`, `ahead_mm`, `aim_mm`, `azimuth_deg`, `window_mm`,
+`reach_mm`, `exposed_mm2`, `length_mm`, `enabled`, `params` (the product's figures overridden)); the system: `pump`,
+`pump_w`, `pump_flow_ml_min`, `tank_l`, `reservoir`, `shift_h`, `dirt`, `ambient_c`, `speed_kmh`, `wind_ms`, `ice_mm`,
+`regime`, `event_s`, `max_obscured`, `heater_on_c`, `shed_ms`, `compressor_eff`, `air_event_s`, `min_cover`; `rates`
+and `doses` (the dirt model's assumptions overridden).
+
+`analysis.framing` (`FramingSettings` in `framing.py`): `main_profile`, `post_profile` (catalogue profile ids),
+`joint` (`brackets` or `anchors`), `feet` (`rails` or `fixpoints`), `plate_mm`, `plate_margin_mm`, `min_plate_mm`,
+`kerf_mm`, `stock_m`, `rail_inset_mm`, `frame_cameras`, `replaced` (the rig-part uids the frame stands for).
+
+`analysis.fea` (`FEASettings` in `fea.py`): `mesh_mm`, `modes`, `bc` (`fixed` or `spring`), `k_foot_z`, `k_foot_xy`
+(N/mm per foot), `zeta`, `plate_cells_mm`.
+
+`analysis.aero` (`AeroSettings` in `aero.py`): `speed1_kmh`, `speed2_kmh`, `v_max_kmh`, `load_kmh`, `crosswind_ms`,
+`air_c`, `pressure_kpa`, `cd_base`, `frontal_m2`, `mass_kg`, `battery_kwh`, `consumption_wh_km`, `crr`, `drive_eff`,
+`aux_w`, `roof_speed_factor`, `lockin_band`, `zeta`, `use_frame`.
 
 `analysis.fleet_twin` (`fleet_twin.py`): `settings` (`FleetTwinSettings`: `variant`, `horizon_days`, `false_alarm`,
 `glr_window`, `min_step`, `risk`, `limit_source` (`auto`, `critical`, `analysis`, `fleet`, `user`), `user_mm`,
@@ -486,6 +612,30 @@ of the solved camera and the camera it ties to it]) and `settings` (the guide's 
 out of the solve for the verify stage) and the rest of its tolerances). The floor boards themselves are `targets`.
 
 `log`: the last 400 entries of the project's history, `[time, kind, text]`.
+
+## Project folders
+
+A project can also be a folder (`name.vantage.d`). It holds what the `.vantage` file holds, split into stable text
+files that git can diff and merge:
+
+- `project.json`;
+- `library/*.json`;
+- `variants/<name>.json`;
+- `analysis/base.json` and `analysis/<study>.json`;
+- `requirements.json`, `fleet.json`, `photos.json`;
+- `log.jsonl` and `design_log.jsonl` (one entry per line);
+- the mesh as `mesh.npz` or `mesh.obj`;
+- `thumb.png`;
+- `.gitattributes` and `.gitignore`.
+
+Every JSON file Vantage writes starts with `"$vantage": "<kind>/1"`. Keys are sorted and there is one item per line.
+Numbers are written as the shortest text that reads back exactly. No save time is stored. The variant on show is kept
+per user in `.vantage-view.json`, which is git-ignored.
+
+Vantage removes only files it marked, and only when the project no longer has what they held. `vantage diff A B`
+compares two projects, folders, files or `path@REV` git revisions by meaning. `vantage diff --git-setup FOLDER`
+registers a merge driver that merges project JSON three ways by meaning. A zip → folder → zip round trip gives the
+same content.
 
 ## What is not in the file
 

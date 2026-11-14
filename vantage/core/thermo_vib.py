@@ -2107,3 +2107,75 @@ def export(res: ThermoVibResult, project, out_dir) -> list[str]:
             fh.write(data)
         paths.append(path)
     return paths
+
+
+# =========================================================================== wind load case (core.aero)
+WIND_ASSUMPTIONS = ('Steady wind forces (core.aero) on each device and rig part, carried down the same chain as the '
+                    'vibration study: each mount\'s first mode taken as a static spring (k of its cantilever or '
+                    'crossbar), a part\'s own wind as 3/8 of it at a mast\'s tip (a uniform load\'s tip deflection) '
+                    'and all of it at a crossbar\'s middle; no gusts, no dynamic amplification.')
+
+
+def wind_response(project, forces, settings: ThermoVibSettings | None = None, variant=None, brackets=None) -> dict:
+    """The static load case of a steady wind: each device's move (mm) and turn (deg) relative to the body under
+    `forces` {device uid or rig-part uid: (Fx, Fy, Fz) N, vehicle frame}, through the same mounts as the vibration
+    study (a camera's or sensor's bracket, a mast, a crossbar). Returns {'devices': [{'uid', 'tag', 'kind', 'on',
+    'force_n' (its own), 'carried_n' (through its lowest flexible mount), 'move_mm' [x, y, z], 'move_abs_mm',
+    'turn_deg' [about x, y, z], 'turn_abs_deg', 'chain'}], 'assumptions'}. Additive: run() does not call it."""
+    p = SU._project_for(project, variant)
+    v = p.variant
+    st = settings if isinstance(settings, ThermoVibSettings) else (
+        ThermoVibSettings.from_dict(settings) if isinstance(settings, dict) else settings_of(p))
+    forces = {k: np.asarray(f, float) for k, f in (forces or {}).items()}
+    rf = roof_box(p)
+    tree = rig_tree(p, rf)
+    devs = devices(p, v)
+    nodes = [carrier(tree, d['P'], rf) for d in devs]
+    carried = _carried(tree, devs, nodes)
+    pm = part_modes(tree, carried, st)
+    from .brackets import MATERIALS as BM, BracketSettings
+    bm = BracketSettings.from_dict(getattr(p.analysis, 'brackets', None)).material
+    printed = dict(BM[bm], label=f'{bm}')
+    # the force each part carries: its own (3/8 at a mast's tip, all at a crossbar's middle), its devices', and that
+    # of the parts resting on it, shared over their supports (top down, as _carried shares the mass)
+    n = len(tree)
+    load = np.zeros((n, 3))
+    own = np.zeros((n, 3))
+    for i, t in enumerate(tree):
+        f = forces.get(t['uid'])
+        if f is not None:
+            own[i] = f * (3.0 / 8.0 if t['part'].kind == 'cylinder' else 1.0)
+    for d, (node, _) in zip(devs, nodes):
+        f = forces.get(d['uid'])
+        if f is not None and isinstance(node, int):
+            load[node] += f
+    for i in sorted(range(n), key=lambda i: -tree[i]['part'].z):
+        sups = [s for s in tree[i]['supports'] if isinstance(s, int)]
+        for s in sups:
+            load[s] += (load[i] + (forces.get(tree[i]['uid'], np.zeros(3)))) / len(sups)
+    out = []
+    for d, (node, Q) in zip(devs, nodes):
+        chain = [pm[i] for i in (chain_of(tree, node) if isinstance(node, int) else []) if i in pm]
+        chain_idx = [i for i in (chain_of(tree, node) if isinstance(node, int) else []) if i in pm]
+        bk = _bracket_mode(d, node, Q, rf, st, brackets, printed)
+        P = d['P']
+        lin = np.zeros(3)
+        ang = np.zeros(3)
+        fdev = forces.get(d['uid'], np.zeros(3))
+        steps = [(md, load[i] + own[i]) for md, i in zip(chain, chain_idx)] + [(bk, fdev)]
+        for md, F in steps:
+            phi, dphi, q = md.shape(P)
+            for e, ax in md.dirs:
+                u = float(F @ e) / max(md.k, 1e-9)          # static deflection at the mode's tip (or middle)
+                a_k = u * dphi * ax
+                lin += u * phi * e + np.cross(a_k, P - q)
+                ang += a_k
+        out.append({'uid': d['uid'], 'tag': d['tag'], 'kind': d['kind'],
+                    'on': tree[node]['name'] if isinstance(node, int) else node,
+                    'force_n': float(np.linalg.norm(fdev)),
+                    'carried_n': float(np.linalg.norm(steps[0][1])) if steps else 0.0,
+                    'move_mm': [float(x) * 1000 for x in lin], 'move_abs_mm': float(np.linalg.norm(lin)) * 1000,
+                    'turn_deg': [math.degrees(float(x)) for x in ang],
+                    'turn_abs_deg': math.degrees(float(np.linalg.norm(ang))),
+                    'chain': [f'{md.name} (k {md.k:,.0f} N/m)' for md, _ in steps]})
+    return {'devices': out, 'assumptions': WIND_ASSUMPTIONS}

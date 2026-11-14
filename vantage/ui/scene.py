@@ -358,10 +358,25 @@ class MainScene(QObject):
         return c
 
     def points(self, vp):
-        """Point sprites: one simulated sweep per visible lidar (View ▸ Overlays ▸ Lidar points)."""
-        if self.mode != 'scene' or not self.ctx.overlays.get('lidarpts') or not self.project.variant.sensors:
+        """Point sprites: one simulated sweep per visible lidar (View ▸ Overlays ▸ Lidar points), and the cleaning
+        windows' covered and missed points (View ▸ Overlays ▸ Cleaning cones)."""
+        out = []
+        if self.mode == 'scene' and self.ctx.overlays.get('lidarpts') and self.project.variant.sensors:
+            out += self._ov3d().point_draws()
+        if self.mode == 'scene' and self.ctx.overlays.get('cleaning'):
+            out += self._cleaning_draws(1)
+        return out
+
+    def _cleaning_draws(self, i) -> list:
+        """The cleaning layout's cones and heater rings (0) or window points (1), from its cached result (not on the
+        Cleaning page's own view, which draws its live result)."""
+        if type(self).__name__ == 'CleaningScene':
             return []
-        return self._ov3d().point_draws()
+        try:
+            from .workspaces.cleaning_ws import scene_lines, scene_points
+            return (scene_lines, scene_points)[i](self.ctx)
+        except Exception:                          # noqa: BLE001 — an overlay never breaks the view
+            return []
 
     def tris_extra(self, vp):
         out, late = [], []                      # late: translucent draws, after every opaque one
@@ -732,6 +747,8 @@ class MainScene(QObject):
             out += self._clock_tree_lines()
         out += self.research_lines()
         out += guides.scene_lines(self, vp)
+        if self.mode == 'scene' and ov.get('cleaning'):          # View ▸ Overlays ▸ Cleaning cones
+            out += self._cleaning_draws(0)
         return out
 
     def _grid(self):

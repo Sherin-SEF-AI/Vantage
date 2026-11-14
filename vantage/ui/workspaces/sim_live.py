@@ -256,6 +256,7 @@ class SimLivePanel(QWidget):
         if app is not None:
             app.aboutToQuit.connect(self.shutdown)
         self._rebuild_cams()
+        self._sync_ego()
         self._sync()
 
     # ------------------------------------------------------------------ layout
@@ -280,6 +281,11 @@ class SimLivePanel(QWidget):
         self.cam_host.setSpacing(8)
         self.cam_row.addLayout(self.cam_host)
         self.cam_row.addStretch(1)
+        self.ego_box = QCheckBox('My vehicle\'s body')         # core.ego_composite: the project's body, not CARLA's car
+        self.ego_box.setToolTip('Composite the project\'s body and rig into every live frame, so the drift indicator '
+                                'measures each camera against the body it really sees (not CARLA\'s car)')
+        self.ego_box.toggled.connect(self._ego_toggled)
+        self.cam_row.addWidget(self.ego_box)
         lay.addLayout(self.cam_row)
         row = QHBoxLayout()
         row.setSpacing(6)
@@ -398,6 +404,34 @@ class SimLivePanel(QWidget):
             b.toggled.connect(self._cams_changed)
             self.cam_host.addWidget(b)
             self.cam_boxes[c.tag] = b
+
+    def _ego_on(self) -> bool:
+        from ...core import ego_composite as EC
+        return EC.settings_of(self.ctx.store.project).live
+
+    def _sync_ego(self):
+        self.ego_box.blockSignals(True)
+        self.ego_box.setChecked(self._ego_on())
+        self.ego_box.blockSignals(False)
+
+    def _ego_toggled(self, on):
+        """The setting (one undo step) and, during a session, the live server at once."""
+        from ...core import ego_composite as EC
+        if on != self._ego_on():
+            d = EC.settings_of(self.ctx.store.project).to_dict()
+            d['live'] = bool(on)
+
+            def fn(p):
+                p.analysis.ego_composite = d
+            self.ctx.store.edit('analysis', fn, f'Live rig · my vehicle\'s body {"on" if on else "off"}')
+        client = self.client
+        if client is not None:
+            def push():
+                try:
+                    client.ego(bool(on))
+                except Exception:                  # noqa: BLE001 — the next session starts with the setting
+                    pass
+            threading.Thread(target=push, daemon=True).start()
 
     def _cams_changed(self, *_):
         off = [t for t, b in self.cam_boxes.items() if not b.isChecked()]
@@ -1145,6 +1179,8 @@ class SimLivePanel(QWidget):
 
     # ------------------------------------------------------------------ the project
     def _on_store_changed(self, sections):
+        if 'analysis' in sections:
+            self._sync_ego()
         if sections & {'variant', 'variants', 'library'} and not self.running:
             if [c.tag for c in self._cams()] != list(self.cam_boxes):
                 self._rebuild_cams()
@@ -1162,6 +1198,7 @@ class SimLivePanel(QWidget):
         self.carla_views, self._fetching = {}, set()
         self.monitor = rh.RigMonitor()
         self._rebuild_cams()
+        self._sync_ego()
         self._sync()
 
     def showEvent(self, e):

@@ -57,6 +57,9 @@ def _nums(v, n=None, default=()) -> tuple:
     return tuple(out)
 
 
+MODALITIES = ('rgb', 'nir', 'lwir', 'event')    # Module.modality
+
+
 @dataclass
 class Module:
     """Sensor + housing (one physical camera product). A figure of 0 or '' is not given by the source."""
@@ -83,6 +86,10 @@ class Module:
     chroma: str = ''                   # 'colour' | 'monochrome' | 'RGB-IR' | ''
     url: str = ''                      # where the figures come from
     note: str = ''                     # the source and any caveat, shown in the library and the module editor
+    modality: str = 'rgb'              # what the sensor records (MODALITIES): rgb (visible, colour or mono), nir,
+                                       # lwir (thermal, 8–14 µm), event (neuromorphic: per-pixel contrast events)
+    modality_params: dict = field(default_factory=dict)   # the modality's own datasheet figures (core.thermal_ir,
+                                       # core.event_camera own the keys); a figure not stated is absent, never guessed
 
     @property
     def sensor_w_mm(self):
@@ -147,6 +154,8 @@ class Module:
             d[k] = d.get(k) if isinstance(d.get(k), str) else ''
         if d['shutter'] not in SHUTTERS:
             d['shutter'] = ''
+        d['modality'] = d.get('modality') if d.get('modality') in MODALITIES else 'rgb'
+        d['modality_params'] = dict(d['modality_params']) if isinstance(d.get('modality_params'), dict) else {}
         known = Module.__dataclass_fields__.keys()
         return Module(**{k: v for k, v in d.items() if k in known})
 
@@ -269,11 +278,13 @@ def theta_of_r(r, f, projection, kb=(0, 0, 0, 0)):
         return np.arcsin(np.clip(x, -1, 1))
     if projection == 'kannala_brandt':
         t = np.array(x, float, copy=True)
-        for _ in range(12):
+        for i in range(40):                 # Newton until converged (a strongly bent wide-angle fit needs ~20 steps)
             g = r_of_theta(t, 1.0, projection, kb) - x
             d = dr_dtheta(t, 1.0, projection, kb)
             t = t - g / np.where(np.abs(d) < 1e-9, 1e-9, d)
             t = np.clip(t, 0, math.pi)
+            if i >= 11 and not np.any(np.abs(g) > 1e-15):
+                break
         return t
     raise ValueError(projection)
 
@@ -650,7 +661,7 @@ def builtin_modules() -> list[Module]:
                 checked=VENDOR_CHECKED, urls=(_E + '/camera-modules/5mp-sony-imx568-global-shutter-gmsl2-camera-module.asp',),
                 extra='Board camera (IP67 enclosure offered): 5 MP Pregius S global shutter at 90 fps, RAW Bayer, no '
                       'default firmware. Power "TBD"; dynamic range and frame sync are not stated.'),
-    ] + _vendor_modules()
+    ] + _vendor_modules() + _modality_library('modules')
 
 
 # ---------------------------------------------------------------- other vendors
@@ -672,6 +683,25 @@ def _vmod(mid, vendor, name, sensor, res, pixel_um, fmt, fps, *, interface, url,
 
 _SEKONIX = ('https://www.sekonix.co.kr/SEKONIX/file/SF332X-10X_2Mega-LVDS-Automotive-Camera-Datasheet_Ver-2.2.5_'
             '190726.pdf')
+
+
+# the other modalities' products (thermal LWIR, event sensors) come from the modules that model them: each offers
+# library('modules') and library('lenses'), built from its makers' datasheets (absent when that module is not there)
+MODALITY_LIBRARIES = ('thermal_ir', 'event_camera')
+
+
+def _modality_library(what) -> list:
+    import importlib
+    out = []
+    for name in MODALITY_LIBRARIES:
+        try:
+            mod = importlib.import_module(f'{__package__}.{name}')
+        except ImportError:
+            continue
+        fn = getattr(mod, 'library', None)
+        if fn is not None:
+            out += list(fn(what))
+    return out
 
 
 def _vendor_modules() -> list[Module]:
@@ -875,7 +905,7 @@ def builtin_lenses() -> list[Lens]:
               checked=VENDOR_CHECKED),
         _lens('nilecam56_std', '113° DFOV', M['nilecam56'], (85.64, 72.25, 113.0), where='lens provided by e-con',
               checked=VENDOR_CHECKED),
-    ] + _vendor_lenses(M)
+    ] + _vendor_lenses(M) + _modality_library('lenses')
 
 
 def _stated_base(focal, sheet, hs) -> str:

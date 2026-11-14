@@ -436,7 +436,20 @@ class RequirementsPage(QWidget):
                 continue
             it['note'] = it['note'] or source + '.'
             props.append({'item': it, 'source': it['text'], 'metric_label': RQ.METRICS[it['metric']].label})
-        self._set_proposals(props, 'the assistant')
+        if props and self.prop_origin == 'the assistant' and self.proposals:
+            # the assistant's earlier proposals still waiting stay: a new one for the same metric and parameters
+            # replaces its earlier version, the others are added after them (a second call used to drop the first)
+            def key(o):
+                return o['item']['metric'], tuple(sorted(o['item']['params'].items()))
+            new = {key(o): o for o in props}
+            props = [new.pop(key(o), o) for o in self.proposals] + list(new.values())
+        taken = {str(i.get('id')) for i in self.settings.items if isinstance(i, dict)}
+        for o in props:                                # each waiting row its own id (two calls each began at R1)
+            if o['item']['id'] in taken:
+                o['item']['id'] = RQ._new_id(taken)
+            taken.add(o['item']['id'])
+        if props:
+            self._set_proposals(props, 'the assistant')
         return len(props)
 
     def _set_proposals(self, props, origin='the brief'):

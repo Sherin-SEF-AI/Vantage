@@ -19,12 +19,12 @@ def _rig():
 
 
 RESEARCH = [f.id for f in ex.FORMATS if f.group in ('Research', 'AV stack')]
-NOT_BRIDGES = {'perception_records'}          # Research formats written by exporters itself, not through a bridge
+NOT_BRIDGES = {'perception_records'} | set(ex._F17)   # written by exporters itself or round 17's table, not a bridge
 BRIDGED = [f for f in RESEARCH if f not in NOT_BRIDGES]
 
 
 def test_every_bridge_is_registered_off_by_default():
-    assert set(BRIDGED) == set(ex._BRIDGES) and NOT_BRIDGES <= set(RESEARCH)
+    assert set(BRIDGED) == set(ex._BRIDGES) and {'perception_records'} <= set(RESEARCH)
     assert {'plucker_rays', 'occupancy_density', 'rectify_maps', 'rectify_canonical', 'rig_gap', 'stress_test',
             'gsplat_bridge', 'foxglove_mcap', 'stack_autoware', 'stack_navsim', 'stack_hugsim', 'stack_mmdet3d',
             'stack_openpcdet', 'stack_lerobot'} <= set(BRIDGED)

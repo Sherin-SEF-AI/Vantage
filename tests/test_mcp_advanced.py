@@ -453,3 +453,60 @@ def app_win():
     w.close()
     w.deleteLater()
     _pump(app, 0.2)
+
+
+def test_a_job_that_ran_to_its_end_is_not_reported_cancelled():
+    """cancel_job on a running job whose tool did not stop: its state is done (with a note), not cancelled; a tool
+    that stopped on the cancel is cancelled."""
+    import threading as th
+    from vantage.mcp.jobs import Jobs
+    go = th.Event()
+
+    def run(tool, args, cancel):
+        go.wait(5)
+        if tool == 'stops' and cancel.is_set():
+            return {'content': [{'type': 'text', 'text': '{"error": "cancelled"}'}], 'isError': True}
+        return {'content': [{'type': 'text', 'text': '{"ok": true}'}], 'isError': False}
+    js = Jobs(run)
+    a = js.start('ignores')['job_id']
+    while js.jobs[a].state != 'running':
+        time.sleep(0.01)
+    js.cancel(a)
+    go.set()
+    js.jobs[a].done.wait(5)
+    assert js.jobs[a].state == 'done' and 'too late' not in js.jobs[a].summary().get('note', 'x') and \
+        js.jobs[a].summary()['note'] == 'finished before the cancel could stop it'
+    go.clear()
+    b = js.start('stops')['job_id']
+    while js.jobs[b].state != 'running':
+        time.sleep(0.01)
+    js.cancel(b)
+    go.set()
+    js.jobs[b].done.wait(5)
+    assert js.jobs[b].state == 'cancelled'
+
+
+def test_a_live_cancel_is_sent_again_until_the_window_confirms_it(monkeypatch):
+    """LiveLink.call: a cancel request lost on the way (LinkError) or answered 'not running yet' is sent again."""
+    import threading as th
+    from vantage.mcp import session as SE
+    link = SE.LiveLink.__new__(SE.LiveLink)
+    sent = []
+    done = th.Event()
+
+    def request(method, **kw):
+        if method == 'call':
+            done.wait(10)
+            return {'ok': True}
+        sent.append(method)
+        if len(sent) == 1:
+            raise SE.LinkError('dropped')
+        if len(sent) == 2:
+            return {'cancelled': False}
+        done.set()
+        return {'cancelled': True}
+    link.request = request
+    ev = th.Event()
+    ev.set()
+    assert link.call('get_coverage', {}, cancel=ev) == {'ok': True}
+    assert sent == ['cancel', 'cancel', 'cancel']

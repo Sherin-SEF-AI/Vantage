@@ -37,6 +37,9 @@ PROTOCOL_NOTE = ('Vantage plans the cameras, lidars, radars, GNSS and IMUs of a 
                  'on a project file each change is saved with a backup of the file as it was first opened.')
 
 SKIP = ('update_plan', 'suggest_next')
+# results over MCP come whole up to here (about 25,000 tokens, Claude Code's own default limit for one tool's
+# output); the in-app chat keeps its smaller cap (tools.MAX_CHARS)
+MCP_MAX_CHARS = 90_000
 NEEDS_WINDOW = ('show_in_app', 'propose_changes', 'propose_requirements', 'add_design_log', 'propose_plan')
 
 _OP_ITEM = {'type': 'object', 'properties': {
@@ -556,6 +559,12 @@ def _assistant_tools():
     return out
 
 
+try:                                           # round 17's write tools (mcp/r17.py)
+    from .r17 import tools as _r17_tools
+    MCP_TOOLS += _r17_tools(Tool)
+except Exception as _e:                        # noqa: BLE001 — a broken module never takes the server down
+    import logging as _logging
+    _logging.getLogger(__name__).warning('the round-17 MCP tools are not available: %s: %s', type(_e).__name__, _e)
 TOOLS = MCP_TOOLS + _assistant_tools()
 BY_NAME = {t.name: t for t in TOOLS}
 
@@ -624,7 +633,7 @@ def call(session, name: str, args, cancel=None) -> dict:
         if session.mode == 'live':
             tc.on_ui, tc.on_proposal, tc.on_copilot, tc.on_log = (session.show, session.proposal, session.plan,
                                                                   session.log)
-        body, ok, pics = T.run_full(tc, name, args)
+        body, ok, pics = T.run_full(tc, name, args, cap=MCP_MAX_CHARS)
         content = [{'type': 'text', 'text': body}] + [_picture(p) for p in pics]
         out = {'content': content, 'isError': not ok}
         st = structured(body)

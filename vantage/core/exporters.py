@@ -384,7 +384,7 @@ def _design_names(p, v):
 
 
 GROUPS =['Documents', 'Extrinsics', 'Calibration and robotics', 'Datasets', 'Research', 'AV stack', 'Surround view',
-          'Images', 'Mount points']
+          'Images', 'Mount points', 'Embedded']
 
 FORMATS: list[ExportFormat] = [
     ExportFormat('mount_sheet_pdf', 'Documents', 'Mount sheet', 'PDF', lambda p, v: 'mount-sheet.pdf', 'binary'),
@@ -574,6 +574,8 @@ FORMATS: list[ExportFormat] = [
     ExportFormat('dxf', 'Mount points', 'Mount points', 'DXF', lambda p, v: 'mount-points.dxf', 'text'),
     ExportFormat('step', 'Mount points', 'Mount points', 'STEP', lambda p, v: 'mount-points.step', 'text'),
 ]
+from .exporters17 import FORMATS17 as _F17, export_formats as _r17_formats      # noqa: E402  (round 17's studies)
+FORMATS += _r17_formats(ExportFormat)
 _BY_ID = {f.id: f for f in FORMATS}
 _IMAGE_KEYS = {'viewport_png': ('viewport', 'viewport capture'), 'bev_png': ('bev', "bird's-eye capture")}
 
@@ -805,7 +807,7 @@ class _Ctx:
                 self._issues = (list(self.opts.issues), False)
             elif self.variant is self.project.variant:
                 try:
-                    self._issues = (rules.collect_issues(self.project, self.result, None, None), True)
+                    self._issues = (rules.collect_issues(self.project, self.result, None, None, self.opts.engine), True)
                 except Exception:
                     self._issues = ([], True)
             else:
@@ -1732,8 +1734,8 @@ Cameras:
   surround rig's cameras do not share one orientation, so its left 3×3 is K_xx R_xx, not K_xx: read the camera
   matrix from K_xx. pykitti.raw and the devkit's loadCalibration.m assume KITTI's stereo layout (rectified cameras
   parallel to camera 00, P_rect = K [I | t]): their K_cam0, T_cam0_velo and T_cam0_imu are right, their K_cam1..3,
-  T_cam1..3_* and baselines are not (and pykitti needs cameras 00 to 03). Use Tr_cam_xx_to_vehicle or
-  kitti/object/<TAG>.txt for the other cameras.
+  T_cam1..3_* and baselines are not (and pykitti needs cameras 00 to 03). Use Tr_cam_xx_to_vehicle{' or' if lid else ''}
+  {'kitti/object/<TAG>.txt ' if lid else ''}for the other cameras.
 - corner_dist is the floor calibration board's square ({square:.3f} m).
 - Lidars and radars: Tr_<tag>_to_vehicle in calib_cams_to_vehicle.txt maps the sensor's frame (x forward, y left,
   z up at its optical centre) into the vehicle frame. With a lidar, calib_velo_to_cam.txt gives the first visible
@@ -3458,6 +3460,10 @@ def _render_files(fmt_id: str, ctx: _Ctx) -> list:
         return [(f'log_replay/{n}', d) for n, d in SP.files(res, ctx.project)] if res is not None else []
     if fmt_id in _R14:
         return _r14_files(fmt_id, ctx)
+    if fmt_id in _F17:
+        from .analysis import Engine
+        from . import exporters17 as X17
+        return X17.files(fmt_id, ctx.project, ctx.variant, ctx.opts.engine or Engine())
     if fmt_id == 'sim_rig':
         from . import simrig as SR
         if not _sim_rig_names(ctx.project, ctx.variant):
@@ -3952,6 +3958,9 @@ def preview(fmt_id: str, project: Project, result, opts: ExportOptions) -> tuple
                        f'seconds) · {len(names)} files or more: ' + ', '.join(os.path.basename(x) for x in names), 0)
     if fmt_id in _R14:
         return _r14_preview(fmt_id, project, ctx, names, first, base)
+    if fmt_id in _F17:
+        from . import exporters17 as X17
+        return X17.preview(fmt_id, _render(fmt_id, ctx) if names else [], base, _size_text)
     if fmt_id == 'sim_rig':
         if not names:
             return first, 'Nothing to simulate: no visible camera, lidar or radar in this variant.', 0

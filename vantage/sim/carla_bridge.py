@@ -644,6 +644,16 @@ def feather(out, atlas, blend, devignette=None):
 
 
 # =========================================================================== the bridge
+def _attr_value(a):
+    """A blueprint attribute's value as its type has it (carla's as_str refuses a number or a bool)."""
+    for fn in ('as_str', 'as_int', 'as_float', 'as_bool'):
+        try:
+            return getattr(a, fn)()
+        except Exception:                              # noqa: BLE001 (a cast of the wrong type)
+            continue
+    return str(a)
+
+
 class Bridge:
     def __init__(self, carla, rig: dict, remaps: dict, out_dir: str, args, progress=None, cancel=None):
         self.carla = carla
@@ -685,6 +695,11 @@ class Bridge:
         self.sumo_ids = {}               # CARLA actor id -> SUMO vehicle id (the vehicles SUMO drives)
         import threading
         self._lock = threading.Lock()
+        # event cameras (round 17): CARLA's DVS camera per rig event camera, with a reference RGB view whose frames
+        # feed core.event_camera's model in the loop (rig event_cameras, core.event_camera.sim_event_cameras)
+        self.ev_cams = [] if getattr(args, 'no_cameras', False) else list(rig.get('event_cameras') or [])
+        self.ev = {}
+        self.ev_t0 = None
         if self.faults:
             self.rig = rig = json.loads(json.dumps(rig))     # the mounts change: never the caller's document
             self._apply_mount_faults()
@@ -1507,6 +1522,7 @@ class Bridge:
             act = self._attach(world, bp, g['carla']['location'], g['carla']['rotation'])
             self._listen(act, ('gnss', g['tag']))
             self.sensors.append((act, 'gnss', g, 0))
+        self._spawn_event_cameras(world, lib)
 
     def _listen(self, act, key):
         q = queue.Queue()
@@ -1764,11 +1780,15 @@ class Bridge:
             t1 = time.perf_counter()
             items = {}
             for act, kind, doc, idx in self.sensors:
-                if kind in ('camera', 'camera_gt'):
+                if kind in ('camera', 'camera_gt', 'dvs', 'dvs_rgb'):     # (event cameras: _event_tick)
                     continue
                 key = (kind, doc['tag']) if kind not in ('radar',) else (kind, doc['tag'], idx)
                 items[key] = self._get(key, frame, timeout)
             perf['wait_s'] += time.perf_counter() - t1
+            if self.ev:
+                t4 = time.perf_counter()
+                self._event_tick(rel, frame, snap, timeout)
+                perf['events_s'] = perf.get('events_s', 0.0) + time.perf_counter() - t4
             boxes = None
             if rel in gt_ticks or rel in key_ticks or rel in sample_ticks:
                 boxes = self._boxes(snap, T_ego) + [b for b in static_boxes if self._near(b, T_ego)]
@@ -1911,7 +1931,130 @@ class Bridge:
         for c in cam_docs:
             if cam_pending[c['tag']]:
                 self._note(f'{c["tag"]}: {len(cam_pending[c["tag"]])} frame(s) missing a view at the end.')
+        if self.ev:
+            self._event_finish(timeout)
         self._finish(ann_rows, instances, perf, cam_frames, phase_meas, t_wall, t_rec0)
+
+    # ------------------------------------------------------------------ event cameras (round 17)
+    def _spawn_event_cameras(self, world, lib):
+        """Each rig event camera: CARLA's DVS camera (sensor.camera.dvs, the RGB camera's post-processing as the rig's
+        cameras have it, thresholds from the module) at its pose, every step; with reference_rgb an RGB view at the
+        same pose, size and step, whose frames run core.event_camera's model (CARLA's algorithm, and in linear light)."""
+        if not self.ev_cams:
+            return
+        from . import dvs_model as EC                  # (core.event_camera's model, shipped with the bridge)
+        for e in self.ev_cams:
+            mode, evc = self._exposure_of({'tag': e['tag']})
+            attrs = dict(self._rgb_attrs(e['width'], e['height'], e['fov_deg'], 0.0, mode, evc), **e['dvs'])
+            bp = self._bp(lib, 'sensor.camera.dvs', attrs)
+            used = {}
+            for k in sorted(e['dvs']) + ['exposure_mode', 'exposure_compensation', 'fov', 'image_size_x']:
+                if bp.has_attribute(k):
+                    used[k] = _attr_value(bp.get_attribute(k))
+            act = self._attach(world, bp, e['carla']['location'], e['carla']['rotation'])
+            self._listen(act, ('dvs', e['tag']))
+            self.sensors.append((act, 'dvs', e, 0))
+            st = {'doc': e, 'carla': [], 'model': [], 'linear': [], 'frames': [], 'arrays': [], 'attrs': used,
+                  'blueprint_attributes': sorted(a.id for a in bp), 'sim': None, 'sim_lin': None, 'first_t': None}
+            if e.get('reference_rgb'):
+                rb = self._bp(lib, 'sensor.camera.rgb', self._rgb_attrs(e['width'], e['height'], e['fov_deg'], 0.0,
+                                                                         mode, evc))
+                ra = self._attach(world, rb, e['carla']['location'], e['carla']['rotation'])
+                self._listen(ra, ('dvs_rgb', e['tag']))
+                self.sensors.append((ra, 'dvs_rgb', e, 0))
+                d = e['dvs']
+                st['sim'] = EC.EventSim((e['height'], e['width']), EC.SimConfig.carla_dvs(d))
+                st['sim_lin'] = EC.EventSim((e['height'], e['width']),
+                                            EC.SimConfig(float(d['positive_threshold']), float(d['negative_threshold']),
+                                                         refractory_s=float(d.get('refractory_period_ns', 0)) * 1e-9))
+            self.ev[e['tag']] = st
+        self._note(f'{len(self.ev_cams)} event camera(s): CARLA\'s DVS camera, events/ beside the dataset'
+                   + (' (with a reference RGB view and the model\'s events on it)'
+                      if any(e.get('reference_rgb') for e in self.ev_cams) else '') + '.')
+
+    def _event_tick(self, rel, frame, snap, timeout):
+        """Collect the DVS arrays that arrived; run the model on this step's reference image."""
+        from . import dvs_model as EC                  # (core.event_camera's model, shipped with the bridge)
+        t_now = float(snap.timestamp.elapsed_seconds)
+        if rel == 0:
+            self.ev_t0 = t_now
+        for tag, st in self.ev.items():
+            q = self.queues[('dvs', tag)]
+            while True:
+                try:
+                    item = q.get_nowait()
+                except queue.Empty:
+                    break
+                a = np.frombuffer(bytes(item.raw_data), EC.CARLA_DVS_DTYPE).copy()
+                st['carla'].append(a)
+                st['arrays'].append((int(item.frame), float(item.timestamp), len(a),
+                                     int(a['t'].min()) if len(a) else None, int(a['t'].max()) if len(a) else None))
+            if st['sim'] is None:
+                continue
+            img = self._get(('dvs_rgb', tag), frame, timeout)
+            bgra = np.frombuffer(img.raw_data, np.uint8).reshape(int(img.height), int(img.width), 4)
+            t_img = float(img.timestamp)
+            if st['first_t'] is None:
+                st['first_t'] = t_img
+            st['model'].append(st['sim'].step(EC.carla_log_grey(bgra), t_img))
+            st['linear'].append(st['sim_lin'].step(EC.linear_log_luminance(bgra), t_img))
+            if rel >= 0 and len(st['frames']) < int(st['doc'].get('reference_frames', 0)):
+                st['frames'].append((t_img - (self.ev_t0 if self.ev_t0 is not None else t_img),
+                                     np.ascontiguousarray(bgra[..., :3])))
+
+    def _event_finish(self, timeout):
+        """The streams on the drive's clock (µs from t = 0), clipped to the drive, compared and written (events/)."""
+        from . import dvs_model as EC                  # (core.event_camera's model, shipped with the bridge)
+        end = time.monotonic() + min(float(timeout), 2.0)
+        for tag, st in self.ev.items():                 # the last arrays may still be on their way
+            q = self.queues[('dvs', tag)]
+            while time.monotonic() < end:
+                try:
+                    item = q.get(timeout=0.2)
+                except queue.Empty:
+                    break
+                a = np.frombuffer(bytes(item.raw_data), EC.CARLA_DVS_DTYPE).copy()
+                st['carla'].append(a)
+                st['arrays'].append((int(item.frame), float(item.timestamp), len(a),
+                                     int(a['t'].min()) if len(a) else None, int(a['t'].max()) if len(a) else None))
+        t0 = self.ev_t0 if self.ev_t0 is not None else 0.0
+        dur_us = int(round(float(self.a.duration) * 1e6))
+        chans = []
+        for tag, st in self.ev.items():
+            e = st['doc']
+            w, h = int(e['width']), int(e['height'])
+            raw = np.concatenate(st['carla']) if st['carla'] else np.zeros(0, EC.CARLA_DVS_DTYPE)
+            # CARLA stamps events in ns of the simulation (episode) clock: the arrays' last event against their
+            # frame's timestamp says whether that holds here
+            gaps = [tmax - ts * 1e9 for _, ts, n, _, tmax in st['arrays'] if n]
+            gap = float(np.median(gaps)) if gaps else None
+            on_clock = gap is not None and abs(gap) <= 2e9 / self.R
+            carla = EC.Events(raw['x'].astype(np.uint16), raw['y'].astype(np.uint16),
+                              (raw['t'].astype(np.int64) - int(round(t0 * 1e9))) // 1000,
+                              np.where(raw['pol'], 1, -1).astype(np.int8), w, h).sorted()
+            carla = carla.between(0, dur_us + 1)
+            out = {'carla': carla}
+            if st['sim'] is not None:
+                shift = int(round((st['first_t'] - t0) * 1e6))
+                for k in ('model', 'linear'):
+                    ev = EC.Events.concat(st[k], w, h)
+                    ev.t = ev.t + shift
+                    out[k] = ev.sorted().between(0, dur_us + 1)
+            cmp = EC.compare_dvs(out['carla'], out['model'], w, h, 0, dur_us + 1) if 'model' in out else None
+            cmp_l = EC.compare_dvs(out['carla'], out['linear'], w, h, 0, dur_us + 1) if 'linear' in out else None
+            rep = {'tag': tag, 'arrays': len(st['arrays']), 'events': len(carla),
+                   'time_check': {'median_last_event_minus_frame_ns': gap, 'on_simulation_clock': on_clock,
+                                  'note': 'the last event of each DVS array against its frame\'s timestamp'},
+                   'dvs_attributes': st['attrs'], 'blueprint_attributes': st['blueprint_attributes'],
+                   'compare': cmp, 'compare_linear': cmp_l}
+            if not on_clock and gap is not None:
+                self._note(f'{tag}: the DVS events\' times are not on the simulation clock (median offset '
+                           f'{gap / 1e6:.1f} ms): compare its timing with care.')
+            chans.append(self.rec.events(e, out, st['frames'], rep, float(self.a.duration)))
+        self.rec.events_index(chans)
+        self.report['event_cameras'] = [{k: c[k] for k in ('tag', 'channel', 'events', 'model_events', 'arrays',
+                                                           'compare', 'compare_linear', 'time_check', 'files')}
+                                        for c in chans]
 
     def _hold_or_keep(self, key, ch, k, content):
         """A freeze fault: within its window the channel repeats the last content written before it (the first frame

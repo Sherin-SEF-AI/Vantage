@@ -105,9 +105,10 @@ class LiveSession:
             st = self.ctx.store
             p = st.project
             import copy
-            saved = {k: copy.deepcopy(p.section(k)) for k in keys}
+            secs = [f'variant:{p.active_uid}' if k == 'variant' else k for k in keys]   # 'variant': the active one
+            saved = {k: copy.deepcopy(p.section(k)) for k in secs}
             try:
-                st.edit([k if not k.startswith(f'variant:{p.active_uid}') else 'variant' for k in keys], fn, text)
+                st.edit([k if not k.startswith(f'variant:{p.active_uid}') else 'variant' for k in secs], fn, text)
             except Exception:
                 for k, state in saved.items():          # the trial passed, so this is a race: leave it as it was
                     p.restore(k, state)

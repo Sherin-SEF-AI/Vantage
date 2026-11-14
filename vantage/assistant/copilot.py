@@ -408,9 +408,12 @@ def _clean_export(d):
     if folder.startswith('/') or folder.startswith('~') or '..' in folder.split('/'):
         bad.append('The export folder is relative to the working folder (no .. and no absolute path).')
         folder = ''
-    out = {'formats': ids, 'folder': folder[:200],
-           'frame': d.get('frame') if d.get('frame') in ('rear_axle', 'front_axle', 'front_bumper', 'ground_centre',
-                                                          'custom') else 'rear_axle',
+    from ..core.project import FRAME_PRESETS
+    frame = d.get('frame') or 'rear_axle'
+    if frame not in FRAME_PRESETS:                 # refused, not swapped for the rear axle (wrong coordinates)
+        bad.append(f'No export frame {frame!r}: one of {", ".join(FRAME_PRESETS)}.')
+        frame = 'rear_axle'
+    out = {'formats': ids, 'folder': folder[:200], 'frame': frame,
            'units': d.get('units') if d.get('units') in ('m', 'mm') else 'm',
            'angles': d.get('angles') if d.get('angles') in ('deg', 'rad') else 'deg'}
     if not ids:

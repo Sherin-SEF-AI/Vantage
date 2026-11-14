@@ -499,3 +499,190 @@ def app_win():
     w.close()
     w.deleteLater()
     _pump(app, 0.2)
+
+
+def test_tools_that_edit_the_active_variant_work_in_the_open_window(app_win):
+    """A tool whose edit names the 'variant' section (add_thermal_camera: ['variant', 'library']) used to fail in the
+    window with KeyError: 'variant' (the bridge saved the section by the raw key before mapping it to the active one)."""
+    app, w = app_win
+    router = Router(mode='live')
+    out = {}
+    n0 = len(w.store.project.variant.cameras)
+    steps0 = w.store.undo.count()
+    t = threading.Thread(target=lambda: out.__setitem__('add', _call(router, 'add_thermal_camera')))
+    t.start()
+    end = time.time() + 300
+    while t.is_alive() and time.time() < end:
+        _pump(app, 0.05)
+    assert not t.is_alive()
+    res, err = out['add']
+    assert not err and 'error' not in res, res
+    assert len(w.store.project.variant.cameras) == n0 + 1
+    assert w.store.undo.count() == steps0 + 1
+    assert w.store.undo.command(w.store.undo.count() - 1).text().startswith('Claude ·')
+    _pump(app, 0.1)
+    undo, redo = w.actions_by_id['undo'], w.actions_by_id['redo']
+    assert undo.text().startswith('Undo Claude ·'), undo.text()        # Edit ▸ Undo names the step
+    w.store.undo.undo()
+    _pump(app, 0.1)
+    assert len(w.store.project.variant.cameras) == n0
+    assert redo.text().startswith('Redo Claude ·'), redo.text()
+
+
+def test_file_mode_saves_into_a_new_folder_and_diffs_a_home_relative_revision(tmp_path, monkeypatch):
+    """save_project into a folder that does not exist yet creates it; diff_projects takes ~/…@REV as well as a plain
+    path (it used to expand ~ only for its own check, then fail in git)."""
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'cfg'))
+    monkeypatch.setenv('HOME', str(tmp_path / 'home'))
+    r = Router(None, 'file')
+    _call(r, 'open_project', sample=True)
+    doc, err = _call(r, 'save_project', path='~/rigs/new/data-rig.vantage.d')
+    assert not err and os.path.isdir(tmp_path / 'home' / 'rigs' / 'new' / 'data-rig.vantage.d'), doc
+    repo = tmp_path / 'home' / 'rigs'
+    git = ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false']
+    subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+    subprocess.run(git + ['-C', str(repo), 'add', '-A'], check=True)
+    subprocess.run(git + ['-C', str(repo), 'commit', '-q', '-m', 'first'], check=True)
+    doc, err = _call(r, 'edit_project', ops=[{'op': 'set', 'target': 'camera', 'id': 'R', 'props': {'pitch': 33}}])
+    assert not err, doc
+    doc, err = _call(r, 'diff_projects', a='~/rigs/new/data-rig.vantage.d@HEAD')
+    assert not err and 'error' not in doc and not doc['same'], doc
+    assert 'R' in doc['text'] and 'pitch' in doc['text']
+
+
+def test_requirement_proposals_get_their_own_ids_and_say_where_they_came_from():
+    """Window-only tools, called as the window's tool context calls them: two proposals from one request used to
+    share the id R1 and say "Proposed from the project brief."; a design-log proposal said it was accepted."""
+    from types import SimpleNamespace
+    from vantage.assistant import tools as T
+    shown = []
+    tc = SimpleNamespace(project=samples.tigor_sample_project(), brief='', on_ui=shown.append, on_log=shown.append)
+    doc = T.propose_requirements(tc, text='pedestrians to 40 m and no blind ground')
+    assert len(doc['proposed']) >= 2, doc
+    ids = [i['id'] for i in doc['proposed']]
+    assert len(set(ids)) == len(ids), ids
+    assert all(i['note'] == 'Proposed from the request.' for i in doc['proposed'])
+    log = T.add_design_log(tc, kind='decision', text='Keep F at 0.62 m', about=['F'])
+    assert log['proposed']['source'] == 'assistant (awaiting the user)', log
+
+
+def test_a_proposed_requirement_with_a_parameter_its_metric_does_not_take_is_refused_with_the_right_ones():
+    """Claude Code proposed 'a 0.5 m child unseen nowhere' as volume.undetected_m2 with {height: 0.5}: the unknown
+    parameter was dropped and the default object (Child 0.9 m) proposed instead, a different requirement. It is now
+    refused, naming the parameter the metric takes and its choices in this project; a right one still passes."""
+    from types import SimpleNamespace
+    from vantage.assistant import tools as T
+    shown = []
+    tc = SimpleNamespace(project=samples.tigor_sample_project(), brief='', on_ui=shown.append, on_log=shown.append)
+    doc = T.propose_requirements(tc, items=[{'metric': 'volume.undetected_m2', 'params': {'height': 0.5}, 'op': '<=',
+                                             'target': 0, 'text': 'A 0.5 m child is seen everywhere'}])
+    assert doc['proposed'] == [] and not shown, doc
+    err = doc['rejected'][0]['error']
+    assert "'height'" in err and "'object'" in err and "'Pole 0.5 m'" in err, err
+    doc = T.propose_requirements(tc, items=[{'metric': 'volume.undetected_m2', 'params': {'object': 'Pole 0.5 m'},
+                                             'op': '<=', 'target': 0, 'text': 'A 0.5 m child is seen everywhere'}])
+    assert [i['params'] for i in doc['proposed']] == [{'object': 'Pole 0.5 m'}] and len(shown) == 1, doc
+
+
+# ======================================================================= the hardening pass (2026-11-14)
+def test_locked_devices_are_neither_lifted_by_a_preset_nor_removed_with_their_variant(sample):
+    """A roof rack fitted under a mast lifted a locked lidar on it, and removing a variant deleted its locked cameras."""
+    p = _proj(sample)
+    E.apply(p, [{'op': 'add', 'target': 'rig_part', 'preset': 'sensor_mast'},
+                {'op': 'add', 'target': 'sensor', 'props': {'kind': 'lidar'}}])
+    lid = p.variant.sensors[-1]
+    q = p.snapshot()
+    reply = E.apply(q, [{'op': 'add', 'target': 'rig_part', 'preset': 'roof_rack'}])
+    z_q = next(s for s in q.variant.sensors if s.uid == lid.uid).z
+    assert z_q > lid.z + 1e-6                        # the rack lifts the mast and the lidar on it ...
+    assert lid.tag in json.dumps(reply, default=str, ensure_ascii=False)    # ... and the reply says so
+    lid.locked = True
+    with pytest.raises(E.EditError, match='locked'):
+        E.apply(p, [{'op': 'add', 'target': 'rig_part', 'preset': 'roof_rack'}])
+    assert next(s for s in p.variant.sensors if s.uid == lid.uid).z == lid.z
+    p = _proj(sample)
+    v = p.variant
+    v.by_tag('F').locked = True
+    with pytest.raises(E.EditError, match='locked'):
+        E.apply(p, [{'op': 'remove', 'target': 'variant', 'id': v.name}])
+    assert any(x.uid == v.uid for x in p.variants)
+
+
+def test_big_results_come_whole_over_mcp_and_as_valid_json_in_the_chat(tmp_path, sample, monkeypatch):
+    """Over MCP, results were cut at the in-app chat's 14,000 characters into invalid JSON (get_requirement_metrics
+    listed 25 of its metrics); the chat's cut now stays valid JSON."""
+    from vantage.assistant import tools as T
+    from vantage.core import requirements as RQ
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'cfg'))
+    path = str(tmp_path / 'p.vantage')
+    sample.save(path)
+    r = Router(path, 'file')
+    res = r.call('get_requirement_metrics', {})
+    doc = json.loads(res['content'][0]['text'])
+    assert res.get('structuredContent') == doc
+    assert not any(isinstance(m, str) and m.startswith('…') for m in doc['metrics'])
+    assert len(doc['metrics']) == sum(1 for k in RQ.METRICS if RQ.metric_available(k))
+    big = {'rows': [{'i': i, 'text': 'x' * 50} for i in range(2000)], 'blob': 'y' * 40000}
+    for cap in (T.MAX_CHARS, 1000):
+        s = T.dump(big, cap)
+        assert len(s) <= cap + 200 and json.loads(s)
+    assert json.loads(T.dump(big, None)) == big
+
+
+def test_file_mode_counts_keeps_studies_logs_undo_and_names_the_blind_patch(tmp_path, sample, monkeypatch):
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'cfg'))
+    path = str(tmp_path / 'p.vantage')
+    sample.save(path)
+    r = Router(path, 'file')
+    # simulate_changes counts the issues get_issues lists (no stitched-view issue without the window's study)
+    gi, _ = _call(r, 'get_issues')
+    sim, err = _call(r, 'simulate_changes', changes=[{'camera': 'F', 'dpitch': 1.0}])
+    assert not err, sim
+    assert sum(sim['issues']['before'].values()) == gi['count']
+    # the blind ground's 'where' lies in blind ground of the ROI, not under the car
+    blind = next((i for i in gi['issues'] if 'is blind' in i['message']), None)
+    if blind is not None:
+        pt, _ = _call(r, 'explain_point', x=blind['where'][0], y=blind['where'][1])
+        assert pt.get('in_roi', True) and 'under the body' not in blind['message']
+    regions, _ = _call(r, 'find_blind_regions')
+    assert regions['blind_regions']
+    for g in regions['blind_regions']:
+        pt, _ = _call(r, 'explain_point', x=g['centre'][0], y=g['centre'][1])
+        if pt.get('in_roi'):
+            assert g['where'] != 'under the body', g
+    # get_studies gives the blind volume run_study computed, until the next change
+    st, _ = _call(r, 'get_studies')
+    assert isinstance(st['blind_volume'], str)
+    _call(r, 'run_study', study='blind_volume')
+    st, _ = _call(r, 'get_studies')
+    assert isinstance(st['blind_volume'], dict) and 'objects' in st['blind_volume']
+    _call(r, 'edit_project', ops=[{'op': 'set', 'target': 'camera', 'id': 'R', 'props': {'pitch': 31}}])
+    st, _ = _call(r, 'get_studies')
+    assert isinstance(st['blind_volume'], str) and 'revision' in st['blind_volume']
+    # undo is in the project's log
+    _call(r, 'undo_last_change')
+    from vantage.core.project import Project
+    kinds = [e.kind for e in Project.load(path).log]
+    assert kinds[-1] == 'undo' and 'edit' in kinds
+
+
+def test_a_job_cancelled_while_queued_ends_at_once():
+    from vantage.mcp.jobs import Jobs
+    gate, ended = threading.Event(), []
+
+    def run(tool, args, cancel):
+        gate.wait(10)
+        return {'content': [{'type': 'text', 'text': '{}'}], 'isError': False}
+    js = Jobs(run, on_done=ended.append)
+    a = js.start('slow')
+    b = js.start('queued')
+    js.cancel(b['job_id'])
+    t0 = time.time()
+    job = js.get(b['job_id'], wait_s=5)
+    assert time.time() - t0 < 1.0 and job.state == 'cancelled' and job.done.is_set()
+    assert [j.id for j in ended] == [b['job_id']]
+    q0 = job.summary()['queued_s']
+    time.sleep(0.3)
+    assert job.summary()['queued_s'] == q0
+    gate.set()
+    assert js.get(a['job_id'], wait_s=5).state == 'done'

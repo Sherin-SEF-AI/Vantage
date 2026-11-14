@@ -975,15 +975,19 @@ def _glob(pat: str):
     return re.compile(''.join('.*' if c == '*' else '.' if c == '?' else re.escape(c) for c in pat))
 
 
+def pattern_matches(pat: str, path: str) -> bool:
+    """Whether a --tolerance PATTERN names the number at path (its whole path, its key, or the path without indices)."""
+    last = re.sub(r'\[\d+\]$', '', path.rsplit('.', 1)[-1])
+    rx = _glob(pat)
+    return bool(rx.fullmatch(path) or rx.fullmatch(last) or rx.fullmatch(re.sub(r'\[\d+\]', '', path)))
+
+
 def tolerance_for(path: str, tolerances: list) -> tuple[float, bool, str | None]:
     """(value, relative, pattern) for the number at path: the first matching pattern, else the bare default, else
     exact."""
-    last = re.sub(r'\[\d+\]$', '', path.rsplit('.', 1)[-1])
     for pat, x, rel in tolerances:
-        if pat is not None:
-            rx = _glob(pat)
-            if rx.fullmatch(path) or rx.fullmatch(last) or rx.fullmatch(re.sub(r'\[\d+\]', '', path)):
-                return x, rel, pat
+        if pat is not None and pattern_matches(pat, path):
+            return x, rel, pat
     default = [t for t in tolerances if t[0] is None]
     if default:
         return default[-1][1], default[-1][2], '*'
@@ -1154,6 +1158,12 @@ def report(name: str, recorded_doc: dict, reproduced_doc: dict | None, tolerance
                    message=error or 'The re-run wrote no result.', reasons=reasons + ([error] if error else []))
         return doc
     cmp_ = compare(recorded_doc, reproduced_doc, tolerances)
+    paths = [r[0] for r in cmp_['numbers']]
+    unused = [p for p, _, _ in tolerances if p is not None and not any(pattern_matches(p, q) for q in paths)]
+    if unused:                                       # a typo ('blnd_m2') is said, not silently applied to nothing
+        doc['unused_tolerances'] = unused
+        reasons.append('tolerance pattern' + ('s ' if len(unused) > 1 else ' ') + ', '.join(repr(u) for u in unused)
+                       + ' matched no number of the result')
     diffs = differences(prov, now) if now else []
     if project_now is not None and not doc['project_given']['same_as_recorded'] and \
             not any(d.startswith('the project differs') for d in diffs):

@@ -8,7 +8,7 @@ resource is always the project as it is now, in the window or the file):
     vantage://project-data      every field edit_project can set, with its value
     vantage://coverage, vantage://issues, vantage://seams, vantage://requirements, vantage://design-log,
     vantage://activity, vantage://page, vantage://camera-library, vantage://validation-checks,
-    vantage://export-formats, vantage://batch-options, vantage://jobs
+    vantage://export-formats, vantage://batch-options
     vantage://view/top.png      the bird's-eye coverage picture
 
 and templates:
@@ -38,7 +38,7 @@ STATIC = [
     ('vantage://status', 'status', 'Status', 'Where Claude works (the window or a file), the project, its variants, '
      'cameras, sensors and rig parts, unsaved changes and the conventions', 'vantage_status', {}),
     ('vantage://overview', 'overview', 'Design overview', 'The vehicle, every camera and sensor with its pose and '
-     'lens, the rig, and the coverage figures', 'get_overview', {}),
+     'lens, the rig, the ROI and the analysis thresholds (vantage://coverage has the figures)', 'get_overview', {}),
     ('vantage://project-data', 'project-data', 'Editable project data', 'Every field edit_project can set, with its '
      'current value, section by section', 'get_project_data',
      {'sections': ['cameras', 'sensors', 'rig', 'obstacles', 'targets', 'variants', 'roi', 'ecu', 'analysis',

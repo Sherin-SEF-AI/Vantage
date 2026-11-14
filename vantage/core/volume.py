@@ -334,7 +334,9 @@ def to_doc(vr: VolumeResult, project=None) -> dict:
            'note': 'Space inside the ROI, from the ground up to the height, that no camera sees (same visibility test as '
                    'the ground analysis: lens model, sensor, occlusion by the body, rig and housings). An object is '
                    'detected when any camera sees any part of its column from the ground up to its height. Reach: '
-                   'farthest such point from the body per azimuth sector (0 deg = forward, 90 deg = left).',
+                   'farthest such point from the body per azimuth sector (0 deg = forward, 90 deg = left). Positions '
+                   'and sizes are in metres in the ISO 8855 frame at the rear-axle centre on the ground, whatever the '
+                   'export frame and units.',
            'height_m': r(vr.height), 'level_step_m': r(vr.dz), 'cell_m': r(vr.cell),
            'roi_m2': r(m['roi_m2']), 'roi_m3': r(m['roi_m3']), 'blind_m3': r(m['blind_m3']), 'blind_pct': r(m['blind_pct'], 2),
            'never_seen_m2': r(m['never_seen_m2']), 'covered_to_m': r(m['covered_to_m']),
@@ -355,7 +357,9 @@ def to_doc(vr: VolumeResult, project=None) -> dict:
 
 def to_obj(vr: VolumeResult, name='blind_volume') -> str:
     P, F = blind_surface(vr)
-    lines = [f'# Vantage blind volume: {vr.metrics["blind_m3"]:.3f} m3 up to {vr.height:.2f} m (ISO 8855 frame, metres)',
+    lines = [f'# Vantage blind volume: {vr.metrics["blind_m3"]:.3f} m3 up to {vr.height:.2f} m',
+             '# ISO 8855 frame with its origin at the rear-axle centre on the ground, in metres, whatever the export '
+             'frame and units',
              f'o {name}']
     lines += [f'v {x:.4f} {y:.4f} {z:.4f}' for x, y, z in P]
     lines += [f'f {a + 1} {b + 1} {c + 1}' for a, b, c in F]

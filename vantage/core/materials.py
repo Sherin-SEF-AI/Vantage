@@ -377,6 +377,45 @@ def class_figures(cls: MaterialClass, paint: str, f_ghz: float, thickness_mm: fl
     return {'two_way_loss_db': float(-2 * db(T[0])), 'reflection_db': float(db(R[0]))}
 
 
+# =========================================================================== road surfaces (ground multipath)
+# The road under a radar as a dielectric half-space for the two-ray ground reflection (core.imaging_radar): (name,
+# eps', tan δ, source). Kurz et al. derived an effective relative permittivity from the reflection a 77 GHz radar
+# evaluation board measured off each surface (Fresnel's equations inverted, the loss not separated: tan δ 0 here, so
+# the modelled reflection is the measured one).
+_KURZ = ('Kurz, Stuelzebach, Pfeiffer, van Driesten, Biebl, "Road surface characteristics for the automotive 77 GHz '
+         'band", Adv. Radio Sci. 19, 165–172, 2021, Table 2 (open-space measurement, BASt duraBASt test area; read '
+         '2026-11-11)')
+ROAD_SURFACES = {
+    'asphalt_concrete': ('Asphalt concrete', 8.6, 0.0, _KURZ + ': asphalt concrete 8.6.'),
+    'split_mastic': ('Split mastic asphalt (11 mm)', 8.3, 0.0, _KURZ + ': split mastic 11 mm 8.3 (8 mm: 10.4).'),
+    'low_noise_asphalt': ('Low-noise asphalt', 2.52, 0.0, _KURZ + ': low noise asphalt 2.52 (porous; the authors call '
+                                                               'the low-noise values not fully reliable yet).'),
+    'concrete': ('Concrete (plate)', 4.46, 0.0, _KURZ + ': concrete plate 4.46, broom-finish concrete 4.34.'),
+}
+
+
+def fresnel_halfspace(eps_r: complex, theta_deg):
+    """Complex amplitude reflection (r_te, r_tm) of an air → half-space interface of complex relative permittivity
+    eps_r (eps'(1 − j tan δ)) at incidence theta_deg from the normal (Born & Wolf §1.5.2). TE: E parallel to the
+    surface (a horizontally polarised radar over the road); TM: E in the plane of incidence (vertical polarisation)."""
+    th = np.radians(np.clip(np.asarray(theta_deg, float), 0.0, 90.0))
+    c, s = np.cos(th), np.sin(th)
+    root = np.sqrt(complex(eps_r) - s * s + 0j)
+    r_te = (c - root) / (c + root)
+    r_tm = (complex(eps_r) * c - root) / (complex(eps_r) * c + root)
+    return r_te, r_tm
+
+
+def road_reflection(surface: str, grazing_deg, polarisation: str = 'vertical'):
+    """Complex reflection of a road surface (ROAD_SURFACES key) at grazing angles (degrees above the road) for a
+    'vertical' (TM) or 'horizontal' (TE) polarised radar. An unknown surface reflects nothing."""
+    if surface not in ROAD_SURFACES:
+        return np.zeros(np.shape(grazing_deg), complex)
+    _, eps, tan, _ = ROAD_SURFACES[surface]
+    r_te, r_tm = fresnel_halfspace(eps * (1 - 1j * tan), 90.0 - np.asarray(grazing_deg, float))
+    return r_te if polarisation == 'horizontal' else r_tm
+
+
 # =========================================================================== physics: light through glass
 def fresnel(n, theta_deg):
     """Power reflectance (R_s, R_p) of an air → n interface at incidence theta_deg."""

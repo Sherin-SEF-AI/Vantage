@@ -17,7 +17,7 @@ from ..charts import Scatter, ChartBase
 from ..planview import PlanView
 from ..theme import THEME, mono, sans, STATUS
 from .. import icons
-from ..widgets import label, button, ScrubSpinBox, Chip, ROW_H, hline, StatusLine, SegmentedControl
+from ..widgets import label, button, ScrubSpinBox, Chip, ROW_H, hline, StatusLine, SegmentedControl, fit_width
 
 
 class OptimiserPage(QWidget):
@@ -170,7 +170,14 @@ class OptimiserPage(QWidget):
         self.b_run.clicked.connect(self.toggle)
         bl.addWidget(self.b_run)
         ll.addLayout(bl)
-        split.addWidget(left)
+        # a scroll area, as the other pages' side panels: the page can be squeezed below the panel's minimum height
+        # (set_page), and without one its rows were drawn over each other
+        left_sc = QScrollArea()
+        left_sc.setWidgetResizable(True)
+        left_sc.setFrameShape(QFrame.Shape.NoFrame)
+        left_sc.setWidget(left)
+        fit_width(left_sc)
+        split.addWidget(left_sc)
         # ------------------------------------------------ centre
         centre = QWidget()
         centre.setObjectName('panel')
@@ -272,13 +279,34 @@ class OptimiserPage(QWidget):
         self.timer.setInterval(500)
         self.timer.timeout.connect(self._tick)
         ctx.store.project_replaced.connect(self._project_replaced)
+        ctx.store.changed.connect(self._on_store)
+        self._made = set()                       # variants this page created (Apply): switching to one keeps the run
 
     # ------------------------------------------------------------------ setup
+    def _on_store(self, sections):
+        """Another active variant: the settings (count, free variables, the 'from' label) are rebuilt for it, and the
+        candidates of the variant before are cleared, unless a run is going or the variant is one this page applied."""
+        if 'variants' not in sections:
+            return
+        win = self.ctx.window
+        if win is not None and 'optimiser' in getattr(win, '_jobs', {}):
+            return
+        v = self.ctx.store.project.variant
+        if self.opt is not None and (v.uid == self.opt.variant.uid or v.uid in self._made):
+            return
+        self._clear()
+        self.activate()
+
     def _project_replaced(self):
         """File > New / Open: candidates of the old project must not be applied to the new one."""
         job = self.ctx.window._jobs.get('optimiser') if self.ctx.window else None
         if job:
             job['cancel'].set()
+        self._clear()
+        self.refiner.project_replaced()
+        self.activate()
+
+    def _clear(self):
         self.opt = None
         self.cands = []
         self.sel = None
@@ -293,8 +321,6 @@ class OptimiserPage(QWidget):
         for pv in (self.plan, self.delta):
             pv._img_key = None
             pv.update()
-        self.refiner.project_replaced()
-        self.activate()
 
     def activate(self):
         p = self.ctx.store.project
@@ -551,9 +577,10 @@ class OptimiserPage(QWidget):
         if self.sel is None or self.opt is None:
             return
         cand = self.cands[self.sel]
-        base = self.ctx.store.project.variant.name
+        base = self.opt.variant.name                 # the variant the candidates came from
         name = f'{base} · {cand.label}'
         v = self.opt.to_variant(cand, name)
+        self._made.add(v.uid)
 
         def fn(p):
             p.variants.append(v)
@@ -567,7 +594,7 @@ class OptimiserPage(QWidget):
         active variant stays, so they can be compared."""
         if self.opt is None or not self.cands:
             return []
-        base = self.ctx.store.project.variant.name
+        base = self.opt.variant.name
         taken = {v.name for v in self.ctx.store.project.variants}
         new = []
         for cand in self.cands[:n]:
