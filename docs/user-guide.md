@@ -28,16 +28,13 @@ tar xf Vantage-*-linux-x86_64.tar.gz && cd Vantage-*-linux-*/
 ./install.sh                 # menu entry, the .vantage file type, ~/.local/bin/vantage
 vantage --self-test          # one line per check, ends with "self-test passed"
 
-# Windows: run Vantage-…-windows-x64-setup.exe, then the "Vantage self-test" shortcut
-# macOS:   move Vantage.app to Applications, then
-/Applications/Vantage.app/Contents/MacOS/vantage-cli --self-test
 
 # from source, Python 3.10 or later
 python3 -m pip install .     # extras: [step] STEP import, [bags] compressed bags, [terminal] Claude Code panel
 vantage
 ```
 
-The downloads are not code-signed. On Windows choose *More info ▸ Run anyway*. On macOS choose *Open Anyway* in *System Settings ▸ Privacy & Security*. Details are in [Install](https://sherin-sef-ai.github.io/Vantage/docs.html#install).
+Vantage is released for Linux only (x86_64, and arm64 for NVIDIA Jetson). Details are in [Install](https://sherin-sef-ai.github.io/Vantage/docs.html#install).
 
 ## The workflow
 
@@ -982,8 +979,6 @@ Vantage is an MCP server, so Claude Code or Claude Desktop can read and change r
 
 ```bash
 claude mcp add --scope user vantage -- vantage --mcp
-# Windows:  … -- vantage-cli.exe --mcp
-# macOS:    … -- /Applications/Vantage.app/Contents/MacOS/vantage-cli --mcp
 # a checkout: … -- python3 /path/to/run_vantage.py --mcp
 ```
 

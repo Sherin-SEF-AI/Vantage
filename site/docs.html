@@ -154,25 +154,16 @@
     <!-- ======================================================== start -->
     <h2 id="install">Install</h2>
     <p><b>Downloads that need no Python</b> are on the
-      <a href="https://github.com/Sherin-SEF-AI/Vantage/releases/latest">latest release</a>. Each carries its own
+      <a href="https://github.com/Sherin-SEF-AI/Vantage/releases/latest">latest release</a>, for Linux only (x86_64,
+      and arm64 for NVIDIA Jetson; there are no Windows or macOS downloads). Each carries its own
       Python and libraries, so there is nothing else to install; <code>SHA256SUMS.txt</code> next to them lists each
       file's SHA-256.</p>
     <table>
       <tr><th>System</th><th>File</th><th>Needs</th></tr>
-      <tr><td>Windows</td><td><code>Vantage-&lt;version&gt;-windows-x64-setup.exe</code> (installer) or <code>…-windows-x64.zip</code></td><td>Windows 10 or 11, x64</td></tr>
-      <tr><td>macOS</td><td><code>Vantage-&lt;version&gt;-macos-arm64.zip</code></td><td>macOS 14 or later, Apple silicon</td></tr>
       <tr><td>Linux</td><td><code>Vantage-&lt;version&gt;-linux-x86_64.tar.gz</code></td><td>x86_64, glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer)</td></tr>
       <tr><td>Linux arm64</td><td><code>Vantage-&lt;version&gt;-linux-arm64.tar.gz</code></td><td>arm64, glibc 2.35 or later: NVIDIA Jetson Orin with JetPack 6, Ubuntu 22.04 arm64 and newer</td></tr>
     </table>
-    <p><b>Windows.</b> Run the setup. It installs for the current user without administrator rights (into
-      <code>%LOCALAPPDATA%\Programs\Vantage</code>), adds Vantage and <em>Vantage self-test</em> to the Start menu, and
-      opens <code>.vantage</code> projects. <code>Vantage.exe</code> is the window; <code>vantage-cli.exe</code> in the
-      same folder is for batch mode and <code>--self-test</code> from a terminal. The <code>.zip</code> is the same
-      program without the installer: unzip it anywhere and run <code>Vantage.exe</code>. Uninstall from
-      <em>Settings ▸ Apps</em>.</p>
-    <p><b>macOS.</b> Unzip the file and move <code>Vantage.app</code> to Applications. Batch mode and the self-test:
-      <code>/Applications/Vantage.app/Contents/MacOS/vantage-cli --self-test</code>.</p>
-    <p><b>Linux.</b></p>
+    <p><b>Installing.</b></p>
 <pre><code>tar xf Vantage-*-linux-x86_64.tar.gz    # or …-linux-arm64.tar.gz on an arm64 machine such as a Jetson
 cd Vantage-*-linux-*/
 ./install.sh            # for your user: a menu entry, the .vantage file type, ~/.local/bin/vantage
@@ -188,18 +179,9 @@ vantage --self-test     # checks the analysis, exports, cameras, ROS 2 bags, Qt'
       back raw. <code>vantage --self-test</code> says which of these work on the machine (it runs a GStreamer test
       pipeline). The arm64 bundle carries Qt 6.7 (PyQt6's later arm64 builds need Ubuntu 24.04); JetPack 5
       (Ubuntu 20.04) is too old for it: run from source there.</p>
-    <p><b>Unsigned builds.</b> The downloads are not code-signed, so the system warns the first time. On Windows,
-      SmartScreen's "Windows protected your PC" has <em>More info ▸ Run anyway</em>. On macOS the first start is
-      refused: choose <em>Open Anyway</em> next to the message about Vantage in <em>System Settings ▸ Privacy &amp;
-      Security</em> (on macOS 14 you can instead Control-click the app and choose <em>Open</em>), or run
-      <code>xattr -dr com.apple.quarantine /Applications/Vantage.app</code> in Terminal if macOS calls the app damaged.
-      Linux asks nothing; check the download against <code>SHA256SUMS.txt</code>.</p>
     <p><b>Checking a download.</b></p>
-<pre><code>sha256sum -c SHA256SUMS.txt --ignore-missing     # Linux: checks the files you downloaded
-shasum -a 256 Vantage-*-macos-arm64.zip            # macOS: compare with its line in SHA256SUMS.txt
-Get-FileHash .\Vantage-*-windows-x64-setup.exe    # Windows (PowerShell): compare with its line</code></pre>
-    <p><b>Self-test.</b> Check an installation at any time with <code>vantage --self-test</code> (Windows: the
-      <em>Vantage self-test</em> shortcut; macOS: <code>Vantage.app/Contents/MacOS/vantage-cli --self-test</code>).
+<pre><code>sha256sum -c SHA256SUMS.txt --ignore-missing     # checks the files you downloaded</code></pre>
+    <p><b>Self-test.</b> Check an installation at any time with <code>vantage --self-test</code>.
       Without showing a window, it opens the sample and analyses its data rig, writes every export format and a ROS 2
       bag into a temporary folder and reads them back, loads Qt's platform plugins and image formats, draws with
       OpenGL and with the software renderer, and builds every page. It prints one line per check, ends with
@@ -210,19 +192,19 @@ Get-FileHash .\Vantage-*-windows-x64-setup.exe    # Windows (PowerShell): compar
 cd Vantage
 python3 -m pip install .            # add [step] for STEP import through gmsh, [bags] for compressed
                                     # ROS 2 bags (zstd, lz4), [keyring] for the assistant's key
-vantage                             # the window; vantage-gui on Windows starts it without a console
+vantage                             # the window
 vantage --install-desktop           # Linux: add Vantage to the app menu and dock with its icon</code></pre>
     <p>On Linux, <code>vantage --install-desktop</code> adds the menu entry, the icon and the <code>.vantage</code> file
       type for your user (in <code>~/.local/share</code>), so the dock and the app grid show Vantage with its icon;
       <code>vantage --desktop-shortcut</code> also puts a launcher on the desktop (trusted, so it starts on a
       double-click), and <code>vantage --uninstall-desktop</code> removes exactly what they added.</p>
     <p><b>Building a bundle.</b> Tagging a version (<code>v0.2.0</code>) runs the repository's <em>Build
-      installers</em> workflow: it builds and smoke-tests the four bundles (Linux x86_64 and arm64, Windows, macOS) and, when all pass, publishes the
+      installers</em> workflow: it builds and smoke-tests the two Linux bundles (x86_64 and arm64) and, when both pass, publishes the
       release with <code>SHA256SUMS.txt</code> and the changelog entry as its notes. To build for the machine you are
       on, in a fresh virtual environment:</p>
 <pre><code>python3 -m venv build-env &amp;&amp; . build-env/bin/activate
 python -m pip install -r packaging/requirements-bundle.txt
-python packaging/build.py --smoke   # dist/: the bundle, its archive and on Windows the installer (Inno Setup 6)</code></pre>
+python packaging/build.py --smoke   # dist/: the bundle and its archive</code></pre>
 
     <h2 id="first-run">First run</h2>
     <p>The start window lists recent projects and templates. The <b>Tata Tigor EV</b> sample has a measured body, six
@@ -2014,9 +1996,7 @@ vantage project.vantage            # open a project</code></pre>
       a Claude subscription, or any MCP client. Add it once:</p>
 <pre>claude mcp add --scope user vantage -- vantage --mcp
 # from source: claude mcp add --scope user vantage -- python3 /path/to/run_vantage.py --mcp</pre>
-    <p>On Windows the command is <code>vantage-cli.exe --mcp</code>, and on macOS
-      <code>/Applications/Vantage.app/Contents/MacOS/vantage-cli --mcp</code>. The server uses the Python standard
-      library only.</p>
+    <p>The server uses the Python standard library only.</p>
     <ul>
       <li><b>With a Vantage window open</b>, Claude works on the project in it. Each change is one undo step named
         <i>Claude · …</i>, and the analysis reruns before Claude sees the figures before and after. Proposals, Copilot
@@ -2064,7 +2044,7 @@ vantage project.vantage            # open a project</code></pre>
         drawing, wide characters, copy and paste (Ctrl+Shift+C / Ctrl+Shift+V, bracketed paste) and the xterm keys.
         Full-screen programs such as Claude Code get the alternate screen and the mouse: the wheel scrolls Claude's
         conversation, and Shift selects text in the terminal. Shift+wheel or Shift+PageUp scrolls the terminal's own
-        history. It needs the optional <code>pyte</code> package and runs on Linux and macOS.</li>
+        history. It needs the optional <code>pyte</code> package and runs on Linux.</li>
       <li><b>Calls to action</b>: the same recommendations as the assistant side, a strip about what you are doing
         and a <b>Suggested</b> menu. <b>Ask</b>, <b>Start goal</b> and <b>Plan it</b> hand the request to Claude Code
         (typed into it, or starting it); <b>Open</b> navigates.</li>
@@ -2878,8 +2858,6 @@ vantage project.vantage --fleet-twin-online V3 online.json --fleet-twin twin/ --
     <ul>
       <li><b>Check the installation:</b> <code>vantage --self-test</code> prints one line per check.</li>
       <li><b>The 3D view looks flat or fails:</b> the shader renderer falls back to fixed-function OpenGL and then to a software renderer by itself; <code>--software-3d</code> forces the software renderer.</li>
-      <li><b>Windows says "Windows protected your PC":</b> the download is not code-signed; choose <em>More info</em>, then <em>Run anyway</em>. Check the file against <code>SHA256SUMS.txt</code> first if you like (<a href="#install">Install</a>).</li>
-      <li><b>macOS refuses to open Vantage, or calls it damaged:</b> choose <em>Open Anyway</em> in <em>System Settings ▸ Privacy &amp; Security</em>, or run <code>xattr -dr com.apple.quarantine /Applications/Vantage.app</code>.</li>
       <li><b>The assistant says the key was not accepted:</b> check it in Preferences ▸ Assistant with <b>Test</b>; a <code>GROQ_API_KEY</code> environment variable overrides a saved key.</li>
       <li><b>Report a problem:</b> <a href="https://github.com/Sherin-SEF-AI/Vantage/issues">open an issue</a> with the steps and, if you can, the project file.</li>
     </ul>

@@ -98,7 +98,8 @@ docs/          the user guide (user-guide.md, generated from site/guide.html), t
                (project-format.md) and its JSON Schema; the simulator bridge contract (simulator-bridge.md) and its schemas
 site/          the website: index, the guide (guide.html), docs, the technical reference (methods.html) and the published validation report
 packaging/     PyInstaller spec, build script, icons, Linux install scripts and desktop entry,
-               Windows installer (Inno Setup); .github/workflows/build.yml builds them on GitHub
+               the Windows installer script (Inno Setup, kept but not built); .github/workflows/build.yml builds the
+               Linux bundles on GitHub
 ```
 
 Fonts: IBM Plex Sans and IBM Plex Mono, SIL Open Font License 1.1 (`vantage/resources/fonts`).

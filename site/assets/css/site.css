@@ -200,8 +200,8 @@ section.alt { background: var(--bg2); border-top: 1px solid var(--hair); border-
 .term .c { color: #8f8d86; } .term .p { color: #8ec0f7; } .term .g { color: #4fd18b; } .term .w { color: #fab219; }
 
 /* ---------------------------------------------------------------- downloads */
-.dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
-@media (max-width: 1000px) { .dl { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 1000px) { .dl { grid-template-columns: 1fr; } }
 @media (max-width: 560px) { .dl { grid-template-columns: 1fr; } }
 .dl .card { display: flex; flex-direction: column; gap: 12px; }
 .dl pre { margin: 0; background: var(--raised); border: 1px solid var(--hair); border-radius: 8px; padding: 12px; font-size: 12.4px;

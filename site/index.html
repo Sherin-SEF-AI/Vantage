@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Vantage · Sensor rig planner for autonomous-driving data collection</title>
-<meta name="description" content="Vantage is a free desktop app for designing the sensor rigs of autonomous-driving data-collection vehicles: place the cameras, lidars, radars, GNSS antennas and IMUs on the vehicle, prove in simulation what they will record before any hardware is fitted, then calibrate and verify the real rig and hand the calibration to the data pipeline. Windows, macOS and Linux; GPL-3.0-or-later.">
+<meta name="description" content="Vantage is a free desktop app for designing the sensor rigs of autonomous-driving data-collection vehicles: place the cameras, lidars, radars, GNSS antennas and IMUs on the vehicle, prove in simulation what they will record before any hardware is fitted, then calibrate and verify the real rig and hand the calibration to the data pipeline. Linux (x86_64 and arm64); GPL-3.0-or-later.">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Vantage · Sensor rig planner for autonomous-driving data collection">
 <meta property="og:description" content="Design data-collection rigs of cameras, lidars, radars, GNSS and IMU with exact lens models and occlusion, simulate what they will record and what they need before fitting the hardware, then calibrate the real rig and check its recordings against the plan.">
@@ -1652,7 +1652,7 @@ does not match)</span></pre>
             and a token only you can read.</li>
         </ul>
         <p class="note">Add it once with <code class="nowrap">claude mcp add vantage -- vantage --mcp</code>. The terminal
-          runs on Linux and macOS. In this picture a recommendation was clicked; Claude Code starts with it.</p>
+          runs on Linux. In this picture a recommendation was clicked; Claude Code starts with it.</p>
       </div>
       <div class="media">
         <div class="frame">
@@ -1827,11 +1827,6 @@ saved built.vantage with variant 6-cam · v3 · as-built
         and log replay need PyTorch, which the downloads leave out: install from source with <code>[torch]</code>.</p>
     </div>
     <div class="dl">
-      <div class="card"><span class="os">Windows</span><h4>Installer</h4>
-<pre>Vantage-*-x64-setup.exe</pre><p>Windows 10 or 11, x64. Installs for your user without administrator rights, with Start menu entries for Vantage and its self-test, and <code>vantage-cli.exe</code> for batch mode. SmartScreen: <em>More info ▸ Run anyway</em>.</p><a href="https://github.com/Sherin-SEF-AI/Vantage/releases/latest">From the latest release</a></div>
-      <div class="card"><span class="os">macOS</span><h4>App</h4>
-<pre>unzip Vantage-*-arm64.zip
-mv Vantage.app /Applications</pre><p>macOS 14 or later, Apple silicon. Not signed: the first time, choose <em>Open Anyway</em> in <em>System Settings ▸ Privacy &amp; Security</em>.</p><a href="https://github.com/Sherin-SEF-AI/Vantage/releases/latest">From the latest release</a></div>
       <div class="card"><span class="os">Linux</span><h4>Bundle, no Python</h4>
 <pre>tar xf Vantage-*-linux-*.tar.gz
 cd Vantage-*-linux-*/

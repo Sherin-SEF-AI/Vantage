@@ -2,6 +2,9 @@
 
 Versions follow [semantic versioning](https://semver.org). The top entry is what the release notes on GitHub show.
 
+**Linux only since 2026-11-24.** Vantage is released for Linux (x86_64, and arm64 for NVIDIA Jetson). The Windows and
+macOS packages were withdrawn from every release; their code stays in the source but is no longer built or tested.
+
 ## 0.10.0 — 2026-11-14
 
 A large release, and the last before a feature freeze: the next releases fix, harden and validate what exists. New
@@ -265,26 +268,16 @@ version 3 or later; the reference stitchers are Apache-2.0.
 
 | System | File | Needs |
 |---|---|---|
-| Windows | `Vantage-0.10.0-windows-x64-setup.exe` (installer), or the `.zip` | Windows 10 or 11, x64 |
-| macOS | `Vantage-0.10.0-macos-arm64.zip` | macOS 14 or later, Apple silicon |
 | Linux x86_64 | `Vantage-0.10.0-linux-x86_64.tar.gz` | glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer) |
 | Linux arm64 | `Vantage-0.10.0-linux-arm64.tar.gz` | glibc 2.35 or later: NVIDIA Jetson Orin with JetPack 6, Ubuntu 22.04 arm64 and newer |
 
 `SHA256SUMS.txt` lists each file's SHA-256. Every bundle carries its own Python and libraries and can check itself
-on your machine: the *Vantage self-test* entry in the Start menu on Windows, `vantage --self-test` on Linux once
-installed, `/Applications/Vantage.app/Contents/MacOS/vantage-cli --self-test` on macOS. On a Jetson, GStreamer
+on your machine: `vantage --self-test` once installed. On a Jetson, GStreamer
 camera pipelines need `gst-launch-1.0` (JetPack installs it; else `sudo apt install gstreamer1.0-tools`).
 
 **Unsigned builds**
 
-The downloads are not code-signed, so the system warns the first time:
-
-- **Windows** (SmartScreen, "Windows protected your PC"): choose *More info*, then *Run anyway*.
-- **macOS** ("Vantage cannot be opened" or "Apple could not verify Vantage"): open *System Settings ▸ Privacy &
-  Security* and choose *Open Anyway* next to the message about Vantage (on macOS 14 you can instead Control-click the
-  app and choose *Open*). If macOS says the app is damaged, run in Terminal:
-  `xattr -dr com.apple.quarantine /Applications/Vantage.app`.
-- **Linux**: nothing to approve; check the download against `SHA256SUMS.txt`.
+The downloads are not code-signed; Linux asks nothing to approve: check the download against `SHA256SUMS.txt`.
 
 **Known limits**
 
@@ -297,7 +290,6 @@ The downloads are not code-signed, so the system warns the first time:
   edge (a mirror camera's yaw) and featureless edges, and frame times are when frames reached Vantage, not sensor time.
 - STEP import needs the optional gmsh package, which the downloads do not include: run from source with
   `pip install .[step]` for it.
-- No Intel Mac or Windows on Arm build (Windows on Arm runs the x64 build emulated); run from source there.
 - The Linux arm64 bundle needs glibc 2.35 or later: JetPack 6 on a Jetson (Ubuntu 22.04), not JetPack 5 (Ubuntu
   20.04; run from source there). It carries Qt 6.7 rather than 6.11, because PyQt6's later arm64 builds need Ubuntu
   24.04; the whole test suite passes on both. The bundle was built and self-tested on GitHub's arm64 machines, not yet on
@@ -362,7 +354,7 @@ The downloads are not code-signed, so the system warns the first time:
 - New in 0.8.0:
   - The Claude Code terminal needs a pseudo-terminal: Linux and macOS (Windows runs the MCP server, not the
     terminal panel). From source it needs the optional `pyte` package (`sudo apt install python3-pyte` or
-    `pip install pyte`); the Linux and macOS downloads include it.
+    `pip install pyte`); the Linux downloads include it.
   - Claude Code itself is not part of Vantage: install it and sign in with your Claude account. Claude's answers
     and changes can be wrong; each change is an undo step, and runs still need your approval.
   - Tested with Claude Code 2.1. The terminal covers what Claude Code, shells and common tools use; other
@@ -793,26 +785,16 @@ under the GNU General Public License, version 3 or later; the reference stitcher
 
 | System | File | Needs |
 |---|---|---|
-| Windows | `Vantage-0.9.0-windows-x64-setup.exe` (installer), or the `.zip` | Windows 10 or 11, x64 |
-| macOS | `Vantage-0.9.0-macos-arm64.zip` | macOS 14 or later, Apple silicon |
 | Linux x86_64 | `Vantage-0.9.0-linux-x86_64.tar.gz` | glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer) |
 | Linux arm64 | `Vantage-0.9.0-linux-arm64.tar.gz` | glibc 2.35 or later: NVIDIA Jetson Orin with JetPack 6, Ubuntu 22.04 arm64 and newer |
 
 `SHA256SUMS.txt` lists each file's SHA-256. Every bundle carries its own Python and libraries and can check itself
-on your machine: the *Vantage self-test* entry in the Start menu on Windows, `vantage --self-test` on Linux once
-installed, `/Applications/Vantage.app/Contents/MacOS/vantage-cli --self-test` on macOS. On a Jetson, GStreamer
+on your machine: `vantage --self-test` once installed. On a Jetson, GStreamer
 camera pipelines need `gst-launch-1.0` (JetPack installs it; else `sudo apt install gstreamer1.0-tools`).
 
 **Unsigned builds**
 
-The downloads are not code-signed, so the system warns the first time:
-
-- **Windows** (SmartScreen, "Windows protected your PC"): choose *More info*, then *Run anyway*.
-- **macOS** ("Vantage cannot be opened" or "Apple could not verify Vantage"): open *System Settings ▸ Privacy &
-  Security* and choose *Open Anyway* next to the message about Vantage (on macOS 14 you can instead Control-click the
-  app and choose *Open*). If macOS says the app is damaged, run in Terminal:
-  `xattr -dr com.apple.quarantine /Applications/Vantage.app`.
-- **Linux**: nothing to approve; check the download against `SHA256SUMS.txt`.
+The downloads are not code-signed; Linux asks nothing to approve: check the download against `SHA256SUMS.txt`.
 
 **Known limits**
 
@@ -824,7 +806,6 @@ The downloads are not code-signed, so the system warns the first time:
   edge (a mirror camera's yaw) and featureless edges, and frame times are when frames reached Vantage, not sensor time.
 - STEP import needs the optional gmsh package, which the downloads do not include: run from source with
   `pip install .[step]` for it.
-- No Intel Mac or Windows on Arm build (Windows on Arm runs the x64 build emulated); run from source there.
 - The Linux arm64 bundle needs glibc 2.35 or later: JetPack 6 on a Jetson (Ubuntu 22.04), not JetPack 5 (Ubuntu
   20.04; run from source there). It carries Qt 6.7 rather than 6.11, because PyQt6's later arm64 builds need Ubuntu
   24.04; the whole test suite passes on both. The bundle was built and self-tested on GitHub's arm64 machines, not yet on
@@ -889,7 +870,7 @@ The downloads are not code-signed, so the system warns the first time:
 - New in 0.8.0:
   - The Claude Code terminal needs a pseudo-terminal: Linux and macOS (Windows runs the MCP server, not the
     terminal panel). From source it needs the optional `pyte` package (`sudo apt install python3-pyte` or
-    `pip install pyte`); the Linux and macOS downloads include it.
+    `pip install pyte`); the Linux downloads include it.
   - Claude Code itself is not part of Vantage: install it and sign in with your Claude account. Claude's answers
     and changes can be wrong; each change is an undo step, and runs still need your approval.
   - Tested with Claude Code 2.1. The terminal covers what Claude Code, shells and common tools use; other
@@ -947,26 +928,16 @@ version 3 or later; the reference stitchers are Apache-2.0.
 
 | System | File | Needs |
 |---|---|---|
-| Windows | `Vantage-0.8.1-windows-x64-setup.exe` (installer), or the `.zip` | Windows 10 or 11, x64 |
-| macOS | `Vantage-0.8.1-macos-arm64.zip` | macOS 14 or later, Apple silicon |
 | Linux x86_64 | `Vantage-0.8.1-linux-x86_64.tar.gz` | glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer) |
 | Linux arm64 | `Vantage-0.8.1-linux-arm64.tar.gz` | glibc 2.35 or later: NVIDIA Jetson Orin with JetPack 6, Ubuntu 22.04 arm64 and newer |
 
 `SHA256SUMS.txt` lists each file's SHA-256. Every bundle carries its own Python and libraries and can check itself
-on your machine: the *Vantage self-test* entry in the Start menu on Windows, `vantage --self-test` on Linux once
-installed, `/Applications/Vantage.app/Contents/MacOS/vantage-cli --self-test` on macOS. On a Jetson, GStreamer
+on your machine: `vantage --self-test` once installed. On a Jetson, GStreamer
 camera pipelines need `gst-launch-1.0` (JetPack installs it; else `sudo apt install gstreamer1.0-tools`).
 
 **Unsigned builds**
 
-The downloads are not code-signed, so the system warns the first time:
-
-- **Windows** (SmartScreen, "Windows protected your PC"): choose *More info*, then *Run anyway*.
-- **macOS** ("Vantage cannot be opened" or "Apple could not verify Vantage"): open *System Settings ▸ Privacy &
-  Security* and choose *Open Anyway* next to the message about Vantage (on macOS 14 you can instead Control-click the
-  app and choose *Open*). If macOS says the app is damaged, run in Terminal:
-  `xattr -dr com.apple.quarantine /Applications/Vantage.app`.
-- **Linux**: nothing to approve; check the download against `SHA256SUMS.txt`.
+The downloads are not code-signed; Linux asks nothing to approve: check the download against `SHA256SUMS.txt`.
 
 **Known limits**
 
@@ -978,7 +949,6 @@ The downloads are not code-signed, so the system warns the first time:
   edge (a mirror camera's yaw) and featureless edges, and frame times are when frames reached Vantage, not sensor time.
 - STEP import needs the optional gmsh package, which the downloads do not include: run from source with
   `pip install .[step]` for it.
-- No Intel Mac or Windows on Arm build (Windows on Arm runs the x64 build emulated); run from source there.
 - The Linux arm64 bundle needs glibc 2.35 or later: JetPack 6 on a Jetson (Ubuntu 22.04), not JetPack 5 (Ubuntu
   20.04; run from source there). It carries Qt 6.7 rather than 6.11, because PyQt6's later arm64 builds need Ubuntu
   24.04; the whole test suite passes on both. It was built and self-tested on GitHub's arm64 machines, not yet on a
@@ -1042,7 +1012,7 @@ The downloads are not code-signed, so the system warns the first time:
 - New in 0.8.0:
   - The Claude Code terminal needs a pseudo-terminal: Linux and macOS (Windows runs the MCP server, not the
     terminal panel). From source it needs the optional `pyte` package (`sudo apt install python3-pyte` or
-    `pip install pyte`); the Linux and macOS downloads include it.
+    `pip install pyte`); the Linux downloads include it.
   - Claude Code itself is not part of Vantage: install it and sign in with your Claude account. Claude's answers
     and changes can be wrong; each change is an undo step, and runs still need your approval.
   - Tested with Claude Code 2.1. The terminal covers what Claude Code, shells and common tools use; other
@@ -1061,8 +1031,7 @@ you talk to it. Conversations are kept on both sides.
 **What's new**
 
 - **Claude over MCP** (`vantage --mcp`; standard library only). Add it once:
-  `claude mcp add --scope user vantage -- vantage --mcp` (on Windows `vantage-cli.exe --mcp`, on macOS
-  `/Applications/Vantage.app/Contents/MacOS/vantage-cli --mcp`).
+  `claude mcp add --scope user vantage -- vantage --mcp`.
   - With a Vantage window open, Claude works on the project in it. Each change is one undo step "Claude · …", and the
     reply carries the analysis before and after it. Its proposals, Copilot plans and design-log entries appear in the
     assistant panel for you to apply, approve or accept. The window listens on 127.0.0.1 only and checks a token kept
@@ -1108,26 +1077,16 @@ version 3 or later; the reference stitchers are Apache-2.0.
 
 | System | File | Needs |
 |---|---|---|
-| Windows | `Vantage-0.8.0-windows-x64-setup.exe` (installer), or the `.zip` | Windows 10 or 11, x64 |
-| macOS | `Vantage-0.8.0-macos-arm64.zip` | macOS 14 or later, Apple silicon |
 | Linux x86_64 | `Vantage-0.8.0-linux-x86_64.tar.gz` | glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer) |
 | Linux arm64 | `Vantage-0.8.0-linux-arm64.tar.gz` | glibc 2.35 or later: NVIDIA Jetson Orin with JetPack 6, Ubuntu 22.04 arm64 and newer |
 
 `SHA256SUMS.txt` lists each file's SHA-256. Every bundle carries its own Python and libraries and can check itself
-on your machine: the *Vantage self-test* entry in the Start menu on Windows, `vantage --self-test` on Linux once
-installed, `/Applications/Vantage.app/Contents/MacOS/vantage-cli --self-test` on macOS. On a Jetson, GStreamer
+on your machine: `vantage --self-test` once installed. On a Jetson, GStreamer
 camera pipelines need `gst-launch-1.0` (JetPack installs it; else `sudo apt install gstreamer1.0-tools`).
 
 **Unsigned builds**
 
-The downloads are not code-signed, so the system warns the first time:
-
-- **Windows** (SmartScreen, "Windows protected your PC"): choose *More info*, then *Run anyway*.
-- **macOS** ("Vantage cannot be opened" or "Apple could not verify Vantage"): open *System Settings ▸ Privacy &
-  Security* and choose *Open Anyway* next to the message about Vantage (on macOS 14 you can instead Control-click the
-  app and choose *Open*). If macOS says the app is damaged, run in Terminal:
-  `xattr -dr com.apple.quarantine /Applications/Vantage.app`.
-- **Linux**: nothing to approve; check the download against `SHA256SUMS.txt`.
+The downloads are not code-signed; Linux asks nothing to approve: check the download against `SHA256SUMS.txt`.
 
 **Known limits**
 
@@ -1139,7 +1098,6 @@ The downloads are not code-signed, so the system warns the first time:
   edge (a mirror camera's yaw) and featureless edges, and frame times are when frames reached Vantage, not sensor time.
 - STEP import needs the optional gmsh package, which the downloads do not include: run from source with
   `pip install .[step]` for it.
-- No Intel Mac or Windows on Arm build (Windows on Arm runs the x64 build emulated); run from source there.
 - The Linux arm64 bundle needs glibc 2.35 or later: JetPack 6 on a Jetson (Ubuntu 22.04), not JetPack 5 (Ubuntu
   20.04; run from source there). It carries Qt 6.7 rather than 6.11, because PyQt6's later arm64 builds need Ubuntu
   24.04; the whole test suite passes on both. It was built and self-tested on GitHub's arm64 machines, not yet on a
@@ -1203,7 +1161,7 @@ The downloads are not code-signed, so the system warns the first time:
 - New in 0.8.0:
   - The Claude Code terminal needs a pseudo-terminal: Linux and macOS (Windows runs the MCP server, not the
     terminal panel). From source it needs the optional `pyte` package (`sudo apt install python3-pyte` or
-    `pip install pyte`); the Linux and macOS downloads include it.
+    `pip install pyte`); the Linux downloads include it.
   - Claude Code itself is not part of Vantage: install it and sign in with your Claude account. Claude's answers
     and changes can be wrong; each change is an undo step, and runs still need your approval.
   - Tested with Claude Code 2.1. The terminal covers what Claude Code, shells and common tools use; other
@@ -1272,26 +1230,16 @@ Apache-2.0.
 
 | System | File | Needs |
 |---|---|---|
-| Windows | `Vantage-0.7.1-windows-x64-setup.exe` (installer), or the `.zip` | Windows 10 or 11, x64 |
-| macOS | `Vantage-0.7.1-macos-arm64.zip` | macOS 14 or later, Apple silicon |
 | Linux x86_64 | `Vantage-0.7.1-linux-x86_64.tar.gz` | glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer) |
 | Linux arm64 | `Vantage-0.7.1-linux-arm64.tar.gz` | glibc 2.35 or later: NVIDIA Jetson Orin with JetPack 6, Ubuntu 22.04 arm64 and newer |
 
 `SHA256SUMS.txt` lists each file's SHA-256. Every bundle carries its own Python and libraries and can check itself
-on your machine: the *Vantage self-test* entry in the Start menu on Windows, `vantage --self-test` on Linux once
-installed, `/Applications/Vantage.app/Contents/MacOS/vantage-cli --self-test` on macOS. On a Jetson, GStreamer
+on your machine: `vantage --self-test` once installed. On a Jetson, GStreamer
 camera pipelines need `gst-launch-1.0` (JetPack installs it; else `sudo apt install gstreamer1.0-tools`).
 
 **Unsigned builds**
 
-The downloads are not code-signed, so the system warns the first time:
-
-- **Windows** (SmartScreen, "Windows protected your PC"): choose *More info*, then *Run anyway*.
-- **macOS** ("Vantage cannot be opened" or "Apple could not verify Vantage"): open *System Settings ▸ Privacy &
-  Security* and choose *Open Anyway* next to the message about Vantage (on macOS 14 you can instead Control-click the
-  app and choose *Open*). If macOS says the app is damaged, run in Terminal:
-  `xattr -dr com.apple.quarantine /Applications/Vantage.app`.
-- **Linux**: nothing to approve; check the download against `SHA256SUMS.txt`.
+The downloads are not code-signed; Linux asks nothing to approve: check the download against `SHA256SUMS.txt`.
 
 **Known limits**
 
@@ -1303,7 +1251,6 @@ The downloads are not code-signed, so the system warns the first time:
   edge (a mirror camera's yaw) and featureless edges, and frame times are when frames reached Vantage, not sensor time.
 - STEP import needs the optional gmsh package, which the downloads do not include: run from source with
   `pip install .[step]` for it.
-- No Intel Mac or Windows on Arm build (Windows on Arm runs the x64 build emulated); run from source there.
 - The Linux arm64 bundle needs glibc 2.35 or later: JetPack 6 on a Jetson (Ubuntu 22.04), not JetPack 5 (Ubuntu
   20.04; run from source there). It carries Qt 6.7 rather than 6.11, because PyQt6's later arm64 builds need Ubuntu
   24.04; the whole test suite passes on both. It was built and self-tested on GitHub's arm64 machines, not yet on a
@@ -1453,26 +1400,16 @@ Apache-2.0.
 
 | System | File | Needs |
 |---|---|---|
-| Windows | `Vantage-0.7.0-windows-x64-setup.exe` (installer), or the `.zip` | Windows 10 or 11, x64 |
-| macOS | `Vantage-0.7.0-macos-arm64.zip` | macOS 14 or later, Apple silicon |
 | Linux x86_64 | `Vantage-0.7.0-linux-x86_64.tar.gz` | glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer) |
 | Linux arm64 | `Vantage-0.7.0-linux-arm64.tar.gz` | glibc 2.35 or later: NVIDIA Jetson Orin with JetPack 6, Ubuntu 22.04 arm64 and newer |
 
 `SHA256SUMS.txt` lists each file's SHA-256. Every bundle carries its own Python and libraries and can check itself
-on your machine: the *Vantage self-test* entry in the Start menu on Windows, `vantage --self-test` on Linux once
-installed, `/Applications/Vantage.app/Contents/MacOS/vantage-cli --self-test` on macOS. On a Jetson, GStreamer
+on your machine: `vantage --self-test` once installed. On a Jetson, GStreamer
 camera pipelines need `gst-launch-1.0` (JetPack installs it; else `sudo apt install gstreamer1.0-tools`).
 
 **Unsigned builds**
 
-The downloads are not code-signed, so the system warns the first time:
-
-- **Windows** (SmartScreen, "Windows protected your PC"): choose *More info*, then *Run anyway*.
-- **macOS** ("Vantage cannot be opened" or "Apple could not verify Vantage"): open *System Settings ▸ Privacy &
-  Security* and choose *Open Anyway* next to the message about Vantage (on macOS 14 you can instead Control-click the
-  app and choose *Open*). If macOS says the app is damaged, run in Terminal:
-  `xattr -dr com.apple.quarantine /Applications/Vantage.app`.
-- **Linux**: nothing to approve; check the download against `SHA256SUMS.txt`.
+The downloads are not code-signed; Linux asks nothing to approve: check the download against `SHA256SUMS.txt`.
 
 **Known limits**
 
@@ -1484,7 +1421,6 @@ The downloads are not code-signed, so the system warns the first time:
   edge (a mirror camera's yaw) and featureless edges, and frame times are when frames reached Vantage, not sensor time.
 - STEP import needs the optional gmsh package, which the downloads do not include: run from source with
   `pip install .[step]` for it.
-- No Intel Mac or Windows on Arm build (Windows on Arm runs the x64 build emulated); run from source there.
 - The Linux arm64 bundle needs glibc 2.35 or later: JetPack 6 on a Jetson (Ubuntu 22.04), not JetPack 5 (Ubuntu
   20.04; run from source there). It carries Qt 6.7 rather than 6.11, because PyQt6's later arm64 builds need Ubuntu
   24.04; the whole test suite passes on both. It was built and self-tested on GitHub's arm64 machines, not yet on a
@@ -1582,26 +1518,16 @@ under the GNU General Public License, version 3 or later.
 
 | System | File | Needs |
 |---|---|---|
-| Windows | `Vantage-0.6.0-windows-x64-setup.exe` (installer), or the `.zip` | Windows 10 or 11, x64 |
-| macOS | `Vantage-0.6.0-macos-arm64.zip` | macOS 14 or later, Apple silicon |
 | Linux x86_64 | `Vantage-0.6.0-linux-x86_64.tar.gz` | glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer) |
 | Linux arm64 | `Vantage-0.6.0-linux-arm64.tar.gz` | glibc 2.35 or later: NVIDIA Jetson Orin with JetPack 6, Ubuntu 22.04 arm64 and newer |
 
 `SHA256SUMS.txt` lists each file's SHA-256. Every bundle carries its own Python and libraries and can check itself
-on your machine: the *Vantage self-test* entry in the Start menu on Windows, `vantage --self-test` on Linux once
-installed, `/Applications/Vantage.app/Contents/MacOS/vantage-cli --self-test` on macOS. On a Jetson, GStreamer
+on your machine: `vantage --self-test` once installed. On a Jetson, GStreamer
 camera pipelines need `gst-launch-1.0` (JetPack installs it; else `sudo apt install gstreamer1.0-tools`).
 
 **Unsigned builds**
 
-The downloads are not code-signed, so the system warns the first time:
-
-- **Windows** (SmartScreen, "Windows protected your PC"): choose *More info*, then *Run anyway*.
-- **macOS** ("Vantage cannot be opened" or "Apple could not verify Vantage"): open *System Settings ▸ Privacy &
-  Security* and choose *Open Anyway* next to the message about Vantage (on macOS 14 you can instead Control-click the
-  app and choose *Open*). If macOS says the app is damaged, run in Terminal:
-  `xattr -dr com.apple.quarantine /Applications/Vantage.app`.
-- **Linux**: nothing to approve; check the download against `SHA256SUMS.txt`.
+The downloads are not code-signed; Linux asks nothing to approve: check the download against `SHA256SUMS.txt`.
 
 **Known limits**
 
@@ -1613,7 +1539,6 @@ The downloads are not code-signed, so the system warns the first time:
   edge (a mirror camera's yaw) and featureless edges, and frame times are when frames reached Vantage, not sensor time.
 - STEP import needs the optional gmsh package, which the downloads do not include: run from source with
   `pip install .[step]` for it.
-- No Intel Mac or Windows on Arm build (Windows on Arm runs the x64 build emulated); run from source there.
 - The Linux arm64 bundle needs glibc 2.35 or later: JetPack 6 on a Jetson (Ubuntu 22.04), not JetPack 5 (Ubuntu
   20.04; run from source there). It carries Qt 6.7 rather than 6.11, because PyQt6's later arm64 builds need Ubuntu
   24.04; the whole test suite passes on both. It was built and self-tested on GitHub's arm64 machines, not yet on a
@@ -1742,26 +1667,16 @@ version 3 or later.
 
 | System | File | Needs |
 |---|---|---|
-| Windows | `Vantage-0.5.0-windows-x64-setup.exe` (installer), or the `.zip` | Windows 10 or 11, x64 |
-| macOS | `Vantage-0.5.0-macos-arm64.zip` | macOS 14 or later, Apple silicon |
 | Linux x86_64 | `Vantage-0.5.0-linux-x86_64.tar.gz` | glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer) |
 | Linux arm64 | `Vantage-0.5.0-linux-arm64.tar.gz` | glibc 2.35 or later: NVIDIA Jetson Orin with JetPack 6, Ubuntu 22.04 arm64 and newer |
 
 `SHA256SUMS.txt` lists each file's SHA-256. Every bundle carries its own Python and libraries and can check itself
-on your machine: the *Vantage self-test* entry in the Start menu on Windows, `vantage --self-test` on Linux once
-installed, `/Applications/Vantage.app/Contents/MacOS/vantage-cli --self-test` on macOS. On a Jetson, GStreamer
+on your machine: `vantage --self-test` once installed. On a Jetson, GStreamer
 camera pipelines need `gst-launch-1.0` (JetPack installs it; else `sudo apt install gstreamer1.0-tools`).
 
 **Unsigned builds**
 
-The downloads are not code-signed, so the system warns the first time:
-
-- **Windows** (SmartScreen, "Windows protected your PC"): choose *More info*, then *Run anyway*.
-- **macOS** ("Vantage cannot be opened" or "Apple could not verify Vantage"): open *System Settings ▸ Privacy &
-  Security* and choose *Open Anyway* next to the message about Vantage (on macOS 14 you can instead Control-click the
-  app and choose *Open*). If macOS says the app is damaged, run in Terminal:
-  `xattr -dr com.apple.quarantine /Applications/Vantage.app`.
-- **Linux**: nothing to approve; check the download against `SHA256SUMS.txt`.
+The downloads are not code-signed; Linux asks nothing to approve: check the download against `SHA256SUMS.txt`.
 
 **Known limits**
 
@@ -1773,7 +1688,6 @@ The downloads are not code-signed, so the system warns the first time:
   edge (a mirror camera's yaw) and featureless edges, and frame times are when frames reached Vantage, not sensor time.
 - STEP import needs the optional gmsh package, which the downloads do not include: run from source with
   `pip install .[step]` for it.
-- No Intel Mac or Windows on Arm build (Windows on Arm runs the x64 build emulated); run from source there.
 - The Linux arm64 bundle needs glibc 2.35 or later: JetPack 6 on a Jetson (Ubuntu 22.04), not JetPack 5 (Ubuntu
   20.04; run from source there). It carries Qt 6.7 rather than 6.11, because PyQt6's later arm64 builds need Ubuntu
   24.04; the whole test suite passes on both. It was built and self-tested on GitHub's arm64 machines, not yet on a
@@ -1930,26 +1844,16 @@ Public License, version 3 or later.
 
 | System | File | Needs |
 |---|---|---|
-| Windows | `Vantage-0.4.0-windows-x64-setup.exe` (installer), or the `.zip` | Windows 10 or 11, x64 |
-| macOS | `Vantage-0.4.0-macos-arm64.zip` | macOS 14 or later, Apple silicon |
 | Linux x86_64 | `Vantage-0.4.0-linux-x86_64.tar.gz` | glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer) |
 | Linux arm64 | `Vantage-0.4.0-linux-arm64.tar.gz` | glibc 2.35 or later: NVIDIA Jetson Orin with JetPack 6, Ubuntu 22.04 arm64 and newer |
 
 `SHA256SUMS.txt` lists each file's SHA-256. Every bundle carries its own Python and libraries and can check itself
-on your machine: the *Vantage self-test* entry in the Start menu on Windows, `vantage --self-test` on Linux once
-installed, `/Applications/Vantage.app/Contents/MacOS/vantage-cli --self-test` on macOS. On a Jetson, GStreamer
+on your machine: `vantage --self-test` once installed. On a Jetson, GStreamer
 camera pipelines need `gst-launch-1.0` (JetPack installs it; else `sudo apt install gstreamer1.0-tools`).
 
 **Unsigned builds**
 
-The downloads are not code-signed, so the system warns the first time:
-
-- **Windows** (SmartScreen, "Windows protected your PC"): choose *More info*, then *Run anyway*.
-- **macOS** ("Vantage cannot be opened" or "Apple could not verify Vantage"): open *System Settings ▸ Privacy &
-  Security* and choose *Open Anyway* next to the message about Vantage (on macOS 14 you can instead Control-click the
-  app and choose *Open*). If macOS says the app is damaged, run in Terminal:
-  `xattr -dr com.apple.quarantine /Applications/Vantage.app`.
-- **Linux**: nothing to approve; check the download against `SHA256SUMS.txt`.
+The downloads are not code-signed; Linux asks nothing to approve: check the download against `SHA256SUMS.txt`.
 
 **Known limits**
 
@@ -1961,7 +1865,6 @@ The downloads are not code-signed, so the system warns the first time:
   edge (a mirror camera's yaw) and featureless edges, and frame times are when frames reached Vantage, not sensor time.
 - STEP import needs the optional gmsh package, which the downloads do not include: run from source with
   `pip install .[step]` for it.
-- No Intel Mac or Windows on Arm build (Windows on Arm runs the x64 build emulated); run from source there.
 - The Linux arm64 bundle needs glibc 2.35 or later: JetPack 6 on a Jetson (Ubuntu 22.04), not JetPack 5 (Ubuntu
   20.04; run from source there). It carries Qt 6.7 rather than 6.11, because PyQt6's later arm64 builds need Ubuntu
   24.04; the whole test suite passes on both. It was built and self-tested on GitHub's arm64 machines, not yet on a
@@ -2071,26 +1974,16 @@ version 3 or later.
 
 | System | File | Needs |
 |---|---|---|
-| Windows | `Vantage-0.3.0-windows-x64-setup.exe` (installer), or the `.zip` | Windows 10 or 11, x64 |
-| macOS | `Vantage-0.3.0-macos-arm64.zip` | macOS 14 or later, Apple silicon |
 | Linux x86_64 | `Vantage-0.3.0-linux-x86_64.tar.gz` | glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer) |
 | Linux arm64 | `Vantage-0.3.0-linux-arm64.tar.gz` | glibc 2.35 or later: NVIDIA Jetson Orin with JetPack 6, Ubuntu 22.04 arm64 and newer |
 
 `SHA256SUMS.txt` lists each file's SHA-256. Every bundle carries its own Python and libraries and can check itself
-on your machine: the *Vantage self-test* entry in the Start menu on Windows, `vantage --self-test` on Linux once
-installed, `/Applications/Vantage.app/Contents/MacOS/vantage-cli --self-test` on macOS. On a Jetson, GStreamer
+on your machine: `vantage --self-test` once installed. On a Jetson, GStreamer
 camera pipelines need `gst-launch-1.0` (JetPack installs it; else `sudo apt install gstreamer1.0-tools`).
 
 **Unsigned builds**
 
-The downloads are not code-signed, so the system warns the first time:
-
-- **Windows** (SmartScreen, "Windows protected your PC"): choose *More info*, then *Run anyway*.
-- **macOS** ("Vantage cannot be opened" or "Apple could not verify Vantage"): open *System Settings ▸ Privacy &
-  Security* and choose *Open Anyway* next to the message about Vantage (on macOS 14 you can instead Control-click the
-  app and choose *Open*). If macOS says the app is damaged, run in Terminal:
-  `xattr -dr com.apple.quarantine /Applications/Vantage.app`.
-- **Linux**: nothing to approve; check the download against `SHA256SUMS.txt`.
+The downloads are not code-signed; Linux asks nothing to approve: check the download against `SHA256SUMS.txt`.
 
 **Known limits**
 
@@ -2102,7 +1995,6 @@ The downloads are not code-signed, so the system warns the first time:
   edge (a mirror camera's yaw) and featureless edges, and frame times are when frames reached Vantage, not sensor time.
 - STEP import needs the optional gmsh package, which the downloads do not include: run from source with
   `pip install .[step]` for it.
-- No Intel Mac or Windows on Arm build (Windows on Arm runs the x64 build emulated); run from source there.
 - The Linux arm64 bundle needs glibc 2.35 or later: JetPack 6 on a Jetson (Ubuntu 22.04), not JetPack 5 (Ubuntu
   20.04; run from source there). It carries Qt 6.7 rather than 6.11, because PyQt6's later arm64 builds need Ubuntu
   24.04; the whole test suite passes on both. It was built and self-tested on GitHub's arm64 machines, not yet on a
@@ -2175,26 +2067,16 @@ Free software under the GNU General Public License, version 3 or later.
 
 | System | File | Needs |
 |---|---|---|
-| Windows | `Vantage-0.2.0-windows-x64-setup.exe` (installer), or the `.zip` | Windows 10 or 11, x64 |
-| macOS | `Vantage-0.2.0-macos-arm64.zip` | macOS 14 or later, Apple silicon |
 | Linux x86_64 | `Vantage-0.2.0-linux-x86_64.tar.gz` | glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer) |
 | Linux arm64 | `Vantage-0.2.0-linux-arm64.tar.gz` | glibc 2.35 or later: NVIDIA Jetson Orin with JetPack 6, Ubuntu 22.04 arm64 and newer |
 
 `SHA256SUMS.txt` lists each file's SHA-256. Every bundle carries its own Python and libraries and can check itself
-on your machine: the *Vantage self-test* entry in the Start menu on Windows, `vantage --self-test` on Linux once
-installed, `/Applications/Vantage.app/Contents/MacOS/vantage-cli --self-test` on macOS. On a Jetson, GStreamer
+on your machine: `vantage --self-test` once installed. On a Jetson, GStreamer
 camera pipelines need `gst-launch-1.0` (JetPack installs it; else `sudo apt install gstreamer1.0-tools`).
 
 **Unsigned builds**
 
-The downloads are not code-signed, so the system warns the first time:
-
-- **Windows** (SmartScreen, "Windows protected your PC"): choose *More info*, then *Run anyway*.
-- **macOS** ("Vantage cannot be opened" or "Apple could not verify Vantage"): open *System Settings ▸ Privacy &
-  Security* and choose *Open Anyway* next to the message about Vantage (on macOS 14 you can instead Control-click the
-  app and choose *Open*). If macOS says the app is damaged, run in Terminal:
-  `xattr -dr com.apple.quarantine /Applications/Vantage.app`.
-- **Linux**: nothing to approve; check the download against `SHA256SUMS.txt`.
+The downloads are not code-signed; Linux asks nothing to approve: check the download against `SHA256SUMS.txt`.
 
 **Known limits**
 
@@ -2206,7 +2088,6 @@ The downloads are not code-signed, so the system warns the first time:
   edge (a mirror camera's yaw) and featureless edges, and frame times are when frames reached Vantage, not sensor time.
 - STEP import needs the optional gmsh package, which the downloads do not include: run from source with
   `pip install .[step]` for it.
-- No Intel Mac or Windows on Arm build (Windows on Arm runs the x64 build emulated); run from source there.
 - The Linux arm64 bundle needs glibc 2.35 or later: JetPack 6 on a Jetson (Ubuntu 22.04), not JetPack 5 (Ubuntu
   20.04; run from source there). It carries Qt 6.7 rather than 6.11, because PyQt6's later arm64 builds need Ubuntu
   24.04; the whole test suite passes on both. It was built and self-tested on GitHub's arm64 machines, not yet on a
@@ -2262,26 +2143,16 @@ its tool). Free software under the GNU General Public License, version 3 or late
 
 | System | File | Needs |
 |---|---|---|
-| Windows | `Vantage-0.1.1-windows-x64-setup.exe` (installer), or the `.zip` | Windows 10 or 11, x64 |
-| macOS | `Vantage-0.1.1-macos-arm64.zip` | macOS 14 or later, Apple silicon |
 | Linux x86_64 | `Vantage-0.1.1-linux-x86_64.tar.gz` | glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer) |
 | Linux arm64 | `Vantage-0.1.1-linux-arm64.tar.gz` | glibc 2.35 or later: NVIDIA Jetson Orin with JetPack 6, Ubuntu 22.04 arm64 and newer |
 
 `SHA256SUMS.txt` lists each file's SHA-256. Every bundle carries its own Python and libraries and can check itself
-on your machine: the *Vantage self-test* entry in the Start menu on Windows, `vantage --self-test` on Linux once
-installed, `/Applications/Vantage.app/Contents/MacOS/vantage-cli --self-test` on macOS. On a Jetson, GStreamer
+on your machine: `vantage --self-test` once installed. On a Jetson, GStreamer
 camera pipelines need `gst-launch-1.0` (JetPack installs it; else `sudo apt install gstreamer1.0-tools`).
 
 **Unsigned builds**
 
-The downloads are not code-signed, so the system warns the first time:
-
-- **Windows** (SmartScreen, "Windows protected your PC"): choose *More info*, then *Run anyway*.
-- **macOS** ("Vantage cannot be opened" or "Apple could not verify Vantage"): open *System Settings ▸ Privacy &
-  Security* and choose *Open Anyway* next to the message about Vantage (on macOS 14 you can instead Control-click the
-  app and choose *Open*). If macOS says the app is damaged, run in Terminal:
-  `xattr -dr com.apple.quarantine /Applications/Vantage.app`.
-- **Linux**: nothing to approve; check the download against `SHA256SUMS.txt`.
+The downloads are not code-signed; Linux asks nothing to approve: check the download against `SHA256SUMS.txt`.
 
 **Known limits**
 
@@ -2293,7 +2164,6 @@ The downloads are not code-signed, so the system warns the first time:
   edge (a mirror camera's yaw) and featureless edges, and frame times are when frames reached Vantage, not sensor time.
 - STEP import needs the optional gmsh package, which the downloads do not include: run from source with
   `pip install .[step]` for it.
-- No Intel Mac or Windows on Arm build (Windows on Arm runs the x64 build emulated); run from source there.
 - The Linux arm64 bundle needs glibc 2.35 or later: JetPack 6 on a Jetson (Ubuntu 22.04), not JetPack 5 (Ubuntu
   20.04; run from source there). It carries Qt 6.7 rather than 6.11, because PyQt6's later arm64 builds need Ubuntu
   24.04; the whole test suite passes on both. It was built and self-tested on GitHub's arm64 machines, not yet on a
@@ -2346,24 +2216,14 @@ Vantage is free software under the GNU General Public License, version 3 or late
 
 | System | File | Needs |
 |---|---|---|
-| Windows | `Vantage-0.1.0-windows-x64-setup.exe` (installer), or the `.zip` | Windows 10 or 11, x64 |
-| macOS | `Vantage-0.1.0-macos-arm64.zip` | macOS 14 or later, Apple silicon |
 | Linux | `Vantage-0.1.0-linux-x86_64.tar.gz` | x86_64 with glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer) |
 
 `SHA256SUMS.txt` lists each file's SHA-256. Every bundle carries its own Python and libraries and can check itself
-on your machine: the *Vantage self-test* entry in the Start menu on Windows, `vantage --self-test` on Linux once
-installed, `/Applications/Vantage.app/Contents/MacOS/vantage-cli --self-test` on macOS.
+on your machine: `vantage --self-test` once installed.
 
 **Unsigned builds**
 
-The downloads are not code-signed, so the system warns the first time:
-
-- **Windows** (SmartScreen, "Windows protected your PC"): choose *More info*, then *Run anyway*.
-- **macOS** ("Vantage cannot be opened" or "Apple could not verify Vantage"): open *System Settings ▸ Privacy &
-  Security* and choose *Open Anyway* next to the message about Vantage (on macOS 14 you can instead Control-click the
-  app and choose *Open*). If macOS says the app is damaged, run in Terminal:
-  `xattr -dr com.apple.quarantine /Applications/Vantage.app`.
-- **Linux**: nothing to approve; check the download against `SHA256SUMS.txt`.
+The downloads are not code-signed; Linux asks nothing to approve: check the download against `SHA256SUMS.txt`.
 
 **Known limits**
 

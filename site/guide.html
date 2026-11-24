@@ -101,15 +101,11 @@ tar xf Vantage-*-linux-x86_64.tar.gz &amp;&amp; cd Vantage-*-linux-*/
 ./install.sh                 # menu entry, the .vantage file type, ~/.local/bin/vantage
 vantage --self-test          # one line per check, ends with "self-test passed"
 
-# Windows: run Vantage-…-windows-x64-setup.exe, then the "Vantage self-test" shortcut
-# macOS:   move Vantage.app to Applications, then
-/Applications/Vantage.app/Contents/MacOS/vantage-cli --self-test
 
 # from source, Python 3.10 or later
 python3 -m pip install .     # extras: [step] STEP import, [bags] compressed bags, [terminal] Claude Code panel
 vantage</code></pre>
-    <p>The downloads are not code-signed. On Windows choose <em>More info ▸ Run anyway</em>. On macOS choose
-      <em>Open Anyway</em> in <em>System Settings ▸ Privacy &amp; Security</em>. Details are in
+    <p>Vantage is released for Linux only (x86_64, and arm64 for NVIDIA Jetson). Details are in
       <a href="docs.html#install">Install</a>.</p>
 
     <h2 id="flow">The workflow</h2>
@@ -895,8 +891,6 @@ vantage --ground-truth-summary run/</code></pre>
     <h3>Claude over MCP</h3>
     <p>Vantage is an MCP server, so Claude Code or Claude Desktop can read and change rig designs. Register it once:</p>
 <pre><code>claude mcp add --scope user vantage -- vantage --mcp
-# Windows:  … -- vantage-cli.exe --mcp
-# macOS:    … -- /Applications/Vantage.app/Contents/MacOS/vantage-cli --mcp
 # a checkout: … -- python3 /path/to/run_vantage.py --mcp</code></pre>
     <p>With a Vantage window open, Claude works on the project in it, and every change shows at once as one undo step. With
       no window, it works on a <code>.vantage</code> file and keeps a <code>.bak</code> of the file as it was opened. Locked
@@ -921,7 +915,7 @@ vantage --ground-truth-summary run/</code></pre>
       project's folder and Claude Code starts in it, connected to this window. Scrolling, mouse, colours, copy and paste
       (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> / <kbd>V</kbd>) work as in a normal terminal. The <b>Suggested</b> menu
       and the strip of recommendations hand a request straight to Claude. <b>History</b> continues an earlier conversation.
-      It runs on Linux and macOS and needs the optional <code>pyte</code> package.</p>
+      It runs on Linux and needs the optional <code>pyte</code> package.</p>
     <figure><div class="frame natural"><img src="media/claude-panel.jpg" alt="The Claude Code terminal inside the assistant panel" loading="lazy" width="642" height="372"></div>
       <figcaption>Claude Code in the assistant panel.</figcaption></figure>
 

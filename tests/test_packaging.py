@@ -194,7 +194,7 @@ def test_desktop_shortcut(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------------------------------- the release
 def test_version_tops_the_changelog():
     """The version (0.10.0: new sensors, the rig's hardware and safety, the lab, the hardening pass) is the CHANGELOG's top entry, which the release job
-    publishes as the notes, with the sections a user needs before downloading."""
+    publishes as the notes, with the sections a user needs before downloading: the Linux downloads only."""
     from vantage import __version__
     release = _packaging_module('release')
     assert __version__ == '0.10.0' == release.version()
@@ -204,10 +204,11 @@ def test_version_tops_the_changelog():
     notes = release.notes(__version__)
     for heading in ('**What it does**', '**Downloads**', '**Unsigned builds**', '**Known limits**'):
         assert heading in notes, heading
-    for name in (f'Vantage-{__version__}-windows-x64-setup.exe', f'Vantage-{__version__}-macos-arm64.zip',
-                 f'Vantage-{__version__}-linux-x86_64.tar.gz', f'Vantage-{__version__}-linux-arm64.tar.gz',
-                 'JetPack 6', 'SHA256SUMS.txt', 'SmartScreen', 'Open Anyway'):
+    for name in (f'Vantage-{__version__}-linux-x86_64.tar.gz', f'Vantage-{__version__}-linux-arm64.tar.gz',
+                 'JetPack 6', 'SHA256SUMS.txt'):
         assert name in notes, name
+    for gone in ('windows-x64', 'macos-arm64', 'SmartScreen', 'Open Anyway'):     # Linux only since 2026-11-24
+        assert gone not in notes, gone
     with pytest.raises(ValueError):
         release.notes('9.9.9')
 
@@ -340,7 +341,7 @@ def test_workflow_releases_only_after_every_bundle():
     assert 'workflow_dispatch' in on and on['push']['tags'] == ['v*']
     jobs = doc['jobs']
     b, rel = jobs['bundle'], jobs['release']
-    assert set(b['strategy']['matrix']['os']) == {'ubuntu-22.04', 'ubuntu-22.04-arm', 'windows-latest', 'macos-15'}
+    assert set(b['strategy']['matrix']['os']) == {'ubuntu-22.04', 'ubuntu-22.04-arm'}          # Linux only
     assert b['strategy']['fail-fast'] is False
     assert doc['permissions'] == {'contents': 'read'} and rel['permissions'] == {'contents': 'write'}
     # the release waits for the whole matrix and runs only for a version tag (never by hand)

@@ -50,20 +50,16 @@ it, the sample opens normally with the photo poses but no images.
 
 ## Install
 
-Download the file for your system from the [latest release](https://github.com/Sherin-SEF-AI/Vantage/releases/latest).
-Each one carries its own Python and libraries, so there is nothing else to install.
+Vantage is released for **Linux** (x86_64 and arm64). Download the file for your machine from the
+[latest release](https://github.com/Sherin-SEF-AI/Vantage/releases/latest). Each one carries its own Python and
+libraries, so there is nothing else to install.
 
 | System | File | Needs |
 |---|---|---|
-| Windows | `Vantage-<version>-windows-x64-setup.exe` (installer) or `…-windows-x64.zip` | Windows 10 or 11, x64 |
-| macOS | `Vantage-<version>-macos-arm64.zip` | macOS 14 or later, Apple silicon |
 | Linux | `Vantage-<version>-linux-x86_64.tar.gz` | x86_64, glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 and newer) |
 | Linux arm64 | `Vantage-<version>-linux-arm64.tar.gz` | arm64, glibc 2.35 or later: NVIDIA Jetson Orin with JetPack 6, Ubuntu 22.04 arm64 and newer |
 
-- **Windows:** run the setup. It installs for the current user without administrator rights.
-- **macOS:** move `Vantage.app` to Applications. The app is not signed, so the first time, choose **Open Anyway** in
-  *System Settings ▸ Privacy & Security*.
-- **Linux:** unpack the file and run `./install.sh`.
+- **Install:** unpack the file and run `./install.sh`.
 - **Check the install:** `vantage --self-test` checks the installation without opening a window, and ends with
   `self-test passed`.
 

@@ -18,11 +18,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # the oldest supported Ubuntu, so the Linux bundle runs on as many distributions as possible (glibc 2.35+);
-        # ubuntu-22.04-arm builds the Linux arm64 bundle on the Ubuntu NVIDIA's JetPack 6 is based on (Jetson Orin);
-        # macos-15 runs on Apple silicon, so the macOS app is arm64 (GitHub retires macos-14 on 2026-11-02; no wheel
-        # the bundle carries needs more than macOS 14, so the app still runs on 14)
-        os: [ubuntu-22.04, ubuntu-22.04-arm, windows-latest, macos-15]
+        # Linux only: the oldest supported Ubuntu, so the bundle runs on as many distributions as possible (glibc
+        # 2.35+), and ubuntu-22.04-arm for the arm64 bundle, on the Ubuntu NVIDIA's JetPack 6 is based on (Jetson
+        # Orin). Windows and macOS are no longer built (their steps below stay, unused: add windows-latest or
+        # macos-15 here to build them again)
+        os: [ubuntu-22.04, ubuntu-22.04-arm]
     runs-on: ${{ matrix.os }}
     env:
       QT_QPA_PLATFORM: offscreen
@@ -104,7 +104,7 @@ jobs:
           cd dist
           ls -la
           n=$(ls | wc -l)
-          if [ "$n" -lt 5 ]; then echo "expected the two Linux, Windows (zip and setup) and macOS files, got $n" >&2; exit 1; fi
+          if [ "$n" -lt 2 ]; then echo "expected the two Linux files (x86_64 and arm64), got $n" >&2; exit 1; fi
           sha256sum -- * > SHA256SUMS.txt
           cat SHA256SUMS.txt
           cd ..

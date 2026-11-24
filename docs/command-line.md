@@ -247,7 +247,6 @@ claude mcp add --scope user vantage -- python3 /path/to/vantage/run_vantage.py -
 claude mcp add --scope user vantage -- vantage --mcp                                     # installed (Linux)
 ```
 
-On Windows use `vantage-cli.exe --mcp` and on macOS `/Applications/Vantage.app/Contents/MacOS/vantage-cli --mcp`.
 Claude Desktop takes the same command in `claude_desktop_config.json` under `mcpServers`.
 
 - **With a Vantage window open**, Claude works on the project in it. Each change is one undo step named
@@ -323,8 +322,8 @@ on your Claude subscription, and works on *this* window even when several are op
 the conversation (Ctrl+\` goes straight to it). The terminal is your shell, in the project's folder. It handles
 colours, Claude Code's interface, copy and paste (Ctrl+Shift+C / Ctrl+Shift+V) and scrollback (the wheel, or
 Shift+PageUp). Keys go to the shell while it has focus. It needs the optional `pyte` package
-(`sudo apt install python3-pyte`, `pip install pyte`, or the `[terminal]` extra; the Linux and macOS downloads
-include it) and runs on Linux and macOS.
+(`sudo apt install python3-pyte`, `pip install pyte`, or the `[terminal]` extra; the Linux downloads include it) and
+runs on Linux.
 
 **What Claude cannot change.** Locked cameras and sensors (Claude may lock one, never unlock it), unit calibrations,
 stream sources, the fleet, photos, the Copilot's approval records and the automation settings. The vehicle model

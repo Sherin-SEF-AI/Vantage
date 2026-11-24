@@ -10,7 +10,7 @@ This document describes what the application is, who it is for, and everything i
 | | |
 |---|---|
 | Current release | **0.10.0** (2026-11-14). |
-| Platforms | Windows 10/11 x64 · macOS 14+ (Apple silicon) · Linux x86_64 · Linux arm64 (NVIDIA Jetson Orin, JetPack 6) |
+| Platforms | Linux x86_64 · Linux arm64 (NVIDIA Jetson Orin, JetPack 6). No Windows or macOS downloads. |
 | Built with | Python 3.10+, PyQt6, NumPy, SciPy, OpenCV, PyOpenGL (GLSL shader renderer) |
 | Size | about 188,000 lines of Python; 84 test files, about 2,050 tests; a validation suite of 71 model checks |
 | Website and docs | <https://sherin-sef-ai.github.io/Vantage/> |
@@ -1835,7 +1835,7 @@ on a Claude subscription, reads and changes rig designs. Add it once with
   available to Claude.
 
 The **assistant panel** switches between the in-app assistant (Groq, or Claude through the API) and **Claude Code ·
-MCP**, a terminal in the same panel (Linux and macOS, with the optional `pyte` package). Claude Code starts there by
+MCP**, a terminal in the same panel (on Linux, with the optional `pyte` package). Claude Code starts there by
 itself and works on that window first.
 
 - **The terminal:** colours, box drawing, copy and paste, scrollback, and the alternate screen and mouse reports of
@@ -2043,12 +2043,10 @@ overwritten.
 
 ### Downloads
 
-Each download carries its own Python, so nothing else needs installing.
+Vantage is released for Linux only. Each download carries its own Python, so nothing else needs installing.
 
 | System | File | Notes |
 |---|---|---|
-| Windows | `Vantage-<v>-windows-x64-setup.exe` or `.zip` | A per-user install; no administrator rights needed. Unsigned: SmartScreen ▸ More info ▸ Run anyway. |
-| macOS | `Vantage-<v>-macos-arm64.zip` | Unsigned: System Settings ▸ Privacy & Security ▸ Open Anyway. |
 | Linux x86_64 | `Vantage-<v>-linux-x86_64.tar.gz` | `./install.sh` adds a menu entry, the `.vantage` file type and `~/.local/bin/vantage`. |
 | Linux arm64 | `Vantage-<v>-linux-arm64.tar.gz` | Jetson Orin with JetPack 6: runs the live rig and the checks on the vehicle itself. |
 
@@ -2133,7 +2131,7 @@ vantage/selftest.py --self-test
 tests/              pytest suites (tests/fake_carla: a fake carla module)
 docs/               the .vantage project format and its JSON Schema
 site/               the website: the guide (guide.html), documentation and technical reference (methods.html)
-packaging/          PyInstaller spec, build script, icons, Linux install scripts, Windows installer
+packaging/          PyInstaller spec, build script, icons, Linux install scripts (the Windows installer script is kept, not built)
 ```
 
 **Design principles that run through the code:**
