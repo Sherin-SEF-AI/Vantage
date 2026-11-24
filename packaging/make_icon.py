@@ -1,8 +1,9 @@
-"""Draw the Vantage application icon (a car seen from above with a lidar on its roof, inside its four camera fans and
-the lidar's scan rings: the sensor rig) and write it as
+"""Render the Vantage application icon from the logo kit in branding/ (the Surround mark on a dark tile; see
+packaging/make_brand.py) and write it as
 vantage/resources/icons/vantage.png (512 px, used for the window and the Linux menu entry), packaging/icons/vantage.ico
-(Windows, 16-256 px) and packaging/icons/vantage.icns (macOS, 16-1024 px). Both containers hold PNG images, which
-Windows Vista+ and macOS 10.7+ read.
+(Windows, 16-256 px), packaging/icons/vantage.icns (macOS, 16-1024 px) and the website's favicon, header logo and
+Apple touch icon (site/assets/img). Both containers hold PNG images, which Windows Vista+ and macOS 10.7+ read.
+Each size uses the mark drawn for it: the 16 px and 32 px versions have heavier strokes and wider gaps.
 
     QT_QPA_PLATFORM=offscreen python3 packaging/make_icon.py
 """
@@ -10,69 +11,40 @@ import os
 import struct
 import sys
 
-from PyQt6.QtCore import QBuffer, QByteArray, QIODevice, QPointF, QRectF, Qt
-from PyQt6.QtGui import QColor, QGuiApplication, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient
+from PyQt6.QtCore import QBuffer, QByteArray, QIODevice, QRectF, Qt
+from PyQt6.QtGui import QColor, QGuiApplication, QImage, QPainter
+from PyQt6.QtSvg import QSvgRenderer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BASE, BODY, GLASS, RIM = '#121211', '#c8c7c2', '#3b3c3b', '#383835'
-TOP, LIDAR = '#1f1f1d', '#0aa5b8'          # the tile's lighter top edge; the lidar's colour in the app
-FANS = [('#3987e5', 90), ('#d95926', 270), ('#199e70', 180), ('#c98500', 0)]     # front, rear, left, right (Qt angles)
+BRAND = os.path.join(ROOT, 'branding')
+TILE = '#0A0B0B'
 
 
-def draw(n: int) -> QImage:
+def _tile_file(n: int) -> str:
+    return os.path.join(BRAND, 'app-icon-16-dark.svg' if n <= 20 else 'app-icon-32-dark.svg' if n <= 40
+                        else 'app-icon-dark.svg')
+
+
+def _mark_file(n: int) -> str:
+    return os.path.join(BRAND, 'mark-16-white.svg' if n <= 20 else 'mark-32-white.svg' if n <= 40
+                        else 'mark-white.svg')
+
+
+def draw(n: int, square: bool = False) -> QImage:
+    """The icon at n px: the rounded dark tile with the mark (a small margin from 64 px up, as desktop icons have);
+    square=True: a full-bleed square tile (the Apple touch icon, which the system rounds itself)."""
     img = QImage(n, n, QImage.Format.Format_ARGB32_Premultiplied)
     img.fill(Qt.GlobalColor.transparent)
     p = QPainter(img)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.scale(n / 512.0, n / 512.0)
-    tile = QRectF(16, 16, 480, 480)
-    g = QLinearGradient(0, 16, 0, 496)
-    g.setColorAt(0.0, QColor(TOP))
-    g.setColorAt(1.0, QColor(BASE))
-    p.setPen(QPen(QColor(RIM), 6))
-    p.setBrush(g)
-    p.drawRoundedRect(tile, 104, 104)
-    clip = QPainterPath()
-    clip.addRoundedRect(tile.adjusted(3, 3, -3, -3), 101, 101)
-    p.setClipPath(clip)
-    # the camera fans: wide wedges from each camera, overlapping at the corners like a surround view, fading outwards
-    p.setPen(Qt.PenStyle.NoPen)
-    origin = {90: QPointF(256, 146), 270: QPointF(256, 366), 180: QPointF(212, 236), 0: QPointF(300, 236)}
-    for col, ang in FANS:
-        o = origin[ang]
-        r = 300
-        rg = QRadialGradient(o, r)
-        for t, a in ((0.0, 0.80), (0.55, 0.62), (1.0, 0.34)):
-            c = QColor(col)
-            c.setAlphaF(a)
-            rg.setColorAt(t, c)
-        p.setBrush(rg)
-        p.drawPie(QRectF(o.x() - r, o.y() - r, 2 * r, 2 * r), int((ang - 62) * 16), int(124 * 16))
-    # the lidar's scan rings on the ground (left out where they would only blur a small icon)
-    centre = QPointF(256, 272)
-    if n >= 48:
-        for r, a in ((150, 0.70), (196, 0.55), (242, 0.40)):
-            c = QColor(LIDAR)
-            c.setAlphaF(a)
-            p.setPen(QPen(c, 7))
-            p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawEllipse(centre, r, r * 0.92)
-    p.setClipping(False)
-    # the car from above: body, windscreen and rear window
-    p.setPen(QPen(QColor(BASE), 10))
-    p.setBrush(QColor(BODY))
-    p.drawRoundedRect(QRectF(196, 130, 120, 252), 48, 48)
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(QColor(GLASS))
-    p.drawRoundedRect(QRectF(212, 196, 88, 46), 14, 14)
-    p.drawRoundedRect(QRectF(214, 304, 84, 34), 12, 12)
-    # the lidar on the roof, between the windows
-    p.setPen(QPen(QColor(BASE), 7))
-    p.setBrush(QColor(LIDAR))
-    p.drawEllipse(centre, 25, 25)
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(QColor(255, 255, 255, 150))
-    p.drawEllipse(QPointF(centre.x() - 7, centre.y() - 8), 7, 7)
+    p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+    if square:
+        p.fillRect(QRectF(0, 0, n, n), QColor(TILE))
+        k = 0.6 * n
+        QSvgRenderer(_mark_file(n)).render(p, QRectF((n - k) / 2, (n - k) / 2, k, k))
+    else:
+        m = n * 16 / 512 if n >= 64 else 0
+        QSvgRenderer(_tile_file(n)).render(p, QRectF(m, m, n - 2 * m, n - 2 * m))
     p.end()
     return img
 
@@ -110,15 +82,19 @@ def main():
     QGuiApplication.instance() or QGuiApplication(sys.argv[:1])
     res = os.path.join(ROOT, 'vantage', 'resources', 'icons')
     out = os.path.join(ROOT, 'packaging', 'icons')
-    os.makedirs(res, exist_ok=True)
-    os.makedirs(out, exist_ok=True)
+    site = os.path.join(ROOT, 'site', 'assets', 'img')
+    for d in (res, out, site):
+        os.makedirs(d, exist_ok=True)
     with open(os.path.join(res, 'vantage.png'), 'wb') as fh:
         fh.write(png(draw(512)))
     with open(os.path.join(out, 'vantage.ico'), 'wb') as fh:
         fh.write(ico([16, 24, 32, 48, 64, 128, 256]))
     with open(os.path.join(out, 'vantage.icns'), 'wb') as fh:
         fh.write(icns())
-    print('wrote', res, out)
+    for name, n, sq in (('favicon.png', 64, False), ('logo.png', 96, False), ('apple-touch-icon.png', 180, True)):
+        with open(os.path.join(site, name), 'wb') as fh:
+            fh.write(png(draw(n, square=sq)))
+    print('wrote', res, out, site)
 
 
 if __name__ == '__main__':
